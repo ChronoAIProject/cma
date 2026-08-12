@@ -17,6 +17,15 @@ spec:
         app.kubernetes.io/part-of: chrono-bot
     spec:
       automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: chrono-bot-web
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
