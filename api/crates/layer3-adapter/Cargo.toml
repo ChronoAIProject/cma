@@ -6,4 +6,8 @@ publish = false
 
 [dependencies]
 async-trait = { workspace = true }
+futures-util = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
