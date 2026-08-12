@@ -1,0 +1,64 @@
+name: Release gate
+
+# Additional gates that apply only to a pull request from develop into main.
+# Everything in ci.yml also runs; this workflow adds the release requirements.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source-branch:
+    name: Source branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: main accepts pull requests only from develop
+        run: |
+          if [ "${{ github.head_ref }}" != "develop" ]; then
+            echo "::error::main only accepts pull requests from develop (got '${{ github.head_ref }}')"
+            exit 1
+          fi
+
+  release-notes:
+    name: Release tag and notes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: A release tag exists on the head commit
+        run: |
+          sha=$(git rev-parse HEAD^2 2>/dev/null || git rev-parse HEAD)
+          tag=$(git tag --points-at "$sha" | head -1)
+          if [ -z "$tag" ]; then
+            echo "::error::no release tag points at the head commit of this pull request"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_ENV"
+      - name: Tag message carries the three required sections
+        run: |
+          body=$(git tag -l --format='%(contents)' "$tag")
+          fail=0
+          for section in "What's new" "What's fixed" "What's changed"; do
+            printf '%s' "$body" | grep -qiF "$section" || {
+              echo "::error::release notes missing section: $section"; fail=1; }
+          done
+          exit $fail
+
+  no-coauthors:
+    name: Commit hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: No Co-Authored-By trailers
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          if git log "$base"..HEAD --format='%B' | grep -qi '^Co-Authored-By:'; then
+            echo "::error::Co-Authored-By trailers are not permitted"
+            exit 1
+          fi
