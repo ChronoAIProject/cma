@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/layer1-public",
+    "crates/layer2-core",
+    "crates/layer3-adapter",
+    "crates/layer4-runtime",
+    "crates/chrono-bot",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+layer2-core = { path = "crates/layer2-core" }
+layer3-adapter = { path = "crates/layer3-adapter" }
+layer1-public = { path = "crates/layer1-public" }

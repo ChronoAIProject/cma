@@ -1,0 +1,12 @@
+[package]
+name = "chrono-bot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+layer1-public = { workspace = true }
+layer2-core = { workspace = true }
+layer3-adapter = { workspace = true }
+tokio = { workspace = true }
