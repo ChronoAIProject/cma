@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: chrono-bot-web
+  namespace: chrono-bot
   labels:
     app.kubernetes.io/name: chrono-bot-web
     app.kubernetes.io/part-of: chrono-bot
