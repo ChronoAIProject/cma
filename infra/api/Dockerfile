@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1
+FROM rust:1.96.1-alpine AS build
+RUN apk add --no-cache musl-dev
+WORKDIR /build
+COPY api/ ./
+RUN cargo build --release --locked --bin chrono-bot
+
+FROM alpine:3.22 AS runtime
+RUN adduser -D -u 10001 chrono
+USER 10001:10001
+COPY --from=build /build/target/release/chrono-bot /usr/local/bin/chrono-bot
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/chrono-bot"]

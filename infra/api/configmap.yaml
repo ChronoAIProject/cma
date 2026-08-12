@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chrono-bot-api
+  labels:
+    app.kubernetes.io/name: chrono-bot-api
+    app.kubernetes.io/part-of: chrono-bot
+data:
+  # Address the control plane binds.
+  CHRONO_SERVER_BIND: "0.0.0.0:8080"
+  # Public origin of this API, used to build redirect URIs.
+  CHRONO_SERVER_PUBLIC_URL: "https://codex-api.chrono-ai.fun"
+  # Origin allowed to call the API from a browser.
+  CHRONO_SERVER_CORS_ORIGIN: "https://codex.chrono-ai.fun"
+  # NyxID identity provider base URL. Endpoints are discovered, never hard-coded.
+  CHRONO_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
+  # OAuth client identifier registered with NyxID. Not a secret.
+  CHRONO_NYXID_CLIENT_ID: "chrono-bot"
+  # MongoDB database name. The connection URI is a secret.
+  CHRONO_MONGODB_DATABASE: "chrono_bot"
+  # OpenSandbox control plane base URL.
+  CHRONO_SANDBOX_BASE_URL: "https://opensandbox.internal"
+  RUST_LOG: "info"
