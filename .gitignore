@@ -16,3 +16,4 @@ web/coverage/
 .env
 .env.*
 !.env.example
+.gstack/
