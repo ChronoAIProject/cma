@@ -6,8 +6,10 @@ COPY api/ ./
 RUN cargo build --release --locked --bin chrono-bot
 
 FROM alpine:3.22 AS runtime
-RUN adduser -D -u 10001 chrono
+# Pull security fixes published after the base image was cut.
+RUN apk upgrade --no-cache && adduser -D -u 10001 chrono
 USER 10001:10001
 COPY --from=build /build/target/release/chrono-bot /usr/local/bin/chrono-bot
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/chrono-bot"]
+# Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.

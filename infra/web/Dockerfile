@@ -7,7 +7,11 @@ COPY web/ ./
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+# Pull security fixes published after the base image was cut. Without this the
+# image ships known-fixed CVEs and the vulnerability gate fails, correctly.
+USER root
+RUN apk upgrade --no-cache
 USER 101:101
 COPY --from=build /build/dist /usr/share/nginx/html
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s CMD ["/usr/bin/curl", "-fsS", "http://127.0.0.1:8080/"]
+# Health is asserted by the Kubernetes probes in infra/web/deployment.yaml.
