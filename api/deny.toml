@@ -18,6 +18,9 @@ allow = [
 # broader than today's graph so adding a dependency does not fail the build for
 # a licence we already accept.
 unused-allowed-license = "allow"
+# Workspace crates are publish = false and carry no licence field; cargo-deny
+# would otherwise report them as unlicensed.
+private = { ignore = true }
 
 [bans]
 multiple-versions = "warn"
