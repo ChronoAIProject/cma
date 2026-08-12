@@ -87,8 +87,9 @@ jobs:
             echo "::error::gitleaks configuration is not permitted; fix the offending string instead"
             exit 1
           fi
-          if grep -rn 'gitleaks:allow' --exclude-dir=.git . ; then
-            echo "::error::gitleaks:allow annotations are not permitted"
+          needle="gitleaks:""allow"
+          if grep -rnF "$needle" --exclude-dir=.git . ; then
+            echo "::error::bypass annotations are not permitted; fix the offending string instead"
             exit 1
           fi
 
@@ -185,7 +186,7 @@ jobs:
           load: true
           tags: chrono-bot-${{ matrix.component }}:ci
       - name: Vulnerability scan
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: chrono-bot-${{ matrix.component }}:ci
           format: table
