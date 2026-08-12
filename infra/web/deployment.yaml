@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: chrono-bot-web
     app.kubernetes.io/part-of: chrono-bot
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: chrono-bot-web
