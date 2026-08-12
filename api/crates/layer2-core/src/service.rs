@@ -1,0 +1,523 @@
+//! The single tunnel: session lifecycle, the event log, and terminal relay.
+//!
+//! Every interface calls this and only this. The service owns one live screen
+//! model per session and keeps it fed for as long as the runtime produces
+//! output — whether or not a client is attached. A detached session that keeps
+//! working is the normal case, and a client that reattaches must find the
+//! screen already correct rather than replaying history.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use layer3_adapter::{KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalInput};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+
+use crate::error::CoreError;
+use crate::event::{Event, EventKind};
+use crate::ids::{KernelId, SessionId, SubjectId};
+use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
+
+/// How many output chunks a slow attached client may fall behind before it is
+/// dropped from the live fan-out. It can always recover from a fresh snapshot,
+/// so lagging is survivable; unbounded buffering is not.
+const LIVE_BUFFER: usize = 512;
+
+/// Builds a screen model at a given geometry.
+///
+/// Injected so the core never depends on a particular terminal parser.
+pub type ScreenFactory = Arc<dyn Fn(TerminalGeometry) -> Box<dyn ScreenModel> + Send + Sync>;
+
+/// An exclusive terminal attachment.
+///
+/// Holding this is what makes an attachment exclusive; dropping it releases the
+/// lease. Attachment is not a tenth core operation — it is an exclusivity mode
+/// on the live stream.
+pub struct AttachmentHandle {
+    session_id: SessionId,
+    service: Arc<SessionService>,
+    /// Live terminal output for as long as the attachment is held.
+    pub output: broadcast::Receiver<Vec<u8>>,
+    /// Bytes that repaint the current screen, delivered before live output.
+    pub repaint: Vec<u8>,
+    /// Geometry the repaint was rendered at.
+    pub geometry: TerminalGeometry,
+}
+
+impl Drop for AttachmentHandle {
+    fn drop(&mut self) {
+        let service = Arc::clone(&self.service);
+        let id = self.session_id.clone();
+        // Release synchronously where possible; the lock is never held across
+        // an await inside the service, so a blocking release cannot deadlock.
+        tokio::spawn(async move {
+            service.release_attachment(&id).await;
+        });
+    }
+}
+
+struct SessionEntry {
+    session: Session,
+    events: Vec<Event>,
+    screen: Arc<Mutex<Box<dyn ScreenModel>>>,
+    runtime: Option<RuntimeHandle>,
+    input: Option<mpsc::Sender<TerminalInput>>,
+    live: broadcast::Sender<Vec<u8>>,
+    attached: bool,
+}
+
+/// The core service.
+pub struct SessionService {
+    entries: RwLock<HashMap<SessionId, SessionEntry>>,
+    adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
+    screen_factory: ScreenFactory,
+}
+
+impl SessionService {
+    /// Build a service over a set of runtime implementations.
+    ///
+    /// The map is the only place a concrete runtime is named; the core selects
+    /// by opaque identifier and never interprets it.
+    pub fn new(
+        adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
+        screen_factory: ScreenFactory,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            entries: RwLock::new(HashMap::new()),
+            adapters,
+            screen_factory,
+        })
+    }
+
+    /// Identifiers of the runtimes this service can back a session with.
+    pub fn available_kernels(&self) -> Vec<KernelId> {
+        let mut ids: Vec<_> = self.adapters.keys().cloned().collect();
+        ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        ids
+    }
+
+    /// Provision a session and start relaying its terminal.
+    pub async fn create_session(
+        self: &Arc<Self>,
+        owner: SubjectId,
+        spec: SessionSpec,
+    ) -> Result<Session, CoreError> {
+        let adapter =
+            self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
+                CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
+            })?;
+
+        let geometry = spec.geometry.unwrap_or_default();
+        let id = SessionId::generate();
+
+        let handle = adapter
+            .provision(&RuntimeSpec {
+                session_id: id.0.clone(),
+                size: TermSize {
+                    cols: geometry.columns(),
+                    rows: geometry.rows(),
+                },
+            })
+            .await
+            .map_err(|e| CoreError::RuntimeUnavailable(e.to_string()))?;
+
+        let channel = adapter
+            .attach_terminal(&handle)
+            .await
+            .map_err(|e| CoreError::RuntimeUnavailable(e.to_string()))?;
+
+        let (live, _) = broadcast::channel(LIVE_BUFFER);
+        let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
+            Arc::new(Mutex::new((self.screen_factory)(geometry)));
+
+        let session = Session {
+            id: id.clone(),
+            owner,
+            kernel: spec.kernel.clone(),
+            status: SessionStatus::Ready,
+            recovery_state: RecoveryState::Normal,
+            stop_reason: None,
+            geometry,
+            last_seq: 0,
+            created_at: now_rfc3339(),
+        };
+
+        let mut entry = SessionEntry {
+            session: session.clone(),
+            events: Vec::new(),
+            screen: Arc::clone(&screen),
+            runtime: Some(handle),
+            input: Some(channel.input.clone()),
+            live: live.clone(),
+            attached: false,
+        };
+        append(&mut entry, EventKind::SessionCreated);
+        append(
+            &mut entry,
+            EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                stop_reason: None,
+            },
+        );
+        let session = entry.session.clone();
+        self.entries.write().await.insert(id.clone(), entry);
+
+        // The relay runs for the session's life, independent of any client.
+        // This is what makes a reattach cheap and a detached session correct.
+        spawn_relay(id.clone(), channel.output, screen, live);
+
+        // Ask the runtime to match the requested geometry before anything is
+        // painted, so the first frame is never rendered at the wrong size.
+        let _ = channel
+            .input
+            .send(TerminalInput::Resize(TermSize {
+                cols: geometry.columns(),
+                rows: geometry.rows(),
+            }))
+            .await;
+
+        tracing::info!(session_id = %id, kernel = %spec.kernel, "session created");
+        Ok(session)
+    }
+
+    /// Read a session, scoped to its owner.
+    pub async fn get_session(
+        &self,
+        subject: &SubjectId,
+        id: &SessionId,
+    ) -> Result<Session, CoreError> {
+        let entries = self.entries.read().await;
+        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+        if !entry.session.is_owned_by(subject) {
+            return Err(CoreError::Forbidden);
+        }
+        Ok(entry.session.clone())
+    }
+
+    /// List the subject's sessions, newest first.
+    pub async fn list_sessions(&self, subject: &SubjectId) -> Vec<Session> {
+        let entries = self.entries.read().await;
+        let mut out: Vec<_> = entries
+            .values()
+            .filter(|e| e.session.is_owned_by(subject))
+            .map(|e| e.session.clone())
+            .collect();
+        out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        out
+    }
+
+    /// Durable events for a session, optionally from a cursor.
+    pub async fn events_since(
+        &self,
+        subject: &SubjectId,
+        id: &SessionId,
+        after: Option<u64>,
+    ) -> Result<Vec<Event>, CoreError> {
+        let entries = self.entries.read().await;
+        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+        if !entry.session.is_owned_by(subject) {
+            return Err(CoreError::Forbidden);
+        }
+        let floor = after.unwrap_or(0);
+        Ok(entry
+            .events
+            .iter()
+            .filter(|e| e.seq > floor)
+            .cloned()
+            .collect())
+    }
+
+    /// Take the exclusive terminal attachment.
+    ///
+    /// The geometry is applied to the screen before the repaint is produced, so
+    /// the caller's first paint is already at its own size.
+    pub async fn attach_terminal(
+        self: &Arc<Self>,
+        subject: &SubjectId,
+        id: &SessionId,
+        geometry: TerminalGeometry,
+    ) -> Result<AttachmentHandle, CoreError> {
+        let (screen, live) = {
+            let mut entries = self.entries.write().await;
+            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+            if !entry.session.is_owned_by(subject) {
+                return Err(CoreError::Forbidden);
+            }
+            if entry.session.status.is_terminal() {
+                return Err(CoreError::SessionTerminated);
+            }
+            if entry.attached {
+                return Err(CoreError::AlreadyAttached);
+            }
+            entry.attached = true;
+            entry.session.geometry = geometry;
+            append(entry, EventKind::TerminalAttached);
+            (Arc::clone(&entry.screen), entry.live.clone())
+        };
+
+        // Subscribe before rendering the repaint: output produced between the
+        // two is then buffered rather than lost.
+        let output = live.subscribe();
+
+        let repaint = {
+            let mut s = screen.lock().await;
+            s.resize(geometry);
+            s.repaint_bytes()
+        };
+
+        self.forward_input(
+            id,
+            TerminalInput::Resize(TermSize {
+                cols: geometry.columns(),
+                rows: geometry.rows(),
+            }),
+        )
+        .await;
+
+        tracing::info!(session_id = %id, cols = geometry.columns(), rows = geometry.rows(), "terminal attached");
+        Ok(AttachmentHandle {
+            session_id: id.clone(),
+            service: Arc::clone(self),
+            output,
+            repaint,
+            geometry,
+        })
+    }
+
+    /// Release the exclusive attachment. Idempotent.
+    pub async fn release_attachment(&self, id: &SessionId) {
+        let mut entries = self.entries.write().await;
+        if let Some(entry) = entries.get_mut(id) {
+            if entry.attached {
+                entry.attached = false;
+                append(entry, EventKind::TerminalDetached);
+                tracing::info!(session_id = %id, "terminal detached");
+            }
+        }
+    }
+
+    /// Deliver input to the session's terminal.
+    pub async fn send_input(
+        &self,
+        subject: &SubjectId,
+        id: &SessionId,
+        bytes: Vec<u8>,
+    ) -> Result<(), CoreError> {
+        self.authorize(subject, id).await?;
+        self.forward_input(id, TerminalInput::Bytes(bytes)).await;
+        Ok(())
+    }
+
+    /// Send an out-of-band signal to the session's runtime.
+    pub async fn send_signal(
+        &self,
+        subject: &SubjectId,
+        id: &SessionId,
+        signal: String,
+    ) -> Result<(), CoreError> {
+        self.authorize(subject, id).await?;
+        self.forward_input(id, TerminalInput::Signal(signal)).await;
+        Ok(())
+    }
+
+    /// Change the session's terminal geometry.
+    pub async fn resize_terminal(
+        &self,
+        subject: &SubjectId,
+        id: &SessionId,
+        geometry: TerminalGeometry,
+    ) -> Result<(), CoreError> {
+        let screen = {
+            let mut entries = self.entries.write().await;
+            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+            if !entry.session.is_owned_by(subject) {
+                return Err(CoreError::Forbidden);
+            }
+            entry.session.geometry = geometry;
+            append(
+                entry,
+                EventKind::TerminalResized {
+                    columns: geometry.columns(),
+                    rows: geometry.rows(),
+                },
+            );
+            Arc::clone(&entry.screen)
+        };
+        screen.lock().await.resize(geometry);
+        self.forward_input(
+            id,
+            TerminalInput::Resize(TermSize {
+                cols: geometry.columns(),
+                rows: geometry.rows(),
+            }),
+        )
+        .await;
+        Ok(())
+    }
+
+    /// Read the current screen without holding a stream.
+    pub async fn screen_snapshot(
+        &self,
+        subject: &SubjectId,
+        id: &SessionId,
+    ) -> Result<ScreenSnapshot, CoreError> {
+        let screen = {
+            let entries = self.entries.read().await;
+            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+            if !entry.session.is_owned_by(subject) {
+                return Err(CoreError::Forbidden);
+            }
+            Arc::clone(&entry.screen)
+        };
+        let snapshot = screen.lock().await.snapshot();
+        Ok(snapshot)
+    }
+
+    /// End a session and tear its runtime down.
+    pub async fn terminate_session(
+        &self,
+        subject: &SubjectId,
+        id: &SessionId,
+    ) -> Result<(), CoreError> {
+        let (adapter, runtime) = {
+            let mut entries = self.entries.write().await;
+            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+            if !entry.session.is_owned_by(subject) {
+                return Err(CoreError::Forbidden);
+            }
+            entry.session.status = SessionStatus::Terminated;
+            entry.session.stop_reason = Some(StopReason::UserTerminated);
+            entry.session.recovery_state = RecoveryState::Retired;
+            append(
+                entry,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Terminated,
+                    stop_reason: Some(StopReason::UserTerminated),
+                },
+            );
+            entry.input = None;
+            (
+                self.adapters.get(&entry.session.kernel).cloned(),
+                entry.runtime.clone(),
+            )
+        };
+
+        if let (Some(adapter), Some(handle)) = (adapter, runtime) {
+            if let Err(e) = adapter.terminate(&handle).await {
+                // The session is already marked terminated; a runtime that
+                // refuses teardown is logged, never silently swallowed.
+                tracing::warn!(session_id = %id, error = %e, "runtime teardown failed");
+            }
+        }
+        tracing::info!(session_id = %id, "session terminated");
+        Ok(())
+    }
+
+    async fn authorize(&self, subject: &SubjectId, id: &SessionId) -> Result<(), CoreError> {
+        let entries = self.entries.read().await;
+        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+        if !entry.session.is_owned_by(subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if entry.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        Ok(())
+    }
+
+    async fn forward_input(&self, id: &SessionId, input: TerminalInput) {
+        let sender = {
+            let entries = self.entries.read().await;
+            entries.get(id).and_then(|e| e.input.clone())
+        };
+        if let Some(tx) = sender {
+            if tx.send(input).await.is_err() {
+                tracing::warn!(session_id = %id, "runtime input channel closed");
+            }
+        }
+    }
+}
+
+/// Append a durable event, allocating the next per-session sequence.
+fn append(entry: &mut SessionEntry, kind: EventKind) {
+    entry.session.last_seq += 1;
+    entry.events.push(Event {
+        session_id: entry.session.id.clone(),
+        seq: entry.session.last_seq,
+        kind,
+    });
+}
+
+/// Pump runtime output into the screen model and out to any live subscriber.
+fn spawn_relay(
+    id: SessionId,
+    mut output: mpsc::Receiver<Vec<u8>>,
+    screen: Arc<Mutex<Box<dyn ScreenModel>>>,
+    live: broadcast::Sender<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        while let Some(chunk) = output.recv().await {
+            screen.lock().await.apply(&chunk);
+            // A send with no subscribers is not an error: the session is simply
+            // detached, and the screen model has already absorbed the bytes.
+            let _ = live.send(chunk);
+        }
+        tracing::info!(session_id = %id, "runtime output ended");
+    });
+}
+
+fn now_rfc3339() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Minimal RFC 3339 in UTC. Avoids a date dependency for a single format.
+    let days = now / 86_400;
+    let secs = now % 86_400;
+    let (y, m, d) = civil_from_days(days as i64);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
+}
+
+/// Days since the Unix epoch to a civil date, per Howard Hinnant's algorithm.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epoch_formats_as_the_unix_epoch_date() {
+        let (y, m, d) = civil_from_days(0);
+        assert_eq!((y, m, d), (1970, 1, 1));
+    }
+
+    #[test]
+    fn a_known_day_count_formats_correctly() {
+        // 2026-08-12 is 20677 days after the epoch.
+        let (y, m, d) = civil_from_days(20_677);
+        assert_eq!((y, m, d), (2026, 8, 12));
+    }
+
+    #[test]
+    fn timestamps_are_rfc3339_utc() {
+        let ts = now_rfc3339();
+        assert!(ts.ends_with('Z'), "got {ts}");
+        assert_eq!(ts.len(), 20, "got {ts}");
+    }
+}
