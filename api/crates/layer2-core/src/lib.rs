@@ -8,6 +8,7 @@
 //! every interface and every runtime needs, so that an interface exposing a
 //! subset is a projection rather than a compromise.
 
+mod clock;
 pub mod error;
 pub mod event;
 pub mod ids;
