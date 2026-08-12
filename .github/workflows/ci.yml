@@ -1,0 +1,190 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  structure:
+    name: Repository structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Root contains only permitted entries
+        run: |
+          allowed=".git .github api web infra docs CLAUDE.md README.md .gitignore"
+          fail=0
+          for entry in $(ls -A); do
+            case " $allowed " in
+              *" $entry "*) ;;
+              *) echo "::error::disallowed root entry: $entry"; fail=1 ;;
+            esac
+          done
+          exit $fail
+      - name: infra/ contains only the fixed file list
+        run: |
+          expected=$(printf '%s\n' \
+            infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
+            infra/api/secret.yaml infra/api/service.yaml \
+            infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
+            infra/web/secret.yaml infra/web/service.yaml | sort)
+          actual=$(find infra -type f | sort)
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::infra/ contents differ from the fixed list"
+            diff <(echo "$expected") <(echo "$actual") || true
+            exit 1
+          fi
+      - name: docs/ contains only markdown
+        run: |
+          bad=$(find docs -type f ! -name '*.md' || true)
+          if [ -n "$bad" ]; then echo "::error::non-markdown in docs/: $bad"; exit 1; fi
+      - name: Layer dependency rule
+        run: |
+          fail=0
+          grep -q 'layer3-adapter' api/crates/layer1-public/Cargo.toml \
+            && { echo "::error::layer1-public must not depend on layer3-adapter"; fail=1; }
+          grep -q 'layer1-public' api/crates/layer2-core/Cargo.toml \
+            && { echo "::error::layer2-core must not depend on layer1-public"; fail=1; }
+          grep -qE 'layer1-public|layer2-core' api/crates/layer3-adapter/Cargo.toml \
+            && { echo "::error::layer3-adapter must not depend on layer1 or layer2"; fail=1; }
+          grep -q 'layer4-runtime' api/crates/chrono-bot/Cargo.toml \
+            && { echo "::error::control plane must not depend on layer4-runtime"; fail=1; }
+          exit $fail
+      - name: Layer 2 is protocol- and kernel-agnostic
+        run: |
+          hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
+          if [ -n "$hits" ]; then
+            echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
+          fi
+
+  secrets:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reject any gitleaks allowlist
+        run: |
+          if find . -name '.gitleaks.toml' -o -name 'gitleaks.toml' | grep -q .; then
+            echo "::error::gitleaks configuration is not permitted; fix the offending string instead"
+            exit 1
+          fi
+          if grep -rn 'gitleaks:allow' --exclude-dir=.git . ; then
+            echo "::error::gitleaks:allow annotations are not permitted"
+            exit 1
+          fi
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: api
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Build
+        run: cargo build --workspace --locked
+      - uses: taiki-e/install-action@nextest
+      - name: Tests
+        run: cargo nextest run --workspace --locked
+      - name: Doctests
+        run: cargo test --doc --workspace --locked
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: api/Cargo.toml
+          command: check advisories licenses bans sources
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install (lockfile integrity)
+        run: npm ci
+      - name: Format
+        run: npx prettier --check .
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm run test
+      - name: Production build
+        run: npm run build
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+  manifests:
+    name: Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          ./kubeconform -strict -summary -output text infra/api/*.yaml infra/web/*.yaml
+      - name: kube-linter
+        uses: stackrox/kube-linter-action@v1
+        with:
+          directory: infra
+
+  images:
+    name: Images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [api, web]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/${{ matrix.component }}/Dockerfile
+          push: false
+          load: true
+          tags: chrono-bot-${{ matrix.component }}:ci
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: chrono-bot-${{ matrix.component }}:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
