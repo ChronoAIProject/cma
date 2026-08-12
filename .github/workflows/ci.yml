@@ -178,15 +178,37 @@ jobs:
         component: [api, web]
     steps:
       - uses: actions/checkout@v5
+      # arm64 builds run under emulation on the amd64 runner.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - name: Build image
+      # Proves the Dockerfile builds for every architecture the cluster may
+      # schedule onto. Discarded via cacheonly rather than loaded: the docker
+      # exporter behind `load: true` cannot export a multi-platform manifest
+      # list, so a combined build-and-load would fail outright.
+      - name: Build image for all target platforms
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/${{ matrix.component }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          outputs: type=cacheonly
+          # Emulated arm64 is slow enough that an uncached Rust release build
+          # dominates CI time. Scoped per component so api and web never
+          # overwrite each other's cache.
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+      # Reuses the layers just cached above, so this is near-free.
+      - name: Load native image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/${{ matrix.component }}/Dockerfile
+          platforms: linux/amd64
           push: false
           load: true
           tags: chrono-bot-${{ matrix.component }}:ci
+          cache-from: type=gha,scope=${{ matrix.component }}
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
