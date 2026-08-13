@@ -82,3 +82,13 @@ export function sortSessions<T extends { readonly createdAt: number }>(
     order === 'newest' ? b.createdAt - a.createdAt : a.createdAt - b.createdAt,
   );
 }
+
+/**
+ * A full timestamp, or nothing at all.
+ *
+ * For values the control plane may not have yet. Rendering "Invalid Date" in
+ * reference material is worse than rendering nothing.
+ */
+export function fullTimestampOrNone(at: number | undefined): string {
+  return at === undefined || Number.isNaN(at) ? '—' : fullTimestamp(at);
+}

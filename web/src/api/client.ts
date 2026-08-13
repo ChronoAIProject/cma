@@ -36,6 +36,7 @@ const LIFECYCLES: readonly SessionLifecycle[] = [
   'provisioning',
   'ready',
   'running',
+  'rotating',
   'idle',
   'terminated',
 ];
@@ -48,6 +49,7 @@ interface SessionPayload {
   kernel?: unknown;
   status?: unknown;
   created_at?: unknown;
+  stop_reason?: unknown;
 }
 
 /**
@@ -76,6 +78,10 @@ export function toSession(raw: unknown): Session {
     kernel: p.kernel as Kernel,
     lifecycle: p.status as SessionLifecycle,
     createdAt: Number.isNaN(parsed) ? Date.now() : parsed,
+    // Narrowed to the one distinction the interface acts on. Carrying the
+    // control plane's full vocabulary here would invite the frontend to
+    // reason about reasons it has no behaviour for.
+    stopReason: p.stop_reason === 'error' ? 'error' : p.stop_reason ? 'other' : undefined,
   };
 }
 
@@ -153,6 +159,41 @@ export async function createSession(
  */
 export async function terminateSession(id: string): Promise<void> {
   await request(`/api/v1/sessions/${encodeURIComponent(id)}/terminate`, { method: 'POST' });
+}
+
+/**
+ * Release a session's sandbox, keeping the session.
+ *
+ * The reversible half of ending something: nothing is running and nothing is
+ * being paid for, while the history stays readable and the session can be
+ * picked up again with `reviveSession`.
+ */
+export async function stopSession(id: string): Promise<void> {
+  await request(`/api/v1/sessions/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+}
+
+/** Give a stopped session a sandbox again, under the same id. */
+export async function reviveSession(id: string): Promise<Session> {
+  const body = await request(`/api/v1/sessions/${encodeURIComponent(id)}/revive`, {
+    method: 'POST',
+  });
+  return toSession(body);
+}
+
+/**
+ * Everything a session's terminal has shown.
+ *
+ * How a session with no sandbox is read. Bytes rather than text, because it is
+ * an escape-sequence stream that only a terminal knows how to interpret.
+ */
+export async function fetchTranscript(id: string): Promise<Uint8Array> {
+  const response = await fetch(`/api/v1/sessions/${encodeURIComponent(id)}/transcript`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, `could not read the session transcript`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 /** Remove a session and its history permanently. */

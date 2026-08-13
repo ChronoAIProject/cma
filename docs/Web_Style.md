@@ -442,6 +442,47 @@ alignment in everything the agent draws.
 
 ---
 
+## 14. Session states and what they allow
+
+A session is shown in one of six states, and the state decides what the
+interface offers. **One rule governs all of it** — whether the terminal accepts
+typing, whether a control is enabled, and whether the session appears in the
+list. Three separate answers to the same question eventually disagree, and the
+disagreement is visible as a button that does nothing.
+
+| State | Shown as | Terminal | Available |
+|---|---|---|---|
+| provisioning | starting | progress, no input | end |
+| ready / running | ready / running | live | reconnect, end, delete |
+| rotating | updating | progress, no input | nothing |
+| idle | idle | history, read-only | **revive**, delete |
+| terminated | ended | history, read-only | delete |
+
+**Controls are disabled, never removed.** The panel keeps its shape as a
+session moves between states, so nobody hunts for a control that was there a
+moment ago. Every disabled control carries a line saying why it is
+unavailable — a greyed button on its own communicates only refusal.
+
+**A session that cannot be typed into always says why**, in the panel, in the
+owner's terms: still starting, stopped, being moved, ended. A terminal that
+silently ignores keystrokes is the state people report as broken.
+
+**A session with no sandbox still shows its history**, read-only. Stopping a
+session releases what it costs; it does not hide what it did. Keystrokes into
+a read-only terminal are dropped rather than buffered — holding them until a
+revive would deliver them into a different sandbox, minutes later, with no
+context.
+
+**Ended sessions leave the list, except when they failed.** A list of
+everything ever run is not a list of someone's sessions. But a session that
+died on its own is the one its owner is looking for, so it stays until they
+remove it.
+
+**Revive is the primary action when it is offered.** A stopped session is
+almost always open because someone wants it back.
+
+---
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -455,3 +496,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-14 | Added §11 Waiting for a session: the provisioning message animates as a left-to-right character wave (1.4s loop, 45ms stagger, 0.28em lift), chosen over a spinner because §5 forbids one and because a wave claims no knowledge of progress. Motion carries no information — the sentence is exposed once to assistive technology and the animation is removed under reduced-motion. Also specified that a session which fails to start must show the recorded reason rather than the same wording as one that ended normally. |
 | 2026-08-14 | Added §12 Page frame and layout and §13 The platform typeface. Established a persistent top bar in both signed-out and signed-in states, a 10% inset on page content with terminal output exempt, a vertical session column on the left labelled by creation time in Singapore time (newest first, reversible, date shown only once not from today), and a collapsible session details panel on the right that collapses to a handle. Columns stack below 60rem. Adopted Geist Pixel as the platform typeface, self-hosted under the SIL Open Font License with a system fallback and `font-display: swap`; terminal content keeps its monospace stack because cell metrics govern its rendering. Replaced the horizontal session tab strip specified in the 2026-08-13 redesign, which truncated labels once sessions accumulated. |
 | 2026-08-14 | Corrected §12: the console obeys the page inset like every other surface, so the session column aligns with the product mark and the details panel with the account control. The earlier entry exempted terminal output from the inset on the grounds that cropping it wasted width; alignment between the bar and the page beneath it matters more, and a full-bleed console under an inset bar reads as a detached bar. Also moved the session lifecycle controls out of the top bar and into the details panel, beside the session they act on. |
+| 2026-08-14 | Added §14 Session states and what they allow: a single table binding each of the six session states to what the terminal does and which controls are available, with one rule shared by the terminal, the buttons and the list so they cannot disagree. Established that controls are disabled rather than removed and that every disabled control and every non-interactive terminal states its reason in the owner's terms; that a session with no sandbox still shows its history read-only, with keystrokes dropped rather than buffered; that ended sessions leave the list unless they ended by failing; and that revive is the primary action wherever it is offered. Adds the `rotating` state, during which the session is neither usable nor stopped and no control acts on it. |

@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import type { Session } from './types';
-import { fullTimestamp } from './sessionTime';
+import { abilitiesFor } from './availability';
+import { labelFor } from './types';
+import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
 import './SessionDetails.css';
 
 /**
@@ -31,6 +33,7 @@ interface SessionDetailsProps {
 }
 
 export function SessionDetails({ session, open, onToggle, ending, actions }: SessionDetailsProps) {
+  const reason = abilitiesFor(session).reason;
   if (!open) {
     return (
       <button
@@ -71,8 +74,30 @@ export function SessionDetails({ session, open, onToggle, ending, actions }: Ses
         </div>
         <div className="details__row">
           <dt>State</dt>
-          <dd>{session.lifecycle}</dd>
+          <dd>{labelFor(session.lifecycle)}</dd>
         </div>
+        {/*
+         * Only present once a session has been moved between runtimes. Shown
+         * because the alternative is someone noticing a gap in their terminal
+         * and having no way to find out what caused it.
+         */}
+        {session.runtimeVersion !== undefined ? (
+          <div className="details__row">
+            <dt>Runtime</dt>
+            <dd>{session.runtimeVersion}</dd>
+          </div>
+        ) : null}
+        {session.rotations !== undefined && session.rotations > 0 ? (
+          <div className="details__row">
+            <dt>Moved</dt>
+            <dd>
+              {session.rotations === 1 ? 'once' : `${session.rotations} times`}
+              {session.rotatedAt !== undefined
+                ? `, last on ${fullTimestampOrNone(session.rotatedAt)}`
+                : ''}
+            </dd>
+          </div>
+        ) : null}
         <div className="details__row">
           <dt>Identifier</dt>
           {/*
@@ -83,6 +108,14 @@ export function SessionDetails({ session, open, onToggle, ending, actions }: Ses
           <dd className="details__id">{session.id}</dd>
         </div>
       </dl>
+
+      {/*
+       * The reason the session cannot be typed into, stated wherever it is
+       * true rather than only when something has gone wrong. A terminal that
+       * ignores keystrokes without saying why is the thing people report as
+       * broken.
+       */}
+      {reason !== undefined ? <p className="details__state">{reason}</p> : null}
 
       {ending !== undefined && ending !== '' ? <p className="details__ending">{ending}</p> : null}
 
