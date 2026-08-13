@@ -57,7 +57,13 @@ pub struct CodexSandboxSpec {
     pub entrypoint: Vec<String>,
     /// Hard resource caps for each sandbox.
     pub resource_limits: BTreeMap<String, String>,
-    /// Seconds before the provider reclaims an idle sandbox.
+    /// Seconds before the provider reclaims the sandbox, or `None` for never.
+    ///
+    /// `None` is the default and is deliberate. A session is a person's working
+    /// terminal: expiring it on a timer ends live work mid-turn, and no timer
+    /// can tell an idle session from one whose owner is reading. Teardown is an
+    /// explicit act by the owner, and the reconciliation sweep is what reclaims
+    /// sandboxes whose session is genuinely gone.
     pub timeout_seconds: Option<u64>,
     /// Where the supervisor forwards the agent's model calls.
     ///
@@ -68,6 +74,11 @@ pub struct CodexSandboxSpec {
     pub upstream_model: String,
     /// Request shape the upstream speaks.
     pub upstream_wire_api: String,
+    /// Root of the identity platform the session's CLI acts against.
+    ///
+    /// Empty means the session gets a terminal and a model but cannot use the
+    /// owner's connected capabilities.
+    pub platform_base_url: String,
 }
 
 impl Default for CodexSandboxSpec {
@@ -79,10 +90,11 @@ impl Default for CodexSandboxSpec {
                 ("cpu".to_string(), "2".to_string()),
                 ("memory".to_string(), "4Gi".to_string()),
             ]),
-            timeout_seconds: Some(3600),
+            timeout_seconds: None,
             upstream_base_url: String::new(),
             upstream_model: "gpt-5.6-sol".into(),
             upstream_wire_api: "responses".into(),
+            platform_base_url: String::new(),
         }
     }
 }
@@ -161,6 +173,19 @@ impl KernelAdapter for CodexAdapter {
             (
                 "CHRONO_UPSTREAM_WIRE_API".to_string(),
                 self.spec.upstream_wire_api.clone(),
+            ),
+            (
+                "CHRONO_PLATFORM_BASE_URL".to_string(),
+                self.spec.platform_base_url.clone(),
+            ),
+            // The CLI reads its endpoint and token from the environment, and
+            // environment wins over any saved session. Pointing it at the local
+            // proxy with an inert token means the real credential never lands
+            // in the sandbox, and the CLI never tries to refresh one itself.
+            ("NYXID_URL".to_string(), "http://127.0.0.1:9092".to_string()),
+            (
+                "NYXID_ACCESS_TOKEN".to_string(),
+                "local-proxy-no-credential-needed".to_string(),
             ),
             (
                 "CHRONO_RUNTIME_COLS".to_string(),
@@ -345,7 +370,17 @@ mod tests {
             s.resource_limits.get("memory").map(String::as_str),
             Some("4Gi")
         );
-        assert!(s.timeout_seconds.is_some(), "sandboxes must expire");
+    }
+
+    #[test]
+    fn sandboxes_do_not_expire_on_a_timer() {
+        // A session is someone's working terminal. Expiring it on a timer ends
+        // live work mid-turn, and a timer cannot tell an idle session from one
+        // whose owner is reading the screen. Only the owner ends a session.
+        assert!(
+            CodexSandboxSpec::default().timeout_seconds.is_none(),
+            "a default lifetime would terminate active sessions"
+        );
     }
 
     #[tokio::test]

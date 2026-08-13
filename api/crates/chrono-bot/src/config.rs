@@ -29,6 +29,8 @@ pub struct Config {
     pub upstream_model: String,
     /// Request shape the upstream speaks.
     pub upstream_wire_api: String,
+    /// Root of the identity platform a session's CLI acts against.
+    pub platform_base_url: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
 }
@@ -46,6 +48,9 @@ impl Config {
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
+        // Defaults to the same provider this service authenticates against, so
+        // a session acts on the platform as the person who signed in.
+        let platform_base_url = var_or("CHRONO_PLATFORM_BASE_URL", "");
         // The key is read from a file rather than an environment variable so it
         // can be delivered by a mounted secret and rotated without a restart of
         // the surrounding config, matching how neighbouring control planes do it.
@@ -105,6 +110,7 @@ impl Config {
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
+            platform_base_url,
             auth_mode,
         })
     }
@@ -161,6 +167,7 @@ mod tests {
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),
             upstream_wire_api: "responses".into(),
+            platform_base_url: "http://p".into(),
             auth_mode: AuthMode::Trusted {
                 subject: "s".into(),
             },
