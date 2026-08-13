@@ -136,6 +136,17 @@ async function waitForConsole() {
   return waitFor(() => screen.getByRole('tablist', { name: /sessions/i }));
 }
 
+/**
+ * Start a session the way a person does: open the settings and confirm.
+ *
+ * Creating one is now a deliberate act with choices attached, so the tests go
+ * through the same door rather than around it.
+ */
+async function startSession(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /new session/i }));
+  await user.click(await screen.findByRole('button', { name: /start session/i }));
+}
+
 describe('App', () => {
   it('shows the introduction to a visitor who is not signed in', async () => {
     await renderApp(createMockAuthProvider());
@@ -178,7 +189,7 @@ describe('App', () => {
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    await user.click(screen.getByRole('button', { name: /new session/i }));
+    await startSession(user);
 
     // The tab exists immediately even though no runtime does yet.
     expect(await screen.findByRole('tab')).toBeInTheDocument();
@@ -193,7 +204,7 @@ describe('App', () => {
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
-    await user.click(screen.getByRole('button', { name: /new session/i }));
+    await startSession(user);
 
     await waitFor(() => {
       expect(sentText()).toContain('build me a web scraper\n');
@@ -242,7 +253,7 @@ describe('App', () => {
     await waitForConsole();
     const before = screen.queryAllByRole('tab').length;
 
-    await user.click(screen.getByRole('button', { name: /new session/i }));
+    await startSession(user);
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab')).toHaveLength(before + 1);

@@ -244,5 +244,6 @@ pub(crate) fn spec() -> SessionSpec {
         kernel: kernel(),
         geometry: None,
         subject_credential: None,
+        options: Default::default(),
     }
 }

@@ -13,6 +13,7 @@
  */
 
 import type { Kernel, Session, SessionLifecycle } from '../sessions/types';
+import type { AgentOptions } from '../sessions/options';
 
 /** A request that failed, carrying enough to tell the user why. */
 export class ApiError extends Error {
@@ -124,11 +125,21 @@ export async function listSessions(): Promise<readonly Session[]> {
   return items.map(toSession);
 }
 
-/** Provision a session on the given kernel. */
-export async function createSession(kernel: Kernel, cols: number, rows: number): Promise<Session> {
+/**
+ * Provision a session on the given kernel.
+ *
+ * Options are sent as given. Omitting them is meaningful — the control plane
+ * applies its own safe defaults — so an absent choice is never filled in here.
+ */
+export async function createSession(
+  kernel: Kernel,
+  cols: number,
+  rows: number,
+  options?: AgentOptions,
+): Promise<Session> {
   const body = await request('/api/v1/sessions', {
     method: 'POST',
-    body: JSON.stringify({ kernel, cols, rows }),
+    body: JSON.stringify({ kernel, cols, rows, options }),
   });
   return toSession(body);
 }

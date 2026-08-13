@@ -13,11 +13,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use layer3_adapter::{KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalInput};
+use layer3_adapter::{
+    KernelAdapter, RuntimeHandle, RuntimeOptions, RuntimePermission, RuntimeSpec, TermSize,
+    TerminalInput,
+};
 use tokio::sync::{broadcast, Mutex};
 
 use crate::event::EventKind;
 use crate::ids::SessionId;
+use crate::options::{AgentOptions, PermissionMode};
 use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 use crate::terminal::{ScreenModel, TerminalGeometry};
@@ -80,6 +84,7 @@ impl SessionService {
                     rows: geometry.rows(),
                 },
                 subject_credential: spec.subject_credential.clone(),
+                options: runtime_options(&spec.options),
             })
             .await
             .map_err(|e| format!("could not provision a runtime: {e}"))?;
@@ -205,5 +210,23 @@ impl SessionService {
                 tracing::warn!(session_id = %id, error = %e, "could not tear down the runtime");
             }
         }
+    }
+}
+
+/// Translate what a person asked for into what a runtime is told.
+///
+/// The two vocabularies are separate on purpose — the core must not speak any
+/// runtime's dialect — so this is the single place they meet, and the only
+/// place a new option has to be taught to cross.
+fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
+    RuntimeOptions {
+        model: options.model.clone(),
+        reasoning_effort: Some(options.reasoning_effort.as_str().to_string()),
+        permission: match options.permission {
+            PermissionMode::Guarded => RuntimePermission::Guarded,
+            PermissionMode::Autonomous => RuntimePermission::Autonomous,
+            PermissionMode::Unrestricted => RuntimePermission::Unrestricted,
+        },
+        own_credential: matches!(options.credential, crate::options::CredentialMode::Own),
     }
 }
