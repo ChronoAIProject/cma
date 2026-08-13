@@ -298,7 +298,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         : { text: openingTurn, sessionId: openingForId },
     [openingTurn, openingForId],
   );
-  const nodes = useSessionDrivers(sessions, opening);
+  const { nodes, reconnect } = useSessionDrivers(sessions, opening);
   const driver = nodes.find((node) => node.session.id === activeId)?.driver ?? null;
 
   // The canvas shows exactly what the rail lists, so one arrangement never
@@ -410,10 +410,19 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 session={active}
                 busy={acting}
                 onReconnect={() => {
-                  // Rebuilding the driver reattaches, which asks the control
-                  // plane to take the sandbox back under management.
+                  /*
+                   * A new driver for this session and no other. The surface
+                   * holding the old one releases its transport and the new one
+                   * dials again, which asks the control plane to take the
+                   * sandbox back under management.
+                   *
+                   * Scoped deliberately: this used to bump `paletteEpoch`,
+                   * which is also the canvas's key, so one session's Reconnect
+                   * rebuilt every node on the canvas — every scrollback
+                   * cleared, every socket redialled.
+                   */
                   setNotice(null);
-                  setPaletteEpoch((n) => n + 1);
+                  reconnect(active.id);
                 }}
                 onRevive={() => void reviveSessionById(active.id)}
                 onStop={() => void endSession(active.id)}
