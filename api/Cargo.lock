@@ -251,8 +251,10 @@ dependencies = [
 name = "chrono-bot"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "base64",
+ "futures-util",
  "layer1-public",
  "layer2-core",
  "layer3-adapter",

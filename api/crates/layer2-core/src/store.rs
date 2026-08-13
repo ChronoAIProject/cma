@@ -1,0 +1,138 @@
+//! Where sessions and their history are kept.
+//!
+//! The core defines what durable storage must do and never how. Two ports,
+//! because the two kinds of state have genuinely different shapes: session
+//! records are small, queryable documents, while an agent's accumulated
+//! context is an opaque blob that grows without bound and is only ever read
+//! whole.
+//!
+//! Nothing here is live state. A screen model, a socket, and an attachment
+//! lease exist only while a runtime is running and are rebuilt on attach;
+//! persisting them would be persisting a snapshot of something already gone.
+
+use crate::event::Event;
+use crate::ids::{SessionId, SubjectId};
+use crate::session::Session;
+
+/// A session as it is stored.
+#[derive(Debug, Clone)]
+pub struct SessionRecord {
+    /// The session itself.
+    pub session: Session,
+    /// Identifier of the runtime currently backing it, when one is running.
+    ///
+    /// Opaque to the core, and cleared when the runtime goes away. Held so a
+    /// restarted process can still find and reclaim what it provisioned.
+    pub runtime_id: Option<String>,
+    /// Where this session's accumulated agent context is stored, if any.
+    pub context_ref: Option<String>,
+}
+
+impl SessionRecord {
+    /// A record for a freshly created session.
+    pub fn new(session: Session) -> Self {
+        Self {
+            session,
+            runtime_id: None,
+            context_ref: None,
+        }
+    }
+}
+
+/// Failures a store may report.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    /// The store could not be reached.
+    #[error("store unavailable: {0}")]
+    Unavailable(String),
+    /// The stored data did not match what the core expects.
+    #[error("stored data not usable: {0}")]
+    Malformed(String),
+}
+
+/// Durable session records and their event history.
+#[async_trait::async_trait]
+pub trait SessionStore: Send + Sync {
+    /// Create or replace a session record.
+    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError>;
+
+    /// Read one session, whoever owns it. Ownership is decided above this.
+    async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError>;
+
+    /// Every session owned by a subject, newest first.
+    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError>;
+
+    /// Every session, newest first. For the monitoring surface.
+    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError>;
+
+    /// Remove a session and its history permanently.
+    ///
+    /// Distinct from ending one: a terminated session stays visible until its
+    /// owner chooses to remove it.
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
+
+    /// Append durable events.
+    ///
+    /// Sequence numbers are allocated by the caller and are monotonic per
+    /// session, so a store must preserve them rather than assign its own.
+    async fn append_events(&self, events: &[Event]) -> Result<(), StoreError>;
+
+    /// Events after a cursor, in sequence order.
+    async fn events_since(&self, id: &SessionId, after: u64) -> Result<Vec<Event>, StoreError>;
+}
+
+/// The agent's accumulated context, stored whole.
+///
+/// Separate from the session store because it is a blob, not a document: it
+/// grows with the conversation, is written wholesale and read wholesale, and
+/// would eventually exceed what a document store will hold.
+#[async_trait::async_trait]
+pub trait ContextStore: Send + Sync {
+    /// Store a session's context, returning a reference to it.
+    async fn put(&self, id: &SessionId, bytes: Vec<u8>) -> Result<String, StoreError>;
+
+    /// Read a session's context back, if any was stored.
+    async fn get(&self, reference: &str) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Remove a session's context.
+    async fn delete(&self, reference: &str) -> Result<(), StoreError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::KernelId;
+    use crate::session::{RecoveryState, SessionStatus};
+    use crate::terminal::TerminalGeometry;
+
+    fn session() -> Session {
+        Session {
+            id: SessionId("sesn_1".into()),
+            owner: SubjectId("subject-a".into()),
+            kernel: KernelId::new("example-runtime"),
+            status: SessionStatus::Ready,
+            recovery_state: RecoveryState::Normal,
+            stop_reason: None,
+            geometry: TerminalGeometry::default(),
+            last_seq: 0,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn a_new_record_references_no_runtime_and_no_context() {
+        // Both are acquired later: a session exists before a sandbox does, and
+        // before the agent has said anything worth keeping.
+        let r = SessionRecord::new(session());
+        assert!(r.runtime_id.is_none());
+        assert!(r.context_ref.is_none());
+    }
+
+    #[test]
+    fn a_record_carries_the_session_unchanged() {
+        let s = session();
+        let r = SessionRecord::new(s.clone());
+        assert_eq!(r.session.id, s.id);
+        assert_eq!(r.session.owner, s.owner);
+    }
+}
