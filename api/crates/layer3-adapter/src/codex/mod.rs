@@ -17,12 +17,19 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalChannel,
-    TerminalInput,
+    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TermSize,
+    TerminalChannel, TerminalInput,
 };
 
 /// Port the supervisor listens on inside the sandbox.
 const SUPERVISOR_PORT: u16 = 9090;
+
+/// Metadata key naming the control plane that created a sandbox.
+///
+/// Written at provisioning and read by reconciliation, so a provider shared
+/// between control planes can be told apart. Absent on sandboxes created before
+/// this was recorded, which reconciliation treats as its own business to decide.
+const CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 
 /// Where the supervisor serves and accepts the agent's conversation.
 const CONVERSATION_PATH: &str = "/runtime/conversation";
@@ -306,10 +313,16 @@ impl KernelAdapter for CodexAdapter {
             timeout: self.spec.timeout_seconds,
             // Correlates a sandbox back to the session that owns it, so an
             // orphan can be found and reclaimed.
-            metadata: BTreeMap::from([
-                (SESSION_METADATA_KEY.to_string(), spec.session_id.clone()),
-                ("chrono-bot/kernel".to_string(), "codex".to_string()),
-            ]),
+            metadata: {
+                let mut m = BTreeMap::from([
+                    (SESSION_METADATA_KEY.to_string(), spec.session_id.clone()),
+                    ("chrono-bot/kernel".to_string(), "codex".to_string()),
+                ]);
+                if let Some(creator) = spec.created_by.as_ref() {
+                    m.insert(CREATOR_METADATA_KEY.to_string(), creator.clone());
+                }
+                m
+            },
         };
 
         let sandbox = self.client.create(&request).await?;
@@ -438,7 +451,7 @@ impl KernelAdapter for CodexAdapter {
         Ok(())
     }
 
-    async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
+    async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         let sandboxes = self
             .client
             .list()
@@ -446,9 +459,10 @@ impl KernelAdapter for CodexAdapter {
             .map_err(|e| AdapterError::Unavailable(e.to_string()))?;
         Ok(sandboxes
             .into_iter()
-            .map(|s| {
-                let session = s.metadata.get(SESSION_METADATA_KEY).cloned();
-                (RuntimeHandle(s.id), session)
+            .map(|s| RuntimeListing {
+                session: s.metadata.get(SESSION_METADATA_KEY).cloned(),
+                created_by: s.metadata.get(CREATOR_METADATA_KEY).cloned(),
+                handle: RuntimeHandle(s.id),
             })
             .collect())
     }
