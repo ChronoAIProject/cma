@@ -120,11 +120,7 @@ describe('which sessions are listed', () => {
       session('idle'),
       session('provisioning'),
     ];
-    expect(listable(sessions).map((s) => s.lifecycle)).toEqual([
-      'running',
-      'idle',
-      'provisioning',
-    ]);
+    expect(listable(sessions).map((s) => s.lifecycle)).toEqual(['running', 'idle', 'provisioning']);
   });
 
   it('handles an empty list', () => {

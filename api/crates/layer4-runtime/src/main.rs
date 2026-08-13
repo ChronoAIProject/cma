@@ -5,6 +5,7 @@
 //! WebSocket. This binary is never linked into the control plane.
 
 mod agent_config;
+mod conversation;
 mod pty;
 mod upstream;
 
@@ -32,6 +33,30 @@ struct AppState {
     command: String,
     /// The owner's credential, swappable while the agent runs.
     credential: CredentialHolder,
+    /// This pod's home directory, where the agent keeps its conversation.
+    home: std::path::PathBuf,
+    /// Set once a conversation has been handed to this pod.
+    ///
+    /// The agent is not started until something attaches, which is what makes
+    /// a handover possible over HTTP at all: the conversation can arrive after
+    /// the pod is running and still be there before the agent reads it.
+    resuming: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AppState {
+    /// The command to start the agent with, given what this pod has been told.
+    fn agent_command(&self) -> String {
+        if !self.resuming.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.command.clone();
+        }
+        // Configuration rather than a constant: which flag continues a
+        // conversation is the agent's decision, it differs between kernels,
+        // and it changes between agent versions. Getting it wrong must be
+        // correctable without shipping a new binary.
+        let resume = std::env::var("CHRONO_RUNTIME_RESUME_ARGS")
+            .unwrap_or_else(|_| "resume --last".to_string());
+        format!("{} {resume}", self.command)
+    }
 }
 
 /// Geometry the control plane requests when it attaches.
@@ -77,6 +102,10 @@ async fn main() {
         .unwrap_or_else(|_| "0.0.0.0:9090".to_string())
         .parse()
         .expect("CHRONO_RUNTIME_BIND must be a socket address");
+
+    let home: std::path::PathBuf = std::env::var("HOME")
+        .unwrap_or_else(|_| "/home/chrono".to_string())
+        .into();
 
     // Which agent to supervise. Configurable so the same binary can host any
     // kernel, and so a shell can stand in when no kernel is installed.
@@ -155,12 +184,20 @@ async fn main() {
         registry: PtyRegistry::new(),
         command: command.clone(),
         credential,
+        home: home.clone(),
+        resuming: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()
         .route("/livez", get(|| async { "ok" }))
         .route("/readyz", get(ready))
         .route("/runtime/{id}/terminal", get(attach))
+        // What makes this pod replaceable. The control plane takes this before
+        // tearing the pod down and hands it to the one that takes over.
+        .route(
+            "/runtime/conversation",
+            get(conversation_snapshot).post(conversation_restore),
+        )
         .with_state(state);
 
     tracing::info!(%bind, %command, "runtime supervisor listening");
@@ -171,6 +208,82 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("runtime supervisor must serve");
+}
+
+/// Take a conversation handed over from the runtime this one replaces.
+///
+/// Refused once the agent is running. Laying a conversation down underneath a
+/// live agent would do nothing useful — it reads its history at startup — and
+/// accepting the call would report success for a handover that did not happen.
+async fn conversation_restore(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    if body.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "a conversation to restore was expected",
+        )
+            .into_response();
+    }
+    if state.registry.is_running().await {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+    match conversation::restore(&state.home, &body, &stamp()) {
+        Ok(_) => {
+            state
+                .resuming
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            axum::http::StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => {
+            // Loud, because the caller is about to tear down the runtime this
+            // conversation came from. Reporting success here would lose it.
+            tracing::error!(error = %e, "cannot restore the conversation handed to this runtime");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("cannot restore the conversation: {e}"),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// A filename-safe stamp, distinct per restore within a pod.
+fn stamp() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    format!("carried-{seconds}")
+}
+
+/// Hand over the agent's conversation so it can be resumed elsewhere.
+async fn conversation_snapshot(State(state): State<AppState>) -> impl IntoResponse {
+    match conversation::capture(&state.home) {
+        Ok(Some(bytes)) => (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            bytes,
+        )
+            .into_response(),
+        // Nothing to carry is not a failure, and must be distinguishable from
+        // one: a caller that read an error as "no conversation" would replace
+        // a runtime and silently drop the session's history.
+        Ok(None) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "cannot capture the conversation");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("cannot capture the conversation: {e}"),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Start a listener that forwards to `upstream` with the owner's credential.
@@ -237,7 +350,7 @@ async fn relay(
 ) -> std::io::Result<()> {
     let session: std::sync::Arc<PtySession> = state
         .registry
-        .get_or_start(&id, &state.command, cols, rows, PLACEHOLDER_KEY)
+        .get_or_start(&id, &state.agent_command(), cols, rows, PLACEHOLDER_KEY)
         .await?;
 
     // Subscribe before the first resize so no output produced during startup

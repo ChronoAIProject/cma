@@ -44,6 +44,7 @@ mod tests {
         assert_eq!(a.kernel_name(), "claude_code");
 
         let spec = RuntimeSpec {
+            restore_from: None,
             session_id: "sesn_1".into(),
             size: TermSize { cols: 80, rows: 24 },
             subject_credential: None,

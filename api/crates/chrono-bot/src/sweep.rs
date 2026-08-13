@@ -52,6 +52,7 @@ pub fn spawn(service: Arc<SessionService>) {
             readopted = recovered.readopted_sessions,
             reprovisioned = recovered.reprovisioned_sessions,
             reclaimed = recovered.orphaned_runtimes,
+            rotated = recovered.rotated_sessions,
             "recovered recorded sessions on startup"
         );
     });

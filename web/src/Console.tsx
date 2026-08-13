@@ -210,7 +210,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * it any more.
    */
   useEffect(() => {
-    if (active === null || (active.lifecycle !== 'provisioning' && active.lifecycle !== 'rotating')) {
+    if (
+      active === null ||
+      (active.lifecycle !== 'provisioning' && active.lifecycle !== 'rotating')
+    ) {
       return;
     }
     const id = active.id;

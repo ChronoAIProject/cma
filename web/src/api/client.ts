@@ -50,6 +50,9 @@ interface SessionPayload {
   status?: unknown;
   created_at?: unknown;
   stop_reason?: unknown;
+  runtime_version?: unknown;
+  rotations?: unknown;
+  rotated_at?: unknown;
 }
 
 /**
@@ -82,7 +85,21 @@ export function toSession(raw: unknown): Session {
     // control plane's full vocabulary here would invite the frontend to
     // reason about reasons it has no behaviour for.
     stopReason: p.stop_reason === 'error' ? 'error' : p.stop_reason ? 'other' : undefined,
+    runtimeVersion: typeof p.runtime_version === 'string' ? p.runtime_version : undefined,
+    rotations: typeof p.rotations === 'number' ? p.rotations : undefined,
+    // Absent until a session has actually been moved, so an unparseable value
+    // becomes absent rather than a date nobody can interpret.
+    rotatedAt: rotatedAt(p.rotated_at),
   };
+}
+
+/** The snapshot time a session was carried across from, if it was. */
+function rotatedAt(raw: unknown): number | undefined {
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {

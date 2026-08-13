@@ -24,6 +24,9 @@ use crate::{
 /// Port the supervisor listens on inside the sandbox.
 const SUPERVISOR_PORT: u16 = 9090;
 
+/// Where the supervisor serves and accepts the agent's conversation.
+const CONVERSATION_PATH: &str = "/runtime/conversation";
+
 /// Metadata key correlating a sandbox back to its session.
 ///
 /// Written at provisioning and read by reconciliation, so the two must agree;
@@ -87,6 +90,16 @@ pub struct CodexSandboxSpec {
     /// Empty means the session gets a terminal and a model but cannot use the
     /// owner's connected capabilities.
     pub platform_base_url: String,
+    /// Arguments that make the agent continue a conversation rather than start
+    /// one, when a runtime is handed a conversation to resume.
+    ///
+    /// Configured rather than fixed, because which flag continues a
+    /// conversation belongs to the agent and changes between its versions.
+    /// Getting it wrong means every handover silently starts fresh, and that
+    /// has to be correctable without building a new image.
+    ///
+    /// Empty leaves the runtime's own default in place.
+    pub resume_args: String,
 }
 
 impl Default for CodexSandboxSpec {
@@ -103,6 +116,7 @@ impl Default for CodexSandboxSpec {
             upstream_model: "gpt-5.6-sol".into(),
             upstream_wire_api: "responses".into(),
             platform_base_url: String::new(),
+            resume_args: "resume --last".into(),
         }
     }
 }
@@ -117,6 +131,25 @@ impl CodexAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
         Self { client, spec }
+    }
+
+    /// Give a new sandbox the conversation it is taking over.
+    ///
+    /// A failure here fails the provisioning. The alternative is a sandbox
+    /// that starts a fresh conversation while the control plane believes the
+    /// old one was carried across — and the runtime it came from is about to
+    /// be torn down, so nothing would notice until its owner did.
+    async fn hand_over(&self, sandbox: &str, conversation: &[u8]) -> Result<(), AdapterError> {
+        let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
+        self.client
+            .post_to_sandbox(&endpoint.endpoint, CONVERSATION_PATH, conversation.to_vec())
+            .await?;
+        tracing::info!(
+            %sandbox,
+            bytes = conversation.len(),
+            "handed this session's conversation to its new runtime"
+        );
+        Ok(())
     }
 
     /// Turn a provider endpoint into the supervisor's terminal URL.
@@ -165,6 +198,10 @@ impl CodexAdapter {
     fn environment_for(&self, spec: &RuntimeSpec) -> BTreeMap<String, String> {
         BTreeMap::from([
             ("CHRONO_RUNTIME_COMMAND".to_string(), "codex".to_string()),
+            (
+                "CHRONO_RUNTIME_RESUME_ARGS".to_string(),
+                self.spec.resume_args.clone(),
+            ),
             ("TERM".to_string(), "xterm-256color".to_string()),
             // The supervisor forwards here and attaches the owner's credential.
             // The credential itself never travels as environment: it arrives
@@ -280,7 +317,33 @@ impl KernelAdapter for CodexAdapter {
             "sandbox provisioned"
         );
         let sandbox = self.await_running(&sandbox.id).await?;
+
+        // Handed over before anything attaches, which is what makes this
+        // possible at all: the supervisor does not start the agent until the
+        // first attachment, so a conversation delivered now is in place before
+        // the agent looks for one.
+        if let Some(conversation) = spec.restore_from.as_ref() {
+            self.hand_over(&sandbox.id, conversation).await?;
+        }
+
         Ok(RuntimeHandle(sandbox.id))
+    }
+
+    async fn snapshot(&self, handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let captured = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, CONVERSATION_PATH)
+            .await?;
+        match captured.as_ref() {
+            Some(bytes) => tracing::info!(
+                sandbox = %handle.0,
+                bytes = bytes.len(),
+                "captured this session's conversation"
+            ),
+            None => tracing::info!(sandbox = %handle.0, "this session has no conversation yet"),
+        }
+        Ok(captured)
     }
 
     async fn attach_terminal(

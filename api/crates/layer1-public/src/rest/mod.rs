@@ -84,6 +84,22 @@ pub struct SessionView {
     rows: u16,
     last_seq: u64,
     created_at: String,
+    /// Which runtime version is serving this session, and what it has been
+    /// through to get there.
+    ///
+    /// Present only once a session has been moved, because a session that has
+    /// never been moved has nothing to explain — and a rotation that goes
+    /// unmentioned is a gap in someone's terminal with no account of itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_version: Option<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    rotations: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rotated_at: Option<String>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 impl From<Session> for SessionView {
@@ -97,6 +113,9 @@ impl From<Session> for SessionView {
             cols: s.geometry.columns(),
             rows: s.geometry.rows(),
             last_seq: s.last_seq,
+            runtime_version: s.runtime_version,
+            rotations: s.rotations,
+            rotated_at: s.rotated_at,
             created_at: s.created_at,
         }
     }
@@ -341,6 +360,9 @@ mod tests {
             options: layer2_core::AgentOptions::default(),
             geometry: TerminalGeometry::new(120, 40).expect("valid"),
             last_seq: 3,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: "2026-08-12T00:00:00Z".into(),
         };
         let view: SessionView = s.into();

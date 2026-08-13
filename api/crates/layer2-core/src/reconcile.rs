@@ -45,6 +45,8 @@ pub struct Reclaimed {
     pub readopted_sessions: usize,
     /// Sessions given a new runtime because theirs was gone.
     pub reprovisioned_sessions: usize,
+    /// Sessions carried onto the current runtime version.
+    pub rotated_sessions: usize,
 }
 
 /// What the provider says is running, for one kernel.
@@ -122,6 +124,7 @@ impl SessionService {
                 orphaned_runtimes = reclaimed.orphaned_runtimes,
                 readopted_sessions = reclaimed.readopted_sessions,
                 reprovisioned_sessions = reclaimed.reprovisioned_sessions,
+                rotated_sessions = reclaimed.rotated_sessions,
                 "reconciliation moved sessions towards their recorded state"
             );
         }
@@ -193,6 +196,16 @@ impl SessionService {
                 return;
             }
         };
+
+        // A session that is running, but not on what it should be running. Done
+        // before the checks below because it is the one case where a healthy,
+        // attached, perfectly alive session still has to be acted on.
+        if alive != Some(false) && self.needs_rotation(&record) {
+            if self.rotate(record).await {
+                reclaimed.rotated_sessions += 1;
+            }
+            return;
+        }
 
         if self.entries.read().await.contains_key(&id) {
             if alive != Some(false) {
@@ -266,7 +279,9 @@ impl SessionService {
         let service = Arc::clone(self);
         let session = starting.session;
         tokio::spawn(async move {
-            service.bring_up(session, spec, adapter, geometry).await;
+            service
+                .bring_up(session, spec, adapter, geometry, None)
+                .await;
         });
         reclaimed.reprovisioned_sessions += 1;
     }

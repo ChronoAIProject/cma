@@ -93,6 +93,13 @@ pub struct SessionService {
     pub(crate) context: Option<Arc<dyn ContextStore>>,
     /// Where to get an owner's credential when the owner is not here to give one.
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
+    /// The runtime version sessions are expected to be running.
+    ///
+    /// Held by the control plane rather than asked of each sandbox: this is
+    /// the version being deployed, and a session on anything else is one to
+    /// carry forward. `None` disables rotation entirely, which is what a
+    /// deployment that does not version its runtime image wants.
+    pub(crate) runtime_version: Option<String>,
     /// Sessions this process is currently bringing up.
     ///
     /// Bring-up is detached and takes minutes, during which the record says
@@ -119,6 +126,7 @@ impl SessionService {
         store: Arc<dyn SessionStore>,
         context: Option<Arc<dyn ContextStore>>,
         credentials: Option<Arc<dyn CredentialSource>>,
+        runtime_version: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
@@ -128,6 +136,7 @@ impl SessionService {
             store,
             context,
             credentials,
+            runtime_version,
             retry_backoff_ms: std::sync::atomic::AtomicU64::new(
                 crate::provision::DEFAULT_RETRY_BACKOFF_MS,
             ),
@@ -201,6 +210,9 @@ impl SessionService {
             options: spec.options.clone(),
             geometry,
             last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: now_rfc3339(),
         };
 
@@ -240,7 +252,9 @@ impl SessionService {
         let service = Arc::clone(self);
         let spawned = record.session.clone();
         tokio::spawn(async move {
-            service.bring_up(spawned, spec, adapter, geometry).await;
+            service
+                .bring_up(spawned, spec, adapter, geometry, None)
+                .await;
         });
 
         tracing::info!(session_id = %id, kernel = %record.session.kernel, "session created, runtime starting");
