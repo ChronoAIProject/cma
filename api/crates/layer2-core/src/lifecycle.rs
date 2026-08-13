@@ -50,6 +50,7 @@ impl SessionService {
                         EventKind::StatusChanged {
                             status: SessionStatus::Terminated,
                             stop_reason: Some(StopReason::UserTerminated),
+                            detail: None,
                         },
                     );
                     entry.input = None;
@@ -104,6 +105,7 @@ impl SessionService {
                 kind: EventKind::StatusChanged {
                     status: SessionStatus::Terminated,
                     stop_reason: Some(StopReason::UserTerminated),
+                    detail: None,
                 },
             }])
             .await

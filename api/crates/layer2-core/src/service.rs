@@ -89,6 +89,11 @@ pub struct SessionService {
     pub(crate) store: Arc<dyn SessionStore>,
     /// Where an agent's accumulated context is kept, when a deployment has one.
     pub(crate) context: Option<Arc<dyn ContextStore>>,
+    /// Milliseconds to wait before the first provisioning retry.
+    ///
+    /// Held here rather than as a constant so a test can exercise the retry
+    /// path without waiting out a delay meant for a provider under load.
+    pub(crate) retry_backoff_ms: std::sync::atomic::AtomicU64,
 }
 
 impl SessionService {
@@ -108,6 +113,9 @@ impl SessionService {
             screen_factory,
             store,
             context,
+            retry_backoff_ms: std::sync::atomic::AtomicU64::new(
+                crate::provision::DEFAULT_RETRY_BACKOFF_MS,
+            ),
         })
     }
 
@@ -167,7 +175,7 @@ impl SessionService {
         };
 
         let mut record = SessionRecord::new(session.clone());
-        record.session.last_seq = 2;
+        record.session.last_seq = 3;
         self.store.upsert(&record).await.map_err(store_failed)?;
         self.store
             .append_events(&[
@@ -182,6 +190,14 @@ impl SessionService {
                     kind: EventKind::StatusChanged {
                         status: SessionStatus::Provisioning,
                         stop_reason: None,
+                        detail: None,
+                    },
+                },
+                Event {
+                    session_id: id.clone(),
+                    seq: 3,
+                    kind: EventKind::Progress {
+                        stage: crate::session::ProvisioningStage::Accepted,
                     },
                 },
             ])

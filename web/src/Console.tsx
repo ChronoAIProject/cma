@@ -2,13 +2,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SessionTabs } from './sessions/SessionTabs';
 import type { Kernel, Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
-import type { AgentOptions } from './sessions/options';
+import { StartupProgress } from './sessions/StartupProgress';
+import type { Stage } from './sessions/progress';
+import { SessionActions } from './sessions/SessionActions';
+import { DEFAULT_OPTIONS, type AgentOptions } from './sessions/options';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { createWebSocketDriver } from './terminal/drivers/websocket';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
-import { ApiError, createSession, followSession, listSessions, terminalUrl } from './api/client';
+import {
+  ApiError,
+  createSession,
+  deleteSession,
+  followSession,
+  listSessions,
+  terminalUrl,
+  terminateSession,
+} from './api/client';
 import './Console.css';
 
 /**
@@ -55,6 +66,18 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // Creating a session asks first. These choices are fixed for its life, so
   // there is no changing them afterwards without discarding the conversation.
   const [choosing, setChoosing] = useState(false);
+  // Why a session ended, when it ended badly. Kept per session so switching
+  // tabs does not carry one session's failure onto another.
+  const [endings, setEndings] = useState<Record<string, string>>({});
+  // The settings the open session was started with, so "start again" can make
+  // another like it rather than a default one.
+  const [lastChoice, setLastChoice] = useState<{ kernel: Kernel; options: AgentOptions } | null>(
+    null,
+  );
+  const [acting, setActing] = useState(false);
+  // The last startup step each session reported. Kept per session so switching
+  // tabs shows that session's progress rather than another's.
+  const [stages, setStages] = useState<Record<string, Stage>>({});
   const [loading, setLoading] = useState(true);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
@@ -112,8 +135,47 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         setSessions((prev) => [session, ...prev]);
         setActiveId(session.id);
         setOpeningForId((prev) => prev ?? session.id);
+        // Remembered so "start again" reproduces the session someone had,
+        // rather than a default one.
+        setLastChoice({ kernel, options });
       } catch (cause) {
         report(cause);
+      }
+    },
+    [report],
+  );
+
+  /** End the open session, leaving it readable. */
+  const endSession = useCallback(
+    async (id: string) => {
+      setActing(true);
+      try {
+        await terminateSession(id);
+        applyLifecycle(id, 'terminated');
+      } catch (cause) {
+        report(cause);
+      } finally {
+        setActing(false);
+      }
+    },
+    [applyLifecycle, report],
+  );
+
+  /** Remove the session and its history. */
+  const removeSession = useCallback(
+    async (id: string) => {
+      setActing(true);
+      try {
+        await deleteSession(id);
+        setSessions((prev) => {
+          const remaining = prev.filter((s) => s.id !== id);
+          setActiveId((current) => (current === id ? (remaining[0]?.id ?? null) : current));
+          return remaining;
+        });
+      } catch (cause) {
+        report(cause);
+      } finally {
+        setActing(false);
       }
     },
     [report],
@@ -131,11 +193,25 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     const id = active.id;
     const stop = followSession(
       id,
-      (lifecycle) => applyLifecycle(id, lifecycle),
-      (message) => setNotice(message),
+      (lifecycle, detail) => {
+        applyLifecycle(id, lifecycle);
+        if (detail !== undefined && detail !== '') {
+          setEndings((prev) => ({ ...prev, [id]: detail }));
+        }
+      },
+      (message) => {
+        setNotice(message);
+      },
+      (stage) => {
+        setStages((prev) => ({ ...prev, [id]: stage }));
+      },
     );
     return stop;
-  }, [active, applyLifecycle]);
+    // Keyed on the session rather than the object: `active` is rebuilt on
+    // every render, and depending on it would tear the stream down and reopen
+    // it continuously.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id, active?.lifecycle === 'provisioning', applyLifecycle]);
 
   /*
    * Built only once a runtime exists. Attaching earlier would open a socket
@@ -168,6 +244,22 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             setChoosing(true);
           }}
         />
+        {active !== null ? (
+          <SessionActions
+            session={active}
+            busy={acting}
+            onTerminate={() => void endSession(active.id)}
+            onDelete={() => void removeSession(active.id)}
+            onStartAgain={() => {
+              // Same settings as the session being replaced, since someone
+              // reopening a session wants the one they had.
+              void start(
+                lastChoice?.kernel ?? (active.kernel as Kernel),
+                lastChoice?.options ?? DEFAULT_OPTIONS,
+              );
+            }}
+          />
+        ) : null}
         <ProfileMenu
           user={user}
           onSignOut={onSignOut}
@@ -187,11 +279,17 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         ) : active === null ? (
           <p className="console__empty">No session open. Press + to start one.</p>
         ) : active.lifecycle === 'provisioning' ? (
-          <p className="console__empty" aria-live="polite">
-            Starting a sandbox for this session. This can take a minute the first time.
-          </p>
+          <StartupProgress
+            message="Starting a sandbox for this session. This can take a minute the first time."
+            stage={stages[active.id] ?? null}
+          />
         ) : active.lifecycle === 'terminated' ? (
-          <p className="console__empty">This session has ended. Press + to start another.</p>
+          <p className="console__empty">
+            {endings[active.id] !== undefined
+              ? `This session could not continue: ${endings[active.id]}`
+              : 'This session has ended.'}{' '}
+            Press + to start another.
+          </p>
         ) : driver === null ? (
           <p className="console__empty">Attaching…</p>
         ) : (

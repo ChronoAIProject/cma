@@ -1,0 +1,92 @@
+/*
+ * Session actions, per docs/Web_Style.md.
+ *
+ * Mirrors the profile menu: a small trigger in the bar and a dropdown that
+ * closes on outside click or Escape. Every value is a token from that document.
+ */
+
+.actions {
+  position: relative;
+}
+
+.actions__trigger {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.actions__trigger:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--rule-2);
+}
+
+.actions__trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.actions__trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  min-width: 16rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+}
+
+.actions__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.actions__item:hover {
+  background: var(--surface-2);
+}
+
+.actions__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.actions__hint {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/*
+ * The destructive act is marked, but the wording carries the warning too —
+ * colour alone would say nothing to someone who cannot distinguish it.
+ */
+.actions__item--danger {
+  color: var(--emphasis);
+}
+
+.actions__item--danger .actions__hint {
+  color: var(--emphasis);
+}

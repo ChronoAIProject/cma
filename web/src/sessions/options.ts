@@ -29,7 +29,7 @@ export interface AgentOptions {
  * selected, never something they received by leaving a form alone.
  */
 export const DEFAULT_OPTIONS: AgentOptions = {
-  reasoning_effort: 'medium',
+  reasoning_effort: 'high',
   permission: 'guarded',
   credential: 'delegated',
 };
@@ -53,8 +53,8 @@ export const KERNELS: readonly KernelChoice[] = [
 export const EFFORTS: readonly { id: ReasoningEffort; label: string; hint: string }[] = [
   { id: 'minimal', label: 'Minimal', hint: 'Fastest, for mechanical work' },
   { id: 'low', label: 'Low', hint: '' },
-  { id: 'medium', label: 'Medium', hint: 'Default' },
-  { id: 'high', label: 'High', hint: '' },
+  { id: 'medium', label: 'Medium', hint: '' },
+  { id: 'high', label: 'High', hint: 'Default' },
   { id: 'xhigh', label: 'Extra high', hint: 'Slowest, for the hardest problems' },
 ];
 

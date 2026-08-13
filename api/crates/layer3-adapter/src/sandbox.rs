@@ -15,6 +15,18 @@ use serde::{Deserialize, Serialize};
 /// Header carrying the provider API key.
 const API_KEY_HEADER: &str = "OPEN-SANDBOX-API-KEY";
 
+/// How long to wait on the provider.
+///
+/// Creating a sandbox is not a quick call: the provider schedules a pod and
+/// pulls an image, which takes seconds on a warm node and minutes on a cold or
+/// preempted one. A minute was enough for the warm case and nothing else, so
+/// sessions failed intermittently — and the failure looked like the provider
+/// being unreachable rather than the wait being too short.
+///
+/// Sits inside the caller's own provisioning deadline, so a provider that
+/// never answers is still given up on rather than waited for indefinitely.
+const PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(240);
+
 /// How a sandbox is described at creation.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,7 +138,7 @@ impl SandboxClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(PROVIDER_TIMEOUT)
                 .build()
                 .expect("http client builds"),
         }
