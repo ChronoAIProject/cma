@@ -152,6 +152,7 @@ mod tests {
             kind: EventKind::StatusChanged {
                 status: SessionStatus::Ready,
                 stop_reason: None,
+                detail: None,
             },
         };
         let payload = serde_json::json!({

@@ -117,6 +117,10 @@ impl SessionService {
                     kind: EventKind::StatusChanged {
                         status: SessionStatus::Terminated,
                         stop_reason: Some(StopReason::Error),
+                        detail: Some(
+                            "the process starting this session stopped before it finished"
+                                .to_string(),
+                        ),
                     },
                 }])
                 .await

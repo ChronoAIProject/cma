@@ -117,6 +117,9 @@ pub(crate) struct FakeAdapter {
     /// When set, provisioning fails. Models a provider that cannot give us a
     /// runtime at all.
     pub(crate) refuse_provision: bool,
+    /// How many attempts fail before one succeeds. Models the transient
+    /// failure that retrying exists for.
+    pub(crate) fail_first: std::sync::atomic::AtomicUsize,
     /// When set, provisioning succeeds and attaching does not. This is the
     /// case that leaks: a runtime exists that nothing has a handle to yet.
     pub(crate) refuse_attach: bool,
@@ -134,6 +137,19 @@ impl KernelAdapter for FakeAdapter {
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
         if self.refuse_provision {
             return Err(AdapterError::Unavailable("no capacity".into()));
+        }
+        // Fail the first few attempts, then succeed, as a provider under load
+        // does.
+        if self
+            .fail_first
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |n| if n > 0 { Some(n - 1) } else { None },
+            )
+            .is_ok()
+        {
+            return Err(AdapterError::Unavailable("provider busy".into()));
         }
         Ok(RuntimeHandle(format!("runtime-for-{}", spec.session_id)))
     }
@@ -196,7 +212,13 @@ pub(crate) fn service(store: Arc<FakeStore>, adapter: Arc<FakeAdapter>) -> Arc<S
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    SessionService::new(adapters, factory, store, None)
+    let service = SessionService::new(adapters, factory, store, None);
+    // Retries are exercised here, not waited out: the production delay exists
+    // for a provider under load, which no test is.
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
 }
 
 pub(crate) fn user(subject: &str) -> Caller {

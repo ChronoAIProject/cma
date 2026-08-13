@@ -29,6 +29,14 @@ pub struct Event {
 pub enum EventKind {
     /// The session was created.
     SessionCreated,
+    /// A step on the way to a usable session.
+    ///
+    /// Starting a session is slow enough that "wait" is not an answer on its
+    /// own — a person watching a silent screen cannot tell a slow start from a
+    /// stuck one. These say which part is taking the time.
+    Progress {
+        stage: crate::session::ProvisioningStage,
+    },
     /// Session status changed.
     StatusChanged {
         /// The new status.
@@ -36,6 +44,14 @@ pub enum EventKind {
         /// Why, when the change was a stop or a pause.
         #[serde(skip_serializing_if = "Option::is_none")]
         stop_reason: Option<StopReason>,
+        /// What went wrong, when something did.
+        ///
+        /// Present only for a failure, and written for the person who has to
+        /// act on it. Without this a session that could not start is
+        /// indistinguishable from one that ended normally, which is precisely
+        /// the moment an explanation is worth most.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     /// A turn began.
     TurnStarted,
@@ -90,6 +106,7 @@ mod tests {
         let e = EventKind::StatusChanged {
             status: SessionStatus::Ready,
             stop_reason: None,
+            detail: None,
         };
         let json = serde_json::to_value(&e).expect("serializes");
         assert_eq!(json["type"], "status_changed");
@@ -105,6 +122,7 @@ mod tests {
         let e = EventKind::StatusChanged {
             status: SessionStatus::Idle,
             stop_reason: Some(StopReason::RequiresAction),
+            detail: None,
         };
         let json = serde_json::to_value(&e).expect("serializes");
         assert_eq!(json["stop_reason"], "requires_action");

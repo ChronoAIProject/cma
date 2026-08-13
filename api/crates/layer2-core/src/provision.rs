@@ -19,11 +19,13 @@ use layer3_adapter::{
 };
 use tokio::sync::{broadcast, Mutex};
 
-use crate::event::EventKind;
+use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
 use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
-use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+use crate::session::{
+    ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus, StopReason,
+};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How long a runtime may take to become usable.
@@ -33,7 +35,23 @@ use crate::terminal::{ScreenModel, TerminalGeometry};
 /// without a deadline a provider that never answers leaves a session waiting
 /// for something that is not coming, and the sandbox it may already have
 /// created is never reclaimed.
-const PROVISION_DEADLINE: Duration = Duration::from_secs(300);
+const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
+
+/// How many times to try bringing a runtime up before giving up.
+///
+/// Provisioning fails for reasons that are nobody's decision and usually pass:
+/// a provider under load, a node being replaced, a pull that took longer than
+/// the call allowed. Someone asking for a session wants a session, and a
+/// transient failure is not an answer to give them — so the first failure is
+/// retried rather than reported.
+const PROVISION_ATTEMPTS: u32 = 4;
+
+/// Wait before the first retry, doubling thereafter.
+///
+/// Long enough to let a provider under load recover, short enough that a
+/// session which succeeds on the second attempt still feels like it started
+/// rather than like it stalled.
+pub(crate) const DEFAULT_RETRY_BACKOFF_MS: u64 = 3_000;
 
 impl SessionService {
     /// Provision a runtime for an existing session and attach its terminal.
@@ -47,7 +65,7 @@ impl SessionService {
         let id = session.id.clone();
         match tokio::time::timeout(
             PROVISION_DEADLINE,
-            self.start_runtime(&session, &spec, &adapter, geometry),
+            self.start_with_retries(&session, &spec, &adapter, geometry),
         )
         .await
         {
@@ -67,6 +85,80 @@ impl SessionService {
         }
     }
 
+    /// Keep trying to bring a runtime up until one does, or the attempts run out.
+    ///
+    /// Each attempt starts clean. A previous attempt may have created a runtime
+    /// before failing — an attach that timed out leaves one running — and
+    /// retrying without tearing that down would leak one sandbox per attempt.
+    async fn start_with_retries(
+        self: &Arc<Self>,
+        session: &Session,
+        spec: &SessionSpec,
+        adapter: &Arc<dyn KernelAdapter>,
+        geometry: TerminalGeometry,
+    ) -> Result<(), String> {
+        let mut backoff = Duration::from_millis(
+            self.retry_backoff_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+        let mut last = String::new();
+
+        for attempt in 1..=PROVISION_ATTEMPTS {
+            match self.start_runtime(session, spec, adapter, geometry).await {
+                Ok(()) => {
+                    if attempt > 1 {
+                        tracing::info!(
+                            session_id = %session.id,
+                            attempt,
+                            "runtime started after retrying"
+                        );
+                    }
+                    return Ok(());
+                }
+                Err(reason) => {
+                    tracing::warn!(
+                        session_id = %session.id,
+                        attempt,
+                        of = PROVISION_ATTEMPTS,
+                        reason = %reason,
+                        "could not start the runtime; trying again"
+                    );
+                    self.discard_runtime(&session.id, adapter).await;
+                    last = reason;
+                }
+            }
+            if attempt < PROVISION_ATTEMPTS {
+                tokio::time::sleep(backoff).await;
+                backoff *= 2;
+            }
+        }
+
+        Err(format!(
+            "could not start a runtime after {PROVISION_ATTEMPTS} attempts. Last error: {last}"
+        ))
+    }
+
+    /// Tear down whatever a failed attempt left behind.
+    ///
+    /// Without this each retry strands the runtime the previous one created,
+    /// which is how a session that eventually succeeds still costs several
+    /// sandboxes.
+    async fn discard_runtime(&self, id: &SessionId, adapter: &Arc<dyn KernelAdapter>) {
+        let Ok(Some(mut record)) = self.store.get(id).await else {
+            return;
+        };
+        let Some(handle) = record.runtime_id.take().map(RuntimeHandle) else {
+            return;
+        };
+        if let Err(e) = adapter.terminate(&handle).await {
+            tracing::warn!(session_id = %id, error = %e, "could not discard a failed runtime");
+        }
+        if let Err(e) = self.store.upsert(&record).await {
+            tracing::error!(session_id = %id, error = %e, "cannot clear the discarded runtime");
+        }
+        self.entries.write().await.remove(id);
+    }
+
     /// The successful path, from nothing to an attached terminal.
     async fn start_runtime(
         self: &Arc<Self>,
@@ -76,6 +168,8 @@ impl SessionService {
         geometry: TerminalGeometry,
     ) -> Result<(), String> {
         let id = session.id.clone();
+        self.note_progress(&id, ProvisioningStage::RuntimeRequested)
+            .await;
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
@@ -92,6 +186,9 @@ impl SessionService {
         // Recorded before anything else is attempted. From here a runtime
         // exists, and a record that does not name it is one nothing can reclaim.
         self.remember_runtime(&id, &handle).await;
+        self.note_progress(&id, ProvisioningStage::RuntimeCreated)
+            .await;
+        self.note_progress(&id, ProvisioningStage::Attaching).await;
 
         let channel = adapter
             .attach_terminal(&handle)
@@ -119,6 +216,7 @@ impl SessionService {
             EventKind::StatusChanged {
                 status: SessionStatus::Ready,
                 stop_reason: None,
+                detail: None,
             },
         );
         self.entries.write().await.insert(id.clone(), entry);
@@ -143,8 +241,39 @@ impl SessionService {
             .await;
 
         self.flush(&id).await;
+        self.note_progress(&id, ProvisioningStage::Ready).await;
         tracing::info!(session_id = %id, "runtime ready");
         Ok(())
+    }
+
+    /// Append a progress step to the session's log.
+    ///
+    /// Written durably rather than pushed at whoever happens to be watching,
+    /// so someone who opens the page mid-start still sees where it got to. A
+    /// step that cannot be recorded is logged and dropped: progress is
+    /// commentary, and failing a session because its commentary failed would
+    /// be absurd.
+    async fn note_progress(&self, id: &SessionId, stage: ProvisioningStage) {
+        let Ok(Some(mut record)) = self.store.get(id).await else {
+            return;
+        };
+        record.session.last_seq += 1;
+        let seq = record.session.last_seq;
+        if let Err(e) = self.store.upsert(&record).await {
+            tracing::warn!(session_id = %id, error = %e, "cannot record progress");
+            return;
+        }
+        if let Err(e) = self
+            .store
+            .append_events(&[Event {
+                session_id: id.clone(),
+                seq,
+                kind: EventKind::Progress { stage },
+            }])
+            .await
+        {
+            tracing::warn!(session_id = %id, error = %e, "cannot append progress");
+        }
     }
 
     /// Record the runtime a session was given, as soon as it exists.
@@ -189,6 +318,9 @@ impl SessionService {
                         kind: EventKind::StatusChanged {
                             status: SessionStatus::Terminated,
                             stop_reason: Some(StopReason::Error),
+                            // The reason travels with the event so the person
+                            // watching learns what the log already knew.
+                            detail: Some(reason.to_string()),
                         },
                     }])
                     .await
