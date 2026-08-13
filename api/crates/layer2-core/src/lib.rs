@@ -23,6 +23,7 @@ pub mod ids;
 pub mod inventory;
 mod lifecycle;
 mod provision;
+mod reading;
 mod readopt;
 pub mod reconcile;
 mod rotate;
@@ -35,6 +36,8 @@ mod provision_tests;
 mod environment_support;
 #[cfg(test)]
 mod screen_support;
+#[cfg(test)]
+mod service_support;
 #[cfg(test)]
 mod test_support;
 
