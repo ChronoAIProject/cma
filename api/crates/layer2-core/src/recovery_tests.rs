@@ -17,6 +17,7 @@ use crate::ids::SessionId;
 use crate::options::AgentOptions;
 use crate::session::{SessionStatus, StopReason};
 use crate::store::{ContextStore, SessionStore, StoreError};
+use crate::terminal::TerminalGeometry;
 use crate::test_support::{
     await_settled, credential_on, service, service_with_context, service_with_credentials, spec,
     user, write_screen, FakeAdapter, FakeStore,
@@ -478,6 +479,40 @@ async fn what_a_session_showed_survives_the_process_that_showed_it() {
     assert_eq!(
         transcript, b"work in progress",
         "a session taken back over must show what it showed before"
+    );
+}
+
+#[tokio::test]
+async fn opening_a_recovered_session_funds_it_there_and_then() {
+    // The order this actually happens in: the control plane restarts and
+    // recovers the session before anyone has signed back in, so there is no
+    // credential to give it. Its owner then arrives. Waiting for a sweep to
+    // notice would leave them with a session that opens, looks healthy, and
+    // refuses every model call for minutes.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    drop(first);
+
+    // Recovered with no credential source at all, as happens when nobody has
+    // signed in yet.
+    let restarted =
+        service_with_credentials(Arc::clone(&store), Arc::clone(&adapter), "arrived-later");
+    restarted.reconcile().await;
+
+    restarted
+        .attach_terminal(&alice, &created.id, TerminalGeometry::default())
+        .await
+        .expect("the owner can open their session");
+
+    assert_eq!(
+        credential_on(&restarted, &created.id).await.as_deref(),
+        Some("arrived-later"),
+        "opening a session must hand it the credential its owner has now"
     );
 }
 

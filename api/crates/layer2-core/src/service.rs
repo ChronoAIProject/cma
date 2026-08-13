@@ -347,6 +347,21 @@ impl SessionService {
             self.readopt(&record).await?;
         }
 
+        // The session may have been recovered before its owner had signed back
+        // in, when there was no credential to be had. This is the moment they
+        // are demonstrably here, so it is the moment to check: without it the
+        // session opens, looks healthy, and refuses every model call until a
+        // sweep happens to notice minutes later.
+        let unfunded = self
+            .entries
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|e| e.subject_credential.is_none());
+        if unfunded {
+            self.supply_credential(id, &caller.subject).await;
+        }
+
         let (screen, live) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
