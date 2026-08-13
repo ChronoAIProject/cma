@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Session } from './types';
 import { fullTimestamp } from './sessionTime';
 import './SessionDetails.css';
@@ -19,9 +20,17 @@ interface SessionDetailsProps {
   readonly onToggle: () => void;
   /** Why the session ended, when it ended badly. */
   readonly ending?: string;
+  /**
+   * What can be done to this session.
+   *
+   * Here rather than in the top bar: these act on the session being described,
+   * and a control that ends something belongs beside the thing it ends, not in
+   * chrome that looks the same whichever session is open.
+   */
+  readonly actions?: ReactNode;
 }
 
-export function SessionDetails({ session, open, onToggle, ending }: SessionDetailsProps) {
+export function SessionDetails({ session, open, onToggle, ending, actions }: SessionDetailsProps) {
   if (!open) {
     return (
       <button
@@ -76,6 +85,8 @@ export function SessionDetails({ session, open, onToggle, ending }: SessionDetai
       </dl>
 
       {ending !== undefined && ending !== '' ? <p className="details__ending">{ending}</p> : null}
+
+      {actions !== undefined ? <div className="details__actions">{actions}</div> : null}
     </aside>
   );
 }

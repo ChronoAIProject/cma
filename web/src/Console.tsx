@@ -243,22 +243,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   return (
     <div className="console">
       <TopBar>
-        {active !== null ? (
-          <SessionActions
-            session={active}
-            busy={acting}
-            onTerminate={() => void endSession(active.id)}
-            onDelete={() => void removeSession(active.id)}
-            onStartAgain={() => {
-              // Same settings as the session being replaced, since someone
-              // reopening a session wants the one they had.
-              void start(
-                lastChoice?.kernel ?? (active.kernel as Kernel),
-                lastChoice?.options ?? DEFAULT_OPTIONS,
-              );
-            }}
-          />
-        ) : null}
         <ProfileMenu
           user={user}
           onSignOut={onSignOut}
@@ -319,6 +303,22 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             onToggle={() => {
               setDetailsOpen((v) => !v);
             }}
+            actions={
+              <SessionActions
+                session={active}
+                busy={acting}
+                onTerminate={() => void endSession(active.id)}
+                onDelete={() => void removeSession(active.id)}
+                onStartAgain={() => {
+                  // Same settings as the session being replaced, since someone
+                  // reopening a session wants the one they had.
+                  void start(
+                    lastChoice?.kernel ?? (active.kernel as Kernel),
+                    lastChoice?.options ?? DEFAULT_OPTIONS,
+                  );
+                }}
+              />
+            }
           />
         ) : null}
       </div>

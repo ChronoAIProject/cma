@@ -28,7 +28,13 @@
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  cursor: text;
+  /*
+   * Not `text` across the whole frame. Clicking anywhere still focuses the
+   * prompt, but an I-beam over the transcript and over the prompt's own label
+   * says text can be entered where it cannot — which reads as a stray cursor
+   * sitting before the prompt.
+   */
+  cursor: default;
 }
 
 .intro__out {
@@ -91,7 +97,9 @@
   }
 }
 
+/* The one place typing happens, so the one place that says so. */
 .intro__row {
+  cursor: text;
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
@@ -168,5 +176,20 @@
 @media (max-width: 640px) {
   .intro__frame {
     padding: var(--space-3);
+  }
+}
+
+/*
+ * The waiting marker. Blinks so the hint reads as the terminal waiting on the
+ * visitor rather than as a static label, and stops for anyone who has asked
+ * for less motion — the words carry the instruction either way.
+ */
+.intro__blink {
+  color: var(--emphasis);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .intro__blink {
+    animation: intro-blink 1060ms step-end infinite;
   }
 }

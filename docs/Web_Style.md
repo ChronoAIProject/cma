@@ -390,9 +390,11 @@ two. It is not navigation and must never become it.
 within that frame so the page reads as a composed surface rather than as text
 against the window edge.
 
-**Terminal output is exempt from the inset.** It is the work itself, and
-cropping it to a margin would waste exactly the room a wide window exists to
-provide. The terminal column runs to the edge of its own column.
+**Everything obeys the inset, including the console.** The session column's
+leading edge lines up with the product mark, and the details panel's trailing
+edge lines up with the account control. Alignment between the bar and the page
+beneath it is what makes them read as one surface; a full-bleed console under an
+inset bar makes the bar look detached from the page it belongs to.
 
 **Sessions live in a column on the left.** Vertical rather than a horizontal
 strip because sessions accumulate: a row runs out of width after a handful and
@@ -411,6 +413,11 @@ read when someone wants to know which agent is answering or why a session
 stopped, and the rest of the time they are width the terminal should have.
 Collapsed, the panel becomes a handle rather than disappearing, so the way back
 is where the panel was.
+
+**A session's lifecycle controls live in that panel**, at the foot of what they
+describe. Ending or deleting a session acts on the session being described, and
+such a control belongs beside the thing it acts on rather than in chrome that
+looks identical whichever session is open.
 
 **Below 60rem the three columns stack**, because a terminal squeezed between
 two panels on a narrow window is not a terminal anyone can work in.
@@ -447,3 +454,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-13 | Added §10 Selectable terminal themes: six vendored palettes (Dracula, Nord, Solarized Dark, Solarized Light, GitHub Light) alongside the product's own, selectable per person and scoped to the terminal canvas only. Vendored as data rather than taken as a dependency. Themes are filtered by the current appearance so a dark palette cannot be placed on a light page. Also specified the appearance control in the profile menu, cycling system → light → dark, where "system" is the absence of a choice rather than a third palette. |
 | 2026-08-14 | Added §11 Waiting for a session: the provisioning message animates as a left-to-right character wave (1.4s loop, 45ms stagger, 0.28em lift), chosen over a spinner because §5 forbids one and because a wave claims no knowledge of progress. Motion carries no information — the sentence is exposed once to assistive technology and the animation is removed under reduced-motion. Also specified that a session which fails to start must show the recorded reason rather than the same wording as one that ended normally. |
 | 2026-08-14 | Added §12 Page frame and layout and §13 The platform typeface. Established a persistent top bar in both signed-out and signed-in states, a 10% inset on page content with terminal output exempt, a vertical session column on the left labelled by creation time in Singapore time (newest first, reversible, date shown only once not from today), and a collapsible session details panel on the right that collapses to a handle. Columns stack below 60rem. Adopted Geist Pixel as the platform typeface, self-hosted under the SIL Open Font License with a system fallback and `font-display: swap`; terminal content keeps its monospace stack because cell metrics govern its rendering. Replaced the horizontal session tab strip specified in the 2026-08-13 redesign, which truncated labels once sessions accumulated. |
+| 2026-08-14 | Corrected §12: the console obeys the page inset like every other surface, so the session column aligns with the product mark and the details panel with the account control. The earlier entry exempted terminal output from the inset on the grounds that cropping it wasted width; alignment between the bar and the page beneath it matters more, and a full-bleed console under an inset bar reads as a detached bar. Also moved the session lifecycle controls out of the top bar and into the details panel, beside the session they act on. |
