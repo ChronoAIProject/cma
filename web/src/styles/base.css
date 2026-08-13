@@ -94,3 +94,43 @@ button {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/*
+ * The platform typeface, vendored under the SIL Open Font License alongside
+ * its licence text in src/assets/fonts/.
+ *
+ * Self-hosted rather than fetched from a third party: a font request to
+ * someone else's host is a request that can be logged, blocked, or slow, and
+ * the file is 28KB.
+ */
+@font-face {
+  font-family: 'Geist Pixel';
+  src: url('../assets/fonts/GeistPixel-Grid.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  /*
+   * Text is shown in the fallback immediately and swapped when the face
+   * arrives. Nothing is ever invisible while waiting for a font.
+   */
+  font-display: swap;
+}
+
+/*
+ * The page frame, per docs/Web_Style.md §12.
+ *
+ * Applied to states that are prose and controls. The console manages its own
+ * columns and insets its bar directly, because terminal output must reach the
+ * edge of its column.
+ */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell > :not(.topbar) {
+  padding-inline: var(--page-inset);
+  flex: 1 1 auto;
+  min-height: 0;
+}

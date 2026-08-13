@@ -15,6 +15,18 @@ use serde::{Deserialize, Serialize};
 /// Header carrying the provider API key.
 const API_KEY_HEADER: &str = "OPEN-SANDBOX-API-KEY";
 
+/// How long to wait on the provider.
+///
+/// Creating a sandbox is not a quick call: the provider schedules a pod and
+/// pulls an image, which takes seconds on a warm node and minutes on a cold or
+/// preempted one. A minute was enough for the warm case and nothing else, so
+/// sessions failed intermittently — and the failure looked like the provider
+/// being unreachable rather than the wait being too short.
+///
+/// Sits inside the caller's own provisioning deadline, so a provider that
+/// never answers is still given up on rather than waited for indefinitely.
+const PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(240);
+
 /// How a sandbox is described at creation.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +79,10 @@ pub struct Sandbox {
     /// Current lifecycle status.
     #[serde(default)]
     pub status: Option<SandboxStatus>,
+    /// Labels the creator attached, which is how a sandbox is traced back to
+    /// the session that owns it when nothing else references it.
+    #[serde(default)]
+    pub metadata: std::collections::BTreeMap<String, String>,
 }
 
 impl Sandbox {
@@ -112,6 +128,18 @@ pub struct SandboxClient {
     http: reqwest::Client,
 }
 
+/// Give a provider endpoint a scheme and no trailing slash.
+///
+/// The provider returns a host and path on its own, which is not a URL until
+/// something puts a scheme on it.
+fn normalise(endpoint: &str) -> String {
+    let bare = endpoint
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    format!("https://{bare}")
+}
+
 impl SandboxClient {
     /// Build a client.
     ///
@@ -122,7 +150,7 @@ impl SandboxClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(PROVIDER_TIMEOUT)
                 .build()
                 .expect("http client builds"),
         }
@@ -133,7 +161,102 @@ impl SandboxClient {
         &self.base_url
     }
 
+    /// Read from a path on a sandbox's own listener.
+    ///
+    /// The supervisor inside a sandbox is reached through the provider's
+    /// proxy, which is authenticated, so these calls carry the provider key
+    /// exactly as the provider's own endpoints do.
+    ///
+    /// `None` for a 204, which several supervisor endpoints use to say "there
+    /// is nothing here" — distinct from an error, and a caller that conflated
+    /// the two would act on absence as though it were failure.
+    pub async fn get_from_sandbox(
+        &self,
+        endpoint: &str,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, SandboxError> {
+        let url = format!("{}{path}", normalise(endpoint));
+        let resp = self
+            .http
+            .get(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(e.to_string()))?;
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(SandboxError::Rejected {
+                status: resp.status().as_u16(),
+                detail: format!("{path} on the sandbox refused the request"),
+            });
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| SandboxError::Unreachable(e.to_string()))?;
+        Ok(Some(bytes.to_vec()))
+    }
+
+    /// Post bytes to a path on a sandbox's own listener.
+    pub async fn post_to_sandbox(
+        &self,
+        endpoint: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> Result<(), SandboxError> {
+        let url = format!("{}{path}", normalise(endpoint));
+        let resp = self
+            .http
+            .post(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(SandboxError::Rejected {
+                status: resp.status().as_u16(),
+                detail: format!("{path} on the sandbox refused the request"),
+            });
+        }
+        Ok(())
+    }
+
     /// Create a sandbox.
+    /// Every sandbox this key can see.
+    ///
+    /// Reconciliation needs the provider's view, because the whole point is to
+    /// find runtimes our own records have lost track of.
+    pub async fn list(&self) -> Result<Vec<Sandbox>, SandboxError> {
+        let url = format!("{}/v1/sandboxes", self.base_url);
+        let response = self
+            .http
+            .get(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(format!("GET {url}: {e}")))?;
+        if !response.status().is_success() {
+            return Err(SandboxError::Rejected {
+                status: response.status().as_u16(),
+                detail: "listing sandboxes".to_string(),
+            });
+        }
+        #[derive(serde::Deserialize)]
+        struct Listing {
+            #[serde(default)]
+            items: Vec<Sandbox>,
+        }
+        let listing: Listing = response
+            .json()
+            .await
+            .map_err(|e| SandboxError::Malformed(format!("sandbox listing not readable: {e}")))?;
+        Ok(listing.items)
+    }
+
     pub async fn create(&self, request: &SandboxRequest) -> Result<Sandbox, SandboxError> {
         let url = format!("{}/v1/sandboxes", self.base_url);
         let resp = self

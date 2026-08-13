@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
-import { createMockAuthProvider } from './auth/mock';
+import { createNyxidAuthProvider } from './auth/nyxid';
 
 const container = document.getElementById('root');
 if (!container) {
@@ -10,10 +10,11 @@ if (!container) {
 }
 
 /*
- * The concrete provider is chosen here and nowhere else. Replacing the mock
- * with the real NyxID adapter (#3) is a one-line change at this seam.
+ * The concrete provider is chosen here and nowhere else, which is what made
+ * replacing the mock with the real adapter a one-line change. The mock remains
+ * for tests.
  */
-const authProvider = createMockAuthProvider();
+const authProvider = createNyxidAuthProvider();
 
 createRoot(container).render(
   <StrictMode>

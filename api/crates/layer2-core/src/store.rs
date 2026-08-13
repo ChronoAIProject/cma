@@ -81,6 +81,19 @@ pub trait SessionStore: Send + Sync {
     async fn events_since(&self, id: &SessionId, after: u64) -> Result<Vec<Event>, StoreError>;
 }
 
+/// Where a session's credential comes from when nobody is asking for it.
+///
+/// A session outlives the request that created it, so the credential it
+/// presents cannot only be the one that arrived with that request. After a
+/// restart, or when a runtime is replaced under a session, something has to
+/// supply the owner's current credential without the owner being present — and
+/// the core cannot know where credentials come from, so it asks through this.
+#[async_trait::async_trait]
+pub trait CredentialSource: Send + Sync {
+    /// The credential to present on a subject's behalf, if one is available.
+    async fn credential_for(&self, subject: &SubjectId) -> Option<String>;
+}
+
 /// The agent's accumulated context, stored whole.
 ///
 /// Separate from the session store because it is a blob, not a document: it
@@ -102,6 +115,7 @@ pub trait ContextStore: Send + Sync {
 mod tests {
     use super::*;
     use crate::ids::KernelId;
+    use crate::options::AgentOptions;
     use crate::session::{RecoveryState, SessionStatus};
     use crate::terminal::TerminalGeometry;
 
@@ -113,8 +127,12 @@ mod tests {
             status: SessionStatus::Ready,
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
+            options: AgentOptions::default(),
             geometry: TerminalGeometry::default(),
             last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }
     }

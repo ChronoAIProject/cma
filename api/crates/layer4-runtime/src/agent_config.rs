@@ -24,6 +24,12 @@ pub struct AgentConfig {
     pub wire_api: String,
     /// Display name for the provider entry.
     pub provider_name: String,
+    /// How much deliberation to ask of the model.
+    pub effort: String,
+    /// When the agent must stop and ask before acting.
+    pub approval_policy: String,
+    /// How far the agent may reach inside its sandbox.
+    pub sandbox_mode: String,
 }
 
 impl AgentConfig {
@@ -37,6 +43,13 @@ impl AgentConfig {
 # environment, or anywhere else the agent can read.
 model = "{model}"
 model_provider = "chrono"
+model_reasoning_effort = "{effort}"
+
+# What the agent may do unattended. The sandbox around this process is the
+# outer boundary and is not affected by these; they govern what the agent does
+# inside it.
+approval_policy = "{approval_policy}"
+sandbox_mode = "{sandbox_mode}"
 
 [model_providers.chrono]
 name = "{provider_name}"
@@ -48,6 +61,9 @@ wire_api = "{wire_api}"
             provider_name = self.provider_name,
             base_url = self.proxy_base_url.trim_end_matches('/'),
             wire_api = self.wire_api,
+            effort = self.effort,
+            approval_policy = self.approval_policy,
+            sandbox_mode = self.sandbox_mode,
         )
     }
 
@@ -70,12 +86,28 @@ wire_api = "{wire_api}"
 
 #[cfg(test)]
 mod tests {
+    /// A configuration with the cautious defaults.
+    fn sample() -> AgentConfig {
+        AgentConfig {
+            proxy_base_url: "http://127.0.0.1:9091".into(),
+            model: "gpt-5.6-sol".into(),
+            wire_api: "responses".into(),
+            provider_name: "Chrono LLM".into(),
+            effort: "medium".into(),
+            approval_policy: "on-request".into(),
+            sandbox_mode: "read-only".into(),
+        }
+    }
+
     use super::*;
 
     fn config() -> AgentConfig {
         AgentConfig {
             proxy_base_url: "http://127.0.0.1:9091/v1".into(),
             model: "gpt-5.6-sol".into(),
+            effort: "medium".into(),
+            approval_policy: "on-request".into(),
+            sandbox_mode: "read-only".into(),
             wire_api: "responses".into(),
             provider_name: "Chrono LLM".into(),
         }
@@ -147,5 +179,43 @@ mod tests {
         let body = std::fs::read_to_string(&written).expect("readable");
         assert!(body.contains("model_provider"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_rendered_config_states_the_permission_settings() {
+        // These decide what the agent may do unattended, so they must appear
+        // in the file rather than being left to the kernel's own defaults.
+        let rendered = AgentConfig {
+            effort: "xhigh".into(),
+            approval_policy: "never".into(),
+            sandbox_mode: "danger-full-access".into(),
+            ..sample()
+        }
+        .render();
+        assert!(
+            rendered.contains(r#"model_reasoning_effort = "xhigh""#),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(r#"approval_policy = "never""#),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(r#"sandbox_mode = "danger-full-access""#),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn a_guarded_session_renders_the_cautious_settings() {
+        let rendered = sample().render();
+        assert!(
+            rendered.contains(r#"approval_policy = "on-request""#),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(r#"sandbox_mode = "read-only""#),
+            "{rendered}"
+        );
     }
 }

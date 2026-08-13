@@ -31,6 +31,52 @@ pub struct RuntimeSpec {
     ///
     /// Opaque here: this layer forwards it and never inspects or logs it.
     pub subject_credential: Option<String>,
+    /// How the agent should behave.
+    ///
+    /// Stated as intent rather than as a rendered configuration, so each
+    /// adapter can express it in whatever its own runtime understands.
+    pub options: RuntimeOptions,
+    /// An earlier state of this session for the agent to resume from.
+    ///
+    /// Present when a session is being carried across runtimes rather than
+    /// started. The bytes are the agent's own conversation as its snapshot
+    /// produced them — opaque here and to the caller, since only the agent
+    /// knows how to read its own history back.
+    ///
+    /// Passed through the control plane rather than fetched by the runtime, so
+    /// the sandbox needs no storage credential of its own.
+    pub restore_from: Option<Vec<u8>>,
+}
+
+/// What a runtime should be told about how to behave.
+///
+/// Declared here rather than taken from the core, because this layer must not
+/// depend on the core — the dependency runs the other way. The two are
+/// deliberately separate vocabularies that the caller maps between: the core
+/// says what a person asked for, and this says what a runtime is given.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeOptions {
+    /// Model to select, or `None` for the deployment's default.
+    pub model: Option<String>,
+    /// How much deliberation to ask for, already in its wire form.
+    pub reasoning_effort: Option<String>,
+    /// How much the agent may do unattended.
+    pub permission: RuntimePermission,
+    /// Whether the agent authenticates with the owner's own vendor account
+    /// instead of being handed a delegated credential.
+    pub own_credential: bool,
+}
+
+/// How much the agent may do without asking.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimePermission {
+    /// Ask before reaching outside the workspace. The safe default.
+    #[default]
+    Guarded,
+    /// Work within the workspace unattended.
+    Autonomous,
+    /// No approvals and no confinement inside the sandbox.
+    Unrestricted,
 }
 
 /// An opaque reference to a provisioned runtime.
@@ -76,6 +122,13 @@ pub enum AdapterError {
     /// The runtime rejected the request.
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    /// The provider cannot answer this question at all.
+    ///
+    /// Distinct from a failure: nothing went wrong, the capability is simply
+    /// absent. Callers that would otherwise read a negative answer into silence
+    /// need to be able to tell the two apart.
+    #[error("not supported by this runtime: {0}")]
+    Unsupported(String),
 }
 
 /// A kernel runtime, abstracted. Layer 2 depends on this trait and never on an
@@ -99,6 +152,44 @@ pub trait KernelAdapter: Send + Sync {
 
     /// Tear the runtime down.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;
+
+    /// Every runtime this adapter can see, with the session each was created
+    /// for.
+    ///
+    /// Reconciliation needs the provider's own view rather than ours, because
+    /// the runtimes worth finding are exactly the ones our records have lost
+    /// track of. The session identifier is whatever was recorded at
+    /// provisioning time and may be absent, in which case nothing links the
+    /// runtime to a session and it is an orphan by definition.
+    ///
+    /// Capture the agent's conversation so it can be resumed elsewhere.
+    ///
+    /// The thing that makes a runtime replaceable. What it returns is the
+    /// agent's own state in whatever form the agent resumes from, paired with
+    /// `RuntimeSpec::restore_from`; nothing outside the adapter interprets it.
+    ///
+    /// `None` means the agent has nothing to resume from yet, which is not a
+    /// failure — a session that has not been used has no conversation.
+    ///
+    /// Defaults to unsupported. An adapter that cannot snapshot can still run
+    /// sessions; it simply cannot carry one across a runtime replacement, and
+    /// a caller needs to know that rather than silently losing the history.
+    async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot capture its agent's conversation".to_string(),
+        ))
+    }
+
+    /// Defaults to saying it cannot answer, rather than to an empty list. The
+    /// difference matters more than it looks: an empty list is a statement that
+    /// nothing is running, and a caller acting on that would tear down or
+    /// replace every live session behind an adapter whose only fault is not
+    /// implementing this.
+    async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot enumerate what it is running".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]

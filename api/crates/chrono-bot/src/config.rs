@@ -24,6 +24,8 @@ pub struct Config {
     /// Image each sandbox runs.
     pub sandbox_image: String,
     /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
+    /// Arguments that make the agent resume rather than start fresh.
+    pub runtime_resume_args: String,
     pub upstream_base_url: String,
     /// Model the agent selects.
     pub upstream_model: String,
@@ -67,6 +69,10 @@ impl Config {
             "http://opensandbox-server.opensandbox-system.svc.cluster.local",
         );
         let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
+        // How the agent is told to continue a conversation rather than start
+        // one. Here rather than baked into the runtime image so a change in
+        // the agent's own flags is a configuration edit, not a rebuild.
+        let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume");
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
@@ -139,6 +145,7 @@ impl Config {
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
+            runtime_resume_args,
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
@@ -201,6 +208,7 @@ mod tests {
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
+            runtime_resume_args: "resume".into(),
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),
             upstream_wire_api: "responses".into(),

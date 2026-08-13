@@ -18,6 +18,8 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod events;
+
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::{InterfaceProfile, Operation};
 
@@ -56,6 +58,9 @@ impl InterfaceProfile for RestInterface {
 /// Request body for creating a session.
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
+    /// How the agent should behave. Omitted means the safe defaults.
+    #[serde(default)]
+    options: Option<layer2_core::AgentOptions>,
     /// Which runtime should back the session.
     pub kernel: String,
     /// Initial terminal width.
@@ -79,6 +84,22 @@ pub struct SessionView {
     rows: u16,
     last_seq: u64,
     created_at: String,
+    /// Which runtime version is serving this session, and what it has been
+    /// through to get there.
+    ///
+    /// Present only once a session has been moved, because a session that has
+    /// never been moved has nothing to explain — and a rotation that goes
+    /// unmentioned is a gap in someone's terminal with no account of itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_version: Option<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    rotations: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rotated_at: Option<String>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 impl From<Session> for SessionView {
@@ -92,13 +113,16 @@ impl From<Session> for SessionView {
             cols: s.geometry.columns(),
             rows: s.geometry.rows(),
             last_seq: s.last_seq,
+            runtime_version: s.runtime_version,
+            rotations: s.rotations,
+            rotated_at: s.rotated_at,
             created_at: s.created_at,
         }
     }
 }
 
 /// A core failure rendered as an RFC 9457 problem document.
-struct Problem(CoreError);
+pub(crate) struct Problem(CoreError);
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
@@ -146,7 +170,18 @@ pub fn router(service: Arc<SessionService>) -> Router {
         // the same button.
         .route("/api/v1/sessions/{id}", delete(remove))
         .route("/api/v1/sessions/{id}/terminate", post(terminate))
+        // Stopping is not ending. A stopped session keeps its history and can
+        // be picked up again; the pair only makes sense together, which is why
+        // reviving lives beside it rather than behind a creation call.
+        .route("/api/v1/sessions/{id}/stop", post(stop))
+        .route("/api/v1/sessions/{id}/revive", post(revive))
         .route("/api/v1/sessions/{id}/screen", get(screen))
+        // What the session has shown, for one that has no runtime to attach
+        // to. Reading stopped work is not the same as resuming it.
+        .route("/api/v1/sessions/{id}/transcript", get(transcript))
+        // Progress for a session whose runtime is still starting, and its
+        // history thereafter. Resumable, so a reconnect loses nothing.
+        .route("/api/v1/sessions/{id}/events", get(events::stream))
         .route("/api/v1/conformance", get(conformance))
         .route("/api/v1/kernels", get(kernels))
         .with_state(service)
@@ -170,6 +205,10 @@ async fn create(
             SessionSpec {
                 kernel: KernelId::new(body.kernel),
                 geometry,
+                // Absent options mean the deployment's defaults, which are the
+                // cautious ones. A client that omits them never lands on a
+                // session that can act without asking.
+                options: body.options.unwrap_or_default(),
                 subject_credential: credential.map(|axum::Extension(c)| c.0),
             },
         )
@@ -201,6 +240,42 @@ async fn terminate(
 ) -> Result<StatusCode, Problem> {
     service.terminate_session(&caller, &SessionId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn stop(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Problem> {
+    service.stop_session(&caller, &SessionId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn revive(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Json<SessionView>, Problem> {
+    let session = service.revive_session(&caller, &SessionId(id)).await?;
+    Ok(Json(session.into()))
+}
+
+/// The session's terminal output as the bytes a terminal would render.
+///
+/// Served as an octet stream rather than JSON because it is an escape-sequence
+/// stream: encoding it as a string would mean deciding how to escape it, and
+/// the client only has to write it to a terminal.
+async fn transcript(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Response, Problem> {
+    let bytes = service.session_transcript(&caller, &SessionId(id)).await?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+        bytes,
+    )
+        .into_response())
 }
 
 async fn remove(
@@ -282,8 +357,12 @@ mod tests {
             status: layer2_core::SessionStatus::Ready,
             recovery_state: layer2_core::RecoveryState::Normal,
             stop_reason: None,
+            options: layer2_core::AgentOptions::default(),
             geometry: TerminalGeometry::new(120, 40).expect("valid"),
             last_seq: 3,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: "2026-08-12T00:00:00Z".into(),
         };
         let view: SessionView = s.into();
