@@ -170,7 +170,37 @@ Secrets are **referenced** in `secret.yaml`, never valued. No real secret value 
 
 ---
 
-## 5. Branches
+## 5. A session in progress is never interrupted
+
+**No deployment, upgrade, restart or rollout may interrupt a session its owner has not stopped.** This is a hard rule and outranks every convenience below it. A session that stops working because chrono-bot was upgraded is a defect of the same severity as losing the data.
+
+What "not interrupted" means, precisely:
+
+- The session keeps its identifier, its history, its configuration and its place in the owner's list.
+- Everything it has shown remains visible. A session that returns blank has lost the work as far as its owner can tell.
+- Work resumes where it left off — the agent continues its conversation rather than starting a new one.
+
+### The database is the only authority
+
+Which sessions should be running is recorded, never remembered. A control plane process holds no state that matters: on boot, and continuously thereafter, it reads the record and makes reality match it — taking back over the runtimes that are still alive, replacing the ones that are gone, and reclaiming the ones nothing is entitled to.
+
+A control plane that has just started has therefore no privileged knowledge, and needs none. This is what makes replacing it safe.
+
+### Runtimes are versioned, and rotated to match
+
+The control plane knows which runtime version it expects. Any session running an older one is **rotated**: its agent transcript is snapshotted to chrono-storage, a new pod is brought up on the current image, and the agent resumes from that snapshot.
+
+Rotation is preferred over upgrading a pod in place, because the runtime image changes too and a rotation exercises the same path a lost sandbox does.
+
+Rotation is not silent:
+
+- The record tracks the runtime version each session is on, every rotation that has happened, and the snapshot each one resumed from.
+- The snapshot carries a timestamp, and that timestamp is shown to the owner: they are told the point their session is being carried forward from.
+- While a rotation is in progress the session is not interactive, and the interface says so. Accepting input that would be lost with the outgoing pod is worse than briefly refusing it.
+
+Never require the owner to do anything to keep a session alive. "Click revive after the deploy" is not an acceptable design.
+
+## 6. Branches
 
 | Branch | Purpose | Rules |
 |---|---|---|
@@ -211,7 +241,7 @@ Everything above, plus:
 
 ---
 
-## 6. Frontend design authority
+## 7. Frontend design authority
 
 `docs/Web_Style.md` is the **single source of truth** for all frontend design and style. No colour, spacing value, type scale, component pattern, or interaction rule may be introduced in `web/` that is not in that document.
 
@@ -219,7 +249,7 @@ The document carries a changelog at the end recording every change. **The change
 
 ---
 
-## 7. Commits
+## 8. Commits
 
 - **Small and frequent, not bulky and infrequent.** One logical change per commit.
 - **No `Co-Authored-By` trailers.** Not for agents, not for pairs, not for anyone.
@@ -228,7 +258,7 @@ The document carries a changelog at the end recording every change. **The change
 
 ---
 
-## 8. Working rules for agents
+## 9. Working rules for agents
 
 - Read this file before making structural changes. It governs.
 - Never place a source file outside its layer's directory to make an import easier — fix the design instead.
