@@ -91,6 +91,7 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
         Arc::new(FakeStore::default()),
         None,
+        None,
     )
 }
 

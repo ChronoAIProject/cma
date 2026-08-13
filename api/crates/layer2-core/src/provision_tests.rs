@@ -90,10 +90,7 @@ async fn a_runtime_that_cannot_be_attached_to_is_torn_down() {
     assert_eq!(settled.status, SessionStatus::Terminated);
     let torn_down = adapter.terminated.lock().await.clone();
     assert!(
-        !torn_down.is_empty()
-            && torn_down
-                .iter()
-                .all(|r| *r == format!("runtime-for-{}", created.id.0)),
+        !torn_down.is_empty() && torn_down.iter().all(|r| r.contains(&created.id.0)),
         "every runtime the attempts created must be torn down, got {torn_down:?}"
     );
 }

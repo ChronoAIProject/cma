@@ -19,11 +19,12 @@ use layer3_adapter::{
 };
 use tokio::sync::{broadcast, Mutex};
 
+use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
-use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
+use crate::service::{spawn_relay, store_failed, SessionEntry, SessionService, LIVE_BUFFER};
 use crate::session::{
     ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus, StopReason,
 };
@@ -65,6 +66,13 @@ impl SessionService {
         geometry: TerminalGeometry,
     ) {
         let id = session.id.clone();
+        // Nobody may have been present to delegate one — a session recovered by
+        // the controller has no request behind it — so it is fetched here
+        // rather than being required of every caller.
+        let mut spec = spec;
+        if spec.subject_credential.is_none() {
+            spec.subject_credential = self.credential_for(&session.owner).await;
+        }
         match tokio::time::timeout(
             PROVISION_DEADLINE,
             self.start_with_retries(&session, &spec, &adapter, geometry),
@@ -85,6 +93,10 @@ impl SessionService {
                 .await
             }
         }
+        // Released last, and on every path: while the claim is held the
+        // controller leaves this session alone, so failing to release it would
+        // strand a session nothing is allowed to recover.
+        self.finish_start(&id).await;
     }
 
     /// Keep trying to bring a runtime up until one does, or the attempts run out.
@@ -222,6 +234,7 @@ impl SessionService {
             live: live.clone(),
             attached: false,
             context_ref: None,
+            captured_len: 0,
         };
         entry.session.status = SessionStatus::Ready;
         crate::service::append(
@@ -377,6 +390,113 @@ fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
 }
 
 impl SessionService {
+    /// Give a stopped session a runtime again.
+    ///
+    /// The same machinery that starts a session, pointed at one that already
+    /// exists: the identity, the history and the options are unchanged, and
+    /// only the sandbox is new. Reviving is therefore never a different kind of
+    /// session, which matters because everything referring to it keeps working.
+    pub async fn revive_session(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<Session, CoreError> {
+        caller.authorization.require(Capability::CreateSession)?;
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.session.status.wants_runtime() {
+            // Already running or already starting. Reviving again would
+            // provision a second sandbox for one session.
+            return Ok(record.session);
+        }
+
+        let adapter = self
+            .adapters
+            .get(&record.session.kernel)
+            .cloned()
+            .ok_or_else(|| {
+                CoreError::RuntimeUnavailable(format!("no runtime {}", record.session.kernel))
+            })?;
+
+        let mut starting = record.clone();
+        starting.session.status = SessionStatus::Provisioning;
+        starting.session.stop_reason = None;
+        starting.session.last_seq += 1;
+        let seq = starting.session.last_seq;
+        self.store.upsert(&starting).await.map_err(store_failed)?;
+        self.store
+            .append_events(&[Event {
+                session_id: id.clone(),
+                seq,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Provisioning,
+                    stop_reason: None,
+                    detail: None,
+                },
+            }])
+            .await
+            .map_err(store_failed)?;
+
+        let geometry = starting.session.geometry;
+        let spec = SessionSpec {
+            kernel: starting.session.kernel.clone(),
+            geometry: Some(geometry),
+            options: starting.session.options.clone(),
+            // The owner is not on the line to delegate one; the renewal loop
+            // hands the session a fresh credential once it is running.
+            subject_credential: None,
+        };
+
+        self.begin_start(id).await;
+        let service = Arc::clone(self);
+        let session = starting.session.clone();
+        let spawned = session.clone();
+        tokio::spawn(async move {
+            service.bring_up(spawned, spec, adapter, geometry).await;
+        });
+
+        tracing::info!(session_id = %id, "session reviving");
+        Ok(session)
+    }
+
+    /// Record that a session which was starting is now usable.
+    async fn settle_ready(&self, record: &SessionRecord) {
+        let mut settled = record.clone();
+        settled.session.status = SessionStatus::Ready;
+        settled.session.stop_reason = None;
+        settled.session.last_seq += 1;
+        let seq = settled.session.last_seq;
+        let id = settled.session.id.clone();
+        if let Err(e) = self.store.upsert(&settled).await {
+            tracing::warn!(session_id = %id, error = %e, "cannot record the recovered status");
+            return;
+        }
+        if let Err(e) = self
+            .store
+            .append_events(&[Event {
+                session_id: id.clone(),
+                seq,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: None,
+                    detail: None,
+                },
+            }])
+            .await
+        {
+            tracing::warn!(session_id = %id, error = %e, "cannot append the recovered status");
+        }
+        if let Some(entry) = self.entries.write().await.get_mut(&id) {
+            entry.session.status = SessionStatus::Ready;
+            entry.session.last_seq = seq;
+        }
+    }
+
     /// Take an existing runtime back under management after losing track of it.
     ///
     /// A sandbox belongs to the provider, not to this process, so it is still
@@ -385,9 +505,9 @@ impl SessionService {
     /// invisible and every open session becoming unusable while still claiming
     /// to be ready.
     ///
-    /// The screen is deliberately empty at first: the transcript this process
-    /// held is gone with it, and inventing one would be worse than an honest
-    /// blank that the agent repaints on its next output.
+    /// The screen is rebuilt from the stored transcript, so what someone left
+    /// is what they come back to. Without that the session would be alive and
+    /// usable but visibly empty, which reads as lost work.
     pub(crate) async fn readopt(&self, record: &SessionRecord) -> Result<(), CoreError> {
         let id = record.session.id.clone();
         let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
@@ -414,8 +534,23 @@ impl SessionService {
         })?;
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
-        let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
-            Arc::new(Mutex::new((self.screen_factory)(record.session.geometry)));
+        let mut model = (self.screen_factory)(record.session.geometry);
+
+        // Replayed before anything new arrives, so the person reattaching sees
+        // the conversation they left rather than a blank screen above their
+        // prompt. Feeding the stored bytes through the model rather than
+        // holding them aside rebuilds its parser state too, which is what makes
+        // the next chunk of output land in the right place.
+        let restored = self
+            .stored_transcript(record.context_ref.as_deref())
+            .await
+            .unwrap_or_default();
+        if !restored.is_empty() {
+            model.apply(&restored);
+            tracing::info!(session_id = %id, bytes = restored.len(), "transcript restored");
+        }
+        let screen: Arc<Mutex<Box<dyn ScreenModel>>> = Arc::new(Mutex::new(model));
+        let captured_len = screen.lock().await.repaint_bytes().len();
 
         let entry = SessionEntry {
             session: record.session.clone(),
@@ -427,9 +562,23 @@ impl SessionService {
             live: live.clone(),
             attached: false,
             context_ref: record.context_ref.clone(),
+            captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
         spawn_relay(id.clone(), channel.output, screen, live);
+
+        // The sandbox kept running, but the credential it was given belonged to
+        // a process that has gone. Without this the session answers every
+        // prompt with an authorisation failure.
+        self.supply_credential(&id, &record.session.owner).await;
+
+        // A session recorded as still starting whose sandbox answers is not
+        // starting — it started, and the process that would have said so died.
+        // Leaving it as `provisioning` would show a working session as one
+        // stuck part-way.
+        if record.session.status == SessionStatus::Provisioning {
+            self.settle_ready(record).await;
+        }
 
         tracing::info!(session_id = %id, "reconnected to an existing runtime");
         Ok(())

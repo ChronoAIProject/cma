@@ -33,11 +33,15 @@ mod persistence_tests;
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
 pub mod options;
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod recovery_tests;
 pub mod service;
 pub mod session;
 pub mod store;
 pub mod terminal;
 mod terminal_io;
+mod transcript;
 
 pub use authz::{Authorization, Caller, Capability};
 pub use error::CoreError;
@@ -47,5 +51,5 @@ pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort}
 pub use reconcile::Reclaimed;
 pub use service::{AttachmentHandle, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
-pub use store::{ContextStore, SessionRecord, SessionStore, StoreError};
+pub use store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
