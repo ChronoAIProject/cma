@@ -58,6 +58,8 @@ An interface exposing a subset is expected. An interface inventing an operation 
 
 ```
 provisioning ──► ready ──► running ⇄ idle ──► terminated
+                    ▲          │
+                    └─ rotating ┘
 ```
 
 | State | Meaning |
@@ -65,10 +67,25 @@ provisioning ──► ready ──► running ⇄ idle ──► terminated
 | `provisioning` | Runtime is being created |
 | `ready` | Runtime is up, awaiting input |
 | `running` | A turn is in progress |
+| `rotating` | **Being carried onto an updated runtime.** Not usable, not stopped, and coming back on its own |
 | `idle` | **Runtime reclaimed; the session is intact and revivable.** Not an error, not termination |
 | `terminated` | Terminal. Carries a `stop_reason` |
 
-`idle` is the state most often misread. A session whose bot pod was reclaimed to save resources is `idle`, and attaching to it revives it under the same session id.
+`idle` is the state most often misread. A session whose bot pod was reclaimed to save resources is `idle`, and it revives under the same session id.
+
+`rotating` is the second. It means the runtime image has moved on and this session is being carried onto the current one: its conversation is captured, the sandbox is replaced, and the agent resumes from the capture. **Clients must refuse input while it lasts** — a keystroke sent now reaches a sandbox being torn down, so it would be accepted and then lost. It is not a failure, it needs no action from the owner, and it ends on its own.
+
+### Runtime version
+
+A session carries the runtime version serving it, how many times it has been carried onto a newer one, and the moment of the snapshot the current runtime resumed from:
+
+```json
+{ "runtime_version": "…/chrono-bot-runtime:8dbd315", "rotations": 1, "rotated_at": "2026-08-14T00:31:10Z" }
+```
+
+`rotated_at` is the honest part and clients should show it. Anything the agent did after that moment did not travel, so an owner who can see the boundary can recognise a gap rather than puzzle over one.
+
+Sessions that have never been moved omit all three.
 
 ### Recovery state
 

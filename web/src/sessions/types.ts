@@ -5,8 +5,25 @@
  * not invent state the core does not have.
  */
 
-/** Lifecycle: provisioning -> ready -> running <-> idle -> terminated. */
-export type SessionLifecycle = 'provisioning' | 'ready' | 'running' | 'idle' | 'terminated';
+/**
+ * Lifecycle: provisioning -> ready -> running <-> idle -> terminated.
+ *
+ * `rotating` sits across the top of that: a running session being moved onto
+ * an updated runtime. It is a state of its own because the session is neither
+ * usable nor stopped while it happens, and calling it either would be a lie
+ * the owner acts on.
+ */
+export type SessionLifecycle =
+  'provisioning' | 'ready' | 'running' | 'rotating' | 'idle' | 'terminated';
+
+/**
+ * Why a session stopped, where the control plane says.
+ *
+ * Only `error` is distinguished here, because it is the only one that changes
+ * what the interface should do: a session that failed stays visible so its
+ * owner can find out why.
+ */
+export type StopReason = 'error' | 'other';
 
 /** The kernels the control plane can run. */
 export type Kernel = 'codex' | 'claude-code';
@@ -17,6 +34,20 @@ export interface Session {
   readonly lifecycle: SessionLifecycle;
   /** Epoch ms the session was created, for the tab's age readout. */
   readonly createdAt: number;
+  /** Why it stopped, when it has. */
+  readonly stopReason?: StopReason;
+  /** Which runtime version is serving it. */
+  readonly runtimeVersion?: string;
+  /** How many times it has been moved onto a newer runtime. */
+  readonly rotations?: number;
+  /**
+   * Epoch ms of the snapshot the current runtime resumed from.
+   *
+   * The honest part of a rotation: it says how much of the session was carried
+   * across, so anything the agent did in the seconds after it can be
+   * recognised as missing rather than silently absent.
+   */
+  readonly rotatedAt?: number;
 }
 
 /** Which semantic token paints a lifecycle state. */
@@ -33,6 +64,7 @@ export function toneFor(lifecycle: SessionLifecycle): StateTone {
     case 'running':
       return 'ok';
     case 'provisioning':
+    case 'rotating':
     case 'idle':
       return 'warn';
     case 'terminated':
@@ -55,6 +87,8 @@ export function labelFor(lifecycle: SessionLifecycle): string {
       return 'ready';
     case 'running':
       return 'running';
+    case 'rotating':
+      return 'updating';
     case 'idle':
       return 'idle';
     case 'terminated':

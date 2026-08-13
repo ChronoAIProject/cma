@@ -69,15 +69,22 @@ Content-Type: application/json
 }
 ```
 
-### Read, list, terminate
+### Read, list, stop, revive, delete
 
 ```http
 GET    /api/v1/sessions/{id}
 GET    /api/v1/sessions?status=running&limit=50
+POST   /api/v1/sessions/{id}/stop
+POST   /api/v1/sessions/{id}/revive
+GET    /api/v1/sessions/{id}/transcript
 DELETE /api/v1/sessions/{id}
 ```
 
-`DELETE` is terminal and irreversible. It is not how you pause — an unattended session idles on its own, keeping its identity and reviving on the next attach.
+`stop` releases the runtime and keeps the session: it goes `idle`, stays listed, stays readable, and nothing is being paid for. `revive` gives it a runtime again under the same id, with the same history and the same options — reviving never mints a new session.
+
+`DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
+
+`transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
 
 ---
 

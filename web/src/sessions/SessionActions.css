@@ -1,0 +1,106 @@
+/*
+ * Session actions, per docs/Web_Style.md.
+ *
+ * A stack of full-width buttons at the foot of the details panel. Full width
+ * because they are the panel's actions rather than controls competing for a
+ * row, and stacked because their order carries meaning: least destructive
+ * first.
+ */
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.actions__button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule-2);
+  border-radius: 2px;
+  padding: var(--space-2);
+  cursor: pointer;
+}
+
+.actions__button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.actions__button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/*
+ * Disabled rather than removed, so the panel keeps its shape as a session
+ * moves between states and nobody has to hunt for a control that was there a
+ * moment ago. The hint beneath each one says why it is unavailable, since a
+ * greyed button on its own only communicates refusal.
+ */
+.actions__button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actions__hint {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/*
+ * The action that gets someone moving again. Marked because when it is offered
+ * it is almost always what the person came to the panel for: their session is
+ * stopped and they want it back.
+ */
+.actions__button--primary {
+  border-color: var(--accent);
+}
+
+.actions__button--primary:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/*
+ * The destructive action is marked, and its wording says so too — colour alone
+ * would carry nothing to someone who cannot distinguish it.
+ */
+.actions__button--danger {
+  color: var(--emphasis);
+  border-color: var(--rule-2);
+}
+
+.actions__button--danger:hover:not(:disabled) {
+  border-color: var(--emphasis);
+}
+
+.actions__button--danger .actions__hint {
+  color: var(--emphasis);
+}
+
+.actions__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--emphasis);
+  border-radius: 2px;
+}
+
+.actions__question {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.actions__row {
+  display: flex;
+  gap: var(--space-2);
+}

@@ -101,6 +101,15 @@ impl PtyRegistry {
         Ok(session)
     }
 
+    /// Whether any agent has been started on this supervisor.
+    ///
+    /// Asked before accepting a conversation to resume from: the agent reads
+    /// its history when it starts, so anything laid down after that is never
+    /// seen, and accepting it would report a handover that did not happen.
+    pub async fn is_running(&self) -> bool {
+        !self.inner.lock().await.is_empty()
+    }
+
     /// Drop a runtime, ending its process.
     #[allow(dead_code)] // part of the registry's API; exercised by tests
     pub async fn remove(&self, id: &str) {

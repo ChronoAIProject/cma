@@ -11,6 +11,7 @@ mod permissions;
 mod renewal;
 mod screen;
 mod store;
+mod sweep;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -94,6 +95,7 @@ async fn main() {
                 upstream_model: config.upstream_model.clone(),
                 upstream_wire_api: config.upstream_wire_api.clone(),
                 platform_base_url: config.platform_base_url.clone(),
+                resume_args: config.runtime_resume_args.clone(),
                 ..CodexSandboxSpec::default()
             },
         )),
@@ -154,8 +156,9 @@ async fn main() {
             }
         };
 
-    let service = SessionService::new(adapters, screen_factory, store, context);
-
+    // Built before the service because the service asks it for an owner's
+    // credential whenever it has to put a runtime back under a session that
+    // nobody is currently watching.
     let auth_state = AuthState::new(config.auth_mode.clone());
     if !auth_state.requires_credential() {
         tracing::warn!(
@@ -164,9 +167,31 @@ async fn main() {
         );
     }
 
+    let service = SessionService::new(
+        adapters,
+        screen_factory,
+        store,
+        context,
+        Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+        // The runtime image reference is the runtime version. Deriving it
+        // rather than configuring it separately means the two cannot drift:
+        // any deployment that changes the image is one whose sessions are
+        // carried onto it, and one that does not is not.
+        Some(config.sandbox_image.clone()),
+    );
+    tracing::info!(
+        runtime_version = %config.sandbox_image,
+        "sessions on any other runtime will be moved onto this one"
+    );
+
     // Keeps delegated credentials valid underneath running sessions, and pushes
     // each renewal into the runtimes already using the old value.
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
+
+    // Sessions end only when their owner says so, which leaves this as the one
+    // thing that reclaims a runtime nothing refers to or finishes a session
+    // whose start-up died with an earlier process.
+    sweep::spawn(Arc::clone(&service));
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(config.cors_origins.clone()))

@@ -50,6 +50,7 @@ impl SessionService {
                         EventKind::StatusChanged {
                             status: SessionStatus::Terminated,
                             stop_reason: Some(StopReason::UserTerminated),
+                            detail: None,
                         },
                     );
                     entry.input = None;
@@ -104,6 +105,101 @@ impl SessionService {
                 kind: EventKind::StatusChanged {
                     status: SessionStatus::Terminated,
                     stop_reason: Some(StopReason::UserTerminated),
+                    detail: None,
+                },
+            }])
+            .await
+            .map_err(store_failed)?;
+        Ok(())
+    }
+
+    /// Stop a session's runtime, keeping the session.
+    ///
+    /// The reversible half of ending something. The sandbox goes, so nothing
+    /// is being paid for and nothing is running, while the session stays
+    /// listed and can be picked up again — which is the difference between
+    /// putting work down and throwing it away.
+    pub async fn stop_session(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+        caller
+            .authorization
+            .require(Capability::TerminateOwnSession)?;
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+
+        let adapter = self.adapters.get(&record.session.kernel).cloned();
+        let runtime = {
+            let mut entries = self.entries.write().await;
+            match entries.get_mut(id) {
+                Some(entry) => {
+                    entry.session.status = SessionStatus::Idle;
+                    entry.session.stop_reason = Some(StopReason::UserTerminated);
+                    entry.input = None;
+                    let taken = entry.runtime.take();
+                    append(
+                        entry,
+                        EventKind::StatusChanged {
+                            status: SessionStatus::Idle,
+                            stop_reason: Some(StopReason::UserTerminated),
+                            detail: None,
+                        },
+                    );
+                    Some(taken)
+                }
+                None => None,
+            }
+        };
+
+        let handle = match runtime {
+            Some(taken) => {
+                // Captured before the entry goes: this is the last chance to
+                // store what the session showed, and a stopped session with no
+                // transcript is one whose history was thrown away by stopping
+                // it — which is exactly what stopping is meant not to do.
+                self.capture_transcript(id).await;
+                self.flush(id).await;
+                // The attachment goes with the runtime: a live entry pointing
+                // at a torn-down sandbox would accept input that reaches
+                // nothing.
+                self.entries.write().await.remove(id);
+                taken
+            }
+            None => {
+                self.rest_record(&record).await?;
+                record.runtime_id.clone().map(RuntimeHandle)
+            }
+        };
+
+        if let (Some(adapter), Some(handle)) = (adapter, handle) {
+            if let Err(e) = adapter.terminate(&handle).await {
+                tracing::warn!(session_id = %id, error = %e, "runtime teardown failed");
+            }
+        }
+        tracing::info!(session_id = %id, "session stopped");
+        Ok(())
+    }
+
+    /// Write a session to its stopped state in the store.
+    async fn rest_record(&self, record: &SessionRecord) -> Result<(), CoreError> {
+        let mut resting = record.clone();
+        resting.session.status = SessionStatus::Idle;
+        resting.session.stop_reason = Some(StopReason::UserTerminated);
+        resting.session.last_seq += 1;
+        // Nothing is running for it any more, so nothing should claim to be.
+        resting.runtime_id = None;
+        self.store.upsert(&resting).await.map_err(store_failed)?;
+        self.store
+            .append_events(&[Event {
+                session_id: resting.session.id.clone(),
+                seq: resting.session.last_seq,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Idle,
+                    stop_reason: Some(StopReason::UserTerminated),
+                    detail: None,
                 },
             }])
             .await
