@@ -12,7 +12,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use layer2_core::SubjectId;
+use layer2_core::{Authorization, Caller, SubjectId};
 
 /// The authenticated principal for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +22,36 @@ impl AuthenticatedSubject {
     /// Borrow the underlying subject.
     pub fn subject(&self) -> &SubjectId {
         &self.0
+    }
+}
+
+/// The authenticated caller: who they are and what they may do.
+///
+/// Extracted as one value so a handler cannot accidentally pass identity
+/// without the capabilities that qualify it. A request that authenticated but
+/// carries no resolvable capabilities yields an empty authorization, which
+/// denies everything rather than defaulting open.
+#[derive(Debug, Clone)]
+pub struct AuthenticatedCaller(pub Caller);
+
+impl<S> FromRequestParts<S> for AuthenticatedCaller
+where
+    S: Send + Sync,
+{
+    type Rejection = NotAuthenticated;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let subject = parts
+            .extensions
+            .get::<AuthenticatedSubject>()
+            .cloned()
+            .ok_or(NotAuthenticated)?;
+        let authorization = parts
+            .extensions
+            .get::<Authorization>()
+            .cloned()
+            .unwrap_or_else(Authorization::none);
+        Ok(Self(Caller::new(subject.0, authorization)))
     }
 }
 

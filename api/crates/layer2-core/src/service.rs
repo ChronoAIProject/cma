@@ -12,10 +12,11 @@ use std::sync::Arc;
 use layer3_adapter::{KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalInput};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
+use crate::authz::{Caller, Capability};
 use crate::clock::now_rfc3339;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
-use crate::ids::{KernelId, SessionId, SubjectId};
+use crate::ids::{KernelId, SessionId};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
@@ -103,9 +104,11 @@ impl SessionService {
     /// Provision a session and start relaying its terminal.
     pub async fn create_session(
         self: &Arc<Self>,
-        owner: SubjectId,
+        caller: &Caller,
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
+        caller.authorization.require(Capability::CreateSession)?;
+        let owner = caller.subject.clone();
         let adapter =
             self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
                 CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
@@ -196,25 +199,25 @@ impl SessionService {
     }
 
     /// Read a session, scoped to its owner.
-    pub async fn get_session(
-        &self,
-        subject: &SubjectId,
-        id: &SessionId,
-    ) -> Result<Session, CoreError> {
+    pub async fn get_session(&self, caller: &Caller, id: &SessionId) -> Result<Session, CoreError> {
         let entries = self.entries.read().await;
         let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !entry.session.is_owned_by(subject) {
+        if !caller.may_read_owned_by(&entry.session.owner) {
             return Err(CoreError::Forbidden);
         }
         Ok(entry.session.clone())
     }
 
     /// List the subject's sessions, newest first.
-    pub async fn list_sessions(&self, subject: &SubjectId) -> Vec<Session> {
+    pub async fn list_sessions(&self, caller: &Caller) -> Vec<Session> {
+        // A privileged reader sees every session; everyone else sees only their
+        // own. The filter is here rather than in an interface so no interface
+        // can forget it.
+        let all = caller.authorization.allows(Capability::ReadAllSessions);
         let entries = self.entries.read().await;
         let mut out: Vec<_> = entries
             .values()
-            .filter(|e| e.session.is_owned_by(subject))
+            .filter(|e| all || e.session.is_owned_by(&caller.subject))
             .map(|e| e.session.clone())
             .collect();
         out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -224,13 +227,13 @@ impl SessionService {
     /// Durable events for a session, optionally from a cursor.
     pub async fn events_since(
         &self,
-        subject: &SubjectId,
+        caller: &Caller,
         id: &SessionId,
         after: Option<u64>,
     ) -> Result<Vec<Event>, CoreError> {
         let entries = self.entries.read().await;
         let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !entry.session.is_owned_by(subject) {
+        if !caller.may_read_owned_by(&entry.session.owner) {
             return Err(CoreError::Forbidden);
         }
         let floor = after.unwrap_or(0);
@@ -248,14 +251,17 @@ impl SessionService {
     /// the caller's first paint is already at its own size.
     pub async fn attach_terminal(
         self: &Arc<Self>,
-        subject: &SubjectId,
+        caller: &Caller,
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<AttachmentHandle, CoreError> {
+        caller.authorization.require(Capability::UseOwnSessions)?;
         let (screen, live) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(subject) {
+            // Attaching is acting, not observing, so ownership is required
+            // even for a privileged reader.
+            if !entry.session.is_owned_by(&caller.subject) {
                 return Err(CoreError::Forbidden);
             }
             if entry.session.status.is_terminal() {
@@ -314,11 +320,11 @@ impl SessionService {
     /// Deliver input to the session's terminal.
     pub async fn send_input(
         &self,
-        subject: &SubjectId,
+        caller: &Caller,
         id: &SessionId,
         bytes: Vec<u8>,
     ) -> Result<(), CoreError> {
-        self.authorize(subject, id).await?;
+        self.authorize(caller, id).await?;
         self.forward_input(id, TerminalInput::Bytes(bytes)).await;
         Ok(())
     }
@@ -326,11 +332,11 @@ impl SessionService {
     /// Send an out-of-band signal to the session's runtime.
     pub async fn send_signal(
         &self,
-        subject: &SubjectId,
+        caller: &Caller,
         id: &SessionId,
         signal: String,
     ) -> Result<(), CoreError> {
-        self.authorize(subject, id).await?;
+        self.authorize(caller, id).await?;
         self.forward_input(id, TerminalInput::Signal(signal)).await;
         Ok(())
     }
@@ -338,14 +344,14 @@ impl SessionService {
     /// Change the session's terminal geometry.
     pub async fn resize_terminal(
         &self,
-        subject: &SubjectId,
+        caller: &Caller,
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
         let screen = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(subject) {
+            if !entry.session.is_owned_by(&caller.subject) {
                 return Err(CoreError::Forbidden);
             }
             entry.session.geometry = geometry;
@@ -373,13 +379,13 @@ impl SessionService {
     /// Read the current screen without holding a stream.
     pub async fn screen_snapshot(
         &self,
-        subject: &SubjectId,
+        caller: &Caller,
         id: &SessionId,
     ) -> Result<ScreenSnapshot, CoreError> {
         let screen = {
             let entries = self.entries.read().await;
             let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(subject) {
+            if !caller.may_read_owned_by(&entry.session.owner) {
                 return Err(CoreError::Forbidden);
             }
             Arc::clone(&entry.screen)
@@ -391,13 +397,16 @@ impl SessionService {
     /// End a session and tear its runtime down.
     pub async fn terminate_session(
         &self,
-        subject: &SubjectId,
+        caller: &Caller,
         id: &SessionId,
     ) -> Result<(), CoreError> {
+        caller
+            .authorization
+            .require(Capability::TerminateOwnSession)?;
         let (adapter, runtime) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(subject) {
+            if !entry.session.is_owned_by(&caller.subject) {
                 return Err(CoreError::Forbidden);
             }
             entry.session.status = SessionStatus::Terminated;
@@ -428,10 +437,10 @@ impl SessionService {
         Ok(())
     }
 
-    async fn authorize(&self, subject: &SubjectId, id: &SessionId) -> Result<(), CoreError> {
+    async fn authorize(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
         let entries = self.entries.read().await;
         let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !entry.session.is_owned_by(subject) {
+        if !entry.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
         if entry.session.status.is_terminal() {
