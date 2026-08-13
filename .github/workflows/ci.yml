@@ -32,9 +32,13 @@ jobs:
           exit $fail
       - name: infra/ contains only the fixed file list
         run: |
+          # infra/runtime/ holds the bot-pod image only. It has no manifests of
+          # its own by design: the sandbox provider schedules that image, so
+          # this repository never declares a Deployment or Service for it.
           expected=$(printf '%s\n' \
             infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
             infra/api/secret.yaml infra/api/service.yaml \
+            infra/runtime/Dockerfile \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
             infra/web/secret.yaml infra/web/service.yaml | sort)
           actual=$(find infra -type f | sort)
@@ -175,7 +179,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [api, web]
+        # Adding a value here adds a check named "Images (<value>)" and leaves
+        # the existing names untouched, so branch protection keeps reporting.
+        # The new check is not required until it is added to the ruleset.
+        component: [api, web, runtime]
     steps:
       - uses: actions/checkout@v5
       # arm64 builds run under emulation on the amd64 runner.
