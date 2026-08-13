@@ -28,6 +28,9 @@ import {
   stopSession,
 } from './api/client';
 import { abilitiesFor, listable } from './sessions/availability';
+import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
+import { createRestProfileStore } from './environment/rest';
+import type { EnvironmentProfile, EnvironmentProfileStore } from './environment/types';
 import './Console.css';
 
 /**
@@ -83,6 +86,21 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // tabs does not carry one session's failure onto another.
   const [endings, setEndings] = useState<Record<string, string>>({});
   const [acting, setActing] = useState(false);
+  // Built once. A store rebuilt on every render would refetch on every render,
+  // because everything consuming it loads in an effect keyed on its identity.
+  const [profileStore] = useState<EnvironmentProfileStore>(() => createRestProfileStore());
+  const [profiles, setProfiles] = useState<readonly EnvironmentProfile[]>([]);
+  const [managingProfiles, setManagingProfiles] = useState(false);
+
+  useEffect(() => {
+    void profileStore
+      .list()
+      .then(setProfiles)
+      .catch(() => {
+        // A console that cannot list profiles is still a console. The manager
+        // reports the failure when someone actually opens it.
+      });
+  }, [profileStore]);
   // The last startup step each session reported. Kept per session so switching
   // tabs shows that session's progress rather than another's.
   const [stages, setStages] = useState<Record<string, Stage>>({});
@@ -157,12 +175,18 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, []);
 
   const start = useCallback(
-    async (kernel: Kernel, options: AgentOptions) => {
+    async (kernel: Kernel, options: AgentOptions, environmentProfile: string | null = null) => {
       setNotice(null);
       try {
         // Returns as soon as the session exists, before its runtime does, so the
         // tab appears immediately and reports its own progress.
-        const session = await createSession(kernel, INITIAL_COLS, INITIAL_ROWS, options);
+        const session = await createSession(
+          kernel,
+          INITIAL_COLS,
+          INITIAL_ROWS,
+          options,
+          environmentProfile,
+        );
         setSessions((prev) => [session, ...prev]);
         select(session.id);
         setOpeningForId((prev) => prev ?? session.id);
@@ -342,6 +366,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           onTerminalThemeChange={() => {
             setPaletteEpoch((n) => n + 1);
           }}
+          onManageEnvironments={() => {
+            setManagingProfiles(true);
+          }}
         />
       </TopBar>
 
@@ -456,14 +483,34 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
       <NewSessionDialog
         open={choosing}
+        profiles={profiles}
         onCancel={() => {
           setChoosing(false);
         }}
-        onStart={(kernel, options) => {
+        onStart={(kernel, options, environmentProfile) => {
           setChoosing(false);
-          void start(kernel as Kernel, options);
+          void start(kernel as Kernel, options, environmentProfile);
         }}
       />
+
+      {managingProfiles ? (
+        <EnvironmentProfiles
+          store={profileStore}
+          onClose={() => {
+            setManagingProfiles(false);
+            // Reread on close rather than on every render: what someone just
+            // authored has to be selectable in the next session they start,
+            // and this is the only moment it can have changed.
+            void profileStore
+              .list()
+              .then(setProfiles)
+              .catch(() => {
+                // Already reported inside the manager; failing to refresh the
+                // selector is not worth a second message about the same thing.
+              });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
