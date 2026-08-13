@@ -23,6 +23,12 @@ pub enum Capability {
     UseOwnSessions,
     /// End a session the caller owns.
     TerminateOwnSession,
+    /// Read and write the caller's own reusable environment bundles.
+    ///
+    /// Its own capability rather than part of session use: a bundle holds
+    /// values a caller is invited to treat as secret, and outlives every
+    /// session that referenced it.
+    ManageOwnEnvironmentProfiles,
     /// Read every session, regardless of owner.
     ReadAllSessions,
     /// Read the runtime inventory: which sandboxes exist and their state.
@@ -164,6 +170,7 @@ mod tests {
             Capability::CreateSession,
             Capability::UseOwnSessions,
             Capability::TerminateOwnSession,
+            Capability::ManageOwnEnvironmentProfiles,
         ]);
         assert!(
             !ordinary.is_privileged(),

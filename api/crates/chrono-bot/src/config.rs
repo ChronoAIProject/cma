@@ -26,6 +26,17 @@ pub struct Config {
     /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
     /// Arguments that make the agent resume rather than start fresh.
     pub runtime_resume_args: String,
+    /// Software every session carries, whoever started it.
+    ///
+    /// Part of what a session *is* on this platform rather than something a
+    /// caller opted into, which is why an environment profile cannot remove an
+    /// entry listed here.
+    pub baseline_packages: Vec<String>,
+    /// Skills every session loads, whoever started it.
+    ///
+    /// Identified the way the registry identifies a skill: either its
+    /// generated identifier or its unique name, both of which resolve.
+    pub baseline_skills: Vec<String>,
     pub upstream_base_url: String,
     /// Model the agent selects.
     pub upstream_model: String,
@@ -73,6 +84,12 @@ impl Config {
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
         let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume");
+        // Defaulted rather than required. These are what a session is expected
+        // to have on this platform, and an environment that forgot to name them
+        // must not silently produce sessions without them. A deployment that
+        // genuinely mandates nothing sets the keys to a single space.
+        let baseline_packages = list_or("CHRONO_BASELINE_PACKAGES", "nyxid");
+        let baseline_skills = list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli");
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
@@ -146,6 +163,8 @@ impl Config {
             sandbox_api_key,
             sandbox_image,
             runtime_resume_args,
+            baseline_packages,
+            baseline_skills,
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
@@ -182,6 +201,20 @@ fn require(key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{key} is required and was not set"))
 }
 
+/// Read a comma-separated list, dropping blank entries.
+///
+/// Blank entries are dropped rather than kept as empty strings: a trailing
+/// comma is the most common way to write one of these by hand, and an empty
+/// package name would reach the runtime as an install of nothing.
+fn list_or(key: &str, default: &str) -> Vec<String> {
+    var_or(key, default)
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +241,8 @@ mod tests {
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
+            baseline_packages: vec![],
+            baseline_skills: vec![],
             runtime_resume_args: "resume".into(),
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),

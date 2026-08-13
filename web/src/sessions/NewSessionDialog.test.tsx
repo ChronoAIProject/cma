@@ -23,7 +23,9 @@ describe('the new session dialog', () => {
 
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
-    expect(onStart).toHaveBeenCalledWith('codex', DEFAULT_OPTIONS);
+    // The third argument is the environment bundle; none chosen means the
+    // session carries what the platform mandates and nothing more.
+    expect(onStart).toHaveBeenCalledWith('codex', DEFAULT_OPTIONS, null);
     expect(DEFAULT_OPTIONS.permission).toBe('guarded');
   });
 
@@ -65,12 +67,16 @@ describe('the new session dialog', () => {
     await user.type(screen.getByPlaceholderText(/default for this deployment/i), 'a-model');
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
-    expect(onStart).toHaveBeenCalledWith('codex', {
-      model: 'a-model',
-      reasoning_effort: 'xhigh',
-      permission: 'unrestricted',
-      credential: 'own',
-    });
+    expect(onStart).toHaveBeenCalledWith(
+      'codex',
+      {
+        model: 'a-model',
+        reasoning_effort: 'xhigh',
+        permission: 'unrestricted',
+        credential: 'own',
+      },
+      null,
+    );
   });
 
   it('leaves the model unset when the field is empty', async () => {
