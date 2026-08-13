@@ -97,6 +97,9 @@ impl RecoveryState {
 /// What a caller asks for when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSpec {
+    /// How the agent should behave, chosen at creation and fixed for the
+    /// session's life.
+    pub options: crate::options::AgentOptions,
     /// Which runtime implementation should back the session.
     pub kernel: KernelId,
     /// Terminal geometry to start the runtime at.

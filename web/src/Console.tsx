@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SessionTabs } from './sessions/SessionTabs';
-import type { Session, SessionLifecycle } from './sessions/types';
+import type { Kernel, Session, SessionLifecycle } from './sessions/types';
+import { NewSessionDialog } from './sessions/NewSessionDialog';
+import type { AgentOptions } from './sessions/options';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { createWebSocketDriver } from './terminal/drivers/websocket';
 import { ProfileMenu } from './profile/ProfileMenu';
@@ -50,6 +52,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * session is never torn down underneath someone.
    */
   const [paletteEpoch, setPaletteEpoch] = useState(0);
+  // Creating a session asks first. These choices are fixed for its life, so
+  // there is no changing them afterwards without discarding the conversation.
+  const [choosing, setChoosing] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
@@ -97,19 +102,22 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = useCallback(async () => {
-    setNotice(null);
-    try {
-      // Returns as soon as the session exists, before its runtime does, so the
-      // tab appears immediately and reports its own progress.
-      const session = await createSession('codex', INITIAL_COLS, INITIAL_ROWS);
-      setSessions((prev) => [session, ...prev]);
-      setActiveId(session.id);
-      setOpeningForId((prev) => prev ?? session.id);
-    } catch (cause) {
-      report(cause);
-    }
-  }, [report]);
+  const start = useCallback(
+    async (kernel: Kernel, options: AgentOptions) => {
+      setNotice(null);
+      try {
+        // Returns as soon as the session exists, before its runtime does, so the
+        // tab appears immediately and reports its own progress.
+        const session = await createSession(kernel, INITIAL_COLS, INITIAL_ROWS, options);
+        setSessions((prev) => [session, ...prev]);
+        setActiveId(session.id);
+        setOpeningForId((prev) => prev ?? session.id);
+      } catch (cause) {
+        report(cause);
+      }
+    },
+    [report],
+  );
 
   /*
    * Follow whichever session is still starting. The stream is the only thing
@@ -156,7 +164,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           sessions={sessions}
           activeId={activeId}
           onSelect={setActiveId}
-          onCreate={() => void start()}
+          onCreate={() => {
+            setChoosing(true);
+          }}
         />
         <ProfileMenu
           user={user}
@@ -192,6 +202,17 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           />
         )}
       </main>
+
+      <NewSessionDialog
+        open={choosing}
+        onCancel={() => {
+          setChoosing(false);
+        }}
+        onStart={(kernel, options) => {
+          setChoosing(false);
+          void start(kernel as Kernel, options);
+        }}
+      />
     </div>
   );
 }
