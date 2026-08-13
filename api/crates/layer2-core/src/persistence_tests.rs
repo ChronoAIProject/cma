@@ -12,7 +12,7 @@ use crate::ids::SubjectId;
 use crate::session::SessionStatus;
 use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
-use crate::test_support::{admin, service, spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{admin, await_settled, service, spec, user, FakeAdapter, FakeStore};
 
 #[tokio::test]
 async fn a_session_is_readable_after_the_process_that_created_it_is_gone() {
@@ -21,10 +21,14 @@ async fn a_session_is_readable_after_the_process_that_created_it_is_gone() {
     let store = Arc::new(FakeStore::default());
     let caller = user("alice");
 
-    let created = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc
         .create_session(&caller, spec())
         .await
         .expect("session is created");
+    // Creation returns before the runtime exists, so the session is only
+    // durably Ready once it has finished starting.
+    await_settled(&svc, &caller, &created.id).await;
 
     let restarted = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
     let found = restarted
@@ -195,10 +199,12 @@ async fn the_stored_runtime_reference_is_what_a_later_process_reclaims() {
     // The record is the only route from a restarted process back to a running
     // sandbox, so it must carry the handle from the moment the session exists.
     let store = Arc::new(FakeStore::default());
-    let created = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
-        .create_session(&user("alice"), spec())
-        .await
-        .expect("created");
+    let alice = user("alice");
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    // The handle is recorded as soon as the runtime exists, which is after
+    // creation returns.
+    await_settled(&svc, &alice, &created.id).await;
 
     let record = store
         .get(&created.id)

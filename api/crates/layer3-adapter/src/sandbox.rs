@@ -67,6 +67,10 @@ pub struct Sandbox {
     /// Current lifecycle status.
     #[serde(default)]
     pub status: Option<SandboxStatus>,
+    /// Labels the creator attached, which is how a sandbox is traced back to
+    /// the session that owns it when nothing else references it.
+    #[serde(default)]
+    pub metadata: std::collections::BTreeMap<String, String>,
 }
 
 impl Sandbox {
@@ -134,6 +138,37 @@ impl SandboxClient {
     }
 
     /// Create a sandbox.
+    /// Every sandbox this key can see.
+    ///
+    /// Reconciliation needs the provider's view, because the whole point is to
+    /// find runtimes our own records have lost track of.
+    pub async fn list(&self) -> Result<Vec<Sandbox>, SandboxError> {
+        let url = format!("{}/v1/sandboxes", self.base_url);
+        let response = self
+            .http
+            .get(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(format!("GET {url}: {e}")))?;
+        if !response.status().is_success() {
+            return Err(SandboxError::Rejected {
+                status: response.status().as_u16(),
+                detail: "listing sandboxes".to_string(),
+            });
+        }
+        #[derive(serde::Deserialize)]
+        struct Listing {
+            #[serde(default)]
+            items: Vec<Sandbox>,
+        }
+        let listing: Listing = response
+            .json()
+            .await
+            .map_err(|e| SandboxError::Malformed(format!("sandbox listing not readable: {e}")))?;
+        Ok(listing.items)
+    }
+
     pub async fn create(&self, request: &SandboxRequest) -> Result<Sandbox, SandboxError> {
         let url = format!("{}/v1/sandboxes", self.base_url);
         let resp = self

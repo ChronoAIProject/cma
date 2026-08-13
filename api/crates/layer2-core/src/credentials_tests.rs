@@ -10,7 +10,7 @@ use crate::ids::{KernelId, SubjectId};
 use crate::service::SessionService;
 use crate::session::SessionSpec;
 use crate::terminal::ScreenModel;
-use crate::test_support::{FakeStore, NullScreen};
+use crate::test_support::{await_settled, FakeStore, NullScreen};
 
 /// A runtime that records what it was asked to do, so the service's behaviour
 /// is observable without a real sandbox.
@@ -147,6 +147,9 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
         .await
         .expect("session created");
 
+    // A renewal reaches sessions that are running, and the runtime only starts
+    // after creation returns.
+    await_settled(&svc, &owner, &session.id).await;
     let pushed = svc
         .refresh_subject_credential(&owner.subject, "second-token".into())
         .await;
