@@ -1,0 +1,87 @@
+.tabs {
+  display: flex;
+  flex: 1;
+  gap: var(--space-1);
+  min-width: 0;
+  align-items: stretch;
+}
+
+/*
+ * Web_Style.md: past six tabs the strip scrolls within its own container. It
+ * never wraps and never pushes the profile menu off-screen.
+ */
+.tabs__strip {
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  align-items: center;
+  height: var(--header-height);
+  padding: 0 var(--space-3);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+
+.tab:hover {
+  color: var(--ink-2);
+}
+
+.tab[data-active='true'] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+  box-shadow: var(--glow-rest);
+}
+
+.tab__id {
+  font-family: var(--font-mono);
+  text-transform: none;
+}
+
+.tab__state {
+  color: var(--ink-3);
+}
+
+.tab__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.tone-bg-ok {
+  background: var(--ok);
+  box-shadow: var(--glow-active);
+}
+.tone-bg-warn {
+  background: var(--warn);
+}
+.tone-bg-danger {
+  background: var(--danger);
+}
+.tone-bg-neutral {
+  background: var(--neutral);
+}
+
+.tab--new {
+  flex: none;
+  min-width: 32px;
+  font-size: var(--text-base);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tab {
+    transition:
+      color 150ms ease,
+      border-color 150ms ease;
+  }
+}
