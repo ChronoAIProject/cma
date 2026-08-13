@@ -141,7 +141,11 @@ pub fn router(service: Arc<SessionService>) -> Router {
     Router::new()
         .route("/api/v1/sessions", post(create).get(list))
         .route("/api/v1/sessions/{id}", get(read))
-        .route("/api/v1/sessions/{id}", delete(terminate))
+        // Two distinct verbs: ending a session leaves it listed, removing it
+        // does not. Collapsing them would make "stop this" and "forget this"
+        // the same button.
+        .route("/api/v1/sessions/{id}", delete(remove))
+        .route("/api/v1/sessions/{id}/terminate", post(terminate))
         .route("/api/v1/sessions/{id}/screen", get(screen))
         .route("/api/v1/conformance", get(conformance))
         .route("/api/v1/kernels", get(kernels))
@@ -196,6 +200,17 @@ async fn terminate(
     Path(id): Path<String>,
 ) -> Result<StatusCode, Problem> {
     service.terminate_session(&caller, &SessionId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn remove(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Problem> {
+    // The stored context is removed by the caller that owns object storage;
+    // the core reports what to remove rather than reaching for it itself.
+    let _context_ref = service.delete_session(&caller, &SessionId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

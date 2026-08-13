@@ -19,6 +19,10 @@ data:
   CHRONO_NYXID_CLIENT_ID: "chrono-bot"
   # MongoDB database name. The connection URI is a secret.
   CHRONO_MONGODB_DATABASE: "chrono_bot"
+  # Bucket holding each session's stored agent context, so a reopened session
+  # can be restarted with its transcript loaded into a fresh sandbox. Reached
+  # through the platform storage service, which brokers the credential.
+  CHRONO_CONTEXT_BUCKET: "chrono-platform-chrono-bot"
   # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
   # never leaves the cluster, and the sandbox provider terminates no TLS of its
   # own. This mirrors how the neighbouring control plane reaches it.

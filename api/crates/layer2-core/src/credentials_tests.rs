@@ -9,7 +9,8 @@ use crate::authz::{Authorization, Caller, Capability};
 use crate::ids::{KernelId, SubjectId};
 use crate::service::SessionService;
 use crate::session::SessionSpec;
-use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
+use crate::terminal::ScreenModel;
+use crate::test_support::{FakeStore, NullScreen};
 
 /// A runtime that records what it was asked to do, so the service's behaviour
 /// is observable without a real sandbox.
@@ -64,24 +65,6 @@ impl KernelAdapter for RecordingAdapter {
     }
 }
 
-struct NullScreen(TerminalGeometry);
-
-impl ScreenModel for NullScreen {
-    fn apply(&mut self, _bytes: &[u8]) {}
-    fn resize(&mut self, geometry: TerminalGeometry) {
-        self.0 = geometry;
-    }
-    fn snapshot(&self) -> ScreenSnapshot {
-        ScreenSnapshot {
-            geometry: self.0,
-            rows: Vec::new(),
-        }
-    }
-    fn repaint_bytes(&self) -> Vec<u8> {
-        Vec::new()
-    }
-}
-
 /// A caller holding the everyday capabilities, so these tests exercise the
 /// credential path rather than authorization.
 fn caller(id: &str) -> Caller {
@@ -101,9 +84,13 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
         KernelId::new("recording"),
         Arc::new(RecordingAdapter { sent }),
     );
+    // A real store rather than a stub: these tests care that a credential
+    // reaches the runtime, and that path now runs through persistence.
     SessionService::new(
         adapters,
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
+        Arc::new(FakeStore::default()),
+        None,
     )
 }
 

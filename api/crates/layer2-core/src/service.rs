@@ -17,8 +17,9 @@ use crate::clock::now_rfc3339;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
-use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
-use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
+use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
+use crate::store::{ContextStore, SessionRecord, SessionStore, StoreError};
+use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
 /// dropped from the live fan-out. It can always recover from a fresh snapshot,
@@ -58,24 +59,36 @@ impl Drop for AttachmentHandle {
     }
 }
 
+/// Everything about a session that exists only while its runtime does.
+///
+/// Deliberately not persisted: a screen model, a socket and an attachment lease
+/// describe a live process, and a restarted one has none of them. They are
+/// rebuilt when a client attaches.
 pub(crate) struct SessionEntry {
     pub(crate) session: Session,
     /// Owner-delegated credential last handed to the runtime. Held so a refresh
     /// can be pushed without the caller tracking which sessions exist.
     pub(crate) subject_credential: Option<String>,
-    events: Vec<Event>,
-    screen: Arc<Mutex<Box<dyn ScreenModel>>>,
-    runtime: Option<RuntimeHandle>,
+    pub(crate) events: Vec<Event>,
+    pub(crate) screen: Arc<Mutex<Box<dyn ScreenModel>>>,
+    pub(crate) runtime: Option<RuntimeHandle>,
     pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
-    live: broadcast::Sender<Vec<u8>>,
-    attached: bool,
+    /// Where this session's stored context lives, once any has been captured.
+    pub(crate) context_ref: Option<String>,
+    pub(crate) live: broadcast::Sender<Vec<u8>>,
+    pub(crate) attached: bool,
 }
 
 /// The core service.
 pub struct SessionService {
+    /// Live sessions, keyed by id. Only those with a running runtime appear.
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
-    adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
+    pub(crate) adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
     screen_factory: ScreenFactory,
+    /// The durable record. Source of truth for anything that outlives a process.
+    pub(crate) store: Arc<dyn SessionStore>,
+    /// Where an agent's accumulated context is kept, when a deployment has one.
+    pub(crate) context: Option<Arc<dyn ContextStore>>,
 }
 
 impl SessionService {
@@ -86,12 +99,25 @@ impl SessionService {
     pub fn new(
         adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
         screen_factory: ScreenFactory,
+        store: Arc<dyn SessionStore>,
+        context: Option<Arc<dyn ContextStore>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
             adapters,
             screen_factory,
+            store,
+            context,
         })
+    }
+
+    /// Read a session's durable record.
+    pub(crate) async fn record(&self, id: &SessionId) -> Result<SessionRecord, CoreError> {
+        self.store
+            .get(id)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::SessionNotFound)
     }
 
     /// Identifiers of the runtimes this service can back a session with.
@@ -129,6 +155,7 @@ impl SessionService {
             .await
             .map_err(|e| CoreError::RuntimeUnavailable(e.to_string()))?;
 
+        let handle_id = handle.0.clone();
         let channel = adapter
             .attach_terminal(&handle)
             .await
@@ -159,6 +186,7 @@ impl SessionService {
             input: Some(channel.input.clone()),
             live: live.clone(),
             attached: false,
+            context_ref: None,
         };
         append(&mut entry, EventKind::SessionCreated);
         append(
@@ -169,6 +197,16 @@ impl SessionService {
             },
         );
         let session = entry.session.clone();
+        // Persist before the session is reachable: a record that exists only in
+        // memory is one a restart loses along with its sandbox.
+        let mut record = SessionRecord::new(session.clone());
+        record.runtime_id = Some(handle_id.clone());
+        self.store.upsert(&record).await.map_err(store_failed)?;
+        self.store
+            .append_events(&entry.events)
+            .await
+            .map_err(store_failed)?;
+        entry.events.clear();
         self.entries.write().await.insert(id.clone(), entry);
 
         // The relay runs for the session's life, independent of any client.
@@ -200,28 +238,33 @@ impl SessionService {
 
     /// Read a session, scoped to its owner.
     pub async fn get_session(&self, caller: &Caller, id: &SessionId) -> Result<Session, CoreError> {
-        let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !caller.may_read_owned_by(&entry.session.owner) {
+        let record = self.record(id).await?;
+        if !caller.may_read_owned_by(&record.session.owner) {
             return Err(CoreError::Forbidden);
         }
-        Ok(entry.session.clone())
+        Ok(record.session)
     }
 
     /// List the subject's sessions, newest first.
     pub async fn list_sessions(&self, caller: &Caller) -> Vec<Session> {
         // A privileged reader sees every session; everyone else sees only their
         // own. The filter is here rather than in an interface so no interface
-        // can forget it.
-        let all = caller.authorization.allows(Capability::ReadAllSessions);
-        let entries = self.entries.read().await;
-        let mut out: Vec<_> = entries
-            .values()
-            .filter(|e| all || e.session.is_owned_by(&caller.subject))
-            .map(|e| e.session.clone())
-            .collect();
-        out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        out
+        // can forget it, and it is pushed into the query rather than applied
+        // after so a large deployment does not read every record to show one.
+        let result = if caller.authorization.allows(Capability::ReadAllSessions) {
+            self.store.list_all().await
+        } else {
+            self.store.list_for(&caller.subject).await
+        };
+        match result {
+            Ok(records) => records.into_iter().map(|r| r.session).collect(),
+            Err(e) => {
+                // Listing is a read: report nothing rather than pretend the
+                // caller has no sessions, and make the failure visible.
+                tracing::error!(error = %e, "cannot list sessions");
+                Vec::new()
+            }
+        }
     }
 
     /// Durable events for a session, optionally from a cursor.
@@ -231,18 +274,14 @@ impl SessionService {
         id: &SessionId,
         after: Option<u64>,
     ) -> Result<Vec<Event>, CoreError> {
-        let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !caller.may_read_owned_by(&entry.session.owner) {
+        let record = self.record(id).await?;
+        if !caller.may_read_owned_by(&record.session.owner) {
             return Err(CoreError::Forbidden);
         }
-        let floor = after.unwrap_or(0);
-        Ok(entry
-            .events
-            .iter()
-            .filter(|e| e.seq > floor)
-            .cloned()
-            .collect())
+        self.store
+            .events_since(id, after.unwrap_or(0))
+            .await
+            .map_err(store_failed)
     }
 
     /// Take the exclusive terminal attachment.
@@ -256,6 +295,22 @@ impl SessionService {
         geometry: TerminalGeometry,
     ) -> Result<AttachmentHandle, CoreError> {
         caller.authorization.require(Capability::UseOwnSessions)?;
+        // A session whose process is gone still exists. Reviving it is the
+        // caller's next step; refusing here would make a persisted session
+        // unusable after the restart that persistence exists to survive.
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if !self.entries.read().await.contains_key(id) {
+            return Err(CoreError::RuntimeUnavailable(
+                "session has no live runtime; revive it first".to_string(),
+            ));
+        }
+
         let (screen, live) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
@@ -275,6 +330,7 @@ impl SessionService {
             append(entry, EventKind::TerminalAttached);
             (Arc::clone(&entry.screen), entry.live.clone())
         };
+        self.flush(id).await;
 
         // Subscribe before rendering the repaint: output produced between the
         // two is then buffered rather than lost.
@@ -315,129 +371,41 @@ impl SessionService {
                 tracing::info!(session_id = %id, "terminal detached");
             }
         }
+        drop(entries);
+        self.flush(id).await;
     }
 
-    /// Deliver input to the session's terminal.
-    pub async fn send_input(
-        &self,
-        caller: &Caller,
-        id: &SessionId,
-        bytes: Vec<u8>,
-    ) -> Result<(), CoreError> {
-        self.authorize(caller, id).await?;
-        self.forward_input(id, TerminalInput::Bytes(bytes)).await;
-        Ok(())
-    }
-
-    /// Send an out-of-band signal to the session's runtime.
-    pub async fn send_signal(
-        &self,
-        caller: &Caller,
-        id: &SessionId,
-        signal: String,
-    ) -> Result<(), CoreError> {
-        self.authorize(caller, id).await?;
-        self.forward_input(id, TerminalInput::Signal(signal)).await;
-        Ok(())
-    }
-
-    /// Change the session's terminal geometry.
-    pub async fn resize_terminal(
-        &self,
-        caller: &Caller,
-        id: &SessionId,
-        geometry: TerminalGeometry,
-    ) -> Result<(), CoreError> {
-        let screen = {
+    /// Persist a session's current state and any events buffered against it.
+    ///
+    /// Called after every state change. Failures are logged rather than
+    /// propagated where the caller has already acted: the runtime really did
+    /// change, and losing the record is a storage problem to surface, not a
+    /// reason to tell the caller their action failed.
+    pub(crate) async fn flush(&self, id: &SessionId) {
+        let (record, events) = {
             let mut entries = self.entries.write().await;
-            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(&caller.subject) {
-                return Err(CoreError::Forbidden);
-            }
-            entry.session.geometry = geometry;
-            append(
-                entry,
-                EventKind::TerminalResized {
-                    columns: geometry.columns(),
-                    rows: geometry.rows(),
-                },
-            );
-            Arc::clone(&entry.screen)
+            let Some(entry) = entries.get_mut(id) else {
+                return;
+            };
+            let events = std::mem::take(&mut entry.events);
+            let mut record = SessionRecord::new(entry.session.clone());
+            record.runtime_id = entry.runtime.as_ref().map(|h| h.0.clone());
+            record.context_ref = entry.context_ref.clone();
+            (record, events)
         };
-        screen.lock().await.resize(geometry);
-        self.forward_input(
-            id,
-            TerminalInput::Resize(TermSize {
-                cols: geometry.columns(),
-                rows: geometry.rows(),
-            }),
-        )
-        .await;
-        Ok(())
-    }
-
-    /// Read the current screen without holding a stream.
-    pub async fn screen_snapshot(
-        &self,
-        caller: &Caller,
-        id: &SessionId,
-    ) -> Result<ScreenSnapshot, CoreError> {
-        let screen = {
-            let entries = self.entries.read().await;
-            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-            if !caller.may_read_owned_by(&entry.session.owner) {
-                return Err(CoreError::Forbidden);
-            }
-            Arc::clone(&entry.screen)
-        };
-        let snapshot = screen.lock().await.snapshot();
-        Ok(snapshot)
-    }
-
-    /// End a session and tear its runtime down.
-    pub async fn terminate_session(
-        &self,
-        caller: &Caller,
-        id: &SessionId,
-    ) -> Result<(), CoreError> {
-        caller
-            .authorization
-            .require(Capability::TerminateOwnSession)?;
-        let (adapter, runtime) = {
-            let mut entries = self.entries.write().await;
-            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(&caller.subject) {
-                return Err(CoreError::Forbidden);
-            }
-            entry.session.status = SessionStatus::Terminated;
-            entry.session.stop_reason = Some(StopReason::UserTerminated);
-            entry.session.recovery_state = RecoveryState::Retired;
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Terminated,
-                    stop_reason: Some(StopReason::UserTerminated),
-                },
-            );
-            entry.input = None;
-            (
-                self.adapters.get(&entry.session.kernel).cloned(),
-                entry.runtime.clone(),
-            )
-        };
-
-        if let (Some(adapter), Some(handle)) = (adapter, runtime) {
-            if let Err(e) = adapter.terminate(&handle).await {
-                // The session is already marked terminated; a runtime that
-                // refuses teardown is logged, never silently swallowed.
-                tracing::warn!(session_id = %id, error = %e, "runtime teardown failed");
-            }
+        if let Err(e) = self.store.upsert(&record).await {
+            tracing::error!(session_id = %id, error = %e, "cannot persist session");
         }
-        tracing::info!(session_id = %id, "session terminated");
-        Ok(())
+        if let Err(e) = self.store.append_events(&events).await {
+            tracing::error!(session_id = %id, error = %e, "cannot persist events");
+        }
     }
 
-    async fn authorize(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+    /// Fail unless the caller owns this live session and it is still running.
+    ///
+    /// Scoped to live sessions on purpose: this guards the terminal-driving
+    /// operations, which are meaningless without a runtime to drive.
+    pub(crate) async fn authorize(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
         let entries = self.entries.read().await;
         let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
         if !entry.session.is_owned_by(&caller.subject) {
@@ -449,7 +417,7 @@ impl SessionService {
         Ok(())
     }
 
-    async fn forward_input(&self, id: &SessionId, input: TerminalInput) {
+    pub(crate) async fn forward_input(&self, id: &SessionId, input: TerminalInput) {
         let sender = {
             let entries = self.entries.read().await;
             entries.get(id).and_then(|e| e.input.clone())
@@ -462,8 +430,21 @@ impl SessionService {
     }
 }
 
+/// Render a storage failure as a core error.
+///
+/// Storage being unreachable is reported as the runtime being unavailable
+/// rather than as "not found": a session that exists but cannot be read is a
+/// different situation from one that does not exist, and conflating them would
+/// tell a client their work was gone when it is merely unreachable.
+pub(crate) fn store_failed(e: StoreError) -> CoreError {
+    CoreError::RuntimeUnavailable(format!("session store: {e}"))
+}
+
 /// Append a durable event, allocating the next per-session sequence.
-fn append(entry: &mut SessionEntry, kind: EventKind) {
+///
+/// Buffers on the entry; `flush` is what makes it durable. Split so a caller
+/// holding the entries lock does not perform I/O while holding it.
+pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
     entry.session.last_seq += 1;
     entry.events.push(Event {
         session_id: entry.session.id.clone(),
