@@ -42,6 +42,9 @@ struct SessionDoc {
     /// such field; those load on defaults rather than failing to load at all.
     #[serde(default)]
     options: Option<mongodb::bson::Bson>,
+    /// The environment bundle the session was started with, if any.
+    #[serde(default)]
+    environment_profile: Option<String>,
     runtime_id: Option<String>,
     context_ref: Option<String>,
     /// Runtime version, rotation count and snapshot time.
@@ -74,10 +77,11 @@ pub struct MongoSessionStore {
 
 impl MongoSessionStore {
     /// Connect and ensure the indexes the guarantees depend on exist.
-    pub async fn connect(uri: &str, database: &str) -> Result<Self, StoreError> {
-        let client = Client::with_uri_str(uri)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("connect: {e}")))?;
+    /// Open the store over an existing connection, ensuring its indexes exist.
+    ///
+    /// Takes a client rather than a URI so one connection serves every store
+    /// this deployment keeps in the same database. See `super::connect`.
+    pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let db = client.database(database);
         let store = Self {
             sessions: db.collection(SESSIONS),
@@ -133,6 +137,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
             mongodb::bson::serialize_to_bson(&s.options)
                 .map_err(|e| StoreError::Malformed(e.to_string()))?,
         ),
+        environment_profile: s.environment_profile.as_ref().map(|p| p.0.clone()),
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
         runtime_version: s.runtime_version.clone(),
@@ -178,6 +183,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             runtime_version: d.runtime_version,
             rotations: d.rotations.unwrap_or(0).clamp(0, i64::from(u32::MAX)) as u32,
             rotated_at: d.rotated_at,
+            environment_profile: d.environment_profile.map(layer2_core::EnvironmentProfileId),
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,

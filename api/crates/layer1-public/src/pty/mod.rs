@@ -135,6 +135,11 @@ async fn attach(
 fn error_code(err: &CoreError) -> &'static str {
     match err {
         CoreError::SessionNotFound | CoreError::Forbidden => "session_not_found",
+        // This interface drives an existing session's terminal and never
+        // authors an environment profile, so a profile it cannot see is
+        // reported the same way a session it cannot see is.
+        CoreError::EnvironmentProfileNotFound => "session_not_found",
+        CoreError::InvalidRequest(_) => "invalid_request",
         CoreError::AlreadyAttached => "already_attached",
         CoreError::SessionTerminated => "session_terminated",
         CoreError::InvalidGeometry(_) => "invalid_geometry",

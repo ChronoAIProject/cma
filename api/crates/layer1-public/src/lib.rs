@@ -39,6 +39,8 @@ pub enum Operation {
     ScreenSnapshot,
     /// Read usage for a session.
     GetUsage,
+    /// Author and reuse environment bundles a session can be started with.
+    ManageEnvironmentProfiles,
 }
 
 /// An interface declares which operations it projects, so callers can discover

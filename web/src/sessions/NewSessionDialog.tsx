@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import type { EnvironmentProfile } from '../environment/types';
 import {
   CREDENTIALS,
   DEFAULT_OPTIONS,
@@ -28,12 +29,30 @@ import './NewSessionDialog.css';
 interface NewSessionDialogProps {
   readonly open: boolean;
   readonly onCancel: () => void;
-  readonly onStart: (kernel: string, options: AgentOptions) => void;
+  readonly onStart: (
+    kernel: string,
+    options: AgentOptions,
+    environmentProfile: string | null,
+  ) => void;
+  /**
+   * Environment bundles this person can start a session with.
+   *
+   * Passed in rather than fetched here so the dialog stays a form: it is opened
+   * and closed constantly, and fetching on every open would ask the control
+   * plane the same question each time.
+   */
+  readonly profiles?: readonly EnvironmentProfile[];
 }
 
-export function NewSessionDialog({ open, onCancel, onStart }: NewSessionDialogProps) {
+export function NewSessionDialog({
+  open,
+  onCancel,
+  onStart,
+  profiles = [],
+}: NewSessionDialogProps) {
   const [kernel, setKernel] = useState('codex');
   const [options, setOptions] = useState<AgentOptions>(DEFAULT_OPTIONS);
+  const [profile, setProfile] = useState<string>('');
   const headingId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLSelectElement>(null);
@@ -184,6 +203,34 @@ export function NewSessionDialog({ open, onCancel, onStart }: NewSessionDialogPr
           </span>
         </label>
 
+        {profiles.length > 0 ? (
+          <label className="dialog__field">
+            <span className="dialog__label">Environment</span>
+            <select
+              className="dialog__control"
+              value={profile}
+              onChange={(e) => {
+                setProfile(e.target.value);
+              }}
+            >
+              {/*
+               * "None" is not "bare". What the platform mandates is applied
+               * whichever option is chosen, so this selects what to add rather
+               * than whether to have anything at all.
+               */}
+              <option value="">None beyond the platform defaults</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <span className="dialog__hint">
+              Tools, variables and skills the session starts with.
+            </span>
+          </label>
+        ) : null}
+
         <div className="dialog__actions">
           <button type="button" className="dialog__button" onClick={onCancel}>
             Cancel
@@ -192,7 +239,7 @@ export function NewSessionDialog({ open, onCancel, onStart }: NewSessionDialogPr
             type="button"
             className="dialog__button dialog__button--primary"
             onClick={() => {
-              onStart(kernel, options);
+              onStart(kernel, options, profile === '' ? null : profile);
             }}
           >
             Start session

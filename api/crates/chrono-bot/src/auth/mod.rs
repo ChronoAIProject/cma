@@ -66,7 +66,7 @@ impl SubjectTokens {
 
 /// Provider metadata, as far as this service uses it.
 #[derive(Debug, Clone, Deserialize)]
-struct ProviderMetadata {
+pub(crate) struct ProviderMetadata {
     authorization_endpoint: String,
     token_endpoint: String,
     #[serde(default)]
@@ -116,6 +116,12 @@ pub struct AuthState {
     /// Display details captured at sign-in, so the interface can show a person
     /// rather than an identifier.
     pub profiles: RwLock<HashMap<SubjectId, profile::Profile>>,
+    /// What the provider has said about bearer tokens, briefly.
+    ///
+    /// Separate from `sessions` because the two are different credentials with
+    /// different lifetimes: a cookie is minted here and lasts until sign-out, a
+    /// token is minted elsewhere and stops being valid when its issuer says so.
+    bearer: bearer::BearerCache,
     /// In-flight authorization attempts: state to PKCE verifier.
     ///
     /// The state parameter is what binds a callback to the login that started
@@ -145,6 +151,7 @@ impl AuthState {
             tokens: RwLock::new(HashMap::new()),
             authorizations: RwLock::new(HashMap::new()),
             profiles: RwLock::new(HashMap::new()),
+            bearer: bearer::BearerCache::default(),
             pending: RwLock::new(HashMap::new()),
         })
     }
@@ -172,9 +179,91 @@ impl AuthState {
         match &self.mode {
             AuthMode::Trusted { subject } => Some(SubjectId(subject.clone())),
             AuthMode::Provider { .. } => {
-                let token = session_cookie(headers)?;
-                self.sessions.read().await.get(&token).cloned()
+                if let Some(token) = session_cookie(headers) {
+                    if let Some(subject) = self.sessions.read().await.get(&token).cloned() {
+                        return Some(subject);
+                    }
+                }
+                // A server client has no cookie jar. Its token is checked with
+                // the provider rather than read here, so a token this service
+                // did not issue — and one that has since been withdrawn — is
+                // refused rather than believed.
+                let token = bearer::bearer_token(headers)?;
+                self.subject_for_bearer(&token).await
             }
+        }
+    }
+
+    /// Who a bearer token belongs to, asking the provider when necessary.
+    ///
+    /// The provider is the only thing that can answer this. Decoding the token
+    /// here would accept anything shaped like one, and would keep accepting it
+    /// after it had been revoked.
+    async fn subject_for_bearer(&self, token: &str) -> Option<SubjectId> {
+        if let Some((subject, authorization, profile)) = self.bearer.get(token).await {
+            self.adopt_bearer(&subject, authorization, profile, token)
+                .await;
+            return Some(subject);
+        }
+        let meta = self.metadata().await.ok()?;
+        match crate::auth::flow::resolve_subject(self, &meta, token).await {
+            Ok((subject, permissions, profile)) => {
+                let authorization = crate::permissions::capabilities_from_permissions(&permissions);
+                self.bearer
+                    .remember(
+                        token,
+                        subject.clone(),
+                        authorization.clone(),
+                        profile.clone(),
+                    )
+                    .await;
+                self.adopt_bearer(&subject, authorization, profile, token)
+                    .await;
+                Some(subject)
+            }
+            Err(e) => {
+                // Not an error worth a stack trace: an expired or withdrawn
+                // token is an ordinary thing for a client to present.
+                tracing::debug!(error = %e, "a bearer token was not accepted");
+                None
+            }
+        }
+    }
+
+    /// Make a bearer caller indistinguishable from a signed-in one downstream.
+    ///
+    /// Everything past the middleware reads capabilities, a profile and a
+    /// delegated credential from the same places whichever way the caller
+    /// arrived. Keeping the token as the delegated credential is what lets a
+    /// session started by a server act on that caller's behalf, exactly as one
+    /// started from a browser does.
+    async fn adopt_bearer(
+        &self,
+        subject: &SubjectId,
+        authorization: Authorization,
+        profile: crate::auth::profile::Profile,
+        token: &str,
+    ) {
+        self.authorizations
+            .write()
+            .await
+            .insert(subject.clone(), authorization);
+        self.profiles.write().await.insert(subject.clone(), profile);
+        let mut tokens = self.tokens.write().await;
+        let entry = tokens
+            .entry(subject.clone())
+            .or_insert_with(|| SubjectTokens {
+                access_token: token.to_string(),
+                refresh_token: None,
+                // Held for as long as this service will reuse the answer about it.
+                // The provider decides when the token really expires; this only
+                // says when to stop assuming it has not been withdrawn.
+                expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
+            });
+        // Only when this service is not already holding a better one: a token
+        // it minted itself can be renewed, and a client's cannot.
+        if entry.refresh_token.is_none() {
+            entry.access_token = token.to_string();
         }
     }
 
@@ -342,6 +431,7 @@ pub async fn attach_subject(
     next.run(req).await
 }
 
+pub mod bearer;
 pub mod capabilities;
 pub mod flow;
 pub mod refresh;
