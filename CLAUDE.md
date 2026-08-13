@@ -53,10 +53,25 @@ infra/api/deployment.yaml
 infra/api/configmap.yaml
 infra/api/secret.yaml
 infra/api/service.yaml
+infra/api/serviceaccount.yaml
+infra/api/secretproviderclass.yaml
+infra/api/httproute.yaml
 infra/runtime/Dockerfile
 ```
 
 No additional manifests, no Helm charts, no kustomize overlays.
+
+The last three exist because the control plane depends on them by name. It
+runs as a named service account, receives the sandbox key through a named
+secret-provider class, and answers on named hostnames. Leaving those applied by
+hand meant the deployment had hard dependencies with no source of truth, which
+is the divergence §4 forbids — a manifest referencing a service account that no
+file declares cannot be validated, and an address the code is configured with
+could drift from the route actually serving it.
+
+Their cloud-side halves are still not here and cannot be: the IAM grant letting
+the service account read the secret, and the gateway the routes attach to, are
+infrastructure this repository consumes rather than owns.
 
 `infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the bot pod is scheduled by the sandbox provider, not by this repository. chrono-bot hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
