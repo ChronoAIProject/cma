@@ -15,10 +15,14 @@
 //! treating that as a transcript would be a success status carrying the wrong
 //! bytes — the one failure mode here that would not announce itself.
 
+use std::sync::Arc;
+
 use layer2_core::{
     store::{ContextStore, StoreError},
     SessionId,
 };
+
+use crate::store::token::TokenSource;
 
 /// Content type recorded for a stored transcript.
 ///
@@ -32,12 +36,15 @@ pub struct ChronoStorageContextStore {
     base_url: String,
     /// Bucket that holds this deployment's session context.
     bucket: String,
-    /// Credential presented to the identity platform.
+    /// Supplies the credential presented to the identity platform.
     ///
-    /// Belongs to the platform's trust domain and nothing else. It is passed in
-    /// rather than derived so that a credential issued for another service can
-    /// never be spent here by accident.
-    credential: String,
+    /// A source rather than a value: this service's identity is a machine one,
+    /// and its tokens expire, so holding a string read once at startup would
+    /// work until the first expiry and then fail for as long as the process
+    /// lived. Injected so the store stays ignorant of how the credential is
+    /// obtained, and so a credential issued for another service cannot be
+    /// spent here by accident.
+    tokens: Arc<dyn TokenSource>,
     http: reqwest::Client,
 }
 
@@ -46,12 +53,12 @@ impl ChronoStorageContextStore {
     pub fn new(
         base_url: impl Into<String>,
         bucket: impl Into<String>,
-        credential: impl Into<String>,
+        tokens: Arc<dyn TokenSource>,
     ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             bucket: bucket.into(),
-            credential: credential.into(),
+            tokens,
             http: reqwest::Client::builder()
                 // Context uploads are large and grow with the conversation.
                 .timeout(std::time::Duration::from_secs(120))
@@ -91,7 +98,7 @@ impl ContextStore for ChronoStorageContextStore {
             .http
             .post(&url)
             .query(&[("key", key.as_str()), ("contentType", CONTENT_TYPE)])
-            .bearer_auth(&self.credential)
+            .bearer_auth(self.tokens.token().await?)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(bytes)
             .send()
@@ -113,7 +120,7 @@ impl ContextStore for ChronoStorageContextStore {
             .http
             .get(&url)
             .query(&[("key", reference)])
-            .bearer_auth(&self.credential)
+            .bearer_auth(self.tokens.token().await?)
             .send()
             .await
             .map_err(|e| StoreError::Unavailable(format!("GET {url}: {e}")))?;
@@ -141,7 +148,7 @@ impl ContextStore for ChronoStorageContextStore {
             .http
             .delete(&url)
             .query(&[("key", reference)])
-            .bearer_auth(&self.credential)
+            .bearer_auth(self.tokens.token().await?)
             .send()
             .await
             .map_err(|e| StoreError::Unavailable(format!("DELETE {url}: {e}")))?;
@@ -160,7 +167,19 @@ mod tests {
     use super::*;
 
     fn store() -> ChronoStorageContextStore {
-        ChronoStorageContextStore::new("http://platform/api/v1/proxy/s/storage/", "bkt", "tok")
+        ChronoStorageContextStore::new(
+            "http://platform/api/v1/proxy/s/storage/",
+            "bkt",
+            Arc::new(crate::store::token::StaticToken("tok".into())),
+        )
+    }
+
+    fn unreachable_store() -> ChronoStorageContextStore {
+        ChronoStorageContextStore::new(
+            "http://127.0.0.1:1",
+            "b",
+            Arc::new(crate::store::token::StaticToken("t".into())),
+        )
     }
 
     #[test]
@@ -209,7 +228,7 @@ mod tests {
     async fn an_unreachable_store_reports_unavailable_rather_than_losing_data() {
         // Port 1 is reserved and never listening, so this exercises the failure
         // path deterministically.
-        let s = ChronoStorageContextStore::new("http://127.0.0.1:1", "b", "t");
+        let s = unreachable_store();
         let err = s
             .put(&SessionId("sesn_1".into()), b"x".to_vec())
             .await
@@ -221,13 +240,13 @@ mod tests {
     async fn an_unreachable_store_fails_a_read_rather_than_reporting_no_context() {
         // Reporting None here would tell a reviving session it had no history
         // when it simply could not be reached.
-        let s = ChronoStorageContextStore::new("http://127.0.0.1:1", "b", "t");
+        let s = unreachable_store();
         assert!(s.get("sessions/a/context.jsonl").await.is_err());
     }
 
     #[tokio::test]
     async fn deleting_against_an_unreachable_store_is_reported() {
-        let s = ChronoStorageContextStore::new("http://127.0.0.1:1", "b", "t");
+        let s = unreachable_store();
         assert!(s.delete("sessions/gone/context.jsonl").await.is_err());
     }
 }
