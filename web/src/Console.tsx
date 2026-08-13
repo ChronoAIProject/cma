@@ -10,8 +10,11 @@ import type { Stage } from './sessions/progress';
 import { SessionActions } from './sessions/SessionActions';
 import type { AgentOptions } from './sessions/options';
 import { TerminalSurface } from './terminal/TerminalSurface';
-import { createWebSocketDriver } from './terminal/drivers/websocket';
-import { createTranscriptDriver } from './terminal/drivers/transcript';
+import { useSessionDrivers } from './sessions/drivers';
+import { SessionCanvas } from './canvas/SessionCanvas';
+import { ViewModeToggle } from './view/ViewModeToggle';
+import { loadViewMode, saveViewMode } from './view/mode';
+import type { ViewMode } from './view/mode';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
@@ -23,7 +26,6 @@ import {
   listSessions,
   reviveSession,
   stopSession,
-  terminalUrl,
 } from './api/client';
 import { abilitiesFor, listable } from './sessions/availability';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
@@ -38,8 +40,13 @@ import './Console.css';
 /**
  * The authenticated surface. Same page, now driven live.
  *
- * Chrome is deliberately limited to the tab strip and the profile menu; the
- * product is one page and this must not grow navigation.
+ * Chrome is deliberately limited to the session rail, the view-mode toggle and
+ * the profile menu; the product is one page and this must not grow navigation.
+ *
+ * The two view modes are two arrangements of one state. `activeId` means the
+ * session the keyboard is talking to in both of them — in tabs mode that is the
+ * one visible terminal, on the canvas it is the focused node — so switching
+ * arrangement never asks anyone where they were.
  */
 
 interface ConsoleProps {
@@ -109,8 +116,25 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // and the panel is the only place that says.
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<ViewMode>(() => loadViewMode());
+  /*
+   * Most recently selected first. The canvas spends its attachment budget from
+   * this, so it is kept here rather than there: every route that changes the
+   * selection goes through this component, including the rail, and a history
+   * the canvas kept for itself would forget everything on a switch to tabs and
+   * back.
+   */
+  const [focusHistory, setFocusHistory] = useState<readonly string[]>([]);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
+
+  /** Select a session, in whichever arrangement is showing. */
+  const select = useCallback((id: string) => {
+    setActiveId(id);
+    setFocusHistory((prev) =>
+      prev[0] === id ? prev : [id, ...prev.filter((seen) => seen !== id)],
+    );
+  }, []);
 
   const report = useCallback((cause: unknown) => {
     setNotice(cause instanceof ApiError ? cause.message : `something went wrong: ${String(cause)}`);
@@ -137,7 +161,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         }
         setSessions(existing);
         const live = existing.find((s) => s.lifecycle !== 'terminated');
-        setActiveId(live?.id ?? null);
+        if (live !== undefined) {
+          select(live.id);
+        }
       } catch (cause) {
         if (!cancelled) {
           report(cause);
@@ -169,18 +195,22 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           environmentProfile,
         );
         setSessions((prev) => [session, ...prev]);
-        setActiveId(session.id);
+        select(session.id);
         setOpeningForId((prev) => prev ?? session.id);
       } catch (cause) {
         report(cause);
       }
     },
-    [report],
+    [report, select],
   );
 
   /** End the open session, leaving it readable. */
   const endSession = useCallback(
     async (id: string) => {
+      // Cleared on the way in, as every action does, so the line above the
+      // surface describes the attempt being watched rather than an older
+      // failure sitting over a console that has since recovered.
+      setNotice(null);
       setActing(true);
       try {
         // Stop rather than terminate: ending a session releases what it is
@@ -200,6 +230,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   /** Give a stopped session a sandbox again, and follow it back up. */
   const reviveSessionById = useCallback(
     async (id: string) => {
+      setNotice(null);
       setActing(true);
       try {
         const revived = await reviveSession(id);
@@ -218,21 +249,38 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   /** Remove the session and its history. */
   const removeSession = useCallback(
     async (id: string) => {
+      setNotice(null);
       setActing(true);
       try {
         await deleteSession(id);
-        setSessions((prev) => {
-          const remaining = prev.filter((s) => s.id !== id);
-          setActiveId((current) => (current === id ? (remaining[0]?.id ?? null) : current));
-          return remaining;
-        });
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        // Out of the history as well as out of the list: a deleted id left
+        // there is a slot of the canvas's attachment budget spent remembering
+        // a session nobody can open.
+        setFocusHistory((prev) => prev.filter((seen) => seen !== id));
+        if (activeId === id) {
+          /*
+           * The successor is *selected*, not merely made active. `activeId` is
+           * not the whole selection — the canvas spends its attachment budget
+           * from `focusHistory` — so a session promoted straight into
+           * `activeId` would be the focused node while sitting at the back of
+           * that list, and with a full history it is evicted at once. That is
+           * the one node §15 promises is never detached.
+           */
+          const successor = sessions.find((s) => s.id !== id);
+          if (successor === undefined) {
+            setActiveId(null);
+          } else {
+            select(successor.id);
+          }
+        }
       } catch (cause) {
         report(cause);
       } finally {
         setActing(false);
       }
     },
-    [report],
+    [activeId, report, select, sessions],
   );
 
   /*
@@ -271,39 +319,54 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, [active?.id, active?.lifecycle, applyLifecycle]);
 
   /*
-   * Built only once a runtime exists. Attaching earlier would open a socket
-   * against a session with nothing behind it yet.
+   * One driver per session, whichever arrangement is showing. Held for every
+   * session rather than only the open one because the canvas renders them all —
+   * and building a driver costs nothing until a surface attaches it, so the
+   * sessions nobody is looking at open no connections.
+   *
+   * Built from every session rather than only the listed ones. A session that
+   * ended on its own leaves the list, but whoever had it open is still owed the
+   * last thing it said.
    */
-  // Whether this session has a runtime to attach to. Hoisted out of the memo
-  // so the dependency is a plain value the linter can reason about.
-  // One rule for whether a session can be typed into, shared with the buttons
-  // that act on it. A terminal that accepts keystrokes the control plane will
-  // refuse is worse than one that plainly says it is not accepting them.
-  const attachable = active !== null && abilitiesFor(active).interactive;
+  const opening = useMemo(
+    () =>
+      openingTurn === null || openingForId === null
+        ? null
+        : { text: openingTurn, sessionId: openingForId },
+    [openingTurn, openingForId],
+  );
+  const { nodes, reconnect } = useSessionDrivers(sessions, opening);
+  const driver = nodes.find((node) => node.session.id === activeId)?.driver ?? null;
 
-  const driver = useMemo(() => {
-    if (active === null) {
-      return null;
-    }
-    if (!attachable) {
-      // No sandbox to attach to, but a history to read. Someone who stopped a
-      // session did not ask to lose sight of it, and someone whose session
-      // failed usually wants to read the last thing it said.
-      const can = abilitiesFor(active);
-      return can.canRevive || active.lifecycle === 'terminated'
-        ? createTranscriptDriver(active.id, can.reason ?? '')
-        : null;
-    }
-    const turn = openingTurn !== null && active.id === openingForId ? openingTurn : undefined;
-    return createWebSocketDriver({ url: terminalUrl(active.id), openingTurn: turn });
-    // Rebuilt per session, not per render: an unrelated update must not tear
-    // down a live terminal.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, active?.lifecycle, attachable]);
+  // The canvas shows exactly what the rail lists, so one arrangement never
+  // holds a session the other has let go of.
+  const listed = useMemo(() => listable(sessions), [sessions]);
+  const canvasNodes = useMemo(
+    () => nodes.filter((node) => abilitiesFor(node.session).listed),
+    [nodes],
+  );
+
+  const changeMode = useCallback((next: ViewMode) => {
+    setMode(next);
+    saveViewMode(next);
+  }, []);
 
   return (
     <div className="console">
       <TopBar>
+        {/*
+         * A display preference rather than navigation: it changes how the
+         * sessions someone already has are arranged, and adds nothing to the
+         * console's chrome. It sits at the trailing edge with the account
+         * control because it belongs to the whole console rather than to any
+         * one column.
+         *
+         * It does not stop at the browser, though. A terminal declares its own
+         * measurements to the runtime drawing into it, so putting every
+         * attached session in a 420×280 node resizes every one of them to
+         * roughly 47 columns. §15 records why that is right and what it costs.
+         */}
+        <ViewModeToggle mode={mode} onChange={changeMode} />
         <ProfileMenu
           user={user}
           onSignOut={onSignOut}
@@ -329,10 +392,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
       <div className="console__body">
         <SessionRail
-          sessions={listable(sessions)}
+          sessions={listed}
           activeId={activeId}
           order={order}
-          onSelect={setActiveId}
+          onSelect={select}
           onCreate={() => {
             setChoosing(true);
           }}
@@ -340,12 +403,36 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         />
 
         <main className="console__surface">
+          {/*
+           * Above the surface, never in place of it. A failure belongs to one
+           * request about one session, and the surface below may hold a dozen
+           * live terminals: rendering the sentence instead of it unmounted
+           * every one of them, so a stop that came back 409 cost eleven other
+           * sessions their connection and their scrollback.
+           */}
           {notice !== null ? (
-            <p className="console__empty" role="alert">
+            <p className="console__notice" role="alert">
               {notice}
             </p>
-          ) : loading ? (
+          ) : null}
+
+          {loading ? (
             <p className="console__empty">Loading your sessions…</p>
+          ) : mode === 'canvas' && canvasNodes.length > 0 ? (
+            <SessionCanvas
+              /*
+               * Remounted when the palette changes, for the same reason the
+               * single terminal is: xterm reads its theme once, at
+               * construction. Doing it on an explicit choice rather than
+               * continuously is what keeps a live session from being torn down
+               * underneath somebody.
+               */
+              key={`canvas:${String(paletteEpoch)}`}
+              nodes={canvasNodes}
+              focusedId={activeId}
+              focusHistory={focusHistory}
+              onFocus={select}
+            />
           ) : active === null ? (
             <p className="console__empty">No session open. Start one from the left.</p>
           ) : active.lifecycle === 'provisioning' ? (
@@ -365,6 +452,13 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               key={`${active.id}:${String(paletteEpoch)}`}
               driver={driver}
               label={`Session ${active.id} on ${active.kernel}`}
+              /*
+               * §14: whether a terminal takes typing is the session's state
+               * saying so, never the fact that it is the one on screen. The
+               * driver for a stopped session drops input too — this is the
+               * layer that stops xterm raising the event at all.
+               */
+              interactive={abilitiesFor(active).interactive}
             />
           )}
         </main>
@@ -382,10 +476,19 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 session={active}
                 busy={acting}
                 onReconnect={() => {
-                  // Rebuilding the driver reattaches, which asks the control
-                  // plane to take the sandbox back under management.
+                  /*
+                   * A new driver for this session and no other. The surface
+                   * holding the old one releases its transport and the new one
+                   * dials again, which asks the control plane to take the
+                   * sandbox back under management.
+                   *
+                   * Scoped deliberately: this used to bump `paletteEpoch`,
+                   * which is also the canvas's key, so one session's Reconnect
+                   * rebuilt every node on the canvas — every scrollback
+                   * cleared, every socket redialled.
+                   */
                   setNotice(null);
-                  setPaletteEpoch((n) => n + 1);
+                  reconnect(active.id);
                 }}
                 onRevive={() => void reviveSessionById(active.id)}
                 onStop={() => void endSession(active.id)}

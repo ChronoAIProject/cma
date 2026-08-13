@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalChannel,
+    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TermSize,
+    TerminalChannel,
 };
 use tokio::sync::{mpsc, Mutex};
 
@@ -17,7 +18,7 @@ use crate::authz::{Authorization, Caller, Capability};
 use crate::environment_service::EnvironmentProfileService;
 use crate::event::Event;
 use crate::ids::{KernelId, SessionId, SubjectId};
-use crate::service::{ScreenFactory, SessionService};
+use crate::service::{Deployment, ScreenFactory, SessionService};
 use crate::session::SessionSpec;
 use crate::store::{SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
@@ -139,6 +140,11 @@ pub(crate) struct FakeAdapter {
     /// When set, enumeration fails. Models a provider that cannot be asked,
     /// which must never be read as a provider running nothing.
     pub(crate) refuse_list: bool,
+    /// The identity this provider reports on everything it is running.
+    ///
+    /// Set to model a provider shared with another control plane, whose
+    /// runtimes must never be reclaimed by this one.
+    pub(crate) created_by: Option<String>,
     /// The last thing this adapter was asked to provision.
     ///
     /// What the core asked for is the only place the environment a session was
@@ -257,7 +263,7 @@ impl KernelAdapter for FakeAdapter {
         Ok(self.conversations.lock().await.get(&handle.0).cloned())
     }
 
-    async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
+    async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         if self.refuse_list {
             return Err(AdapterError::Unsupported("cannot enumerate".into()));
         }
@@ -266,7 +272,11 @@ impl KernelAdapter for FakeAdapter {
             .lock()
             .await
             .iter()
-            .map(|(h, s)| (RuntimeHandle(h.clone()), s.clone()))
+            .map(|(h, s)| RuntimeListing {
+                handle: RuntimeHandle(h.clone()),
+                session: s.clone(),
+                created_by: self.created_by.clone(),
+            })
             .collect())
     }
 }
@@ -304,8 +314,8 @@ pub(crate) fn service_with_context(
         store,
         Some(context),
         None,
-        None,
         no_environments(),
+        owned(),
     );
     service
         .retry_backoff_ms
@@ -331,8 +341,11 @@ pub(crate) fn service_on_version(
         store,
         None,
         None,
-        Some(version.to_string()),
         no_environments(),
+        Deployment {
+            runtime_version: Some(version.to_string()),
+            ..owned()
+        },
     );
     service
         .retry_backoff_ms
@@ -355,8 +368,8 @@ pub(crate) fn service_with_credentials(
         store,
         None,
         Some(Arc::new(FixedCredential(credential.to_string()))),
-        None,
         no_environments(),
+        owned(),
     );
     service
         .retry_backoff_ms
@@ -380,6 +393,38 @@ pub(crate) async fn credential_on(svc: &Arc<SessionService>, id: &SessionId) -> 
         .and_then(|e| e.subject_credential.clone())
 }
 
+/// A service identifying itself as a particular deployment.
+pub(crate) fn service_as(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    deployment: Deployment,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        None,
+        None,
+        no_environments(),
+        deployment,
+    );
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
+/// A deployment that owns its provider, which is what most tests are about.
+pub(crate) fn owned() -> Deployment {
+    Deployment {
+        adopts_untagged: true,
+        ..Deployment::default()
+    }
+}
+
 pub(crate) fn kernel() -> KernelId {
     KernelId::new("fake")
 }
@@ -398,8 +443,8 @@ pub(crate) fn service(store: Arc<FakeStore>, adapter: Arc<FakeAdapter>) -> Arc<S
         store,
         None,
         None,
-        None,
         no_environments(),
+        owned(),
     );
     // Retries are exercised here, not waited out: the production delay exists
     // for a provider under load, which no test is.
@@ -418,7 +463,7 @@ pub(crate) fn service_with_environments(
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    SessionService::new(adapters, factory, store, None, None, None, profiles)
+    SessionService::new(adapters, factory, store, None, None, profiles, owned())
 }
 
 /// A profile service with nothing in it, for tests that do not care.

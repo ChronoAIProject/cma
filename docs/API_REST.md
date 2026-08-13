@@ -10,6 +10,27 @@ See [API_Overview.md](./API_Overview.md) for the core operation set, session lif
 
 ## 1. Conventions
 
+### Authentication
+
+Two credentials are accepted, because there are two kinds of client.
+
+A **browser** signs in through the identity provider and is given a session cookie. Send it with every request (`credentials: 'include'` from `fetch`).
+
+A **server** presents a bearer token issued by the identity provider:
+
+```http
+Authorization: Bearer <access token>
+```
+
+This is the form chrono-bot's own clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
+
+The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so revocation takes effect within that window rather than immediately.
+
+Capabilities are the same either way: they come from the subject's roles as the provider reports them, so a client is never more privileged for having arrived over one route than the other.
+
+A request with neither credential is `401`. A request whose credential is valid but insufficient is `403`.
+
+
 | Concern | Rule |
 |---|---|
 | Base path | `/api/v1` |

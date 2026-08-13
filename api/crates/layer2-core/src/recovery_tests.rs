@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use crate::options::AgentOptions;
+use crate::service::Deployment;
 use crate::session::{SessionStatus, StopReason};
 use crate::store::SessionStore;
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
@@ -150,6 +151,102 @@ async fn recovery_keeps_the_session_the_owner_configured() {
         "the options the owner chose must outlive the sandbox they were chosen for"
     );
     assert_eq!(record.session.id, created.id, "and so must the identity");
+}
+
+#[tokio::test]
+async fn a_runtime_another_control_plane_created_is_left_alone() {
+    // A sandbox provider is shared: one key sees everything provisioned against
+    // it. A second control plane — staging, mid-rollout, or one being verified
+    // against production infrastructure — would otherwise read every session it
+    // has never heard of as an orphan and tear it down on its first sweep.
+    let store = Arc::new(FakeStore::default());
+    let theirs = Arc::new(FakeAdapter {
+        created_by: Some("some-other-control-plane".to_string()),
+        ..FakeAdapter::default()
+    });
+    theirs
+        .running
+        .lock()
+        .await
+        .insert("their-runtime".to_string(), Some("sesn_theirs".to_string()));
+
+    let ours = crate::test_support::service_as(
+        Arc::clone(&store),
+        Arc::clone(&theirs),
+        Deployment {
+            identity: Some("ours".to_string()),
+            adopts_untagged: true,
+            ..Deployment::default()
+        },
+    );
+    let recovered = ours.reconcile().await;
+
+    assert_eq!(
+        recovered.orphaned_runtimes, 0,
+        "a runtime belonging to another control plane must never be reclaimed"
+    );
+    assert!(
+        theirs.terminated.lock().await.is_empty(),
+        "and must certainly not be torn down"
+    );
+}
+
+#[tokio::test]
+async fn a_secondary_control_plane_leaves_unnamed_runtimes_alone() {
+    // The runtimes that predate deployment names are the first deployment's.
+    // A second one sharing the provider has no way to tell whether they should
+    // exist, so it must not decide.
+    let store = Arc::new(FakeStore::default());
+    let provider = Arc::new(FakeAdapter::default());
+    provider
+        .running
+        .lock()
+        .await
+        .insert("older-runtime".to_string(), Some("sesn_older".to_string()));
+
+    let secondary = crate::test_support::service_as(
+        Arc::clone(&store),
+        Arc::clone(&provider),
+        Deployment {
+            identity: Some("verification".to_string()),
+            adopts_untagged: false,
+            ..Deployment::default()
+        },
+    );
+    let recovered = secondary.reconcile().await;
+
+    assert_eq!(recovered.orphaned_runtimes, 0);
+    assert!(provider.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn the_deployment_that_owns_the_provider_still_reclaims_orphans() {
+    // The other half of the rule: scoping reclamation must not stop the primary
+    // deployment cleaning up after itself, or a sandbox created moments before
+    // a crash would never be released.
+    let store = Arc::new(FakeStore::default());
+    let provider = Arc::new(FakeAdapter::default());
+    provider
+        .running
+        .lock()
+        .await
+        .insert("stray".to_string(), Some("sesn_nobody".to_string()));
+
+    let primary = crate::test_support::service_as(
+        Arc::clone(&store),
+        Arc::clone(&provider),
+        Deployment {
+            identity: Some("ours".to_string()),
+            adopts_untagged: true,
+            ..Deployment::default()
+        },
+    );
+    let recovered = primary.reconcile().await;
+
+    assert_eq!(
+        recovered.orphaned_runtimes, 1,
+        "a runtime no session refers to is still reclaimed"
+    );
 }
 
 #[tokio::test]

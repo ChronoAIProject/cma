@@ -21,6 +21,26 @@ pub struct TermSize {
     pub rows: u16,
 }
 
+/// One runtime the provider is running, as it describes it.
+///
+/// Carries who created it as well as what it is for. A provider is shared: one
+/// key can see everything provisioned against it, including runtimes belonging
+/// to a different control plane entirely. Without that distinction a second
+/// control plane — a staging one, one mid-rollout, one being verified — reads
+/// every session it has never heard of as an orphan and tears it down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeListing {
+    /// How to address this runtime.
+    pub handle: RuntimeHandle,
+    /// The session it was provisioned for, when it says.
+    pub session: Option<String>,
+    /// The control plane that created it, when it says.
+    ///
+    /// `None` means it predates this being recorded, which is a different
+    /// thing from belonging to somebody else and is treated differently.
+    pub created_by: Option<String>,
+}
+
 /// What the runtime should already have when the agent starts.
 ///
 /// The caller states intent; how it is applied — environment entries, an
@@ -89,6 +109,11 @@ pub struct RuntimeSpec {
     /// Passed through the control plane rather than fetched by the runtime, so
     /// the sandbox needs no storage credential of its own.
     pub restore_from: Option<Vec<u8>>,
+    /// Identity of the control plane asking, recorded on the runtime.
+    ///
+    /// So that a provider shared between control planes can be told apart, and
+    /// no control plane reclaims a runtime it did not create.
+    pub created_by: Option<String>,
     /// What the runtime should already carry when the agent starts.
     pub environment: RuntimeEnvironment,
 }
@@ -230,7 +255,7 @@ pub trait KernelAdapter: Send + Sync {
     /// nothing is running, and a caller acting on that would tear down or
     /// replace every live session behind an adapter whose only fault is not
     /// implementing this.
-    async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
+    async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         Err(AdapterError::Unsupported(
             "this runtime cannot enumerate what it is running".to_string(),
         ))
