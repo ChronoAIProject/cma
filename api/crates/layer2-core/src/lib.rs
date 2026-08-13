@@ -11,6 +11,7 @@
 pub mod authz;
 mod clock;
 mod credentials;
+pub mod directory;
 pub mod environment;
 pub mod environment_service;
 pub mod error;
@@ -59,6 +60,7 @@ mod transcript;
 mod transcript_tests;
 
 pub use authz::{Authorization, Caller, Capability};
+pub use directory::{RegisteredUser, UserDirectory};
 pub use environment::{
     Baseline, CatalogError, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
     EnvironmentVariable, ResolvedEnvironment, SkillCatalog, SkillId, SoftwarePackage,
@@ -74,6 +76,6 @@ pub use service::{AttachmentHandle, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{
     ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord, SessionStore,
-    StoreError,
+    StoreError, UserDirectoryStore,
 };
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
