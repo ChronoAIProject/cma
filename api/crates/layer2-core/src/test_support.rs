@@ -114,6 +114,12 @@ impl SessionStore for FakeStore {
 #[derive(Default)]
 pub(crate) struct FakeAdapter {
     pub(crate) terminated: Mutex<Vec<String>>,
+    /// When set, provisioning fails. Models a provider that cannot give us a
+    /// runtime at all.
+    pub(crate) refuse_provision: bool,
+    /// When set, provisioning succeeds and attaching does not. This is the
+    /// case that leaks: a runtime exists that nothing has a handle to yet.
+    pub(crate) refuse_attach: bool,
     /// Kept alive so the relay's output channel does not close immediately,
     /// which would make a live session look dead.
     pub(crate) senders: Mutex<Vec<mpsc::Sender<Vec<u8>>>>,
@@ -126,6 +132,9 @@ impl KernelAdapter for FakeAdapter {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
+        if self.refuse_provision {
+            return Err(AdapterError::Unavailable("no capacity".into()));
+        }
         Ok(RuntimeHandle(format!("runtime-for-{}", spec.session_id)))
     }
 
@@ -133,6 +142,9 @@ impl KernelAdapter for FakeAdapter {
         &self,
         _handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
+        if self.refuse_attach {
+            return Err(AdapterError::Unavailable("terminal not listening".into()));
+        }
         let (out_tx, out_rx) = mpsc::channel(8);
         let (in_tx, _in_rx) = mpsc::channel(8);
         self.senders.lock().await.push(out_tx);
@@ -203,6 +215,28 @@ pub(crate) fn admin() -> Caller {
         SubjectId("admin".into()),
         Authorization::from_capabilities([Capability::ReadAllSessions]),
     )
+}
+
+/// Wait until a session has finished starting, whichever way it went.
+///
+/// Creating a session now returns before its runtime exists, so a test that
+/// asserts on a running runtime has to wait for one. Polls the store rather
+/// than sleeping a fixed time, so it is neither flaky nor slower than the
+/// thing it waits for.
+pub(crate) async fn await_settled(
+    svc: &Arc<SessionService>,
+    caller: &Caller,
+    id: &crate::ids::SessionId,
+) -> crate::session::Session {
+    for _ in 0..400 {
+        if let Ok(s) = svc.get_session(caller, id).await {
+            if s.status != crate::session::SessionStatus::Provisioning {
+                return s;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    panic!("session never left provisioning");
 }
 
 pub(crate) fn spec() -> SessionSpec {

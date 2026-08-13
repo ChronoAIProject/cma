@@ -11,7 +11,7 @@ use crate::ids::SessionId;
 use crate::session::SessionStatus;
 use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
-use crate::test_support::{service, spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
 
 #[tokio::test]
 async fn a_terminated_session_remains_listed_until_it_is_deleted() {
@@ -48,6 +48,8 @@ async fn deleting_a_running_session_tears_its_runtime_down_first() {
     let caller = user("alice");
     let svc = service(Arc::clone(&store), Arc::clone(&adapter));
     let created = svc.create_session(&caller, spec()).await.expect("created");
+    // Deleting must stop a *running* runtime, so wait until there is one.
+    await_settled(&svc, &caller, &created.id).await;
 
     svc.delete_session(&caller, &created.id)
         .await
@@ -151,10 +153,12 @@ async fn a_session_can_be_terminated_after_a_restart() {
     // reclaim it — and the user's terminate button is the only reaper there is.
     let store = Arc::new(FakeStore::default());
     let caller = user("alice");
-    let created = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
+    let first = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = first
         .create_session(&caller, spec())
         .await
         .expect("session is created");
+    await_settled(&first, &caller, &created.id).await;
 
     let adapter = Arc::new(FakeAdapter::default());
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SessionTabs } from './sessions/SessionTabs';
-import type { Session } from './sessions/types';
+import type { Session, SessionLifecycle } from './sessions/types';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { createWebSocketDriver } from './terminal/drivers/websocket';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
-import { ApiError, createSession, listSessions, terminalUrl } from './api/client';
+import { ApiError, createSession, followSession, listSessions, terminalUrl } from './api/client';
 import './Console.css';
 
 /**
@@ -38,46 +38,29 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * refresh cannot resubmit the visitor's text a second time.
    */
   const [openingTurn] = useState<string | null>(() => consumePendingTurn());
-  /*
-   * Which session the landing prompt belongs to. Bound once, when the first
-   * session of this page load is established, so opening a second tab cannot
-   * replay someone's opening line into it.
-   */
   const [openingForId, setOpeningForId] = useState<string | null>(null);
 
   const [sessions, setSessions] = useState<readonly Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
 
   const report = useCallback((cause: unknown) => {
-    const message =
-      cause instanceof ApiError ? cause.message : `something went wrong: ${String(cause)}`;
-    setNotice(message);
+    setNotice(cause instanceof ApiError ? cause.message : `something went wrong: ${String(cause)}`);
   }, []);
 
-  const start = useCallback(async () => {
-    setBusy(true);
-    setNotice(null);
-    try {
-      const session = await createSession('codex', INITIAL_COLS, INITIAL_ROWS);
-      setSessions((prev) => [session, ...prev]);
-      setActiveId(session.id);
-      setOpeningForId((prev) => prev ?? session.id);
-    } catch (cause) {
-      report(cause);
-    } finally {
-      setBusy(false);
-    }
-  }, [report]);
+  /** Replace a session's lifecycle wherever it is listed. */
+  const applyLifecycle = useCallback((id: string, lifecycle: SessionLifecycle) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, lifecycle } : s)));
+  }, []);
 
   /*
-   * Sessions outlive the browser tab, so the console opens onto whatever is
-   * already running rather than starting something new. Only an owner with no
-   * sessions at all gets one created for them, which is what makes the first
-   * visit land straight in a terminal.
+   * Sessions outlive the browser tab, so opening the console restores what is
+   * already running. Nothing is created here: starting work is the owner's
+   * decision, and a console that provisions a sandbox merely because someone
+   * signed in spends real resources on an intention nobody expressed.
    */
   useEffect(() => {
     let cancelled = false;
@@ -87,46 +70,77 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         if (cancelled) {
           return;
         }
-        const live = existing.filter((s) => s.lifecycle !== 'terminated');
-        if (live.length > 0) {
-          const resumed = live[0]?.id ?? null;
-          setSessions(existing);
-          setActiveId(resumed);
-          setOpeningForId((prev) => prev ?? resumed);
-          setBusy(false);
-          return;
-        }
-        await start();
+        setSessions(existing);
+        const live = existing.find((s) => s.lifecycle !== 'terminated');
+        setActiveId(live?.id ?? null);
       } catch (cause) {
         if (!cancelled) {
           report(cause);
-          setBusy(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-    // Deliberately once: this restores what already exists, and re-running it
-    // on any state change would fight the user's own tab selection.
+    // Once, on open: re-running would fight the user's own tab selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const start = useCallback(async () => {
+    setNotice(null);
+    try {
+      // Returns as soon as the session exists, before its runtime does, so the
+      // tab appears immediately and reports its own progress.
+      const session = await createSession('codex', INITIAL_COLS, INITIAL_ROWS);
+      setSessions((prev) => [session, ...prev]);
+      setActiveId(session.id);
+      setOpeningForId((prev) => prev ?? session.id);
+    } catch (cause) {
+      report(cause);
+    }
+  }, [report]);
+
   /*
-   * Keyed on the session so switching tabs builds a new driver, and memoised so
-   * an unrelated re-render does not tear down and rebuild the terminal.
+   * Follow whichever session is still starting. The stream is the only thing
+   * that reports a runtime failing, since nobody is waiting on a request for
+   * it any more.
    */
+  useEffect(() => {
+    if (active === null || active.lifecycle !== 'provisioning') {
+      return;
+    }
+    const id = active.id;
+    const stop = followSession(
+      id,
+      (lifecycle) => applyLifecycle(id, lifecycle),
+      (message) => setNotice(message),
+    );
+    return stop;
+  }, [active, applyLifecycle]);
+
+  /*
+   * Built only once a runtime exists. Attaching earlier would open a socket
+   * against a session with nothing behind it yet.
+   */
+  // Whether this session has a runtime to attach to. Hoisted out of the memo
+  // so the dependency is a plain value the linter can reason about.
+  const attachable =
+    active !== null && active.lifecycle !== 'provisioning' && active.lifecycle !== 'terminated';
+
   const driver = useMemo(() => {
-    if (active === null) {
+    if (active === null || !attachable) {
       return null;
     }
-    // The landing prompt goes to the session it was bound to and no other.
     const turn = openingTurn !== null && active.id === openingForId ? openingTurn : undefined;
     return createWebSocketDriver({ url: terminalUrl(active.id), openingTurn: turn });
     // Rebuilt per session, not per render: an unrelated update must not tear
     // down a live terminal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id]);
+  }, [active?.id, attachable]);
 
   return (
     <div className="console">
@@ -145,10 +159,18 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           <p className="console__empty" role="alert">
             {notice}
           </p>
-        ) : driver === null || active === null ? (
-          <p className="console__empty">
-            {busy ? 'Opening a session…' : 'No session open. Press + to start one.'}
+        ) : loading ? (
+          <p className="console__empty">Loading your sessions…</p>
+        ) : active === null ? (
+          <p className="console__empty">No session open. Press + to start one.</p>
+        ) : active.lifecycle === 'provisioning' ? (
+          <p className="console__empty" aria-live="polite">
+            Starting a sandbox for this session. This can take a minute the first time.
           </p>
+        ) : active.lifecycle === 'terminated' ? (
+          <p className="console__empty">This session has ended. Press + to start another.</p>
+        ) : driver === null ? (
+          <p className="console__empty">Attaching…</p>
         ) : (
           <TerminalSurface
             key={active.id}

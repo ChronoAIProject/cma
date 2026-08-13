@@ -18,6 +18,8 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod events;
+
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::{InterfaceProfile, Operation};
 
@@ -98,7 +100,7 @@ impl From<Session> for SessionView {
 }
 
 /// A core failure rendered as an RFC 9457 problem document.
-struct Problem(CoreError);
+pub(crate) struct Problem(CoreError);
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
@@ -147,6 +149,9 @@ pub fn router(service: Arc<SessionService>) -> Router {
         .route("/api/v1/sessions/{id}", delete(remove))
         .route("/api/v1/sessions/{id}/terminate", post(terminate))
         .route("/api/v1/sessions/{id}/screen", get(screen))
+        // Progress for a session whose runtime is still starting, and its
+        // history thereafter. Resumable, so a reconnect loses nothing.
+        .route("/api/v1/sessions/{id}/events", get(events::stream))
         .route("/api/v1/conformance", get(conformance))
         .route("/api/v1/kernels", get(kernels))
         .with_state(service)
