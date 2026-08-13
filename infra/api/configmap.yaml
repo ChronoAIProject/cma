@@ -58,8 +58,19 @@ data:
   # Where a sandbox forwards the agent's model calls, on the owner's behalf.
   # The owner's own credential is what authorises the call; this is only the
   # address it is sent to.
-  CHRONO_UPSTREAM_BASE_URL: "https://llm.aelf.dev/v1"
-  CHRONO_UPSTREAM_MODEL: "gpt-5.6-sol"
+  #
+  # Addressed through the identity platform's proxy rather than the model
+  # service directly. The direct address rejects a platform token outright —
+  # it wants an API key — so pointing there would fail every turn while
+  # looking like a model problem. The proxy is also what applies the owner's
+  # own entitlements to the call.
+  #
+  # No /v1 suffix: the proxy already resolves to the service's versioned root,
+  # and adding one produces a duplicated path that answers 404.
+  CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm"
+  # A model the service actually publishes, and one tuned for this kernel. The
+  # previous value existed on no upstream and was inherited from a neighbour.
+  CHRONO_UPSTREAM_MODEL: "gpt-5.3-codex"
   CHRONO_UPSTREAM_WIRE_API: "responses"
   # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
   # never leaves the cluster, and the sandbox provider terminates no TLS of its
