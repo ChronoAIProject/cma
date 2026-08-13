@@ -45,20 +45,63 @@ pub fn capture(home: &Path) -> std::io::Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 
+/// A conversation laid down for the agent to continue.
+pub struct Restored {
+    /// Where the rollout was written. Read by the tests that check it landed
+    /// somewhere the agent looks.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub path: PathBuf,
+    /// The conversation's own identifier, taken from the rollout.
+    ///
+    /// The agent has to be told which conversation to continue by name. It
+    /// will not work it out: asked for "the most recent", it selects among
+    /// conversations recorded in the current working directory, and a
+    /// conversation carried from another pod was recorded somewhere else. It
+    /// then finds nothing, starts a fresh one, and reports success — so a
+    /// missing identifier here is silent data loss, not a failure.
+    pub session_id: Option<String>,
+}
+
 /// Lay a captured conversation down where the agent will find it.
-///
-/// Written under today's date rather than the original's, because the agent
-/// picks the most recent rollout and a file filed under its original date
-/// would be passed over in favour of anything newer.
-pub fn restore(home: &Path, bytes: &[u8], stamp: &str) -> std::io::Result<PathBuf> {
+pub fn restore(home: &Path, bytes: &[u8], stamp: &str) -> std::io::Result<Restored> {
     let dir = home.join(SESSIONS_DIR).join("restored");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("rollout-{stamp}.jsonl"));
     let mut file = std::fs::File::create(&path)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    tracing::info!(path = %path.display(), bytes = bytes.len(), "restored the conversation");
-    Ok(path)
+    let session_id = conversation_id(bytes);
+    match session_id.as_deref() {
+        Some(id) => tracing::info!(
+            path = %path.display(),
+            bytes = bytes.len(),
+            conversation = %id,
+            "restored the conversation"
+        ),
+        // Worth shouting about: without the identifier the agent cannot be
+        // told what to continue, and will quietly start something new.
+        None => tracing::error!(
+            path = %path.display(),
+            bytes = bytes.len(),
+            "restored a conversation that does not name itself; the agent cannot be told to continue it"
+        ),
+    }
+    Ok(Restored { path, session_id })
+}
+
+/// The identifier a rollout gives itself, from its opening record.
+///
+/// Read rather than derived from the filename: the name is ours to choose and
+/// the agent's own record is not, so this keeps working when we change how the
+/// file is named and when the agent changes how it names them.
+fn conversation_id(bytes: &[u8]) -> Option<String> {
+    let first = bytes.split(|b| *b == b'\n').next()?;
+    let value: serde_json::Value = serde_json::from_slice(first).ok()?;
+    value
+        .get("payload")?
+        .get("id")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// The most recently modified rollout under a directory tree.
@@ -179,6 +222,32 @@ mod tests {
         assert!(capture(dir.path()).expect("readable").is_none());
     }
 
+    /// A rollout's opening record, in the shape the agent writes it.
+    const META: &str = r#"{"timestamp":"2026-08-14T00:00:00Z","type":"session_meta","payload":{"id":"019ed5ef-b5eb-7f60-96d1-8b8202fa7eff","cwd":"/somewhere/else"}}"#;
+
+    #[test]
+    fn a_restored_conversation_names_itself() {
+        // The identifier is the whole mechanism: the agent continues a
+        // conversation by name, and asked for "the most recent" it would
+        // select among conversations recorded in this working directory —
+        // which a conversation carried from another pod never is.
+        let dir = Home::new("names-itself");
+        let restored =
+            restore(dir.path(), format!("{META}\n").as_bytes(), "stamp").expect("restorable");
+        assert_eq!(
+            restored.session_id.as_deref(),
+            Some("019ed5ef-b5eb-7f60-96d1-8b8202fa7eff")
+        );
+    }
+
+    #[test]
+    fn a_conversation_that_does_not_name_itself_is_not_guessed_at() {
+        // Better to start fresh loudly than to resume something arbitrary.
+        let dir = Home::new("unnamed");
+        let restored = restore(dir.path(), b"not json at all\n", "stamp").expect("restorable");
+        assert!(restored.session_id.is_none());
+    }
+
     #[test]
     fn a_restored_conversation_is_what_the_agent_finds() {
         // The round trip is the whole point: what one pod captured is what the
@@ -199,9 +268,9 @@ mod tests {
     fn restoring_creates_the_directory_the_agent_reads() {
         // A fresh pod has no sessions tree at all, so restore cannot assume one.
         let dir = Home::new("round-trip");
-        let path = restore(dir.path(), b"{}", "2026-08-14T00-00-00").expect("restorable");
-        assert!(path.exists());
-        assert!(path.starts_with(dir.path().join(SESSIONS_DIR)));
+        let restored = restore(dir.path(), b"{}", "2026-08-14T00-00-00").expect("restorable");
+        assert!(restored.path.exists());
+        assert!(restored.path.starts_with(dir.path().join(SESSIONS_DIR)));
     }
 
     #[test]

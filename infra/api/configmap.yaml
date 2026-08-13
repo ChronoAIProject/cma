@@ -103,13 +103,20 @@ data:
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:8dbd315"
-  # How the agent is told to continue a conversation rather than start a new
-  # one, used when a session is carried onto a newer runtime. Configuration
-  # rather than part of the image because the flag belongs to the agent and
-  # changes between its versions: if it were wrong, every handover would
-  # silently start a fresh conversation, and that must be fixable without
-  # building and publishing a new runtime image.
-  CHRONO_RUNTIME_RESUME_ARGS: "resume --last"
+  # The subcommand that makes the agent continue a named conversation, used
+  # when a session is carried onto a newer runtime. The conversation's own
+  # identifier is appended, so this must be a form that takes one.
+  #
+  # Not "resume --last". That asks for the most recent conversation recorded in
+  # the current working directory, and one carried from another pod was
+  # recorded somewhere else — so it finds nothing, starts a fresh conversation
+  # and reports success. Verified against codex 0.146: resuming by identifier
+  # continues the conversation, asking for the latest does not.
+  #
+  # Configuration rather than part of the image because it belongs to the agent
+  # and changes between its versions, and getting it wrong must be fixable
+  # without building and publishing a new runtime image.
+  CHRONO_RUNTIME_RESUME_ARGS: "resume"
   # Path to the mounted OpenSandbox API key. Read from a file rather than an
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.
