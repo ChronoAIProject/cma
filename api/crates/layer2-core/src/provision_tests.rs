@@ -245,3 +245,44 @@ async fn a_session_that_cannot_start_says_why() {
     });
     assert!(explained, "the failure carried no explanation: {events:?}");
 }
+
+#[tokio::test]
+async fn every_event_of_a_successful_start_is_recorded() {
+    // Progress and status were allocated by two counters from the same
+    // starting point, so they claimed the same sequence and the second insert
+    // was rejected. The session came up and nothing recorded that it had,
+    // leaving a live session that looked stuck forever.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+
+    let events = svc
+        .events_since(&caller, &created.id, None)
+        .await
+        .expect("history readable");
+
+    let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
+    let mut unique = seqs.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        seqs.len(),
+        unique.len(),
+        "two events claimed the same sequence: {seqs:?}"
+    );
+
+    // The one that matters: a client following the stream has to be told the
+    // session is usable.
+    let announced_ready = events.iter().any(|e| {
+        matches!(
+            &e.kind,
+            crate::event::EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                ..
+            }
+        )
+    });
+    assert!(announced_ready, "readiness was never recorded: {events:?}");
+}
