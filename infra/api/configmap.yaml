@@ -9,8 +9,22 @@ metadata:
 data:
   # Address the control plane binds.
   CHRONO_SERVER_BIND: "0.0.0.0:8080"
-  # Public origin of this API, used to build redirect URIs.
-  CHRONO_SERVER_PUBLIC_URL: "https://bot-api.chrono-ai.fun"
+  # How callers are authenticated. Stated explicitly rather than left to the
+  # default because the other value, "trusted", attributes every request to one
+  # fixed principal and is meant only for local development. A switch that can
+  # disable authentication should be visible in the manifest, not implied.
+  CHRONO_AUTH_MODE: "provider"
+  # Origin the browser sees, used to build the sign-in redirect URI.
+  #
+  # The app's origin, not this API's, because the whole browser flow has to
+  # stay on one host. The proxy in front of the app forwards /auth/ here, so
+  # the callback still reaches this service — but the session cookie is set for
+  # the origin the browser is actually on, and the post-sign-in redirect lands
+  # on the app rather than on an API that serves no page there.
+  #
+  # Pointing this at the API's own hostname sends the user to a 404 holding a
+  # cookie the app can never read, since the cookie is host-only by design.
+  CHRONO_SERVER_PUBLIC_URL: "https://bot.chrono-ai.fun"
   # Origin allowed to call the API from a browser.
   CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun"
   # NyxID identity provider base URL. Endpoints are discovered, never hard-coded.
@@ -23,7 +37,13 @@ data:
   # error page rather than to login.
   CHRONO_NYXID_CLIENT_ID: "c0cd33d2-27ba-4b8d-b38e-562364fadb72"
   # MongoDB database name. The connection URI is a secret.
-  CHRONO_MONGODB_DATABASE: "chrono_bot"
+  #
+  # Must match the database the connection string's credentials are scoped to.
+  # A hosted deployment grants a user rights on one named database, so a name
+  # that differs by so much as a separator authenticates successfully and is
+  # then refused on first write — which reads as a permissions problem rather
+  # than the typo it is.
+  CHRONO_MONGODB_DATABASE: "chrono-bot"
   # Bucket holding each session's stored agent context, so a reopened session
   # can be restarted with its transcript loaded into a fresh sandbox. Reached
   # through the platform storage service, which brokers the credential.
@@ -47,7 +67,20 @@ data:
   # Where a sandbox forwards the agent's model calls, on the owner's behalf.
   # The owner's own credential is what authorises the call; this is only the
   # address it is sent to.
-  CHRONO_UPSTREAM_BASE_URL: "https://llm.aelf.dev/v1"
+  #
+  # Addressed through the identity platform's proxy rather than the model
+  # service directly. The direct address rejects a platform token outright —
+  # it wants an API key — so pointing there would fail every turn while
+  # looking like a model problem. The proxy is also what applies the owner's
+  # own entitlements to the call.
+  #
+  # No /v1 suffix: the proxy already resolves to the service's versioned root,
+  # and adding one produces a duplicated path that answers 404.
+  CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm"
+  # Verified against the live service rather than taken from its model list:
+  # that listing is incomplete, and the model it does advertise for this kernel
+  # currently answers 503 while this one answers normally. Checking the list
+  # alone would have picked the broken one.
   CHRONO_UPSTREAM_MODEL: "gpt-5.6-sol"
   CHRONO_UPSTREAM_WIRE_API: "responses"
   # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
@@ -56,7 +89,34 @@ data:
   CHRONO_SANDBOX_BASE_URL: "http://opensandbox-server.opensandbox-system.svc.cluster.local"
   # Image each session's sandbox runs: the agent kernel plus the supervisor that
   # hosts it under a pseudo-terminal. Built from infra/runtime/Dockerfile.
-  CHRONO_SANDBOX_IMAGE: "ghcr.io/chronoaiproject/chrono-bot-runtime:0.1.0"
+  # Published alongside the control plane from this repository, in the registry
+  # the cluster already pulls from. The previous value pointed at a public
+  # registry the cluster cannot authenticate to and where this image had never
+  # been published, so every session would have failed to start its sandbox.
+  #
+  # This value is also the runtime version. Sessions record the image they are
+  # running, and the control plane carries any session on a different one onto
+  # this — capturing the agent's conversation, replacing the sandbox, and
+  # resuming from the capture. Changing this tag is therefore a rollout of
+  # every live session, which is the point: CLAUDE.md section 5 forbids leaving
+  # a session on an image nobody maintains, and forbids interrupting it to fix
+  # that. Never point this at a moving tag; a tag that changes underneath a
+  # running deployment would rotate sessions with nothing having been decided.
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:8dbd315"
+  # The subcommand that makes the agent continue a named conversation, used
+  # when a session is carried onto a newer runtime. The conversation's own
+  # identifier is appended, so this must be a form that takes one.
+  #
+  # Not "resume --last". That asks for the most recent conversation recorded in
+  # the current working directory, and one carried from another pod was
+  # recorded somewhere else — so it finds nothing, starts a fresh conversation
+  # and reports success. Verified against codex 0.146: resuming by identifier
+  # continues the conversation, asking for the latest does not.
+  #
+  # Configuration rather than part of the image because it belongs to the agent
+  # and changes between its versions, and getting it wrong must be fixable
+  # without building and publishing a new runtime image.
+  CHRONO_RUNTIME_RESUME_ARGS: "resume"
   # Path to the mounted OpenSandbox API key. Read from a file rather than an
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.

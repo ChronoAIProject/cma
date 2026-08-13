@@ -12,7 +12,7 @@ use crate::ids::SubjectId;
 use crate::session::SessionStatus;
 use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
-use crate::test_support::{admin, service, spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{admin, await_settled, service, spec, user, FakeAdapter, FakeStore};
 
 #[tokio::test]
 async fn a_session_is_readable_after_the_process_that_created_it_is_gone() {
@@ -21,10 +21,14 @@ async fn a_session_is_readable_after_the_process_that_created_it_is_gone() {
     let store = Arc::new(FakeStore::default());
     let caller = user("alice");
 
-    let created = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc
         .create_session(&caller, spec())
         .await
         .expect("session is created");
+    // Creation returns before the runtime exists, so the session is only
+    // durably Ready once it has finished starting.
+    await_settled(&svc, &caller, &created.id).await;
 
     let restarted = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
     let found = restarted
@@ -195,19 +199,22 @@ async fn the_stored_runtime_reference_is_what_a_later_process_reclaims() {
     // The record is the only route from a restarted process back to a running
     // sandbox, so it must carry the handle from the moment the session exists.
     let store = Arc::new(FakeStore::default());
-    let created = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
-        .create_session(&user("alice"), spec())
-        .await
-        .expect("created");
+    let alice = user("alice");
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    // The handle is recorded as soon as the runtime exists, which is after
+    // creation returns.
+    await_settled(&svc, &alice, &created.id).await;
 
     let record = store
         .get(&created.id)
         .await
         .expect("readable")
         .expect("present");
-    assert_eq!(
-        record.runtime_id.as_deref(),
-        Some(format!("runtime-for-{}", created.id.0).as_str())
+    let handle = record.runtime_id.expect("the record names the runtime");
+    assert!(
+        handle.contains(&created.id.0),
+        "the recorded handle must be this session's, got {handle}"
     );
 }
 
@@ -228,4 +235,69 @@ async fn driving_a_terminal_requires_a_live_runtime_not_merely_a_record() {
             .await,
         Err(CoreError::SessionNotFound)
     ));
+}
+
+#[tokio::test]
+async fn a_session_survives_the_control_plane_restarting_under_it() {
+    // The failure this exists for: a deployment loses the attachment but not
+    // the sandbox, and the session then reported itself ready while refusing
+    // to open — a contradiction the person had no way to resolve.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let adapter = Arc::new(FakeAdapter::default());
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first
+        .create_session(&caller, spec())
+        .await
+        .expect("created");
+    await_settled(&first, &caller, &created.id).await;
+
+    // A second instance shares only the store, exactly as a restarted process
+    // does.
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let attached = restarted
+        .attach_terminal(&caller, &created.id, TerminalGeometry::default())
+        .await;
+
+    assert!(
+        attached.is_ok(),
+        "a restarted process must reclaim a running sandbox, got {:?}",
+        attached.err()
+    );
+}
+
+#[tokio::test]
+async fn a_session_whose_sandbox_is_gone_says_so_plainly() {
+    // Reconnecting is not always possible, and when it is not the person needs
+    // a sentence they can act on rather than the provider's wording.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = first
+        .create_session(&caller, spec())
+        .await
+        .expect("created");
+    await_settled(&first, &caller, &created.id).await;
+
+    let restarted = service(
+        Arc::clone(&store),
+        Arc::new(FakeAdapter {
+            refuse_attach: true,
+            ..FakeAdapter::default()
+        }),
+    );
+    // The handle carries a live socket and is not printable, so the result is
+    // matched rather than unwrapped.
+    match restarted
+        .attach_terminal(&caller, &created.id, TerminalGeometry::default())
+        .await
+    {
+        Ok(_) => panic!("a vanished sandbox must not appear to reconnect"),
+        Err(CoreError::RuntimeUnavailable(message)) => {
+            assert!(message.contains("no longer running"), "got {message}");
+        }
+        Err(other) => panic!("expected an unavailable runtime, got {other:?}"),
+    }
 }

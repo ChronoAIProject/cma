@@ -314,6 +314,175 @@ The byte stream written into the terminal originates from a coding agent executi
 
 ---
 
+## 10. Selectable terminal themes
+
+The 16-slot palette in §6 is the product's own and remains the default in both
+appearances. A terminal is somewhere people spend hours, and legibility at that
+duration is personal, so the palette inside the terminal viewport — and only
+inside it — may be changed by the person using it.
+
+The scope is deliberately narrow. A selected theme repaints the terminal
+canvas. It never changes the surrounding interface, which stays on the tokens
+in §2, because a page whose chrome shifts with a terminal preference stops
+being one product.
+
+These are transcribed from their published definitions and vendored as data.
+They are not a dependency: a theme is twenty hex values against a fixed
+interface, and taking a package for that would add a supply-chain risk with
+nothing to show for it.
+
+Every theme names the appearance it belongs to. A dark theme selected in light
+appearance would put a near-black rectangle in the middle of a light page, so
+the selector offers only themes matching the current appearance.
+
+| Theme | Appearance | Background | Foreground | Origin |
+|---|---|---|---|---|
+| ChronoBot | dark | `#0B0F17` | `#E8EEF5` | §6, the default |
+| ChronoBot | light | `#FFFFFF` | `#0A0E14` | §6, the default |
+| Dracula | dark | `#282A36` | `#F8F8F2` | Dracula, MIT |
+| Nord | dark | `#2E3440` | `#D8DEE9` | Nord, MIT |
+| Solarized Dark | dark | `#002B36` | `#839496` | Solarized, MIT |
+| Solarized Light | light | `#FDF6E3` | `#657B83` | Solarized, MIT |
+| GitHub Light | light | `#FFFFFF` | `#24292E` | GitHub, MIT |
+
+Contrast inside the terminal is the theme author's, not ours, and these are all
+long-established palettes designed for extended reading. The product's own
+default is the one measured in §2 and remains what an unconfigured session
+gets.
+
+---
+
+## 11. Waiting for a session
+
+Provisioning a sandbox takes seconds on a warm node and a minute on a cold one,
+and nothing can say in advance which it will be. A static line held for that
+long reads as a page that has stopped working.
+
+The wait is therefore animated: the characters of the message lift in sequence,
+left to right, on a 1.4s loop with each character starting 45ms after the one
+before it. The displacement is `0.28em` — a sense of life, not a bouncing ball,
+because this sits beside someone for a minute.
+
+It is a wave rather than a spinner because §5 forbids a full-page spinner, and
+because a wave makes no claim about progress. A progress bar would imply the
+system knows how far along it is, which it does not.
+
+**The motion never carries information.** The sentence is exposed once to
+assistive technology as ordinary text, and under `prefers-reduced-motion` the
+animation is removed entirely while the message stays. Nothing is lost by not
+seeing it move.
+
+**A session that ends badly says why.** Terminating normally and failing to
+start are different events and must not read the same: the control plane
+records a reason on the failure, and the surface shows it rather than the bare
+statement that the session has ended.
+
+---
+
+## 12. Page frame and layout
+
+**One bar, always.** The top bar carries the product mark and whatever the
+current state needs at its trailing edge. It is present before signing in and
+after, because a visitor and an owner are looking at one product rather than
+two. It is not navigation and must never become it.
+
+**Content is inset by 10% on each side.** Chrome, prose and controls stay
+within that frame so the page reads as a composed surface rather than as text
+against the window edge.
+
+**Everything obeys the inset, including the console.** The session column's
+leading edge lines up with the product mark, and the details panel's trailing
+edge lines up with the account control. Alignment between the bar and the page
+beneath it is what makes them read as one surface; a full-bleed console under an
+inset bar makes the bar look detached from the page it belongs to.
+
+**Sessions live in a column on the left.** Vertical rather than a horizontal
+strip because sessions accumulate: a row runs out of width after a handful and
+begins truncating, while a column scrolls with every label still readable. The
+column owns its own scrolling — the page itself still never scrolls.
+
+**A session is labelled by when it started, in Singapore time.** That is what
+distinguishes one session from another in a way a person can hold in their
+head, and a fixed zone means the same session reads the same to everyone who
+sees it. The zone is stated in the interface rather than assumed. The date
+appears only once a session is no longer from today. Order is newest first by
+default and can be reversed.
+
+**Session details sit to the right and collapse.** They are reference material:
+read when someone wants to know which agent is answering or why a session
+stopped, and the rest of the time they are width the terminal should have.
+Collapsed, the panel becomes a handle rather than disappearing, so the way back
+is where the panel was.
+
+**A session's lifecycle controls live in that panel**, at the foot of what they
+describe. Ending or deleting a session acts on the session being described, and
+such a control belongs beside the thing it acts on rather than in chrome that
+looks identical whichever session is open.
+
+**Below 60rem the three columns stack**, because a terminal squeezed between
+two panels on a narrow window is not a terminal anyone can work in.
+
+---
+
+## 13. The platform typeface
+
+Platform text is set in **Geist Pixel**, vendored under the SIL Open Font
+License with its licence text beside it in `web/src/assets/fonts/`.
+
+It is **self-hosted, never fetched from a third party**: a font request to
+someone else's host is one that can be logged, blocked or slow, and the file is
+28KB. It is declared with `font-display: swap` and a system fallback, so text
+is readable from the first paint and stays readable if the file never arrives —
+the face is character, not information.
+
+**Terminal content keeps its monospace stack.** The pixel face is the
+product's voice, not the agent's output: terminal rendering depends on exact
+cell metrics, and substituting a display face there would break column
+alignment in everything the agent draws.
+
+---
+
+## 14. Session states and what they allow
+
+A session is shown in one of six states, and the state decides what the
+interface offers. **One rule governs all of it** — whether the terminal accepts
+typing, whether a control is enabled, and whether the session appears in the
+list. Three separate answers to the same question eventually disagree, and the
+disagreement is visible as a button that does nothing.
+
+| State | Shown as | Terminal | Available |
+|---|---|---|---|
+| provisioning | starting | progress, no input | end |
+| ready / running | ready / running | live | reconnect, end, delete |
+| rotating | updating | progress, no input | nothing |
+| idle | idle | history, read-only | **revive**, delete |
+| terminated | ended | history, read-only | delete |
+
+**Controls are disabled, never removed.** The panel keeps its shape as a
+session moves between states, so nobody hunts for a control that was there a
+moment ago. Every disabled control carries a line saying why it is
+unavailable — a greyed button on its own communicates only refusal.
+
+**A session that cannot be typed into always says why**, in the panel, in the
+owner's terms: still starting, stopped, being moved, ended. A terminal that
+silently ignores keystrokes is the state people report as broken.
+
+**A session with no sandbox still shows its history**, read-only. Stopping a
+session releases what it costs; it does not hide what it did. Keystrokes into
+a read-only terminal are dropped rather than buffered — holding them until a
+revive would deliver them into a different sandbox, minutes later, with no
+context.
+
+**Ended sessions leave the list, except when they failed.** A list of
+everything ever run is not a list of someone's sessions. But a session that
+died on its own is the one its owner is looking for, so it stays until they
+remove it.
+
+**Revive is the primary action when it is offered.** A stopped session is
+almost always open because someone wants it back.
+
+---
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -323,3 +492,8 @@ Append-only. Never edit or delete an entry.
 | 2026-08-12 | Initial version. Established colour tokens for light and dark, semantic state colours, type stacks and scale, 4px spacing system, component rules for status chip, data table, terminal and buttons, interaction and accessibility baselines. |
 | 2026-08-13 | Terminal-first cyberpunk redesign. Reframed the frontend as a single full-bleed terminal page with no navigation, in two states (scripted introduction and live session). Replaced the colour system with a cyan/magenta-on-near-black palette, recording measured WCAG ratios and raising `--ink-3` to `#7C8A9E` in dark to clear AA for 11px metadata. Added the `--emphasis` token, a bounded three-step glow system with an ambient overlay cap, and an authoritative 16-slot ANSI palette. Promoted the monospace stack to primary and retuned the type scale. Made the page non-scrolling and the terminal full-bleed, and set radii to 0/2px. Specified the intro sequence timing, skip behaviour and reduced-motion equivalence, the session tab strip, and the profile menu. Added §8 Terminal safety covering OSC 52, tab-title suppression, scrollback caps and OSC 8 validation. Removed the data table component and the "information density over whitespace" premise, both of which described a dashboard this frontend no longer is. |
 | 2026-08-13 | Documented one focus-state variant in §7: the terminal prompt row carries its 2px accent indicator on the row's leading edge rather than as a ring around the input, because a ring around a full-width borderless field boxes in the whole prompt line and breaks the terminal illusion. A relocation, not a removal, scoped to that one input. |
+| 2026-08-13 | Added §10 Selectable terminal themes: six vendored palettes (Dracula, Nord, Solarized Dark, Solarized Light, GitHub Light) alongside the product's own, selectable per person and scoped to the terminal canvas only. Vendored as data rather than taken as a dependency. Themes are filtered by the current appearance so a dark palette cannot be placed on a light page. Also specified the appearance control in the profile menu, cycling system → light → dark, where "system" is the absence of a choice rather than a third palette. |
+| 2026-08-14 | Added §11 Waiting for a session: the provisioning message animates as a left-to-right character wave (1.4s loop, 45ms stagger, 0.28em lift), chosen over a spinner because §5 forbids one and because a wave claims no knowledge of progress. Motion carries no information — the sentence is exposed once to assistive technology and the animation is removed under reduced-motion. Also specified that a session which fails to start must show the recorded reason rather than the same wording as one that ended normally. |
+| 2026-08-14 | Added §12 Page frame and layout and §13 The platform typeface. Established a persistent top bar in both signed-out and signed-in states, a 10% inset on page content with terminal output exempt, a vertical session column on the left labelled by creation time in Singapore time (newest first, reversible, date shown only once not from today), and a collapsible session details panel on the right that collapses to a handle. Columns stack below 60rem. Adopted Geist Pixel as the platform typeface, self-hosted under the SIL Open Font License with a system fallback and `font-display: swap`; terminal content keeps its monospace stack because cell metrics govern its rendering. Replaced the horizontal session tab strip specified in the 2026-08-13 redesign, which truncated labels once sessions accumulated. |
+| 2026-08-14 | Corrected §12: the console obeys the page inset like every other surface, so the session column aligns with the product mark and the details panel with the account control. The earlier entry exempted terminal output from the inset on the grounds that cropping it wasted width; alignment between the bar and the page beneath it matters more, and a full-bleed console under an inset bar reads as a detached bar. Also moved the session lifecycle controls out of the top bar and into the details panel, beside the session they act on. |
+| 2026-08-14 | Added §14 Session states and what they allow: a single table binding each of the six session states to what the terminal does and which controls are available, with one rule shared by the terminal, the buttons and the list so they cannot disagree. Established that controls are disabled rather than removed and that every disabled control and every non-interactive terminal states its reason in the owner's terms; that a session with no sandbox still shows its history read-only, with keystrokes dropped rather than buffered; that ended sessions leave the list unless they ended by failing; and that revive is the primary action wherever it is offered. Adds the `rotating` state, during which the session is neither usable nor stopped and no control acts on it. |

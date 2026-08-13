@@ -3,7 +3,49 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{KernelId, SessionId, SubjectId};
+use crate::options::AgentOptions;
 use crate::terminal::TerminalGeometry;
+
+/// A named step in bringing a session up.
+///
+/// Ordered, and each knows its position, so a client can show how far along
+/// something is without hard-coding the sequence — adding a step here changes
+/// what every client displays rather than requiring each to be taught.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProvisioningStage {
+    /// The request arrived and the session exists.
+    Accepted,
+    /// A runtime has been asked for.
+    RuntimeRequested,
+    /// The provider gave us one.
+    RuntimeCreated,
+    /// Connecting to its terminal.
+    Attaching,
+    /// Usable.
+    Ready,
+}
+
+impl ProvisioningStage {
+    /// Every stage, in the order they happen.
+    pub const ALL: [Self; 5] = [
+        Self::Accepted,
+        Self::RuntimeRequested,
+        Self::RuntimeCreated,
+        Self::Attaching,
+        Self::Ready,
+    ];
+
+    /// How far through the sequence this stage sits, counting from one.
+    pub fn position(self) -> usize {
+        Self::ALL.iter().position(|s| *s == self).unwrap_or(0) + 1
+    }
+
+    /// How many stages there are in total.
+    pub fn total() -> usize {
+        Self::ALL.len()
+    }
+}
 
 /// Lifecycle state of a session. `Idle` means the runtime was reclaimed while
 /// the session itself remains valid and revivable.
@@ -16,6 +58,14 @@ pub enum SessionStatus {
     Ready,
     /// A turn is in progress.
     Running,
+    /// Being carried onto a different runtime.
+    ///
+    /// Neither usable nor stopped. The session is intact and will come back on
+    /// its own, but the runtime under it is being replaced, so anything typed
+    /// now would go to a sandbox that is about to stop existing. Distinct from
+    /// `Provisioning` because nothing was asked for and nothing is starting
+    /// from nothing — there is a conversation being carried across.
+    Rotating,
     /// Runtime reclaimed; session intact and revivable.
     Idle,
     /// Terminal state.
@@ -26,6 +76,40 @@ impl SessionStatus {
     /// Whether no further work can occur under this session id.
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Terminated)
+    }
+
+    /// Whether this session is mid-handover between runtimes.
+    pub fn is_rotating(self) -> bool {
+        matches!(self, Self::Rotating)
+    }
+
+    /// Whether this session should have a runtime running for it right now.
+    ///
+    /// The desired state, against which reality is reconciled. A stopped
+    /// session deliberately wants none — that is what stopping meant — and a
+    /// terminated one is over.
+    pub fn wants_runtime(self) -> bool {
+        matches!(
+            self,
+            Self::Provisioning | Self::Ready | Self::Running | Self::Rotating
+        )
+    }
+
+    /// Whether a client should accept input for this session.
+    ///
+    /// Rotation is the case worth naming: the session is healthy, it is not
+    /// stopped, and input must still be refused, because the runtime it would
+    /// reach is being torn down.
+    pub fn is_interactive(self) -> bool {
+        matches!(self, Self::Ready | Self::Running)
+    }
+
+    /// Whether the owner can pick this session up again.
+    ///
+    /// Stopping is reversible and ending is not; a person needs to know which
+    /// one they are looking at without having to remember what they did.
+    pub fn is_revivable(self) -> bool {
+        matches!(self, Self::Idle)
     }
 }
 
@@ -97,6 +181,9 @@ impl RecoveryState {
 /// What a caller asks for when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSpec {
+    /// How the agent should behave, chosen at creation and fixed for the
+    /// session's life.
+    pub options: AgentOptions,
     /// Which runtime implementation should back the session.
     pub kernel: KernelId,
     /// Terminal geometry to start the runtime at.
@@ -115,6 +202,14 @@ pub struct SessionSpec {
 /// A session and everything the core knows about it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
+    /// How this session's agent was configured.
+    ///
+    /// Persisted with the session rather than only being passed at creation,
+    /// because reviving a stopped session has to produce the session someone
+    /// had. Rebuilding it on defaults would silently swap the model out from
+    /// under them.
+    #[serde(default)]
+    pub options: AgentOptions,
     /// Stable identifier.
     pub id: SessionId,
     /// The principal that owns it. Every operation is scoped to this subject.
@@ -131,6 +226,29 @@ pub struct Session {
     pub geometry: TerminalGeometry,
     /// Highest sequence number appended for this session.
     pub last_seq: u64,
+    /// Which runtime version is serving this session.
+    ///
+    /// The control plane knows which version it expects; this says which one
+    /// the session actually has, and a session whose version is behind is
+    /// carried onto the current one rather than left on an image nobody
+    /// maintains any more.
+    ///
+    /// Absent on sessions created before versions were tracked, which is read
+    /// as "not the current one" — the safe direction, since the alternative is
+    /// leaving a session on an unknown image forever.
+    #[serde(default)]
+    pub runtime_version: Option<String>,
+    /// How many times this session has been carried onto a newer runtime.
+    #[serde(default)]
+    pub rotations: u32,
+    /// When the snapshot the current runtime resumed from was taken.
+    ///
+    /// Part of the session rather than bookkeeping about its runtime, because
+    /// it is something its owner is told: it says the point their work was
+    /// carried across from, so anything after it can be recognised as missing
+    /// rather than puzzled over.
+    #[serde(default)]
+    pub rotated_at: Option<String>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
@@ -194,8 +312,12 @@ mod tests {
             status: SessionStatus::Ready,
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
+            options: AgentOptions::default(),
             geometry: TerminalGeometry::default(),
             last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
         assert!(session.is_owned_by(&owner));

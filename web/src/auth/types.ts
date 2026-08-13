@@ -12,10 +12,23 @@
 
 /** The signed-in subject, as much of it as the frontend is entitled to see. */
 export interface User {
-  /** Opaque subject identifier. Never a token. */
+  /**
+   * Opaque subject identifier. Never a token, and never shown to a person:
+   * it is what state is keyed on, not what someone is called.
+   */
   readonly id: string;
-  /** Display handle, rendered into the shell prompt. */
+  /**
+   * What to call this person.
+   *
+   * Resolved from the provider's account name, then their email, and only
+   * then the identifier — which means a bare identifier on screen is a signal
+   * the provider released nothing, not a design choice.
+   */
   readonly handle: string;
+  /** The provider's account name, when it has one. */
+  readonly displayName?: string;
+  /** The account's email address, when the provider releases it. */
+  readonly email?: string;
   /** Optional avatar URL. Absent means render initials. */
   readonly avatarUrl?: string;
 }

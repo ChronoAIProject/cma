@@ -1,0 +1,38 @@
+# What the load balancer probes to decide the control plane is healthy.
+#
+# Without this the balancer probes "/", which this service does not serve — it
+# answers 404 there, quite correctly — so every backend is marked unhealthy and
+# the gateway returns 503 while the pods are perfectly fine. That failure is
+# unusually misleading: the deployment is Ready, the endpoints are Ready, the
+# routes are Accepted, and the service is still unreachable from outside.
+#
+# It probes the liveness endpoint rather than the readiness one deliberately.
+# Readiness reports whether this instance should receive traffic and may go
+# false while dependencies recover; liveness reports whether the process is
+# alive. The balancer already stops sending traffic to endpoints Kubernetes
+# marks unready, so pointing it at readiness as well would take a backend out
+# twice for the same reason.
+#
+# The neighbouring control planes each declare one of these; chrono-bot simply
+# lacked it.
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: chrono-bot-api
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: chrono-bot-api
+    app.kubernetes.io/part-of: chrono-bot
+spec:
+  targetRef:
+    group: ""
+    kind: Service
+    name: chrono-bot-api
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        # The container port, not the Service port: the balancer talks to pods
+        # directly rather than through the Service's cluster IP.
+        port: 8080
+        requestPath: /livez
