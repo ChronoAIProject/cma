@@ -39,12 +39,15 @@ mod tests {
     use layer2_core::Capability;
 
     fn provider_state() -> std::sync::Arc<AuthState> {
-        AuthState::new(AuthMode::Provider {
-            base_url: "http://provider.invalid".into(),
-            client_id: "c".into(),
-            client_secret: "s".into(),
-            public_url: "http://service.invalid".into(),
-        })
+        AuthState::new(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "c".into(),
+                client_secret: "s".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+        )
     }
 
     #[tokio::test]
