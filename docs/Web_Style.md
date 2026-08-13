@@ -566,6 +566,32 @@ padding-width apart.
 Nodes are arranged in a square-ish grid, so the surface overflows in both
 directions and panning means something in both.
 
+**A node's size is the geometry its runtime is told to draw at.** A terminal
+reports its own measurements to the other end, so a 420×280 node — about 402×221
+once the frame, the header and the terminal's own padding are taken out — asks
+for roughly 47 columns and a dozen rows, where the single terminal of tabs mode
+asks for the full width of the column. **Choosing the canvas therefore resizes
+every attached session**, and each agent redraws at the new width.
+
+That is correct rather than a defect: a terminal shown in a small frame is a
+small terminal, and telling the runtime otherwise would wrap its output against
+a width the frame does not have. But it is a real cost of this arrangement and
+it does not undo. Output an agent has already wrapped at 47 columns stays
+wrapped at 47 columns, on the canvas and in the transcript afterwards.
+
+Two consequences follow, and both are intended. A session left on the canvas
+keeps producing narrow output for as long as it is shown there. And a session
+that was attached when the arrangement changed keeps the last geometry it was
+given until something attaches to it again — which re-declares its size before
+the first frame, so what is on screen is never wrong. Nothing restores a
+geometry behind the owner's back, because there is no arrangement to restore it
+to: the size a terminal should be is the size of the frame showing it, and while
+no frame is showing it the question has no answer.
+
+The mode toggle is still a display preference and adds nothing to the console's
+chrome. It is not, however, a control that stops at the browser, and it must
+never be described as one.
+
 ### Focus, and how it differs from selection
 
 Exactly one node is focused. **The focused node is the only one that receives
@@ -682,3 +708,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-14 | Added §14 Session states and what they allow: a single table binding each of the six session states to what the terminal does and which controls are available, with one rule shared by the terminal, the buttons and the list so they cannot disagree. Established that controls are disabled rather than removed and that every disabled control and every non-interactive terminal states its reason in the owner's terms; that a session with no sandbox still shows its history read-only, with keystrokes dropped rather than buffered; that ended sessions leave the list unless they ended by failing; and that revive is the primary action wherever it is offered. Adds the `rotating` state, during which the session is neither usable nor stopped and no control acts on it. |
 | 2026-08-14 | Added §15 Canvas — every session at once: a second arrangement of the same sessions, in which each listed session is a 420×280 framed node on a pannable surface hosting its own terminal, chosen by a two-button toggle at the trailing edge of the top bar whose stored value is validated on read. The canvas replaces the console's middle column only, so the rail, the details panel and the bar keep their places and one selection serves both arrangements. Established that exactly one node is focused and only it receives keystrokes, with hover distinguished from focus by border weight rather than hue; that focus is never a second opinion on §14, so a provisioning, rotating, idle or ended session stays read-only on the canvas, says so on the node, and shows its stored transcript rather than an empty frame; that the canvas is one tab stop with clamped arrow navigation and a polite live region announcing moves; that unfocused terminals are never dimmed, tinted or covered; that the only motion is the 150ms focus transition, wrapped in `prefers-reduced-motion: no-preference`; and that at most 12 nodes hold a terminal at once, evicted by least recent focus, with the count of unattached sessions stated below the viewport because silent truncation reads as breakage. Adds the `--canvas-node-w` and `--canvas-node-h` tokens, and labels nodes by start time as §12 labels the rail rather than by identifier, so one session is not called two things in two views. |
 | 2026-08-14 | Specified in §12 where a failed action is reported: one `sm` `--danger` line with a `--rule` underline at the head of the middle column, above whatever the column is showing and never in place of it, recording 6.16:1 light and 5.47:1 dark against `--surface`. The console previously rendered the failure instead of the surface, which was survivable when the surface was one terminal and is not now that §15 puts up to twelve attached terminals there — a stop returning 409 detached eleven sessions that had not failed. Also established that the line reports the most recent attempt, cleared by every action as it starts, so a stale failure never sits above a console that has recovered. |
+| 2026-08-14 | Recorded in §15 that a node's size is the geometry its runtime is told to draw at, so choosing the canvas resizes every attached session to roughly 47 columns and a dozen rows and each agent redraws at that width. Kept the behaviour — a terminal in a small frame is a small terminal, and declaring anything else wraps output against a width the frame does not have — but stated its two consequences: output already wrapped narrow stays wrapped, and a session detached mid-arrangement keeps its last geometry until something attaches to it and re-declares one. The mode toggle was previously described in the code as reaching nothing beyond the arrangement; it reaches the runtime of every session on the canvas, and may not be described as a browser-only control. |

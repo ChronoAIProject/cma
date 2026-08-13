@@ -325,9 +325,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       <TopBar>
         {/*
          * A display preference rather than navigation: it changes how the
-         * sessions someone already has are arranged, and reaches nothing else.
-         * It sits at the trailing edge with the account control because it
-         * belongs to the whole console rather than to any one column.
+         * sessions someone already has are arranged, and adds nothing to the
+         * console's chrome. It sits at the trailing edge with the account
+         * control because it belongs to the whole console rather than to any
+         * one column.
+         *
+         * It does not stop at the browser, though. A terminal declares its own
+         * measurements to the runtime drawing into it, so putting every
+         * attached session in a 420×280 node resizes every one of them to
+         * roughly 47 columns. §15 records why that is right and what it costs.
          */}
         <ViewModeToggle mode={mode} onChange={changeMode} />
         <ProfileMenu
