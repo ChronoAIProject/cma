@@ -22,6 +22,12 @@ use crate::{
 /// Port the supervisor listens on inside the sandbox.
 const SUPERVISOR_PORT: u16 = 9090;
 
+/// Metadata key correlating a sandbox back to its session.
+///
+/// Written at provisioning and read by reconciliation, so the two must agree;
+/// naming it once is what keeps them in step.
+const SESSION_METADATA_KEY: &str = "chrono-bot/session";
+
 /// How many output chunks may queue before the relay applies backpressure.
 ///
 /// A full-screen application repaints in bursts, so a too-small buffer stalls
@@ -208,7 +214,7 @@ impl KernelAdapter for CodexAdapter {
             // Correlates a sandbox back to the session that owns it, so an
             // orphan can be found and reclaimed.
             metadata: BTreeMap::from([
-                ("chrono-bot/session".to_string(), spec.session_id.clone()),
+                (SESSION_METADATA_KEY.to_string(), spec.session_id.clone()),
                 ("chrono-bot/kernel".to_string(), "codex".to_string()),
             ]),
         };
@@ -311,6 +317,21 @@ impl KernelAdapter for CodexAdapter {
         // the caller's real size before anything is painted.
         tracing::debug!(sandbox = %handle.0, cols = size.cols, rows = size.rows, "resize requested");
         Ok(())
+    }
+
+    async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
+        let sandboxes = self
+            .client
+            .list()
+            .await
+            .map_err(|e| AdapterError::Unavailable(e.to_string()))?;
+        Ok(sandboxes
+            .into_iter()
+            .map(|s| {
+                let session = s.metadata.get(SESSION_METADATA_KEY).cloned();
+                (RuntimeHandle(s.id), session)
+            })
+            .collect())
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {

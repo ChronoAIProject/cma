@@ -15,6 +15,12 @@ pub mod error;
 pub mod event;
 pub mod ids;
 mod lifecycle;
+mod provision;
+pub mod reconcile;
+
+#[cfg(test)]
+#[path = "provision_tests.rs"]
+mod provision_tests;
 
 #[cfg(test)]
 mod test_support;
@@ -36,6 +42,7 @@ pub use authz::{Authorization, Caller, Capability};
 pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame};
 pub use ids::{KernelId, SessionId, SubjectId};
+pub use reconcile::Reclaimed;
 pub use service::{AttachmentHandle, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{ContextStore, SessionRecord, SessionStore, StoreError};

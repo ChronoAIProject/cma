@@ -15,6 +15,34 @@ import type { AuthProvider } from './auth/types';
  * right surface, and a swapped-out client would stop testing that.
  */
 const sockets: FakeSocket[] = [];
+const streams: FakeEventSource[] = [];
+
+/**
+ * A stand-in for the progress stream.
+ *
+ * A session now starts as `provisioning` and becomes usable later, so the
+ * console learns it is ready from here rather than from the create response.
+ */
+class FakeEventSource {
+  static readonly CLOSED = 2;
+  readyState = 1;
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(readonly url: string) {
+    streams.push(this);
+    // Announce readiness on the next tick, as a real runtime would.
+    queueMicrotask(() => this.announce('ready'));
+  }
+  announce(status: string): void {
+    this.onmessage?.({
+      data: JSON.stringify({ seq: 2, event: { type: 'status_changed', status } }),
+    } as MessageEvent);
+  }
+  close(): void {
+    this.readyState = FakeEventSource.CLOSED;
+  }
+}
 
 class FakeSocket {
   static readonly OPEN = 1;
@@ -55,7 +83,9 @@ let created = 0;
 beforeEach(() => {
   sockets.length = 0;
   created = 0;
+  streams.length = 0;
   vi.stubGlobal('WebSocket', FakeSocket);
+  vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -69,10 +99,12 @@ beforeEach(() => {
       }
       if (url.endsWith('/api/v1/sessions') && init?.method === 'POST') {
         created += 1;
+        // Creation answers before a runtime exists; readiness arrives on the
+        // event stream.
         return json(201, {
           id: `sesn_${created}`,
           kernel: 'codex',
-          status: 'ready',
+          status: 'provisioning',
           created_at: new Date(0).toISOString(),
         });
       }
@@ -130,11 +162,26 @@ describe('App', () => {
     expect(screen.queryByRole('navigation')).toBeNull();
   });
 
-  it('opens a session automatically so the console is never empty', async () => {
+  it('starts no session until one is asked for', async () => {
+    // Signing in is not a request to do work. Provisioning a sandbox because
+    // someone opened the page spends real resources on an intention nobody
+    // expressed, so the console waits to be asked.
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    expect(screen.getAllByRole('tab').length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(await screen.findByText(/press \+ to start one/i)).toBeInTheDocument();
+  });
+
+  it('says a session is starting rather than appearing to hang', async () => {
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: /new session/i }));
+
+    // The tab exists immediately even though no runtime does yet.
+    expect(await screen.findByRole('tab')).toBeInTheDocument();
   });
 
   it('carries the visitor prompt into the first session', async () => {
@@ -143,8 +190,10 @@ describe('App', () => {
     // in the browser would show text the session never received.
     capturePendingTurn('build me a web scraper');
 
+    const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
+    await user.click(screen.getByRole('button', { name: /new session/i }));
 
     await waitFor(() => {
       expect(sentText()).toContain('build me a web scraper\n');
@@ -191,10 +240,12 @@ describe('App', () => {
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
-    const before = screen.getAllByRole('tab').length;
+    const before = screen.queryAllByRole('tab').length;
 
     await user.click(screen.getByRole('button', { name: /new session/i }));
 
-    expect(screen.getAllByRole('tab')).toHaveLength(before + 1);
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(before + 1);
+    });
   });
 });

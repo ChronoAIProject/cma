@@ -99,6 +99,21 @@ pub trait KernelAdapter: Send + Sync {
 
     /// Tear the runtime down.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;
+
+    /// Every runtime this adapter can see, with the session each was created
+    /// for.
+    ///
+    /// Reconciliation needs the provider's own view rather than ours, because
+    /// the runtimes worth finding are exactly the ones our records have lost
+    /// track of. The session identifier is whatever was recorded at
+    /// provisioning time and may be absent, in which case nothing links the
+    /// runtime to a session and it is an orphan by definition.
+    ///
+    /// Defaults to reporting nothing so an adapter that cannot enumerate is
+    /// not forced to pretend. Such an adapter simply has no orphan recovery.
+    async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]
