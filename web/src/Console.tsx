@@ -216,18 +216,34 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       setActing(true);
       try {
         await deleteSession(id);
-        setSessions((prev) => {
-          const remaining = prev.filter((s) => s.id !== id);
-          setActiveId((current) => (current === id ? (remaining[0]?.id ?? null) : current));
-          return remaining;
-        });
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        // Out of the history as well as out of the list: a deleted id left
+        // there is a slot of the canvas's attachment budget spent remembering
+        // a session nobody can open.
+        setFocusHistory((prev) => prev.filter((seen) => seen !== id));
+        if (activeId === id) {
+          /*
+           * The successor is *selected*, not merely made active. `activeId` is
+           * not the whole selection — the canvas spends its attachment budget
+           * from `focusHistory` — so a session promoted straight into
+           * `activeId` would be the focused node while sitting at the back of
+           * that list, and with a full history it is evicted at once. That is
+           * the one node §15 promises is never detached.
+           */
+          const successor = sessions.find((s) => s.id !== id);
+          if (successor === undefined) {
+            setActiveId(null);
+          } else {
+            select(successor.id);
+          }
+        }
       } catch (cause) {
         report(cause);
       } finally {
         setActing(false);
       }
     },
-    [report],
+    [activeId, report, select, sessions],
   );
 
   /*
