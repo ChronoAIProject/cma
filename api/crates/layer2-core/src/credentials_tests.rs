@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, TerminalInput};
 
+use crate::authz::{Authorization, Caller, Capability};
 use crate::ids::{KernelId, SubjectId};
 use crate::service::SessionService;
 use crate::session::SessionSpec;
@@ -81,6 +82,19 @@ impl ScreenModel for NullScreen {
     }
 }
 
+/// A caller holding the everyday capabilities, so these tests exercise the
+/// credential path rather than authorization.
+fn caller(id: &str) -> Caller {
+    Caller::new(
+        SubjectId(id.to_string()),
+        Authorization::from_capabilities([
+            Capability::CreateSession,
+            Capability::UseOwnSessions,
+            Capability::TerminateOwnSession,
+        ]),
+    )
+}
+
 fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
@@ -108,9 +122,9 @@ async fn credentials_seen(sent: &Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) ->
 async fn the_owner_credential_reaches_the_runtime_at_creation() {
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let svc = service(Arc::clone(&sent));
-    let owner = SubjectId("subject-a".into());
+    let owner = caller("subject-a");
     svc.create_session(
-        owner.clone(),
+        &owner,
         SessionSpec {
             kernel: KernelId::new("recording"),
             geometry: None,
@@ -133,10 +147,10 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
     // starts presenting the new value.
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let svc = service(Arc::clone(&sent));
-    let owner = SubjectId("subject-a".into());
+    let owner = caller("subject-a");
     let session = svc
         .create_session(
-            owner.clone(),
+            &owner,
             SessionSpec {
                 kernel: KernelId::new("recording"),
                 geometry: None,
@@ -147,7 +161,7 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
         .expect("session created");
 
     let pushed = svc
-        .refresh_subject_credential(&owner, "second-token".into())
+        .refresh_subject_credential(&owner.subject, "second-token".into())
         .await;
     assert_eq!(pushed, 1, "the live session must receive the renewal");
 
@@ -169,9 +183,9 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
 async fn a_renewal_does_not_leak_across_subjects() {
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let svc = service(Arc::clone(&sent));
-    let owner = SubjectId("subject-a".into());
+    let owner = caller("subject-a");
     svc.create_session(
-        owner.clone(),
+        &owner,
         SessionSpec {
             kernel: KernelId::new("recording"),
             geometry: None,
@@ -182,7 +196,7 @@ async fn a_renewal_does_not_leak_across_subjects() {
     .expect("session created");
 
     let pushed = svc
-        .refresh_subject_credential(&SubjectId("subject-b".into()), "b-token".into())
+        .refresh_subject_credential(&SubjectId("subject-b".to_string()), "b-token".into())
         .await;
     assert_eq!(pushed, 0, "another subject's renewal must reach nothing");
 
@@ -196,10 +210,10 @@ async fn a_renewal_does_not_leak_across_subjects() {
 async fn a_terminated_session_is_not_renewed() {
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let svc = service(Arc::clone(&sent));
-    let owner = SubjectId("subject-a".into());
+    let owner = caller("subject-a");
     let session = svc
         .create_session(
-            owner.clone(),
+            &owner,
             SessionSpec {
                 kernel: KernelId::new("recording"),
                 geometry: None,
@@ -213,7 +227,7 @@ async fn a_terminated_session_is_not_renewed() {
         .expect("terminated");
 
     let pushed = svc
-        .refresh_subject_credential(&owner, "new-token".into())
+        .refresh_subject_credential(&owner.subject, "new-token".into())
         .await;
     assert_eq!(pushed, 0, "a dead session must not be handed a credential");
 }
@@ -222,9 +236,9 @@ async fn a_terminated_session_is_not_renewed() {
 async fn a_session_created_without_a_credential_is_still_usable() {
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let svc = service(Arc::clone(&sent));
-    let owner = SubjectId("subject-a".into());
+    let owner = caller("subject-a");
     svc.create_session(
-        owner,
+        &owner,
         SessionSpec {
             kernel: KernelId::new("recording"),
             geometry: None,

@@ -60,7 +60,7 @@ async fn login(State(auth): State<Arc<AuthState>>) -> Response {
                     .await
                     .insert(state.clone(), verifier.clone());
                 let url = format!(
-                    "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid%20profile%20proxy%20offline_access\
+                    "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid%20profile%20roles%20proxy%20offline_access\
 &state={}&code_challenge={}&code_challenge_method=S256",
                     meta.authorization_endpoint,
                     urlencode(client_id),
@@ -205,7 +205,7 @@ async fn callback(
         }
     };
 
-    let subject = match resolve_subject(&auth, &meta, &token.access_token).await {
+    let (subject, permissions) = match resolve_subject(&auth, &meta, &token.access_token).await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "cannot resolve subject");
@@ -238,6 +238,16 @@ async fn callback(
         );
     }
 
+    // Capabilities are resolved once, at sign-in, from the permissions the
+    // provider reported. A caller with none authenticates successfully and is
+    // then refused every operation, which is the correct outcome for someone
+    // who has a platform account but no access here.
+    let authorization = crate::permissions::capabilities_from_permissions(&permissions);
+    if authorization.capabilities().count() == 0 {
+        tracing::warn!(%subject, "signed in with no capabilities for this service");
+    }
+    auth.store_authorization(&subject, authorization).await;
+
     let session = auth.issue_session(subject).await;
     // Host-only, HttpOnly, SameSite=Lax: the cookie is never readable from
     // script, and never sent on a cross-site request that could act as the user.
@@ -254,7 +264,7 @@ async fn resolve_subject(
     auth: &AuthState,
     meta: &ProviderMetadata,
     access_token: &str,
-) -> Result<SubjectId, String> {
+) -> Result<(SubjectId, Vec<String>), String> {
     let Some(endpoint) = meta.userinfo_endpoint.as_ref() else {
         return Err("provider advertises no userinfo endpoint".into());
     };
@@ -272,10 +282,24 @@ async fn resolve_subject(
         .json()
         .await
         .map_err(|e| format!("userinfo body not usable: {e}"))?;
-    body.get("sub")
+    let subject = body
+        .get("sub")
         .and_then(|v| v.as_str())
         .map(|s| SubjectId(s.to_string()))
-        .ok_or_else(|| "userinfo carried no subject claim".into())
+        .ok_or_else(|| "userinfo carried no subject claim".to_string())?;
+
+    // Permissions arrive flattened from the subject's roles when the roles
+    // scope was granted. Absent means no capabilities here, which denies.
+    let permissions: Vec<String> = body
+        .get("permissions")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((subject, permissions))
 }
 
 async fn session(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {

@@ -20,10 +20,10 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use layer2_core::{CoreError, SessionId, SessionService, SubjectId, TerminalGeometry};
+use layer2_core::{Caller, CoreError, SessionId, SessionService, TerminalGeometry};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::AuthenticatedSubject;
+use crate::auth::AuthenticatedCaller;
 use crate::{InterfaceProfile, Operation};
 
 /// Conformance classes this interface satisfies.
@@ -116,9 +116,9 @@ async fn attach(
     ws: WebSocketUpgrade,
     Path(id): Path<String>,
     State(service): State<Arc<SessionService>>,
-    AuthenticatedSubject(subject): AuthenticatedSubject,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| serve(socket, service, SessionId(id), subject))
+    ws.on_upgrade(move |socket| serve(socket, service, SessionId(id), caller))
 }
 
 /// Translate a core failure into this interface's error vocabulary.
@@ -137,7 +137,7 @@ fn error_code(err: &CoreError) -> &'static str {
     }
 }
 
-async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, subject: SubjectId) {
+async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, caller: Caller) {
     let (mut sink, mut source) = socket.split();
 
     // The client must declare its geometry before any terminal byte is sent.
@@ -209,7 +209,7 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, s
         }
     };
 
-    let attachment = match service.attach_terminal(&subject, &id, geometry).await {
+    let attachment = match service.attach_terminal(&caller, &id, geometry).await {
         Ok(a) => a,
         Err(e) => {
             let code = error_code(&e);
@@ -271,7 +271,7 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, s
 
     let svc = Arc::clone(&service);
     let sid = id.clone();
-    let subj = subject.clone();
+    let caller_in = caller.clone();
     let mut pump_in = tokio::spawn(async move {
         while let Some(frame) = source.next().await {
             match frame {
@@ -280,7 +280,11 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, s
                         tracing::warn!(session_id = %sid, len = bytes.len(), "oversized frame");
                         break;
                     }
-                    if svc.send_input(&subj, &sid, bytes.to_vec()).await.is_err() {
+                    if svc
+                        .send_input(&caller_in, &sid, bytes.to_vec())
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -288,13 +292,13 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, s
                     Ok(ClientControl::Resize { cols, rows }) => {
                         match TerminalGeometry::new(cols, rows) {
                             Ok(g) => {
-                                let _ = svc.resize_terminal(&subj, &sid, g).await;
+                                let _ = svc.resize_terminal(&caller_in, &sid, g).await;
                             }
                             Err(e) => tracing::debug!(error = %e, "zero geometry ignored"),
                         }
                     }
                     Ok(ClientControl::Signal { sig }) => {
-                        let _ = svc.send_signal(&subj, &sid, sig).await;
+                        let _ = svc.send_signal(&caller_in, &sid, sig).await;
                     }
                     Ok(ClientControl::Ping) => {}
                     Err(e) => tracing::debug!(error = %e, "malformed control ignored"),

@@ -18,7 +18,7 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{AuthenticatedSubject, DelegatedCredential};
+use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::{InterfaceProfile, Operation};
 
 /// Base URI for problem types this interface returns.
@@ -150,7 +150,7 @@ pub fn router(service: Arc<SessionService>) -> Router {
 
 async fn create(
     State(service): State<Arc<SessionService>>,
-    AuthenticatedSubject(subject): AuthenticatedSubject,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
     // Optional on purpose: a deployment with no delegation configured still
     // creates sessions, they simply cannot call out as the owner.
     credential: Option<axum::Extension<DelegatedCredential>>,
@@ -162,7 +162,7 @@ async fn create(
     };
     let session = service
         .create_session(
-            subject,
+            &caller,
             SessionSpec {
                 kernel: KernelId::new(body.kernel),
                 geometry,
@@ -175,36 +175,36 @@ async fn create(
 
 async fn list(
     State(service): State<Arc<SessionService>>,
-    AuthenticatedSubject(subject): AuthenticatedSubject,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Json<Vec<SessionView>> {
-    let sessions = service.list_sessions(&subject).await;
+    let sessions = service.list_sessions(&caller).await;
     Json(sessions.into_iter().map(SessionView::from).collect())
 }
 
 async fn read(
     State(service): State<Arc<SessionService>>,
-    AuthenticatedSubject(subject): AuthenticatedSubject,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<Json<SessionView>, Problem> {
-    let session = service.get_session(&subject, &SessionId(id)).await?;
+    let session = service.get_session(&caller, &SessionId(id)).await?;
     Ok(Json(session.into()))
 }
 
 async fn terminate(
     State(service): State<Arc<SessionService>>,
-    AuthenticatedSubject(subject): AuthenticatedSubject,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<StatusCode, Problem> {
-    service.terminate_session(&subject, &SessionId(id)).await?;
+    service.terminate_session(&caller, &SessionId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn screen(
     State(service): State<Arc<SessionService>>,
-    AuthenticatedSubject(subject): AuthenticatedSubject,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, Problem> {
-    let snapshot = service.screen_snapshot(&subject, &SessionId(id)).await?;
+    let snapshot = service.screen_snapshot(&caller, &SessionId(id)).await?;
     Ok(Json(serde_json::json!({
         "cols": snapshot.geometry.columns(),
         "rows": snapshot.geometry.rows(),
