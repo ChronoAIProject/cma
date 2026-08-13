@@ -1,4 +1,4 @@
-import type { AuthProvider, AuthState, User } from './types';
+import type { AuthProvider, AuthState, Capability, User } from './types';
 
 /**
  * Stand-in identity provider.
@@ -13,20 +13,37 @@ import type { AuthProvider, AuthState, User } from './types';
  * into storing a credential.
  */
 
-const MOCK_USER: User = {
-  id: 'mock-subject',
-  handle: 'operator',
-};
+/**
+ * What a signed-in person may do here by default.
+ *
+ * The everyday set and nothing more, mirroring what the control plane grants a
+ * caller who has not been made an operator. A mock that handed out the operator
+ * capabilities would make the surface that is meant to be hidden the one every
+ * test sees.
+ */
+const DAILY_USE: readonly Capability[] = [
+  'create_session',
+  'use_own_sessions',
+  'terminate_own_session',
+  'manage_own_environment_profiles',
+];
 
 export interface MockAuthOptions {
   /** Start already signed in, for tests and local shell work. */
   readonly initiallyAuthenticated?: boolean;
   /** Force `current()` to report a failure, so error paths can be exercised. */
   readonly failCurrent?: string;
+  /** What the signed-in person may do. Defaults to the everyday set. */
+  readonly capabilities?: readonly Capability[];
 }
 
 export function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
-  let user: User | null = options.initiallyAuthenticated === true ? MOCK_USER : null;
+  const mockUser: User = {
+    id: 'mock-subject',
+    handle: 'operator',
+    capabilities: options.capabilities ?? DAILY_USE,
+  };
+  let user: User | null = options.initiallyAuthenticated === true ? mockUser : null;
 
   return {
     async current(): Promise<AuthState> {
@@ -38,7 +55,7 @@ export function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvi
 
     async signIn(): Promise<void> {
       // The real provider navigates to NyxID here and never returns.
-      user = MOCK_USER;
+      user = mockUser;
     },
 
     async signOut(): Promise<void> {
