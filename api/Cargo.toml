@@ -21,6 +21,12 @@ mongodb = { version = "3", default-features = false, features = [
     "bson-3",
     "compat-3-3-0",
     "rustls-tls",
+    # Required to accept a mongodb+srv:// URI, which resolves its host list over
+    # DNS rather than naming servers directly. Hosted deployments hand out that
+    # form, and without this the driver rejects the connection string outright
+    # at startup — a failure that only appears against a real cluster, since a
+    # direct mongodb:// URI needs no resolver.
+    "dns-resolver",
 ] }
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
