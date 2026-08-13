@@ -17,6 +17,13 @@ pub enum CoreError {
     #[error("session not found")]
     SessionNotFound,
 
+    /// No such environment profile, or not visible to this subject.
+    ///
+    /// Conflated with "belongs to someone else" at the edge for the same reason
+    /// as a session, and kept distinct here for the same reason too.
+    #[error("environment profile not found")]
+    EnvironmentProfileNotFound,
+
     /// The session exists but belongs to another subject.
     #[error("forbidden")]
     Forbidden,
@@ -40,6 +47,15 @@ pub enum CoreError {
     /// The operation is not valid in the session's current state.
     #[error("invalid state for operation")]
     InvalidState,
+
+    /// The request was well-formed but describes something unusable.
+    ///
+    /// Distinct from `InvalidState`: nothing about the system prevents this,
+    /// the caller simply sent something that cannot be stored or applied. The
+    /// message names what is wrong and never quotes a value, which is the one
+    /// part of a request that may be a credential.
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
 }
 
 impl CoreError {
@@ -50,12 +66,14 @@ impl CoreError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::SessionNotFound => "session_not_found",
+            Self::EnvironmentProfileNotFound => "environment_profile_not_found",
             Self::Forbidden => "forbidden",
             Self::SessionTerminated => "session_terminated",
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::InvalidState => "invalid_state",
+            Self::InvalidRequest(_) => "invalid_request",
         }
     }
 }
@@ -69,6 +87,7 @@ mod tests {
     fn every_variant_has_a_distinct_code() {
         let codes = [
             CoreError::SessionNotFound.code(),
+            CoreError::EnvironmentProfileNotFound.code(),
             CoreError::Forbidden.code(),
             CoreError::SessionTerminated.code(),
             CoreError::AlreadyAttached.code(),
@@ -76,6 +95,7 @@ mod tests {
                 .code(),
             CoreError::RuntimeUnavailable("x".into()).code(),
             CoreError::InvalidState.code(),
+            CoreError::InvalidRequest("x".into()).code(),
         ];
         let mut sorted = codes.to_vec();
         sorted.sort_unstable();

@@ -69,6 +69,12 @@ pub struct CreateSessionRequest {
     /// Initial terminal height.
     #[serde(default)]
     pub rows: Option<u16>,
+    /// Reusable environment bundle to start the session with.
+    ///
+    /// Omitting it does not mean a bare session: what the platform mandates is
+    /// applied either way.
+    #[serde(default)]
+    pub environment_profile: Option<String>,
 }
 
 /// A session as this interface renders it.
@@ -122,7 +128,7 @@ impl From<Session> for SessionView {
 }
 
 /// A core failure rendered as an RFC 9457 problem document.
-pub(crate) struct Problem(CoreError);
+pub(crate) struct Problem(pub(crate) CoreError);
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
@@ -132,6 +138,10 @@ impl IntoResponse for Problem {
             CoreError::SessionNotFound | CoreError::Forbidden => {
                 (StatusCode::NOT_FOUND, "session-not-found")
             }
+            CoreError::EnvironmentProfileNotFound => {
+                (StatusCode::NOT_FOUND, "environment-profile-not-found")
+            }
+            CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
             CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
             CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
             CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
@@ -159,6 +169,13 @@ impl From<CoreError> for Problem {
         Self(e)
     }
 }
+
+/// Environment bundles a session can be started with.
+///
+/// A resource of its own rather than a property of a session, because a bundle
+/// outlives every session that used one — so it has its own router, mounted
+/// beside this one.
+pub mod environments;
 
 /// Routes this interface contributes.
 pub fn router(service: Arc<SessionService>) -> Router {
@@ -203,6 +220,9 @@ async fn create(
         .create_session(
             &caller,
             SessionSpec {
+                environment_profile: body
+                    .environment_profile
+                    .map(layer2_core::EnvironmentProfileId),
                 kernel: KernelId::new(body.kernel),
                 geometry,
                 // Absent options mean the deployment's defaults, which are the
@@ -358,6 +378,7 @@ mod tests {
             recovery_state: layer2_core::RecoveryState::Normal,
             stop_reason: None,
             options: layer2_core::AgentOptions::default(),
+            environment_profile: None,
             geometry: TerminalGeometry::new(120, 40).expect("valid"),
             last_seq: 3,
             runtime_version: None,
