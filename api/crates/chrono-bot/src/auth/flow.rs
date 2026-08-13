@@ -60,7 +60,7 @@ async fn login(State(auth): State<Arc<AuthState>>) -> Response {
                     .await
                     .insert(state.clone(), verifier.clone());
                 let url = format!(
-                    "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid%20profile\
+                    "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid%20profile%20proxy%20offline_access\
 &state={}&code_challenge={}&code_challenge_method=S256",
                     meta.authorization_endpoint,
                     urlencode(client_id),
@@ -188,6 +188,10 @@ async fn callback(
     #[derive(Deserialize)]
     struct TokenResponse {
         access_token: String,
+        #[serde(default)]
+        refresh_token: Option<String>,
+        #[serde(default)]
+        expires_in: Option<u64>,
     }
     let token: TokenResponse = match resp.json().await {
         Ok(t) => t,
@@ -212,6 +216,27 @@ async fn callback(
                 .into_response();
         }
     };
+
+    // Held so the runtime can act as this subject, and so the access token can
+    // be renewed before it expires under a running session.
+    auth.store_tokens(
+        &subject,
+        super::SubjectTokens {
+            access_token: token.access_token.clone(),
+            refresh_token: token.refresh_token.clone(),
+            expires_at: std::time::Instant::now()
+                + std::time::Duration::from_secs(token.expires_in.unwrap_or(3600)),
+        },
+    )
+    .await;
+    if token.refresh_token.is_none() {
+        // Without one, a long session ends when the access token does. Say so
+        // once, at the point the decision is visible.
+        tracing::warn!(
+            %subject,
+            "provider issued no refresh token; delegated access will expire and cannot be renewed"
+        );
+    }
 
     let session = auth.issue_session(subject).await;
     // Host-only, HttpOnly, SameSite=Lax: the cookie is never readable from

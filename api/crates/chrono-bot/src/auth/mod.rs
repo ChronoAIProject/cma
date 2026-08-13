@@ -24,6 +24,44 @@ use tokio::sync::RwLock;
 /// Name of the session cookie this service issues.
 pub const SESSION_COOKIE: &str = "chrono_bot_session";
 
+/// What the provider issued for a signed-in subject.
+///
+/// The refresh token is the reason this is stored at all: an access token
+/// outlives neither a long terminal session nor a long agent turn, and the only
+/// alternative to renewing it is interrupting the user.
+#[derive(Clone)]
+pub struct SubjectTokens {
+    /// Currently valid access token.
+    pub access_token: String,
+    /// Used to obtain the next access token, when the provider issued one.
+    pub refresh_token: Option<String>,
+    /// When the access token stops being accepted.
+    pub expires_at: std::time::Instant,
+}
+
+impl std::fmt::Debug for SubjectTokens {
+    /// Redacted: no `{:?}` may put a live token in a log.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubjectTokens")
+            .field("access_token", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+impl SubjectTokens {
+    /// Whether the access token should be renewed now.
+    ///
+    /// Renewed early rather than on expiry: a token that dies mid-turn fails a
+    /// request the user is waiting on, and the margin costs nothing.
+    pub fn needs_refresh(&self, margin: std::time::Duration) -> bool {
+        std::time::Instant::now() + margin >= self.expires_at
+    }
+}
+
 /// Provider metadata, as far as this service uses it.
 #[derive(Debug, Clone, Deserialize)]
 struct ProviderMetadata {
@@ -69,6 +107,8 @@ pub struct AuthState {
     metadata: RwLock<Option<ProviderMetadata>>,
     /// Issued session cookies mapped to their subject.
     sessions: RwLock<HashMap<String, SubjectId>>,
+    /// Provider tokens held per subject, for delegation and renewal.
+    tokens: RwLock<HashMap<SubjectId, SubjectTokens>>,
     /// In-flight authorization attempts: state to PKCE verifier.
     ///
     /// The state parameter is what binds a callback to the login that started
@@ -95,6 +135,7 @@ impl AuthState {
                 .expect("http client builds"),
             metadata: RwLock::new(None),
             sessions: RwLock::new(HashMap::new()),
+            tokens: RwLock::new(HashMap::new()),
             pending: RwLock::new(HashMap::new()),
         })
     }
@@ -159,6 +200,99 @@ impl AuthState {
         Ok(meta)
     }
 
+    /// Store the tokens issued for a subject.
+    pub async fn store_tokens(&self, subject: &SubjectId, tokens: SubjectTokens) {
+        self.tokens.write().await.insert(subject.clone(), tokens);
+    }
+
+    /// The subject's current access token, if one is held.
+    pub async fn access_token(&self, subject: &SubjectId) -> Option<String> {
+        self.tokens
+            .read()
+            .await
+            .get(subject)
+            .map(|t| t.access_token.clone())
+    }
+
+    /// Subjects whose access token is close enough to expiry to renew.
+    pub async fn subjects_needing_refresh(
+        &self,
+        margin: std::time::Duration,
+    ) -> Vec<(SubjectId, String)> {
+        self.tokens
+            .read()
+            .await
+            .iter()
+            .filter(|(_, t)| t.needs_refresh(margin))
+            .filter_map(|(s, t)| t.refresh_token.clone().map(|r| (s.clone(), r)))
+            .collect()
+    }
+
+    /// Exchange a refresh token for a new access token.
+    ///
+    /// A provider that refuses the exchange has withdrawn the delegation, so
+    /// the stored tokens are dropped rather than retried forever.
+    pub async fn refresh(
+        &self,
+        subject: &SubjectId,
+        refresh_token: &str,
+    ) -> Result<String, String> {
+        let AuthMode::Provider {
+            client_id,
+            client_secret,
+            ..
+        } = &self.mode
+        else {
+            return Err("no provider configured".into());
+        };
+        let meta = self.metadata().await?;
+        let form = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
+        ];
+        let resp = self
+            .http
+            .post(&meta.token_endpoint)
+            .form(&form)
+            .send()
+            .await
+            .map_err(|e| format!("refresh request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            self.tokens.write().await.remove(subject);
+            return Err(format!("provider refused refresh with {status}"));
+        }
+        #[derive(Deserialize)]
+        struct RefreshResponse {
+            access_token: String,
+            #[serde(default)]
+            refresh_token: Option<String>,
+            #[serde(default)]
+            expires_in: Option<u64>,
+        }
+        let body: RefreshResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("refresh response not usable: {e}"))?;
+
+        let mut store = self.tokens.write().await;
+        let existing_refresh = store.get(subject).and_then(|t| t.refresh_token.clone());
+        store.insert(
+            subject.clone(),
+            SubjectTokens {
+                access_token: body.access_token.clone(),
+                // A provider that rotates refresh tokens returns a new one; one
+                // that does not expects the original to keep working.
+                refresh_token: body.refresh_token.or(existing_refresh),
+                expires_at: std::time::Instant::now()
+                    + std::time::Duration::from_secs(body.expires_in.unwrap_or(3600)),
+            },
+        );
+        Ok(body.access_token)
+    }
+
     async fn issue_session(&self, subject: SubjectId) -> String {
         let token = uuid_v4();
         self.sessions
@@ -220,6 +354,13 @@ pub async fn attach_subject(
     next: axum::middleware::Next,
 ) -> Response {
     if let Some(subject) = auth.resolve(req.headers()).await {
+        // The credential rides separately from identity: nearly every handler
+        // needs the subject, almost none needs a credential, so taking one has
+        // to be deliberate.
+        if let Some(token) = auth.access_token(&subject).await {
+            req.extensions_mut()
+                .insert(layer1_public::auth::DelegatedCredential(token));
+        }
         req.extensions_mut().insert(AuthenticatedSubject(subject));
     }
     next.run(req).await

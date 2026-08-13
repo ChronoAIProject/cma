@@ -25,6 +25,21 @@ impl AuthenticatedSubject {
     }
 }
 
+/// A credential the authenticated subject has delegated for this request.
+///
+/// Separate from the subject on purpose. Identity is needed by every handler;
+/// a delegated credential is needed by almost none, so extracting it has to be
+/// a deliberate act rather than something that rides along by default.
+#[derive(Clone)]
+pub struct DelegatedCredential(pub String);
+
+impl std::fmt::Debug for DelegatedCredential {
+    /// Redacted, so no accidental `{:?}` puts a live credential in a log.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DelegatedCredential(<redacted {} bytes>)", self.0.len())
+    }
+}
+
 /// Rejection returned when no verified subject is present.
 #[derive(Debug)]
 pub struct NotAuthenticated;

@@ -87,6 +87,7 @@ impl PtyRegistry {
         command: &str,
         cols: u16,
         rows: u16,
+        placeholder_key: &str,
     ) -> std::io::Result<Arc<PtySession>> {
         let mut sessions = self.inner.lock().await;
         if let Some(existing) = sessions.get(id) {
@@ -95,7 +96,7 @@ impl PtyRegistry {
         }
 
         tracing::info!(runtime = %id, %command, cols, rows, "starting runtime process");
-        let session = Arc::new(start_process(command, cols, rows)?);
+        let session = Arc::new(start_process(command, cols, rows, placeholder_key)?);
         sessions.insert(id.to_string(), Arc::clone(&session));
         Ok(session)
     }
@@ -120,7 +121,12 @@ impl PtyRegistry {
     }
 }
 
-fn start_process(command: &str, cols: u16, rows: u16) -> std::io::Result<PtySession> {
+fn start_process(
+    command: &str,
+    cols: u16,
+    rows: u16,
+    placeholder_key: &str,
+) -> std::io::Result<PtySession> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -141,6 +147,10 @@ fn start_process(command: &str, cols: u16, rows: u16) -> std::io::Result<PtySess
     }
     // The kernel decides how to render; the client must not negotiate this.
     cmd.env("TERM", "xterm-256color");
+    // The kernel refuses to start without a key for its provider. This one is
+    // inert: the supervisor's proxy strips it and attaches the real credential,
+    // so nothing reachable from inside the sandbox is usable elsewhere.
+    cmd.env("CHRONO_UPSTREAM_PLACEHOLDER_KEY", placeholder_key);
     cmd.env("COLORTERM", "truecolor");
     if let Ok(home) = std::env::var("HOME") {
         cmd.cwd(home);
@@ -203,11 +213,11 @@ mod tests {
         assert!(reg.is_empty().await);
 
         let a = reg
-            .get_or_start("r1", "/bin/cat", 80, 24)
+            .get_or_start("r1", "/bin/cat", 80, 24, "k")
             .await
             .expect("starts");
         let b = reg
-            .get_or_start("r1", "/bin/cat", 80, 24)
+            .get_or_start("r1", "/bin/cat", 80, 24, "k")
             .await
             .expect("reattaches");
         assert!(Arc::ptr_eq(&a, &b), "reattach must reuse the same process");
@@ -220,8 +230,14 @@ mod tests {
     #[tokio::test]
     async fn distinct_ids_get_distinct_processes() {
         let reg = PtyRegistry::new();
-        let a = reg.get_or_start("a", "/bin/cat", 80, 24).await.expect("a");
-        let b = reg.get_or_start("b", "/bin/cat", 80, 24).await.expect("b");
+        let a = reg
+            .get_or_start("a", "/bin/cat", 80, 24, "k")
+            .await
+            .expect("a");
+        let b = reg
+            .get_or_start("b", "/bin/cat", 80, 24, "k")
+            .await
+            .expect("b");
         assert!(!Arc::ptr_eq(&a, &b));
         assert_eq!(reg.len().await, 2);
     }
@@ -230,7 +246,7 @@ mod tests {
     async fn input_is_echoed_back_through_the_pty() {
         let reg = PtyRegistry::new();
         let s = reg
-            .get_or_start("echo", "/bin/cat", 80, 24)
+            .get_or_start("echo", "/bin/cat", 80, 24, "k")
             .await
             .expect("starts");
         let mut rx = s.output.subscribe();
@@ -255,7 +271,7 @@ mod tests {
     async fn zero_geometry_is_refused() {
         let reg = PtyRegistry::new();
         let s = reg
-            .get_or_start("z", "/bin/cat", 80, 24)
+            .get_or_start("z", "/bin/cat", 80, 24, "k")
             .await
             .expect("starts");
         assert!(s.resize(0, 24).is_err());

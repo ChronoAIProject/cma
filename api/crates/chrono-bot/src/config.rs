@@ -23,6 +23,12 @@ pub struct Config {
     pub sandbox_api_key: String,
     /// Image each sandbox runs.
     pub sandbox_image: String,
+    /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
+    pub upstream_base_url: String,
+    /// Model the agent selects.
+    pub upstream_model: String,
+    /// Request shape the upstream speaks.
+    pub upstream_wire_api: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
 }
@@ -37,6 +43,9 @@ impl Config {
             "http://example-host-02.example-namespace.svc.cluster.local",
         );
         let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
+        let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
+        let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
+        let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
         // The key is read from a file rather than an environment variable so it
         // can be delivered by a mounted secret and rotated without a restart of
         // the surrounding config, matching how neighbouring control planes do it.
@@ -93,6 +102,9 @@ impl Config {
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
+            upstream_base_url,
+            upstream_model,
+            upstream_wire_api,
             auth_mode,
         })
     }
@@ -146,6 +158,9 @@ mod tests {
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
+            upstream_base_url: "http://u".into(),
+            upstream_model: "m".into(),
+            upstream_wire_api: "responses".into(),
             auth_mode: AuthMode::Trusted {
                 subject: "s".into(),
             },

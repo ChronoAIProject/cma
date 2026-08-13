@@ -59,6 +59,15 @@ pub struct CodexSandboxSpec {
     pub resource_limits: BTreeMap<String, String>,
     /// Seconds before the provider reclaims an idle sandbox.
     pub timeout_seconds: Option<u64>,
+    /// Where the supervisor forwards the agent's model calls.
+    ///
+    /// Empty means the agent runs with no model endpoint: still a usable
+    /// terminal, but unable to complete a turn.
+    pub upstream_base_url: String,
+    /// Model the agent should select.
+    pub upstream_model: String,
+    /// Request shape the upstream speaks.
+    pub upstream_wire_api: String,
 }
 
 impl Default for CodexSandboxSpec {
@@ -71,6 +80,9 @@ impl Default for CodexSandboxSpec {
                 ("memory".to_string(), "4Gi".to_string()),
             ]),
             timeout_seconds: Some(3600),
+            upstream_base_url: String::new(),
+            upstream_model: "gpt-5.6-sol".into(),
+            upstream_wire_api: "responses".into(),
         }
     }
 }
@@ -135,6 +147,21 @@ impl KernelAdapter for CodexAdapter {
         let env = BTreeMap::from([
             ("CHRONO_RUNTIME_COMMAND".to_string(), "codex".to_string()),
             ("TERM".to_string(), "xterm-256color".to_string()),
+            // The supervisor forwards here and attaches the owner's credential.
+            // The credential itself never travels as environment: it arrives
+            // over the control channel and lives only in supervisor memory.
+            (
+                "CHRONO_UPSTREAM_BASE_URL".to_string(),
+                self.spec.upstream_base_url.clone(),
+            ),
+            (
+                "CHRONO_UPSTREAM_MODEL".to_string(),
+                self.spec.upstream_model.clone(),
+            ),
+            (
+                "CHRONO_UPSTREAM_WIRE_API".to_string(),
+                self.spec.upstream_wire_api.clone(),
+            ),
             (
                 "CHRONO_RUNTIME_COLS".to_string(),
                 spec.size.cols.to_string(),
@@ -235,6 +262,9 @@ impl KernelAdapter for CodexAdapter {
                     TerminalInput::Signal(sig) => {
                         Message::Text(format!(r#"{{"t":"signal","sig":"{sig}"}}"#))
                     }
+                    TerminalInput::Credential(value) => Message::Text(
+                        serde_json::json!({ "t": "credential", "value": value }).to_string(),
+                    ),
                 };
                 if let Err(e) = sink.send(message).await {
                     tracing::warn!(%sandbox, error = %e, "sandbox terminal write failed");
@@ -327,6 +357,7 @@ mod tests {
             .provision(&RuntimeSpec {
                 session_id: "sesn_x".into(),
                 size: TermSize { cols: 80, rows: 24 },
+                subject_credential: None,
             })
             .await
             .expect_err("must fail against a dead provider");
