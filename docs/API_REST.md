@@ -237,3 +237,83 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `503` | Control plane recovering or failing over; retry |
 
 `501` responses name the missing capability in `detail`, so a client learns what is unavailable rather than guessing.
+
+---
+
+## 10. Administration
+
+Everything an operator can see and do lives under `/api/v1/admin/`, one segment so the whole surface can be restricted in front of the service as well as inside it. Each endpoint is gated on its own capability, and no capability is implied by another.
+
+| Permission | Capability | What it opens |
+|---|---|---|
+| `chrono-bot:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
+| `chrono-bot:admin:users` | read the user directory | `GET /api/v1/admin/users` |
+| `chrono-bot:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
+| `chrono-bot:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
+| `chrono-bot:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
+
+Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
+
+**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists.
+
+### Registered users
+
+```http
+GET /api/v1/admin/users
+```
+
+```json
+[{ "subject": "76fe9d91", "label": "Ada Lovelace", "display_name": "Ada Lovelace",
+   "email": "ada@example.com", "first_seen": "2026-08-01T09:14:22Z",
+   "last_seen": "2026-08-14T11:02:05Z" }]
+```
+
+Recorded on sign-in, since that is the only moment the identity provider's account details are in hand. `label` is what a client displays; `subject` is what it keys on. A person the provider released no details for carries no `label`, and a client falls back rather than presenting an opaque identifier as a name.
+
+### Activity log
+
+```http
+GET /api/v1/admin/activity?actor=76fe9d91&limit=100
+```
+
+```json
+[{ "id": "actv_0f3c…", "at": "2026-08-14T11:02:05Z", "actor": "76fe9d91",
+   "action": "session_terminate",
+   "target": { "kind": "session", "id": "sesn_01JD8Z3K7" },
+   "outcome": "succeeded",
+   "detail": { "runtime": "codex" } }]
+```
+
+Every request the control plane serves is recorded: who, when, what, with which parameters, and how it came out. `outcome` is one of `succeeded`, `denied` (turned away), `rejected` (sent something unusable), `failed` (our fault). `actor` is absent when the request carried no established identity — a refused caller is recorded precisely because they were refused.
+
+**`detail` never contains a secret.** What may be recorded is an allowlist in the core, and there is no key in it for an environment variable's value, a credential, a token, a cookie or a header. A bundle of variables is described by how many it carried, never by what they were. Newest first; `limit` is clamped by the service. Entries expire on a schedule the deployment sets (`CHRONO_ACTIVITY_RETENTION_DAYS`, ninety days by default).
+
+Reading requires `chrono-bot:admin:activity`. There is no per-caller view: an ordinary caller cannot read the log at all, not even their own entries. What happened to their own session is in that session's event stream, which is theirs.
+
+### Live runtimes
+
+```http
+GET /api/v1/admin/runtimes
+```
+
+```json
+{ "running": 3, "fully_observed": true,
+  "providers": [{ "kernel": "codex", "observable": true,
+    "runtimes": [{ "runtime": "sbx_7Q2", "session": "sesn_01JD8Z3K7",
+                   "owner": "76fe9d91", "status": "ready", "unaccounted": false }] }] }
+```
+
+The providers are asked what they are running and the answer is joined against the record, which is what supplies the session's owner and state. `unaccounted` marks a runtime nothing in the record is entitled to.
+
+**A provider that cannot be asked is not a provider running nothing.** That provider carries `"observable": false` with a `reason` and **no `runtimes` array at all**, and the top-level `running` is omitted, because a total that silently excludes a provider is the same lie as an empty list. Clients must render this as "unknown", never as an idle namespace.
+
+### Cross-owner session control
+
+```http
+POST /api/v1/admin/sessions/{id}/stop
+POST /api/v1/admin/sessions/{id}/terminate
+```
+
+The same core operations the owner's own routes project, at an address that says who is taking them. `stop` stays reversible whoever asked for it; the session keeps its history and can be revived by its owner. Deleting is **not** here: running the service needs the ability to stop work that is costing money or misbehaving, and stopping is reversible where destroying somebody else's history is not.
+
+Both are recorded in the activity log with the operator as `actor` and the session as `target`, and Layer 2 logs a warning whenever the caller is not the owner.
