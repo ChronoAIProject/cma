@@ -36,16 +36,23 @@ pub struct Config {
     /// Database holding session records and their history.
     pub mongodb_database: String,
     /// Bucket holding stored session context.
-    pub context_bucket: String,
-    /// Credential this service presents to the identity platform when storing
-    /// session context.
     ///
-    /// Deliberately its own key rather than a credential borrowed from
-    /// elsewhere. The sandbox provider and the identity platform are separate
-    /// trust domains, and a key issued for one must never be spendable at the
-    /// other — reusing one would both fail to authenticate and hand a
-    /// credential to a service with no business holding it.
-    pub context_credential: String,
+    /// Named explicitly rather than defaulted, and the only bucket this
+    /// service ever addresses. It creates no bucket and holds no capability to
+    /// create one; an absent name switches context storage off.
+    pub context_bucket: String,
+    /// This service's own machine identity on the identity platform, used to
+    /// store session context.
+    ///
+    /// Its own identity rather than a credential borrowed from elsewhere. The
+    /// sandbox provider and the identity platform are separate trust domains,
+    /// and a key issued for one must never be spendable at the other.
+    ///
+    /// The identifier is not secret; the secret is, and the two are delivered
+    /// separately for that reason.
+    pub storage_client_id: String,
+    /// Secret half of the machine identity above.
+    pub storage_client_secret: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
 }
@@ -70,8 +77,12 @@ impl Config {
         // store would accept work it silently cannot keep.
         let mongodb_uri = require("CHRONO_MONGODB_URI")?;
         let mongodb_database = var_or("CHRONO_MONGODB_DATABASE", "chrono_bot");
-        let context_bucket = var_or("CHRONO_CONTEXT_BUCKET", "chrono-platform-chrono-bot");
-        let context_credential = var_or("CHRONO_CONTEXT_CREDENTIAL", "");
+        // No default. The bucket is created and owned by whoever runs the
+        // platform, and every object this service writes lands in it, so
+        // guessing a name would mean writing somewhere nobody chose.
+        let context_bucket = var_or("CHRONO_CONTEXT_BUCKET", "");
+        let storage_client_id = var_or("CHRONO_STORAGE_CLIENT_ID", "");
+        let storage_client_secret = var_or("CHRONO_STORAGE_CLIENT_SECRET", "");
         // The key is read from a file rather than an environment variable so it
         // can be delivered by a mounted secret and rotated without a restart of
         // the surrounding config, matching how neighbouring control planes do it.
@@ -135,7 +146,8 @@ impl Config {
             mongodb_uri,
             mongodb_database,
             context_bucket,
-            context_credential,
+            storage_client_id,
+            storage_client_secret,
             auth_mode,
         })
     }
@@ -196,7 +208,8 @@ mod tests {
             mongodb_uri: "mongodb://h/db".into(),
             mongodb_database: "db".into(),
             context_bucket: "bkt".into(),
-            context_credential: "ctx-token".into(),
+            storage_client_id: "sa-id".into(),
+            storage_client_secret: "sa-secret".into(),
             auth_mode: AuthMode::Trusted {
                 subject: "s".into(),
             },
