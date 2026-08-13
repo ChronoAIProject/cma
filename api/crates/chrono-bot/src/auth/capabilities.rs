@@ -6,9 +6,22 @@
 
 use layer2_core::{Authorization, SubjectId};
 
-use super::AuthState;
+use super::{AuthMode, AuthState};
 
 impl AuthState {
+    /// What a subject may do in this deployment.
+    ///
+    /// One answer rather than two: the middleware that enforces capabilities
+    /// and the endpoint that reports them read the same function, so a client
+    /// can never be told it may do something the next request refuses. That
+    /// disagreement is the whole failure mode of telling a client anything.
+    pub async fn effective_authorization(&self, subject: &SubjectId) -> Authorization {
+        match self.mode {
+            AuthMode::Trusted { .. } => Self::trusted_authorization(),
+            AuthMode::Provider { .. } => self.authorization(subject).await,
+        }
+    }
+
     /// Record what a subject may do, as resolved at sign-in.
     pub async fn store_authorization(&self, subject: &SubjectId, authorization: Authorization) {
         self.authorizations
@@ -94,6 +107,48 @@ mod tests {
         assert!(
             !a.allows(Capability::ReadAllSessions),
             "a revoked capability must not persist"
+        );
+    }
+
+    #[tokio::test]
+    async fn trusted_mode_answers_the_same_whoever_asks() {
+        // Local bring-up has no provider to resolve against, so the fixed
+        // subject carries the everyday set — and the report a client reads has
+        // to say exactly that, or the console would offer nothing at all.
+        let auth = AuthState::new(
+            AuthMode::Trusted {
+                subject: "local-developer".into(),
+            },
+            None,
+        );
+        let a = auth
+            .effective_authorization(&SubjectId("anybody".into()))
+            .await;
+        assert!(a.allows(Capability::CreateSession));
+        assert!(!a.is_privileged());
+    }
+
+    #[tokio::test]
+    async fn provider_mode_reports_what_was_resolved_at_sign_in() {
+        let auth = provider_state();
+        let s = SubjectId("subject-a".into());
+        auth.store_authorization(
+            &s,
+            Authorization::from_capabilities([Capability::ReadActivityLog]),
+        )
+        .await;
+        assert!(auth
+            .effective_authorization(&s)
+            .await
+            .allows(Capability::ReadActivityLog));
+        // And an unknown subject still gets nothing, which is what makes the
+        // report safe to hand to a browser.
+        assert_eq!(
+            auth.effective_authorization(&SubjectId("never-seen".into()))
+                .await
+                .capabilities()
+                .count(),
+            0
         );
     }
 
