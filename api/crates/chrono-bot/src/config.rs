@@ -17,8 +17,12 @@ pub struct Config {
     pub public_url: String,
     /// Origins permitted to call this API from a browser.
     pub cors_origins: Vec<HeaderValue>,
-    /// Base URL of the sandboxed runtime supervisor.
-    pub runtime_base_url: String,
+    /// Base URL of the sandbox provider's lifecycle API.
+    pub sandbox_base_url: String,
+    /// API key for the sandbox provider.
+    pub sandbox_api_key: String,
+    /// Image each sandbox runs.
+    pub sandbox_image: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
 }
@@ -28,7 +32,24 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         let bind = var_or("CHRONO_SERVER_BIND", "0.0.0.0:8080");
         let public_url = var_or("CHRONO_SERVER_PUBLIC_URL", "http://localhost:8080");
-        let runtime_base_url = var_or("CHRONO_RUNTIME_BASE_URL", "http://chrono-bot-runtime:9090");
+        let sandbox_base_url = var_or(
+            "CHRONO_SANDBOX_BASE_URL",
+            "http://opensandbox-server.opensandbox-system.svc.cluster.local",
+        );
+        let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
+        // The key is read from a file rather than an environment variable so it
+        // can be delivered by a mounted secret and rotated without a restart of
+        // the surrounding config, matching how neighbouring control planes do it.
+        let sandbox_api_key = match std::env::var("CHRONO_SANDBOX_API_KEY_FILE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        {
+            Some(path) => std::fs::read_to_string(&path)
+                .map_err(|e| format!("cannot read CHRONO_SANDBOX_API_KEY_FILE at {path}: {e}"))?
+                .trim()
+                .to_string(),
+            None => require("CHRONO_SANDBOX_API_KEY")?,
+        };
 
         let cors_origins = var_or("CHRONO_SERVER_CORS_ORIGIN", "http://localhost:5173")
             .split(',')
@@ -69,7 +90,9 @@ impl Config {
             bind,
             public_url,
             cors_origins,
-            runtime_base_url,
+            sandbox_base_url,
+            sandbox_api_key,
+            sandbox_image,
             auth_mode,
         })
     }
@@ -94,7 +117,7 @@ fn require(key: &str) -> Result<String, String> {
     std::env::var(key)
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .ok_or_else(|| format!("{key} is required when CHRONO_AUTH_MODE is \"provider\""))
+        .ok_or_else(|| format!("{key} is required and was not set"))
 }
 
 #[cfg(test)]
@@ -120,7 +143,9 @@ mod tests {
             bind: "0.0.0.0:8080".into(),
             public_url: "http://x".into(),
             cors_origins: vec![],
-            runtime_base_url: "http://r".into(),
+            sandbox_base_url: "http://r".into(),
+            sandbox_api_key: "k".into(),
+            sandbox_image: "img".into(),
             auth_mode: AuthMode::Trusted {
                 subject: "s".into(),
             },
