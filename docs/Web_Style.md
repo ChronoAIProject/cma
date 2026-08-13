@@ -483,6 +483,111 @@ almost always open because someone wants it back.
 
 ---
 
+## 15. The operator panel
+
+Running the service raises four questions nobody else can answer: who is using
+it, what it has been asked to do, what is running right now, and — occasionally
+— stop that. The panel answers those four and nothing else.
+
+**It is a dialog, not a page.** Opened from the profile menu as an account
+action, exactly as environment profiles are, and closed back onto the same
+terminal. §1 still holds: one page, one terminal, no navigation and no second
+route. The profile menu gains an item; it does not become a nav menu.
+
+**The entry point is absent unless the control plane says otherwise.** The
+identity surface reports the caller's capabilities, and the menu item is
+rendered only for a caller holding one this panel can act on. This is
+presentation, never protection — the API refuses on its own and would refuse a
+hand-written request just the same. Both halves are required: a control nobody
+can use should not be drawn, and a drawn control is not what makes it safe.
+
+**Each view is offered on its own capability**, matching the API, where reading
+every session, reading the directory, reading the record and reading the
+inventory are four separate grants and none implies another. A caller holding
+two sees two views. A view is never drawn empty because of entitlement — an
+empty list must always mean "there is nothing", or the panel teaches people to
+misread it.
+
+### View switch
+
+The four views share one dialog and are switched by a row of buttons at the top
+of its body, marked up as a tablist.
+
+| Property | Value |
+|---|---|
+| Label | monospace, `xs`, uppercase, `letter-spacing: 0.12em` |
+| Size | minimum 32px tall, `8px/12px` padding |
+| Container | 1px `--rule` bottom border, `gap: 4px` |
+| Selected | `--accent` text, 2px `--accent` bottom border |
+| Unselected | `--ink-2` text, transparent border |
+
+The selected view is named by its border **and** by `aria-selected`; colour is
+never the only signal. Past four views the row would need to scroll, which is
+the sign the panel has grown past what it is for.
+
+### Record list
+
+The one place this product shows many rows at once. It is a list, not a table:
+rows are read one at a time and a table's column rules earn nothing here.
+
+- Each row is a `<li>`: a leading timestamp, a primary label, then secondary
+  metadata beneath it. Timestamps and any column of digits take
+  `font-variant-numeric: tabular-nums`.
+- Metadata is `xs` `--ink-3` monospace; the primary label is `base` `--ink`.
+- The list scrolls inside the dialog body — the page still never scrolls — and
+  anything too wide sits in its own `overflow-x: auto` container.
+- Rows carry a 1px `--rule` separator and no zebra striping, no hover
+  highlight, and no row-level click target. Nothing in this panel navigates.
+- An empty list says what would have been there, in a sentence.
+
+**Newest first, always.** The record is read from the top, and an order that
+depends on where you came from is an order nobody can trust. The activity view
+is filterable by person and by action; the filters are ordinary selects and
+narrow what is shown without ever changing the order.
+
+### Naming people
+
+**A person is their name, then their email — never their subject identifier.**
+The identifier is opaque, and putting it where a name goes makes every row look
+alike.
+
+Where the directory knows nothing about a subject, the identifier is shown in
+identifier style — monospace, `xs`, `--ink-3` — so a reader can tell at a glance
+that they are looking at an identifier rather than at somebody named that. An
+action with no established identity behind it reads "Not signed in", which is a
+fact, rather than an empty cell, which is an omission.
+
+### Unknown is not empty
+
+A provider that could not be asked what it is running renders as **unknown**,
+carrying the reason, and never as a provider running nothing. The count of what
+is running is withheld entirely while any provider is unobservable, because a
+partial total presented as a total is the same lie as an empty list. This
+mirrors the API contract exactly, and it is the one thing in this panel that
+must not be simplified for tidiness.
+
+### Acting on somebody else's session
+
+Two controls, and the destructive one asks twice — the pattern in §6 and §14,
+unchanged because acting on work that is not yours is not a reason to invent a
+new interaction.
+
+| Control | Confirms | Available when |
+|---|---|---|
+| Stop | no | the session has a runtime to release |
+| Terminate | yes, inline | the session has not already ended |
+
+Both are **disabled rather than removed** when they do not apply or when the
+caller may watch but not act, and each disabled control states its reason, per
+§14. Deleting somebody else's session is not offered here at all: the API does
+not expose it, and stopping is reversible where destroying a history is not.
+
+Times follow §12 — Singapore time, with the zone stated. No new colour, glow or
+spacing value is introduced: outcomes and session states use the semantic tokens
+from §2 as ordinary status chips.
+
+---
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -497,3 +602,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-14 | Added §12 Page frame and layout and §13 The platform typeface. Established a persistent top bar in both signed-out and signed-in states, a 10% inset on page content with terminal output exempt, a vertical session column on the left labelled by creation time in Singapore time (newest first, reversible, date shown only once not from today), and a collapsible session details panel on the right that collapses to a handle. Columns stack below 60rem. Adopted Geist Pixel as the platform typeface, self-hosted under the SIL Open Font License with a system fallback and `font-display: swap`; terminal content keeps its monospace stack because cell metrics govern its rendering. Replaced the horizontal session tab strip specified in the 2026-08-13 redesign, which truncated labels once sessions accumulated. |
 | 2026-08-14 | Corrected §12: the console obeys the page inset like every other surface, so the session column aligns with the product mark and the details panel with the account control. The earlier entry exempted terminal output from the inset on the grounds that cropping it wasted width; alignment between the bar and the page beneath it matters more, and a full-bleed console under an inset bar reads as a detached bar. Also moved the session lifecycle controls out of the top bar and into the details panel, beside the session they act on. |
 | 2026-08-14 | Added §14 Session states and what they allow: a single table binding each of the six session states to what the terminal does and which controls are available, with one rule shared by the terminal, the buttons and the list so they cannot disagree. Established that controls are disabled rather than removed and that every disabled control and every non-interactive terminal states its reason in the owner's terms; that a session with no sandbox still shows its history read-only, with keystrokes dropped rather than buffered; that ended sessions leave the list unless they ended by failing; and that revive is the primary action wherever it is offered. Adds the `rotating` state, during which the session is neither usable nor stopped and no control acts on it. |
+| 2026-08-14 | Added §15 The operator panel: a dialog opened from the profile menu as an account action, keeping the product one page, whose entry point is drawn only when the control plane reports that the caller holds an operator capability — presentation, never protection, since the API refuses on its own. Established that each of its four views is offered on its own capability, so a view is never drawn empty because of entitlement; a view switch marked up as a tablist (monospace `xs` uppercase labels; selected by `--accent` text plus a 2px `--accent` bottom border and `aria-selected`, never colour alone); and a record list — rows rather than the data table removed on 2026-08-13 — with a leading tabular-nums timestamp, `base` primary label, `xs` `--ink-3` monospace metadata, hairline separators, no zebra striping and no row-level click target, ordered newest first always and filterable by person and by action. Established that a person is named by display name then email and never by their subject identifier, which is shown in identifier style when nothing else is known, and that an unattributed action reads "Not signed in"; that a provider which could not be asked renders as unknown carrying its reason and never as one running nothing, with the running total withheld while any provider is unobservable; and that stop and terminate on another owner's session keep the §6 destructive pattern — terminate confirms inline, both are disabled with a stated reason rather than removed, and deleting somebody else's session is not offered at all. |
