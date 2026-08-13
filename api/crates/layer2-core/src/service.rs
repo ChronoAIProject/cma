@@ -286,9 +286,12 @@ impl SessionService {
             return Err(CoreError::SessionTerminated);
         }
         if !self.entries.read().await.contains_key(id) {
-            return Err(CoreError::RuntimeUnavailable(
-                "session has no live runtime; revive it first".to_string(),
-            ));
+            // The sandbox outlives this process, so a restart loses the
+            // attachment and not the runtime. Re-adopting it here is what makes
+            // a session survive a deployment: the alternative is a session that
+            // reports itself ready, still has a runtime running, and refuses to
+            // open — which is a lie the person cannot act on.
+            self.readopt(&record).await?;
         }
 
         let (screen, live) = {
