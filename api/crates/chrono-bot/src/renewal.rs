@@ -106,12 +106,15 @@ mod tests {
 
     #[tokio::test]
     async fn only_subjects_with_a_refresh_token_are_returned() {
-        let auth = AuthState::new(AuthMode::Provider {
-            base_url: "http://provider.invalid".into(),
-            client_id: "c".into(),
-            client_secret: "s".into(),
-            public_url: "http://service.invalid".into(),
-        });
+        let auth = AuthState::new(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "c".into(),
+                client_secret: "s".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+        );
         let renewable = SubjectId("has-refresh".into());
         let stranded = SubjectId("no-refresh".into());
         auth.store_tokens(&renewable, tokens(Duration::from_secs(1), Some("r")))
@@ -130,9 +133,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_stored_access_token_is_readable_for_delegation() {
-        let auth = AuthState::new(AuthMode::Trusted {
-            subject: "local".into(),
-        });
+        let auth = AuthState::new(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+        );
         let s = SubjectId("subject-a".into());
         assert_eq!(auth.access_token(&s).await, None);
         auth.store_tokens(&s, tokens(Duration::from_secs(600), Some("r")))
@@ -143,9 +149,12 @@ mod tests {
     #[tokio::test]
     async fn renewal_does_not_start_without_a_provider() {
         // Trusted mode has no tokens to renew; starting a loop would be noise.
-        let auth = AuthState::new(AuthMode::Trusted {
-            subject: "local".into(),
-        });
+        let auth = AuthState::new(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+        );
         assert!(!auth.requires_credential());
     }
 }

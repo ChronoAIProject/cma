@@ -244,6 +244,10 @@ async fn callback(
     // then refused every operation, which is the correct outcome for someone
     // who has a platform account but no access here.
     let authorization = crate::permissions::capabilities_from_permissions(&permissions);
+    // Written down before the sign-in completes, because this is the only
+    // moment the provider's account details are in hand: a person not recorded
+    // here is a person the service can never name afterwards.
+    auth.note_sign_in(&subject, &profile).await;
     if !profile.is_empty() {
         auth.profiles.write().await.insert(subject.clone(), profile);
     }

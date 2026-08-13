@@ -5,6 +5,7 @@
 //! rendered screen per live session, and relays terminals to and from sandboxed
 //! runtimes that run elsewhere.
 
+mod activity;
 mod auth;
 mod config;
 mod permissions;
@@ -23,8 +24,8 @@ use layer1_public::{
     rest::RestInterface, InterfaceProfile,
 };
 use layer2_core::{
-    Baseline, EnvironmentProfileService, KernelId, ScreenModel, SessionService, SkillId,
-    SoftwarePackage, TerminalGeometry,
+    ActivityService, Baseline, EnvironmentProfileService, KernelId, ScreenModel, SessionService,
+    SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
 };
 use layer3_adapter::{
     codex::{CodexAdapter, CodexSandboxSpec},
@@ -33,7 +34,8 @@ use layer3_adapter::{
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use crate::auth::AuthState;
+use crate::activity::ActivityRecorder;
+use crate::auth::{AuthState, SignInRecords};
 use crate::config::Config;
 use crate::screen::VtScreen;
 
@@ -112,7 +114,13 @@ async fn main() {
     // is served: starting without them would accept work we cannot keep, and a
     // control plane that opened one and not the other would serve half its
     // surface with the failure found by a user rather than at startup.
-    let stores = match crate::store::connect(&config.mongodb_uri, &config.mongodb_database).await {
+    let stores = match crate::store::connect(
+        &config.mongodb_uri,
+        &config.mongodb_database,
+        config.activity_retention,
+    )
+    .await
+    {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "cannot open the stores");
@@ -121,6 +129,16 @@ async fn main() {
     };
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
+    // The account of what this service is asked to do, and of who asks. Both
+    // are opened with everything else rather than lazily: a control plane that
+    // served traffic it could not account for would be discovered by somebody
+    // looking for an entry that was never written.
+    let activity = ActivityService::new(Arc::new(stores.activity));
+    let users = UserDirectory::new(Arc::new(stores.users));
+    tracing::info!(
+        retention_days = config.activity_retention.as_secs() / 86_400,
+        "every request is recorded, and entries older than this are removed"
+    );
 
     // Context storage is optional: without it a session still works, it simply
     // cannot carry its transcript into a new sandbox.
@@ -166,7 +184,13 @@ async fn main() {
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
     // nobody is currently watching.
-    let auth_state = AuthState::new(config.auth_mode.clone());
+    let auth_state = AuthState::new(
+        config.auth_mode.clone(),
+        Some(SignInRecords {
+            users: Arc::clone(&users),
+            activity: Arc::clone(&activity),
+        }),
+    );
     if !auth_state.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; every request is attributed \
@@ -238,6 +262,16 @@ async fn main() {
             axum::http::Method::DELETE,
         ]);
 
+    // What somebody running the service can see and do. Its own router under
+    // its own path segment so the whole surface can be restricted in front of
+    // this process as well as inside it.
+    let operator =
+        layer1_public::rest::admin::router(Arc::new(layer1_public::rest::admin::AdminState {
+            sessions: Arc::clone(&service),
+            activity: Arc::clone(&activity),
+            users: Arc::clone(&users),
+        }));
+
     let app = Router::new()
         .route("/livez", get(|| async { "ok" }))
         .route("/ready", get(ready))
@@ -245,8 +279,17 @@ async fn main() {
         .merge(layer1_public::rest::environments::router(Arc::clone(
             &environments,
         )))
+        .merge(operator)
         .merge(layer1_public::pty::router(Arc::clone(&service)))
         .merge(auth::router(Arc::clone(&auth_state)))
+        // Ordered deliberately. A layer added later wraps the ones before it,
+        // so identity is established first and recording sees both who called
+        // and how their request came out. Reversing these two would record
+        // every request as having no actor.
+        .layer(axum::middleware::from_fn_with_state(
+            ActivityRecorder::new(Arc::clone(&activity)),
+            activity::record,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&auth_state),
             auth::attach_subject,
