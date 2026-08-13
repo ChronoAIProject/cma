@@ -279,6 +279,11 @@ Single accent button per view. Everything else is a quiet button: transparent ba
 ## 7. Interaction
 
 - Every interactive element has a visible focus state: `2px solid var(--accent)`, `outline-offset: 2px`. Never remove outlines.
+
+  **One documented variant: the terminal prompt row.** A full-width, borderless input inside a terminal is not a control with edges, and a 2px ring drawn around it boxes in the whole prompt line and breaks the illusion the surface depends on. For that input only, the indicator is a 2px `--accent` bar on the row's leading edge (`box-shadow: inset 2px 0 0 var(--accent)`), reinforced by the `--accent` caret.
+
+  This is a **relocation, not a removal** — same width, same token, still plainly visible, and still present under keyboard focus. It applies to the terminal prompt input and to nothing else; every other control takes the standard outline. Any future variant needs its own entry here.
+
 - All transitions ≤ 150ms, and every one is wrapped in `@media (prefers-reduced-motion: no-preference)`. **The intro typewriter is bound by this rule** — see §6.
 - Loading is a skeleton or an inline indicator; never a full-page spinner.
 - Errors state what went wrong and what to do about it. No apologies, no raw error codes without a human sentence.
@@ -317,3 +322,4 @@ Append-only. Never edit or delete an entry.
 |---|---|
 | 2026-08-12 | Initial version. Established colour tokens for light and dark, semantic state colours, type stacks and scale, 4px spacing system, component rules for status chip, data table, terminal and buttons, interaction and accessibility baselines. |
 | 2026-08-13 | Terminal-first cyberpunk redesign. Reframed the frontend as a single full-bleed terminal page with no navigation, in two states (scripted introduction and live session). Replaced the colour system with a cyan/magenta-on-near-black palette, recording measured WCAG ratios and raising `--ink-3` to `#7C8A9E` in dark to clear AA for 11px metadata. Added the `--emphasis` token, a bounded three-step glow system with an ambient overlay cap, and an authoritative 16-slot ANSI palette. Promoted the monospace stack to primary and retuned the type scale. Made the page non-scrolling and the terminal full-bleed, and set radii to 0/2px. Specified the intro sequence timing, skip behaviour and reduced-motion equivalence, the session tab strip, and the profile menu. Added §8 Terminal safety covering OSC 52, tab-title suppression, scrollback caps and OSC 8 validation. Removed the data table component and the "information density over whitespace" premise, both of which described a dashboard this frontend no longer is. |
+| 2026-08-13 | Documented one focus-state variant in §7: the terminal prompt row carries its 2px accent indicator on the row's leading edge rather than as a ring around the input, because a ring around a full-width borderless field boxes in the whole prompt line and breaks the terminal illusion. A relocation, not a removal, scoped to that one input. |
