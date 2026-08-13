@@ -25,6 +25,12 @@ use crate::session::SessionStatus;
 pub struct RuntimeEntry {
     /// The provider's own identifier for it. Opaque; never parsed.
     pub runtime: String,
+    /// Which control plane created it, when the provider records one.
+    ///
+    /// A provider is shared, so an operator reading this may be looking at
+    /// sandboxes belonging to a deployment other than the one they are asking.
+    /// Saying which is what stops a stranger's runtime reading as an orphan.
+    pub created_by: Option<String>,
     /// The session it was provisioned for, as the provider recorded it.
     pub session: Option<SessionId>,
     /// Who owns that session, when the record still knows of it.
@@ -135,11 +141,16 @@ impl SessionService {
                 Ok(runtimes) => ProviderView::Observed(
                     runtimes
                         .into_iter()
-                        .map(|(handle, session)| {
-                            let known = session.as_deref().and_then(|s| owners.get(s));
+                        .map(|listing| {
+                            let known = listing.session.as_deref().and_then(|s| owners.get(s));
                             RuntimeEntry {
-                                runtime: handle.0,
-                                session: session.map(SessionId),
+                                runtime: listing.handle.0,
+                                // Which control plane created it, so an
+                                // operator reading a shared provider can tell
+                                // this deployment's sandboxes from another's
+                                // rather than wondering whose a stranger is.
+                                created_by: listing.created_by,
+                                session: listing.session.map(SessionId),
                                 owner: known.map(|(owner, _)| (*owner).clone()),
                                 status: known.map(|(_, status)| *status),
                             }
