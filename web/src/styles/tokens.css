@@ -1,0 +1,149 @@
+/*
+ * Design tokens — docs/Web_Style.md is the single source of truth.
+ * Every value here is transcribed from that document. Never introduce a
+ * colour, radius, or glow value that does not appear there.
+ *
+ * Light is defined on bare :root first, per Web_Style.md section 2: a colour
+ * whose only definition lives inside a media query or [data-theme] block is a
+ * bug, because a token that fails to resolve under an unexpected combination
+ * of theme settings silently renders as `unset`.
+ */
+
+:root {
+  /* Surfaces */
+  --ground: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #e9edf3;
+
+  /* Text */
+  --ink: #0a0e14;
+  --ink-2: #3d4757;
+  --ink-3: #5b6779;
+
+  /* Borders */
+  --rule: #d5dbe4;
+  --rule-2: #b9c2ce;
+
+  /* Interactive */
+  --accent: #006d8f;
+  --emphasis: #b3006b;
+
+  /* Semantic state */
+  --ok: #00674a;
+  --warn: #7a5200;
+  --danger: #c0182b;
+  --neutral: #5b6779;
+
+  /* Glow — exactly three permitted values, Web_Style.md section 3 */
+  --glow-rest: 0 0 10px rgb(0 109 143 / 0.16);
+  --glow-active: 0 0 16px rgb(0 109 143 / 0.28);
+  --glow-emphasis: 0 0 16px rgb(179 0 107 / 0.28);
+
+  /* Type */
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+
+  --leading-xs: 1.4;
+  --leading-sm: 1.45;
+  --leading-base: 1.5;
+  --leading-lg: 1.35;
+  --leading-xl: 1.25;
+
+  /* Terminal type */
+  --term-size: 14px;
+  --term-leading: 1.35;
+
+  /* Spacing — 4px base, only these values are permitted */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radius */
+  --radius: 0;
+  --radius-chip: 2px;
+
+  /* Chrome */
+  --header-height: 40px;
+  --frame-inset: 12px;
+}
+
+/*
+ * Dark. Redefined under BOTH the media query (guarded so an explicit light
+ * choice wins) and the explicit attribute, so a deliberate choice beats the
+ * system preference in either direction.
+ */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --ground: #05070b;
+    --surface: #0b0f17;
+    --surface-2: #131a26;
+
+    --ink: #e8eef5;
+    --ink-2: #93a4b8;
+    --ink-3: #7c8a9e;
+
+    --rule: #1c2534;
+    --rule-2: #2a3546;
+
+    --accent: #00e5ff;
+    --emphasis: #ff2e97;
+
+    --ok: #00ffa3;
+    --warn: #ffb800;
+    --danger: #ff3b4e;
+    --neutral: #7c8a9e;
+
+    --glow-rest: 0 0 12px rgb(0 229 255 / 0.2);
+    --glow-active: 0 0 20px rgb(0 229 255 / 0.35);
+    --glow-emphasis: 0 0 20px rgb(255 46 151 / 0.35);
+  }
+}
+
+:root[data-theme='dark'] {
+  --ground: #05070b;
+  --surface: #0b0f17;
+  --surface-2: #131a26;
+
+  --ink: #e8eef5;
+  --ink-2: #93a4b8;
+  --ink-3: #7c8a9e;
+
+  --rule: #1c2534;
+  --rule-2: #2a3546;
+
+  --accent: #00e5ff;
+  --emphasis: #ff2e97;
+
+  --ok: #00ffa3;
+  --warn: #ffb800;
+  --danger: #ff3b4e;
+  --neutral: #7c8a9e;
+
+  --glow-rest: 0 0 12px rgb(0 229 255 / 0.2);
+  --glow-active: 0 0 20px rgb(0 229 255 / 0.35);
+  --glow-emphasis: 0 0 20px rgb(255 46 151 / 0.35);
+}
+
+@media (min-width: 641px) {
+  :root {
+    --frame-inset: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --frame-inset: 8px;
+  }
+}
