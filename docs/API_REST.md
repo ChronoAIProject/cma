@@ -317,3 +317,23 @@ POST /api/v1/admin/sessions/{id}/terminate
 The same core operations the owner's own routes project, at an address that says who is taking them. `stop` stays reversible whoever asked for it; the session keeps its history and can be revived by its owner. Deleting is **not** here: running the service needs the ability to stop work that is costing money or misbehaving, and stopping is reversible where destroying somebody else's history is not.
 
 Both are recorded in the activity log with the operator as `actor` and the session as `target`, and Layer 2 logs a warning whenever the caller is not the owner.
+
+---
+
+## 11. What the caller may do
+
+A browser client asks who it is at `GET /auth/session`, and the answer says what that identity may do:
+
+```json
+{ "authenticated": true, "subject": "76fe9d91",
+  "display_name": "Ada Lovelace", "email": "ada@example.com",
+  "capabilities": ["read_all_sessions", "read_user_directory", "control_any_session"] }
+```
+
+The names are the core's capabilities, not the identity provider's permissions: a client is never given the provider's vocabulary, because role names, their nesting and their wildcards belong to whoever issues them and change without this service moving. An unauthenticated caller gets `401` with `{"authenticated": false}` and no `capabilities` key at all — there is no identity to have an entitlement.
+
+**This is advisory.** It exists so a client can offer only what will be permitted, rather than offering everything and letting people discover refusals by hitting them. Every capability named here is checked again by the core on the request that uses it, so a client that ignored this list, or fabricated one, would gain nothing. Hiding a control is a courtesy; it is not access control.
+
+A caller granted nothing is told `"capabilities": []`. The key is always present for an authenticated caller, so a client that reads an absent key as "unknown" and an empty one as "nothing" never has to guess which it is looking at.
+
+Discovering entitlement by attempting the operation is deliberately **not** the intended route: every attempt is recorded in the activity log, so a client that probed on every page load would fill the record with refusals nobody asked for.
