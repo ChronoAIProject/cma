@@ -25,6 +25,20 @@ impl AuthenticatedSubject {
     }
 }
 
+/// The subject whose work a request reached, when it was not the caller's own.
+///
+/// Placed on the *response* by the handler that established it, for whatever
+/// records requests to read back. Anything sitting outside the handlers sees a
+/// method and a path and nothing else, and at that remove "an operator ended
+/// somebody's session" and "somebody ended their own" are the same request to
+/// the same shape of address — so the one fact that distinguishes them has to
+/// be carried out from where it is known.
+///
+/// Absent means the caller was acting on their own work, which needs no
+/// second name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActedUpon(pub SubjectId);
+
 /// The authenticated caller: who they are and what they may do.
 ///
 /// Extracted as one value so a handler cannot accidentally pass identity

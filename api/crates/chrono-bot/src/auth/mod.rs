@@ -23,6 +23,8 @@ use layer2_core::{Authorization, SubjectId};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
+use token::random_token;
+
 /// Name of the session cookie this service issues.
 pub const SESSION_COOKIE: &str = "chrono_bot_session";
 
@@ -127,6 +129,13 @@ pub struct AuthState {
     /// The state parameter is what binds a callback to the login that started
     /// it. Without it a callback from an unrelated flow would be accepted.
     pending: RwLock<HashMap<String, String>>,
+    /// Where a sign-in is written down, when this deployment keeps a record.
+    ///
+    /// Optional because a control plane can be stood up with a fixed subject
+    /// and no database in front of it, and in that mode nobody ever signs in —
+    /// so there is genuinely nothing to record rather than somewhere missing
+    /// to record it.
+    records: Option<records::SignInRecords>,
 }
 
 /// Derive the PKCE challenge for a verifier, per S256.
@@ -138,10 +147,11 @@ fn code_challenge(verifier: &str) -> String {
 }
 
 impl AuthState {
-    /// Build auth state for a mode.
-    pub fn new(mode: AuthMode) -> Arc<Self> {
+    /// Build auth state for a mode, and for wherever sign-ins are recorded.
+    pub fn new(mode: AuthMode, records: Option<records::SignInRecords>) -> Arc<Self> {
         Arc::new(Self {
             mode,
+            records,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
@@ -394,33 +404,6 @@ fn rebase(endpoint: &str, base: &str) -> String {
     }
 }
 
-/// Length of a generated token, in hexadecimal characters.
-///
-/// Two v4 UUIDs' worth. The lower bound is set by PKCE rather than by the
-/// cookie: RFC 7636 requires a verifier of 43 to 128 unreserved characters, so
-/// a single UUID's 32 would be rejected by a conforming provider.
-const TOKEN_HEX_CHARS: usize = 64;
-
-/// A random, unguessable token.
-///
-/// Used for session cookies, OAuth `state` and PKCE verifiers. Every one of
-/// those is a bearer secret: whoever can predict a session cookie is signed in
-/// as its owner, and whoever can predict a verifier can complete somebody
-/// else's authorization code exchange.
-///
-/// Drawn from the operating system's CSPRNG, which is what `Uuid::new_v4`
-/// uses. Deriving one from the clock and a process address would be neither —
-/// the clock is public to within the round trip that observes it, and address
-/// layout is randomised per process rather than per call, so a single token
-/// observed by an attacker would fix the non-time half of every later one.
-fn random_token() -> String {
-    let mut token = String::with_capacity(TOKEN_HEX_CHARS);
-    while token.len() < TOKEN_HEX_CHARS {
-        token.push_str(&uuid::Uuid::new_v4().simple().to_string());
-    }
-    token
-}
-
 fn session_cookie(headers: &HeaderMap) -> Option<String> {
     let raw = headers.get(header::COOKIE)?.to_str().ok()?;
     raw.split(';')
@@ -443,11 +426,11 @@ pub async fn attach_subject(
             req.extensions_mut()
                 .insert(layer1_public::auth::DelegatedCredential(token));
         }
-        let authorization = match auth.mode {
-            AuthMode::Trusted { .. } => AuthState::trusted_authorization(),
-            AuthMode::Provider { .. } => auth.authorization(&subject).await,
-        };
-        req.extensions_mut().insert(authorization);
+        // The same resolution the identity endpoint reports, so what a client
+        // was told it may do and what this request is allowed to do cannot
+        // drift apart.
+        req.extensions_mut()
+            .insert(auth.effective_authorization(&subject).await);
         req.extensions_mut().insert(AuthenticatedSubject(subject));
     }
     next.run(req).await
@@ -455,177 +438,16 @@ pub async fn attach_subject(
 
 pub mod bearer;
 pub mod capabilities;
+pub mod entitlements;
 pub mod flow;
+pub mod records;
 pub mod refresh;
+mod token;
+
+pub use records::SignInRecords;
 
 pub use flow::router;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn headers_with_cookie(value: &str) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        h.insert(header::COOKIE, value.parse().expect("valid header"));
-        h
-    }
-
-    #[test]
-    fn the_session_cookie_is_found_among_others() {
-        let h = headers_with_cookie("theme=dark; chrono_bot_session=abc123; other=1");
-        assert_eq!(session_cookie(&h).as_deref(), Some("abc123"));
-    }
-
-    #[test]
-    fn a_missing_session_cookie_is_none() {
-        let h = headers_with_cookie("theme=dark; other=1");
-        assert_eq!(session_cookie(&h), None);
-        assert_eq!(session_cookie(&HeaderMap::new()), None);
-    }
-
-    #[tokio::test]
-    async fn trusted_mode_attributes_every_request_to_one_subject() {
-        let auth = AuthState::new(AuthMode::Trusted {
-            subject: "local-developer".into(),
-        });
-        assert!(!auth.requires_credential());
-        let got = auth.resolve(&HeaderMap::new()).await;
-        assert_eq!(got, Some(SubjectId("local-developer".into())));
-    }
-
-    #[tokio::test]
-    async fn provider_mode_rejects_a_request_with_no_cookie() {
-        let auth = AuthState::new(AuthMode::Provider {
-            base_url: "http://provider.invalid".into(),
-            client_id: "client".into(),
-            client_secret: "secret".into(),
-            public_url: "http://service.invalid".into(),
-        });
-        assert!(auth.requires_credential());
-        assert_eq!(auth.resolve(&HeaderMap::new()).await, None);
-    }
-
-    #[tokio::test]
-    async fn an_issued_session_resolves_and_stops_resolving_after_logout() {
-        let auth = AuthState::new(AuthMode::Provider {
-            base_url: "http://provider.invalid".into(),
-            client_id: "client".into(),
-            client_secret: "secret".into(),
-            public_url: "http://service.invalid".into(),
-        });
-        let token = auth.issue_session(SubjectId("subject-a".into())).await;
-        let h = headers_with_cookie(&format!("{SESSION_COOKIE}={token}"));
-        assert_eq!(auth.resolve(&h).await, Some(SubjectId("subject-a".into())));
-
-        auth.sessions.write().await.remove(&token);
-        assert_eq!(auth.resolve(&h).await, None);
-    }
-
-    #[tokio::test]
-    async fn discovery_against_an_unreachable_provider_reports_why() {
-        let auth = AuthState::new(AuthMode::Provider {
-            base_url: "http://127.0.0.1:1".into(),
-            client_id: "c".into(),
-            client_secret: "s".into(),
-            public_url: "http://service.invalid".into(),
-        });
-        let err = auth.metadata().await.expect_err("must fail");
-        assert!(err.contains("discovery request"), "got {err}");
-    }
-
-    #[test]
-    fn rebase_moves_a_back_channel_endpoint_onto_the_reachable_host() {
-        assert_eq!(
-            rebase(
-                "http://localhost:8444/oauth/token",
-                "http://nyxid.internal:8080"
-            ),
-            "http://nyxid.internal:8080/oauth/token"
-        );
-    }
-
-    #[test]
-    fn rebase_preserves_the_query_string() {
-        assert_eq!(
-            rebase("https://public/oauth/userinfo?x=1", "http://internal:3001"),
-            "http://internal:3001/oauth/userinfo?x=1"
-        );
-    }
-
-    #[test]
-    fn rebase_tolerates_a_base_with_a_trailing_slash() {
-        assert_eq!(
-            rebase("https://public/a", "http://internal:1/"),
-            "http://internal:1/a"
-        );
-    }
-
-    #[test]
-    fn rebase_handles_an_endpoint_with_no_path() {
-        assert_eq!(
-            rebase("https://public", "http://internal:1"),
-            "http://internal:1"
-        );
-    }
-
-    #[test]
-    fn rebase_leaves_an_unparseable_endpoint_alone() {
-        // Failing loudly at request time beats silently rewriting nonsense.
-        assert_eq!(rebase("not-a-url", "http://internal:1"), "not-a-url");
-    }
-
-    #[test]
-    fn a_token_is_long_enough_for_the_strictest_thing_it_is_used_as() {
-        // PKCE sets the bar, not the cookie: a verifier outside 43..=128
-        // unreserved characters is rejected by a conforming provider, so a
-        // shorter token would break sign-in rather than merely weaken it.
-        let token = random_token();
-        assert_eq!(token.len(), TOKEN_HEX_CHARS);
-        assert!(
-            (43..=128).contains(&token.len()),
-            "outside the PKCE verifier length RFC 7636 allows: {}",
-            token.len()
-        );
-        assert!(
-            token.chars().all(|c| c.is_ascii_hexdigit()),
-            "a verifier may only carry unreserved characters"
-        );
-    }
-
-    #[test]
-    fn a_token_carries_no_fixed_run_an_observer_could_learn() {
-        // The failure this replaced: a token built from the clock and a stack
-        // address repeated that address on every call, so one token observed
-        // by an attacker fixed a sixteen-character tail of every later one.
-        // Uniqueness never caught it, because the clock moved — so what is
-        // asserted is that no position is constant across a large batch,
-        // beyond the one nibble per UUID that names its own version.
-        const SAMPLES: usize = 256;
-        let tokens: Vec<String> = (0..SAMPLES).map(|_| random_token()).collect();
-        assert_eq!(
-            tokens
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            SAMPLES,
-            "tokens repeated"
-        );
-
-        let constant: Vec<usize> = (0..TOKEN_HEX_CHARS)
-            .filter(|&position| {
-                tokens
-                    .iter()
-                    .filter_map(|t| t.as_bytes().get(position))
-                    .collect::<std::collections::HashSet<_>>()
-                    .len()
-                    == 1
-            })
-            .collect();
-        assert_eq!(
-            constant,
-            vec![12, 44],
-            "only each UUID's version nibble may be constant; anything else is \
-             a run of the token that is not secret"
-        );
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

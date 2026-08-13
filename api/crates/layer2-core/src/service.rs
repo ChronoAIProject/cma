@@ -329,54 +329,6 @@ impl SessionService {
         Ok(record.session)
     }
 
-    /// Read a session, scoped to its owner.
-    pub async fn get_session(&self, caller: &Caller, id: &SessionId) -> Result<Session, CoreError> {
-        let record = self.record(id).await?;
-        if !caller.may_read_owned_by(&record.session.owner) {
-            return Err(CoreError::Forbidden);
-        }
-        Ok(record.session)
-    }
-
-    /// List the subject's sessions, newest first.
-    pub async fn list_sessions(&self, caller: &Caller) -> Vec<Session> {
-        // A privileged reader sees every session; everyone else sees only their
-        // own. The filter is here rather than in an interface so no interface
-        // can forget it, and it is pushed into the query rather than applied
-        // after so a large deployment does not read every record to show one.
-        let result = if caller.authorization.allows(Capability::ReadAllSessions) {
-            self.store.list_all().await
-        } else {
-            self.store.list_for(&caller.subject).await
-        };
-        match result {
-            Ok(records) => records.into_iter().map(|r| r.session).collect(),
-            Err(e) => {
-                // Listing is a read: report nothing rather than pretend the
-                // caller has no sessions, and make the failure visible.
-                tracing::error!(error = %e, "cannot list sessions");
-                Vec::new()
-            }
-        }
-    }
-
-    /// Durable events for a session, optionally from a cursor.
-    pub async fn events_since(
-        &self,
-        caller: &Caller,
-        id: &SessionId,
-        after: Option<u64>,
-    ) -> Result<Vec<Event>, CoreError> {
-        let record = self.record(id).await?;
-        if !caller.may_read_owned_by(&record.session.owner) {
-            return Err(CoreError::Forbidden);
-        }
-        self.store
-            .events_since(id, after.unwrap_or(0))
-            .await
-            .map_err(store_failed)
-    }
-
     /// Persist a session's current state and any events buffered against it.
     ///
     /// Called after every state change. Failures are logged rather than

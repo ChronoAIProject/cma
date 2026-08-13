@@ -24,7 +24,7 @@ use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::{InterfaceProfile, Operation};
 
 /// Base URI for problem types this interface returns.
-const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/problems";
+pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/problems";
 
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[
@@ -132,9 +132,17 @@ pub(crate) struct Problem(pub(crate) CoreError);
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
-        let (status, slug) = match &self.0 {
-            // A caller who may not see a session is told it does not exist:
-            // confirming the id would itself leak information.
+        // A caller who may not see a session is told it does not exist:
+        // confirming the id would itself leak information. The substitution
+        // happens once, here, and everything below renders the condition the
+        // caller is being told about rather than the one that occurred —
+        // matching the status while the body still says "forbidden" answers
+        // the very question the refusal exists to withhold.
+        let rendered = match &self.0 {
+            CoreError::Forbidden => &CoreError::SessionNotFound,
+            other => other,
+        };
+        let (status, slug) = match rendered {
             CoreError::SessionNotFound | CoreError::Forbidden => {
                 (StatusCode::NOT_FOUND, "session-not-found")
             }
@@ -156,8 +164,8 @@ impl IntoResponse for Problem {
                 "type": format!("{PROBLEM_BASE}/{slug}"),
                 "title": slug.replace('-', " "),
                 "status": status.as_u16(),
-                "detail": self.0.to_string(),
-                "code": self.0.code(),
+                "detail": rendered.to_string(),
+                "code": rendered.code(),
             })),
         )
             .into_response()
@@ -176,6 +184,13 @@ impl From<CoreError> for Problem {
 /// outlives every session that used one — so it has its own router, mounted
 /// beside this one.
 pub mod environments;
+
+/// What somebody running the service can see and do.
+///
+/// Its own router under its own path segment, mounted beside this one, so the
+/// whole surface can be restricted in front of the service rather than one
+/// route at a time.
+pub mod admin;
 
 /// Routes this interface contributes.
 pub fn router(service: Arc<SessionService>) -> Router {
@@ -347,12 +362,33 @@ mod tests {
         assert_eq!(RestInterface.operations().len(), 9);
     }
 
-    #[test]
-    fn unauthorized_reads_as_not_found() {
-        let forbidden = Problem(CoreError::Forbidden).into_response();
-        let missing = Problem(CoreError::SessionNotFound).into_response();
-        assert_eq!(forbidden.status(), StatusCode::NOT_FOUND);
-        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    /// Everything a client can observe about a refusal.
+    async fn rendered(e: CoreError) -> (StatusCode, serde_json::Value) {
+        let response = Problem(e).into_response();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("problem documents are small");
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("a problem document is json"),
+        )
+    }
+
+    #[tokio::test]
+    async fn unauthorized_is_indistinguishable_from_not_found() {
+        // Not merely the same status. A body that still says "forbidden"
+        // confirms the identifier exists, which is the one thing this refusal
+        // is shaped to withhold — so every field a client can read must match.
+        let (forbidden_status, forbidden_body) = rendered(CoreError::Forbidden).await;
+        let (missing_status, missing_body) = rendered(CoreError::SessionNotFound).await;
+
+        assert_eq!(forbidden_status, StatusCode::NOT_FOUND);
+        assert_eq!(missing_status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            forbidden_body, missing_body,
+            "a refusal that reads differently is an existence oracle"
+        );
     }
 
     #[test]
