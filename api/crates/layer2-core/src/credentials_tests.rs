@@ -92,6 +92,7 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
         Arc::new(FakeStore::default()),
         None,
         None,
+        None,
     )
 }
 

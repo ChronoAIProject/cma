@@ -64,6 +64,7 @@ impl SessionService {
         spec: SessionSpec,
         adapter: Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
+        restore: Option<Vec<u8>>,
     ) {
         let id = session.id.clone();
         // Nobody may have been present to delegate one — a session recovered by
@@ -75,7 +76,7 @@ impl SessionService {
         }
         match tokio::time::timeout(
             PROVISION_DEADLINE,
-            self.start_with_retries(&session, &spec, &adapter, geometry),
+            self.start_with_retries(&session, &spec, &adapter, geometry, restore.as_ref()),
         )
         .await
         {
@@ -110,6 +111,7 @@ impl SessionService {
         spec: &SessionSpec,
         adapter: &Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
+        restore: Option<&Vec<u8>>,
     ) -> Result<(), String> {
         let mut backoff = Duration::from_millis(
             self.retry_backoff_ms
@@ -118,7 +120,10 @@ impl SessionService {
         let mut last = String::new();
 
         for attempt in 1..=PROVISION_ATTEMPTS {
-            match self.start_runtime(session, spec, adapter, geometry).await {
+            match self
+                .start_runtime(session, spec, adapter, geometry, restore)
+                .await
+            {
                 Ok(()) => {
                     if attempt > 1 {
                         tracing::info!(
@@ -180,6 +185,7 @@ impl SessionService {
         spec: &SessionSpec,
         adapter: &Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
+        restore: Option<&Vec<u8>>,
     ) -> Result<(), String> {
         let id = session.id.clone();
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
@@ -193,6 +199,7 @@ impl SessionService {
                 },
                 subject_credential: spec.subject_credential.clone(),
                 options: runtime_options(&spec.options),
+                restore_from: restore.cloned(),
             })
             .await
             .map_err(|e| format!("could not provision a runtime: {e}"))?;
@@ -213,16 +220,17 @@ impl SessionService {
         let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
             Arc::new(Mutex::new((self.screen_factory)(geometry)));
 
-        // Sequence numbers are allocated from one place or they collide. This
-        // task has been appending progress against the stored record while the
-        // copy passed in still carries the count from before any of it, so the
-        // entry starts from what is actually written down rather than from a
-        // stale number. Two allocators sharing a starting point is exactly how
-        // a session ends up ready with nothing recording that it is.
-        let mut seeded = session.clone();
-        if let Ok(Some(record)) = self.store.get(&id).await {
-            seeded.last_seq = record.session.last_seq;
-        }
+        // Seeded from the record rather than from the copy passed in, because
+        // the record is the authority and the copy is a snapshot from before
+        // this task started. It has moved on since: progress events have been
+        // appended against it, and a session being carried between runtimes
+        // has had its version and rotation count written. Anything not read
+        // back here is silently reverted by the next flush.
+        let (mut seeded, context_ref) = match self.store.get(&id).await {
+            Ok(Some(record)) => (record.session, record.context_ref),
+            _ => (session.clone(), None),
+        };
+        seeded.geometry = geometry;
 
         let mut entry = SessionEntry {
             session: seeded,
@@ -233,7 +241,7 @@ impl SessionService {
             input: Some(channel.input.clone()),
             live: live.clone(),
             attached: false,
-            context_ref: None,
+            context_ref,
             captured_len: 0,
         };
         entry.session.status = SessionStatus::Ready;
@@ -309,6 +317,10 @@ impl SessionService {
             return;
         };
         record.runtime_id = Some(handle.0.clone());
+        // Stamped with what it was actually started on, so the next sweep can
+        // tell a session that is current from one that is behind. Without this
+        // every session would look due for rotation forever.
+        record.session.runtime_version = self.runtime_version.clone();
         if let Err(e) = self.store.upsert(&record).await {
             // Worth shouting about: the runtime exists and the record does not
             // name it, which is exactly the orphan reconciliation must catch.
@@ -457,7 +469,9 @@ impl SessionService {
         let session = starting.session.clone();
         let spawned = session.clone();
         tokio::spawn(async move {
-            service.bring_up(spawned, spec, adapter, geometry).await;
+            service
+                .bring_up(spawned, spec, adapter, geometry, None)
+                .await;
         });
 
         tracing::info!(session_id = %id, "session reviving");

@@ -136,6 +136,12 @@ pub(crate) struct FakeAdapter {
     /// Handles issued so far. Monotonic rather than a count of what is running,
     /// so a replacement sandbox is never named after the one it replaced.
     pub(crate) issued: std::sync::atomic::AtomicUsize,
+    /// What each runtime says its agent's conversation is.
+    pub(crate) conversations: Mutex<HashMap<String, Vec<u8>>>,
+    /// Conversations handed to newly provisioned runtimes, in order.
+    pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
+    /// When set, the runtime cannot hand its conversation over.
+    pub(crate) refuse_snapshot: bool,
 }
 
 impl FakeAdapter {
@@ -147,6 +153,14 @@ impl FakeAdapter {
 
     pub(crate) async fn running_count(&self) -> usize {
         self.running.lock().await.len()
+    }
+
+    /// Give a runtime a conversation to hand over when asked.
+    pub(crate) async fn set_conversation(&self, handle: &str, bytes: &[u8]) {
+        self.conversations
+            .lock()
+            .await
+            .insert(handle.to_string(), bytes.to_vec());
     }
 }
 
@@ -180,6 +194,9 @@ impl KernelAdapter for FakeAdapter {
             .issued
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1;
+        if let Some(carried) = spec.restore_from.clone() {
+            self.handovers.lock().await.push(carried);
+        }
         let mut running = self.running.lock().await;
         let handle = format!("runtime-{n}-for-{}", spec.session_id);
         running.insert(handle.clone(), Some(spec.session_id.clone()));
@@ -218,6 +235,13 @@ impl KernelAdapter for FakeAdapter {
         self.terminated.lock().await.push(handle.0.clone());
         self.running.lock().await.remove(&handle.0);
         Ok(())
+    }
+
+    async fn snapshot(&self, handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
+        if self.refuse_snapshot {
+            return Err(AdapterError::Unsupported("cannot capture".into()));
+        }
+        Ok(self.conversations.lock().await.get(&handle.0).cloned())
     }
 
     async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
@@ -300,7 +324,33 @@ pub(crate) fn service_with_context(
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    let service = SessionService::new(adapters, factory, store, Some(context), None);
+    let service = SessionService::new(adapters, factory, store, Some(context), None, None);
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
+/// A service that expects a particular runtime version.
+///
+/// Two of these over one store is an upgrade: the second expects a version the
+/// first's sessions are not on.
+pub(crate) fn service_on_version(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        None,
+        None,
+        Some(version.to_string()),
+    );
     service
         .retry_backoff_ms
         .store(1, std::sync::atomic::Ordering::Relaxed);
@@ -322,6 +372,7 @@ pub(crate) fn service_with_credentials(
         store,
         None,
         Some(Arc::new(FixedCredential(credential.to_string()))),
+        None,
     );
     service
         .retry_backoff_ms
@@ -357,7 +408,7 @@ pub(crate) fn service(store: Arc<FakeStore>, adapter: Arc<FakeAdapter>) -> Arc<S
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    let service = SessionService::new(adapters, factory, store, None, None);
+    let service = SessionService::new(adapters, factory, store, None, None, None);
     // Retries are exercised here, not waited out: the production delay exists
     // for a provider under load, which no test is.
     service

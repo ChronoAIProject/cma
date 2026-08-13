@@ -78,9 +78,7 @@ export function SessionActions({
       >
         End session
         <span className="actions__hint">
-          {can.canStop
-            ? 'Releases the sandbox, keeps the history'
-            : 'This session is not running'}
+          {can.canStop ? 'Releases the sandbox, keeps the history' : 'This session is not running'}
         </span>
       </button>
 

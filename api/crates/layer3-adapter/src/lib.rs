@@ -36,6 +36,16 @@ pub struct RuntimeSpec {
     /// Stated as intent rather than as a rendered configuration, so each
     /// adapter can express it in whatever its own runtime understands.
     pub options: RuntimeOptions,
+    /// An earlier state of this session for the agent to resume from.
+    ///
+    /// Present when a session is being carried across runtimes rather than
+    /// started. The bytes are the agent's own conversation as its snapshot
+    /// produced them — opaque here and to the caller, since only the agent
+    /// knows how to read its own history back.
+    ///
+    /// Passed through the control plane rather than fetched by the runtime, so
+    /// the sandbox needs no storage credential of its own.
+    pub restore_from: Option<Vec<u8>>,
 }
 
 /// What a runtime should be told about how to behave.
@@ -152,6 +162,24 @@ pub trait KernelAdapter: Send + Sync {
     /// provisioning time and may be absent, in which case nothing links the
     /// runtime to a session and it is an orphan by definition.
     ///
+    /// Capture the agent's conversation so it can be resumed elsewhere.
+    ///
+    /// The thing that makes a runtime replaceable. What it returns is the
+    /// agent's own state in whatever form the agent resumes from, paired with
+    /// `RuntimeSpec::restore_from`; nothing outside the adapter interprets it.
+    ///
+    /// `None` means the agent has nothing to resume from yet, which is not a
+    /// failure — a session that has not been used has no conversation.
+    ///
+    /// Defaults to unsupported. An adapter that cannot snapshot can still run
+    /// sessions; it simply cannot carry one across a runtime replacement, and
+    /// a caller needs to know that rather than silently losing the history.
+    async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot capture its agent's conversation".to_string(),
+        ))
+    }
+
     /// Defaults to saying it cannot answer, rather than to an empty list. The
     /// difference matters more than it looks: an empty list is a statement that
     /// nothing is running, and a caller acting on that would tear down or
