@@ -105,6 +105,25 @@ mod tests {
     }
 
     #[test]
+    fn the_base_url_carries_no_version_segment() {
+        // The brokered upstream's own base URL already ends in a version, and
+        // the broker appends whatever path arrives. A version here produces
+        // .../v1/v1/responses upstream and a 404 the agent reports as a model
+        // failure. Regression guard for exactly that.
+        let mut c = config();
+        c.proxy_base_url = "http://127.0.0.1:9091".into();
+        let rendered = c.render();
+        assert!(
+            rendered.contains(r#"base_url = "http://127.0.0.1:9091""#),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("9091/v1"),
+            "the agent base_url must not carry a version segment: {rendered}"
+        );
+    }
+
+    #[test]
     fn a_trailing_slash_on_the_proxy_url_is_normalised() {
         let mut c = config();
         c.proxy_base_url = "http://127.0.0.1:9091/v1/".into();
