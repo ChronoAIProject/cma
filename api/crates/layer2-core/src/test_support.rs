@@ -126,6 +126,28 @@ pub(crate) struct FakeAdapter {
     /// Kept alive so the relay's output channel does not close immediately,
     /// which would make a live session look dead.
     pub(crate) senders: Mutex<Vec<mpsc::Sender<Vec<u8>>>>,
+    /// What the provider currently has running: handle to the session it was
+    /// provisioned for. This is the provider's own view, which is the thing
+    /// reconciliation compares the record against.
+    pub(crate) running: Mutex<HashMap<String, Option<String>>>,
+    /// When set, enumeration fails. Models a provider that cannot be asked,
+    /// which must never be read as a provider running nothing.
+    pub(crate) refuse_list: bool,
+    /// Handles issued so far. Monotonic rather than a count of what is running,
+    /// so a replacement sandbox is never named after the one it replaced.
+    pub(crate) issued: std::sync::atomic::AtomicUsize,
+}
+
+impl FakeAdapter {
+    /// Forget a runtime without being told to, as a provider does when a node
+    /// is replaced underneath a sandbox.
+    pub(crate) async fn lose(&self, handle: &str) {
+        self.running.lock().await.remove(handle);
+    }
+
+    pub(crate) async fn running_count(&self) -> usize {
+        self.running.lock().await.len()
+    }
 }
 
 #[async_trait::async_trait]
@@ -151,15 +173,31 @@ impl KernelAdapter for FakeAdapter {
         {
             return Err(AdapterError::Unavailable("provider busy".into()));
         }
-        Ok(RuntimeHandle(format!("runtime-for-{}", spec.session_id)))
+        // Unique per provisioning, not per session: a session given a second
+        // runtime must be distinguishable from one still on its first, which is
+        // the whole question reconciliation answers.
+        let n = self
+            .issued
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        let mut running = self.running.lock().await;
+        let handle = format!("runtime-{n}-for-{}", spec.session_id);
+        running.insert(handle.clone(), Some(spec.session_id.clone()));
+        Ok(RuntimeHandle(handle))
     }
 
     async fn attach_terminal(
         &self,
-        _handle: &RuntimeHandle,
+        handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
         if self.refuse_attach {
             return Err(AdapterError::Unavailable("terminal not listening".into()));
+        }
+        // A sandbox that is not running cannot be attached to. Without this the
+        // fake would let a session reattach to something that no longer exists,
+        // which is the failure these tests are about.
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
         }
         let (out_tx, out_rx) = mpsc::channel(8);
         let (in_tx, _in_rx) = mpsc::channel(8);
@@ -178,7 +216,21 @@ impl KernelAdapter for FakeAdapter {
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
         self.terminated.lock().await.push(handle.0.clone());
+        self.running.lock().await.remove(&handle.0);
         Ok(())
+    }
+
+    async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
+        if self.refuse_list {
+            return Err(AdapterError::Unsupported("cannot enumerate".into()));
+        }
+        Ok(self
+            .running
+            .lock()
+            .await
+            .iter()
+            .map(|(h, s)| (RuntimeHandle(h.clone()), s.clone()))
+            .collect())
     }
 }
 
@@ -200,6 +252,99 @@ impl ScreenModel for NullScreen {
     }
 }
 
+/// A screen that keeps everything it is given.
+///
+/// The null screen is right for tests about lifecycle, where the content is
+/// irrelevant. It is exactly wrong for tests about whether content survives,
+/// which would pass against a model that never held anything.
+#[derive(Default)]
+pub(crate) struct RecordingScreen {
+    geometry: TerminalGeometry,
+    bytes: Vec<u8>,
+}
+
+impl ScreenModel for RecordingScreen {
+    fn apply(&mut self, bytes: &[u8]) {
+        self.bytes.extend_from_slice(bytes);
+    }
+    fn resize(&mut self, geometry: TerminalGeometry) {
+        self.geometry = geometry;
+    }
+    fn snapshot(&self) -> ScreenSnapshot {
+        ScreenSnapshot {
+            geometry: self.geometry,
+            rows: Vec::new(),
+        }
+    }
+    fn repaint_bytes(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
+}
+
+/// A credential holder that always has the same one.
+pub(crate) struct FixedCredential(pub(crate) String);
+
+#[async_trait::async_trait]
+impl crate::store::CredentialSource for FixedCredential {
+    async fn credential_for(&self, _subject: &SubjectId) -> Option<String> {
+        Some(self.0.clone())
+    }
+}
+
+/// A service that stores transcripts, over a screen model that keeps them.
+pub(crate) fn service_with_context(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    context: Arc<dyn crate::store::ContextStore>,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let service = SessionService::new(adapters, factory, store, Some(context), None);
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
+/// A service that can supply an owner's credential without the owner present.
+pub(crate) fn service_with_credentials(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    credential: &str,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        None,
+        Some(Arc::new(FixedCredential(credential.to_string()))),
+    );
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
+/// Put bytes on a session's screen, as its runtime would.
+pub(crate) async fn write_screen(svc: &Arc<SessionService>, id: &SessionId, bytes: &[u8]) {
+    let entries = svc.entries.read().await;
+    let entry = entries.get(id).expect("the session is live");
+    entry.screen.lock().await.apply(bytes);
+}
+
+/// The credential a live session is currently holding.
+pub(crate) async fn credential_on(svc: &Arc<SessionService>, id: &SessionId) -> Option<String> {
+    svc.entries
+        .read()
+        .await
+        .get(id)
+        .and_then(|e| e.subject_credential.clone())
+}
+
 pub(crate) fn kernel() -> KernelId {
     KernelId::new("fake")
 }
@@ -212,7 +357,7 @@ pub(crate) fn service(store: Arc<FakeStore>, adapter: Arc<FakeAdapter>) -> Arc<S
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    let service = SessionService::new(adapters, factory, store, None);
+    let service = SessionService::new(adapters, factory, store, None, None);
     // Retries are exercised here, not waited out: the production delay exists
     // for a provider under load, which no test is.
     service

@@ -151,7 +151,15 @@ pub fn router(service: Arc<SessionService>) -> Router {
         // the same button.
         .route("/api/v1/sessions/{id}", delete(remove))
         .route("/api/v1/sessions/{id}/terminate", post(terminate))
+        // Stopping is not ending. A stopped session keeps its history and can
+        // be picked up again; the pair only makes sense together, which is why
+        // reviving lives beside it rather than behind a creation call.
+        .route("/api/v1/sessions/{id}/stop", post(stop))
+        .route("/api/v1/sessions/{id}/revive", post(revive))
         .route("/api/v1/sessions/{id}/screen", get(screen))
+        // What the session has shown, for one that has no runtime to attach
+        // to. Reading stopped work is not the same as resuming it.
+        .route("/api/v1/sessions/{id}/transcript", get(transcript))
         // Progress for a session whose runtime is still starting, and its
         // history thereafter. Resumable, so a reconnect loses nothing.
         .route("/api/v1/sessions/{id}/events", get(events::stream))
@@ -213,6 +221,42 @@ async fn terminate(
 ) -> Result<StatusCode, Problem> {
     service.terminate_session(&caller, &SessionId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn stop(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Problem> {
+    service.stop_session(&caller, &SessionId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn revive(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Json<SessionView>, Problem> {
+    let session = service.revive_session(&caller, &SessionId(id)).await?;
+    Ok(Json(session.into()))
+}
+
+/// The session's terminal output as the bytes a terminal would render.
+///
+/// Served as an octet stream rather than JSON because it is an escape-sequence
+/// stream: encoding it as a string would mean deciding how to escape it, and
+/// the client only has to write it to a terminal.
+async fn transcript(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Response, Problem> {
+    let bytes = service.session_transcript(&caller, &SessionId(id)).await?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+        bytes,
+    )
+        .into_response())
 }
 
 async fn remove(
@@ -294,6 +338,7 @@ mod tests {
             status: layer2_core::SessionStatus::Ready,
             recovery_state: layer2_core::RecoveryState::Normal,
             stop_reason: None,
+            options: layer2_core::AgentOptions::default(),
             geometry: TerminalGeometry::new(120, 40).expect("valid"),
             last_seq: 3,
             created_at: "2026-08-12T00:00:00Z".into(),
