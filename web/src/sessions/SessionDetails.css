@@ -106,3 +106,15 @@
   background: var(--surface-2);
   border-left: 2px solid var(--emphasis);
 }
+
+/*
+ * The lifecycle controls, at the foot of what they act on. Separated by a rule
+ * because acting on a session is a different kind of thing from reading about
+ * it.
+ */
+.details__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--rule);
+}

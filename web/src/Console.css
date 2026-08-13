@@ -15,16 +15,21 @@
   background: var(--ground);
 }
 
+/*
+ * Inset to the same frame as the bar above it, so the session column's leading
+ * edge lines up with the product mark and the details panel's trailing edge
+ * lines up with the account control. Anything that broke that alignment would
+ * make the bar look detached from the page it belongs to.
+ */
 .console__body {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  padding-inline: var(--page-inset);
 }
 
 /*
- * The terminal column. It takes the remaining width and is deliberately not
- * inset: terminal output is the work, and cropping it to a page margin would
- * waste the room a wide window exists to provide.
+ * The terminal column, taking whatever width the two panels leave.
  */
 .console__surface {
   flex: 1 1 auto;

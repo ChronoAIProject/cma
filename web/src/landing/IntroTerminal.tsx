@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ACCESSIBLE_TRANSCRIPT, INTRO_LINES, TIMING, lineText } from './script';
+import { ACCESSIBLE_TRANSCRIPT, INTRO_LINES, TIMING, lineText, OPENING_LINE } from './script';
 import { useIntroAnimation } from './useIntroAnimation';
 import { MAX_TURN_LENGTH, capturePendingTurn } from '../auth/pendingTurn';
 import { useAuth } from '../auth/context';
@@ -34,6 +34,15 @@ export function IntroTerminal() {
   const [status, setStatus] = useState('');
   const [emptyEnters, setEmptyEnters] = useState(0);
   const [capturing, setCapturing] = useState(false);
+  // The opening line types itself once the boot finishes, so the prompt shows
+  // what to do rather than an empty field and a blinking caret. It stays
+  // editable: it is a suggestion, not a script.
+  const [suggested, setSuggested] = useState(false);
+  // Whether the visitor has typed anything themselves. The suggestion must
+  // never overwrite their words: someone who starts typing during the
+  // introduction has said what they want, and finishing our sentence over the
+  // top of theirs is the worst thing this could do.
+  const [touched, setTouched] = useState(false);
 
   // The skip control appears only after the boot block, the first point at
   // which "how long is this?" can occur. Offering it at 0ms would frame the
@@ -49,6 +58,27 @@ export function IntroTerminal() {
       window.clearTimeout(timer);
     };
   }, [reducedMotion, complete]);
+
+  useEffect(() => {
+    if (!complete || suggested || touched) {
+      return;
+    }
+    // Reduced motion arrives in one step rather than by a separate path, so
+    // both cases share the same guard against overwriting the visitor.
+    const step = reducedMotion ? OPENING_LINE.length : 1;
+    let index = 0;
+    const timer = window.setInterval(() => {
+      index += step;
+      setValue(OPENING_LINE.slice(0, index));
+      if (index >= OPENING_LINE.length) {
+        window.clearInterval(timer);
+        setSuggested(true);
+      }
+    }, TIMING.typeInterval);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [complete, reducedMotion, suggested, touched]);
 
   // Derived, not stored: once the animation finishes there is nothing to skip,
   // and leaving dead chrome on the page is worse than removing it.
@@ -196,6 +226,8 @@ export function IntroTerminal() {
             onChange={(event) => {
               setValue(event.target.value);
               setEmptyEnters(0);
+              // From here the words are theirs; the suggestion stops.
+              setTouched(true);
             }}
             onKeyDown={handleKeyDown}
           />
@@ -204,7 +236,18 @@ export function IntroTerminal() {
           </span>
         </div>
 
-        {showHint ? <p className="intro__hint">↵ enter — sign in, then i run this</p> : null}
+        {suggested || showHint ? (
+          <p className="intro__hint">
+            {/*
+             * Blinks so it reads as the terminal waiting on the visitor rather
+             * than as a static label, and is announced once as ordinary text.
+             */}
+            <span className="intro__blink" aria-hidden="true">
+              ↵
+            </span>{' '}
+            Enter to continue
+          </p>
+        ) : null}
 
         <p className="intro__status sr-only" aria-live="polite" aria-atomic="true">
           {status}
