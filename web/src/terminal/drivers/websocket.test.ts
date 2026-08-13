@@ -14,10 +14,15 @@ class FakeSocket {
   binaryType = '';
   sent: unknown[] = [];
   closed = false;
+  onopen: (() => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
   onclose: ((e: CloseEvent) => void) | null = null;
 
+  /** Drive the open handshake, as a real socket would. */
+  open(): void {
+    this.onopen?.();
+  }
   send(data: unknown): void {
     this.sent.push(data);
   }
@@ -81,24 +86,50 @@ describe('the websocket terminal driver', () => {
     expect(sink.written).toEqual([]);
   });
 
-  it('holds geometry set before ready and sends it once the relay is up', () => {
-    // Resizing before the relay is ready must not be lost, or the first frame
-    // paints at the wrong size.
+  it('declares geometry as soon as the socket opens, before anything else', () => {
+    // The relay will not announce itself until it has a size, so waiting for
+    // that announcement before sending one leaves both sides waiting. This is
+    // the deadlock the ordering exists to prevent.
     const { socket, sink, driver } = harness();
     driver.attach(sink);
     driver.resize(120, 40);
     expect(socket.sent).toHaveLength(0);
-    socket.control({ t: 'ready', cols: 80, rows: 24 });
-    expect(socket.sent.map(textOf)).toContain(JSON.stringify({ t: 'resize', cols: 120, rows: 40 }));
+
+    socket.open();
+    expect(socket.sent.map(textOf)).toEqual([JSON.stringify({ t: 'resize', cols: 120, rows: 40 })]);
+  });
+
+  it('declares a conventional size when the surface has not measured yet', () => {
+    // Opening at the wrong size and correcting a frame later beats stalling
+    // the handshake until something reports a size.
+    const { socket, sink, driver } = harness();
+    driver.attach(sink);
+    socket.open();
+    expect(socket.sent.map(textOf)).toEqual([JSON.stringify({ t: 'resize', cols: 80, rows: 24 })]);
   });
 
   it('sends a later resize immediately', () => {
     const { socket, sink, driver } = harness();
     driver.attach(sink);
+    socket.open();
     socket.control({ t: 'ready', cols: 80, rows: 24 });
     socket.sent.length = 0;
     driver.resize(100, 30);
     expect(socket.sent.map(textOf)).toEqual([JSON.stringify({ t: 'resize', cols: 100, rows: 30 })]);
+  });
+
+  it('never sends data before the relay is ready', () => {
+    // The relay rejects a data frame that arrives before it is ready, which is
+    // exactly what filled the terminal with protocol errors.
+    const { socket, sink, driver } = harness();
+    driver.attach(sink);
+    socket.open();
+    driver.send('ls\n');
+    const beforeReady = socket.sent.map(textOf);
+    expect(beforeReady).toEqual([JSON.stringify({ t: 'resize', cols: 80, rows: 24 })]);
+
+    socket.control({ t: 'ready', cols: 80, rows: 24 });
+    expect(socket.sent.map(textOf)).toContain('ls\n');
   });
 
   it('submits the opening turn as ordinary typed input', () => {
@@ -106,6 +137,7 @@ describe('the websocket terminal driver', () => {
     // receives a prompt nobody submitted.
     const { socket, sink, driver } = harness('summarise this repo');
     driver.attach(sink);
+    socket.open();
     socket.control({ t: 'ready', cols: 80, rows: 24 });
     expect(socket.sent.map(textOf)).toContain('summarise this repo\n');
   });
@@ -113,6 +145,9 @@ describe('the websocket terminal driver', () => {
   it('sends keystrokes as binary', () => {
     const { socket, sink, driver } = harness();
     driver.attach(sink);
+    socket.open();
+    socket.control({ t: 'ready', cols: 80, rows: 24 });
+    socket.sent.length = 0;
     driver.send('ls\n');
     // Asserted by content rather than constructor identity: the encoder and
     // the test may not share a realm, which makes instanceof unreliable here.
@@ -193,12 +228,13 @@ describe('the websocket terminal driver', () => {
     expect(sink.failures[0]).toContain('refused');
   });
 
-  it('drops input when the socket is not open rather than throwing', () => {
+  it('does not throw when the socket is gone', () => {
     const { socket, sink, driver } = harness();
     driver.attach(sink);
+    socket.open();
+    socket.control({ t: 'ready', cols: 80, rows: 24 });
     socket.readyState = 3;
     expect(() => driver.send('x')).not.toThrow();
-    expect(socket.sent).toHaveLength(0);
   });
 });
 
