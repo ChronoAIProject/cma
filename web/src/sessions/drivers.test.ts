@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import {
   createSessionDriverRegistry,
   driverKindFor,
@@ -180,13 +180,13 @@ describe('useSessionDrivers', () => {
       ({ list }: { list: readonly Session[] }) => useSessionDrivers(list, null),
       { initialProps: { list: sessions } },
     );
-    const first = result.current[0]?.driver;
+    const first = result.current.nodes[0]?.driver;
 
     rerender({ list: sessions });
 
     // A registry rebuilt on a re-render would drop every live connection it
     // was holding.
-    expect(result.current[0]?.driver).toBe(first);
+    expect(result.current.nodes[0]?.driver).toBe(first);
   });
 
   it('drops a driver once its session leaves the list', () => {
@@ -194,11 +194,29 @@ describe('useSessionDrivers', () => {
       ({ list }: { list: readonly Session[] }) => useSessionDrivers(list, null),
       { initialProps: { list: [session('a', 'idle')] as readonly Session[] } },
     );
-    const first = result.current[0]?.driver;
+    const first = result.current.nodes[0]?.driver;
 
     rerender({ list: [] });
     rerender({ list: [session('a', 'idle')] });
 
-    expect(result.current[0]?.driver).not.toBe(first);
+    expect(result.current.nodes[0]?.driver).not.toBe(first);
+  });
+
+  it('reconnects the session it was given and leaves every other driver alone', () => {
+    const list = [session('a', 'idle'), session('b', 'idle')] as readonly Session[];
+    const { result } = renderHook(() => useSessionDrivers(list, null));
+    const before = result.current.nodes.map((node) => node.driver);
+
+    act(() => {
+      result.current.reconnect('a');
+    });
+
+    /*
+     * Reconnect is offered in a panel describing one session, and the canvas
+     * may have a dozen more attached. Rebuilding those would clear their
+     * scrollbacks and redial their sockets for a button nobody pressed on them.
+     */
+    expect(result.current.nodes[0]?.driver).not.toBe(before[0]);
+    expect(result.current.nodes[1]?.driver).toBe(before[1]);
   });
 });
