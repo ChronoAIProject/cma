@@ -44,6 +44,17 @@ struct SessionDoc {
     options: Option<mongodb::bson::Bson>,
     runtime_id: Option<String>,
     context_ref: Option<String>,
+    /// Runtime version, rotation count and snapshot time.
+    ///
+    /// All optional so documents written before rotation existed still load. A
+    /// session with no recorded version is treated as being on an older one,
+    /// which is what brings it onto the current image.
+    #[serde(default)]
+    runtime_version: Option<String>,
+    #[serde(default)]
+    rotations: Option<i64>,
+    #[serde(default)]
+    rotated_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,6 +135,9 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         ),
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
+        runtime_version: s.runtime_version.clone(),
+        rotations: Some(i64::from(s.rotations)),
+        rotated_at: s.rotated_at.clone(),
     })
 }
 
@@ -161,6 +175,9 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
                 Some(v) => Some(parse_plain(&v)?),
                 None => None,
             },
+            runtime_version: d.runtime_version,
+            rotations: d.rotations.unwrap_or(0).clamp(0, i64::from(u32::MAX)) as u32,
+            rotated_at: d.rotated_at,
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,

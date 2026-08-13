@@ -17,6 +17,7 @@ pub mod ids;
 mod lifecycle;
 mod provision;
 pub mod reconcile;
+mod rotate;
 
 #[cfg(test)]
 #[path = "provision_tests.rs"]
@@ -36,6 +37,9 @@ pub mod options;
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+#[cfg(test)]
+#[path = "rotate_tests.rs"]
+mod rotate_tests;
 pub mod service;
 pub mod session;
 pub mod store;

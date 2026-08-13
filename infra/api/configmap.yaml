@@ -93,7 +93,23 @@ data:
   # the cluster already pulls from. The previous value pointed at a public
   # registry the cluster cannot authenticate to and where this image had never
   # been published, so every session would have failed to start its sandbox.
+  #
+  # This value is also the runtime version. Sessions record the image they are
+  # running, and the control plane carries any session on a different one onto
+  # this — capturing the agent's conversation, replacing the sandbox, and
+  # resuming from the capture. Changing this tag is therefore a rollout of
+  # every live session, which is the point: CLAUDE.md section 5 forbids leaving
+  # a session on an image nobody maintains, and forbids interrupting it to fix
+  # that. Never point this at a moving tag; a tag that changes underneath a
+  # running deployment would rotate sessions with nothing having been decided.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:8dbd315"
+  # How the agent is told to continue a conversation rather than start a new
+  # one, used when a session is carried onto a newer runtime. Configuration
+  # rather than part of the image because the flag belongs to the agent and
+  # changes between its versions: if it were wrong, every handover would
+  # silently start a fresh conversation, and that must be fixable without
+  # building and publishing a new runtime image.
+  CHRONO_RUNTIME_RESUME_ARGS: "resume --last"
   # Path to the mounted OpenSandbox API key. Read from a file rather than an
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.

@@ -128,6 +128,18 @@ pub struct SandboxClient {
     http: reqwest::Client,
 }
 
+/// Give a provider endpoint a scheme and no trailing slash.
+///
+/// The provider returns a host and path on its own, which is not a URL until
+/// something puts a scheme on it.
+fn normalise(endpoint: &str) -> String {
+    let bare = endpoint
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    format!("https://{bare}")
+}
+
 impl SandboxClient {
     /// Build a client.
     ///
@@ -147,6 +159,70 @@ impl SandboxClient {
     /// Base URL this client talks to.
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Read from a path on a sandbox's own listener.
+    ///
+    /// The supervisor inside a sandbox is reached through the provider's
+    /// proxy, which is authenticated, so these calls carry the provider key
+    /// exactly as the provider's own endpoints do.
+    ///
+    /// `None` for a 204, which several supervisor endpoints use to say "there
+    /// is nothing here" — distinct from an error, and a caller that conflated
+    /// the two would act on absence as though it were failure.
+    pub async fn get_from_sandbox(
+        &self,
+        endpoint: &str,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, SandboxError> {
+        let url = format!("{}{path}", normalise(endpoint));
+        let resp = self
+            .http
+            .get(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(e.to_string()))?;
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(SandboxError::Rejected {
+                status: resp.status().as_u16(),
+                detail: format!("{path} on the sandbox refused the request"),
+            });
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| SandboxError::Unreachable(e.to_string()))?;
+        Ok(Some(bytes.to_vec()))
+    }
+
+    /// Post bytes to a path on a sandbox's own listener.
+    pub async fn post_to_sandbox(
+        &self,
+        endpoint: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> Result<(), SandboxError> {
+        let url = format!("{}{path}", normalise(endpoint));
+        let resp = self
+            .http
+            .post(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(SandboxError::Rejected {
+                status: resp.status().as_u16(),
+                detail: format!("{path} on the sandbox refused the request"),
+            });
+        }
+        Ok(())
     }
 
     /// Create a sandbox.
