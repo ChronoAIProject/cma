@@ -11,6 +11,7 @@ mod permissions;
 mod renewal;
 mod screen;
 mod store;
+mod sweep;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -167,6 +168,11 @@ async fn main() {
     // Keeps delegated credentials valid underneath running sessions, and pushes
     // each renewal into the runtimes already using the old value.
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
+
+    // Sessions end only when their owner says so, which leaves this as the one
+    // thing that reclaims a runtime nothing refers to or finishes a session
+    // whose start-up died with an earlier process.
+    sweep::spawn(Arc::clone(&service));
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(config.cors_origins.clone()))

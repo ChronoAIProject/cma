@@ -148,6 +148,50 @@ export async function deleteSession(id: string): Promise<void> {
   await request(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+/**
+ * Follow a session's events until it stops provisioning.
+ *
+ * Creating a session returns before its runtime exists, so this is how the UI
+ * learns what happened next. Resumes from a cursor and reconnects on its own,
+ * which is why it is a stream of server-sent events rather than polling.
+ *
+ * Returns a cancel function; calling it closes the stream.
+ */
+export function followSession(
+  id: string,
+  onStatus: (lifecycle: SessionLifecycle) => void,
+  onError: (message: string) => void,
+): () => void {
+  const source = new EventSource(`/api/v1/sessions/${encodeURIComponent(id)}/events`, {
+    withCredentials: true,
+  });
+
+  source.onmessage = (message: MessageEvent) => {
+    let payload: { event?: { type?: string; status?: string } };
+    try {
+      payload = JSON.parse(String(message.data)) as typeof payload;
+    } catch {
+      // A frame we cannot read is not worth tearing the stream down for; the
+      // next one carries the same state.
+      return;
+    }
+    const status = payload.event?.status;
+    if (typeof status === 'string' && LIFECYCLES.includes(status as SessionLifecycle)) {
+      onStatus(status as SessionLifecycle);
+    }
+  };
+
+  source.onerror = () => {
+    // EventSource reconnects by itself, so this is only worth reporting if the
+    // browser has given up entirely.
+    if (source.readyState === EventSource.CLOSED) {
+      onError('lost contact with the control plane while starting the session');
+    }
+  };
+
+  return () => source.close();
+}
+
 /** URL of the terminal relay for a session. */
 export function terminalUrl(id: string): string {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
