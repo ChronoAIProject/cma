@@ -70,3 +70,15 @@
       background 150ms ease;
   }
 }
+
+/*
+ * The address under the name. Quieter than the name it belongs to, because it
+ * identifies the account rather than the person.
+ */
+.profile__email {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}

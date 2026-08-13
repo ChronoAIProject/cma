@@ -314,6 +314,44 @@ The byte stream written into the terminal originates from a coding agent executi
 
 ---
 
+## 10. Selectable terminal themes
+
+The 16-slot palette in §6 is the product's own and remains the default in both
+appearances. A terminal is somewhere people spend hours, and legibility at that
+duration is personal, so the palette inside the terminal viewport — and only
+inside it — may be changed by the person using it.
+
+The scope is deliberately narrow. A selected theme repaints the terminal
+canvas. It never changes the surrounding interface, which stays on the tokens
+in §2, because a page whose chrome shifts with a terminal preference stops
+being one product.
+
+These are transcribed from their published definitions and vendored as data.
+They are not a dependency: a theme is twenty hex values against a fixed
+interface, and taking a package for that would add a supply-chain risk with
+nothing to show for it.
+
+Every theme names the appearance it belongs to. A dark theme selected in light
+appearance would put a near-black rectangle in the middle of a light page, so
+the selector offers only themes matching the current appearance.
+
+| Theme | Appearance | Background | Foreground | Origin |
+|---|---|---|---|---|
+| ChronoBot | dark | `#0B0F17` | `#E8EEF5` | §6, the default |
+| ChronoBot | light | `#FFFFFF` | `#0A0E14` | §6, the default |
+| Dracula | dark | `#282A36` | `#F8F8F2` | Dracula, MIT |
+| Nord | dark | `#2E3440` | `#D8DEE9` | Nord, MIT |
+| Solarized Dark | dark | `#002B36` | `#839496` | Solarized, MIT |
+| Solarized Light | light | `#FDF6E3` | `#657B83` | Solarized, MIT |
+| GitHub Light | light | `#FFFFFF` | `#24292E` | GitHub, MIT |
+
+Contrast inside the terminal is the theme author's, not ours, and these are all
+long-established palettes designed for extended reading. The product's own
+default is the one measured in §2 and remains what an unconfigured session
+gets.
+
+---
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -323,3 +361,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-12 | Initial version. Established colour tokens for light and dark, semantic state colours, type stacks and scale, 4px spacing system, component rules for status chip, data table, terminal and buttons, interaction and accessibility baselines. |
 | 2026-08-13 | Terminal-first cyberpunk redesign. Reframed the frontend as a single full-bleed terminal page with no navigation, in two states (scripted introduction and live session). Replaced the colour system with a cyan/magenta-on-near-black palette, recording measured WCAG ratios and raising `--ink-3` to `#7C8A9E` in dark to clear AA for 11px metadata. Added the `--emphasis` token, a bounded three-step glow system with an ambient overlay cap, and an authoritative 16-slot ANSI palette. Promoted the monospace stack to primary and retuned the type scale. Made the page non-scrolling and the terminal full-bleed, and set radii to 0/2px. Specified the intro sequence timing, skip behaviour and reduced-motion equivalence, the session tab strip, and the profile menu. Added §8 Terminal safety covering OSC 52, tab-title suppression, scrollback caps and OSC 8 validation. Removed the data table component and the "information density over whitespace" premise, both of which described a dashboard this frontend no longer is. |
 | 2026-08-13 | Documented one focus-state variant in §7: the terminal prompt row carries its 2px accent indicator on the row's leading edge rather than as a ring around the input, because a ring around a full-width borderless field boxes in the whole prompt line and breaks the terminal illusion. A relocation, not a removal, scoped to that one input. |
+| 2026-08-13 | Added §10 Selectable terminal themes: six vendored palettes (Dracula, Nord, Solarized Dark, Solarized Light, GitHub Light) alongside the product's own, selectable per person and scoped to the terminal canvas only. Vendored as data rather than taken as a dependency. Themes are filtered by the current appearance so a dark palette cannot be placed on a light page. Also specified the appearance control in the profile menu, cycling system → light → dark, where "system" is the absence of a choice rather than a third palette. |

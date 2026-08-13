@@ -16,6 +16,8 @@ use axum::{
     http::{header, HeaderMap},
     response::Response,
 };
+pub mod profile;
+
 use layer1_public::AuthenticatedSubject;
 use layer2_core::{Authorization, SubjectId};
 use serde::Deserialize;
@@ -111,6 +113,9 @@ pub struct AuthState {
     tokens: RwLock<HashMap<SubjectId, SubjectTokens>>,
     /// Capabilities resolved at sign-in, per subject.
     authorizations: RwLock<HashMap<SubjectId, Authorization>>,
+    /// Display details captured at sign-in, so the interface can show a person
+    /// rather than an identifier.
+    pub profiles: RwLock<HashMap<SubjectId, profile::Profile>>,
     /// In-flight authorization attempts: state to PKCE verifier.
     ///
     /// The state parameter is what binds a callback to the login that started
@@ -139,6 +144,7 @@ impl AuthState {
             sessions: RwLock::new(HashMap::new()),
             tokens: RwLock::new(HashMap::new()),
             authorizations: RwLock::new(HashMap::new()),
+            profiles: RwLock::new(HashMap::new()),
             pending: RwLock::new(HashMap::new()),
         })
     }

@@ -43,6 +43,13 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   const [sessions, setSessions] = useState<readonly Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /*
+   * Bumped when the terminal palette changes. xterm reads its theme when the
+   * terminal is constructed, so remounting is what applies a new one — and
+   * doing it on an explicit change rather than continuously means a live
+   * session is never torn down underneath someone.
+   */
+  const [paletteEpoch, setPaletteEpoch] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
@@ -151,7 +158,13 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           onSelect={setActiveId}
           onCreate={() => void start()}
         />
-        <ProfileMenu user={user} onSignOut={onSignOut} />
+        <ProfileMenu
+          user={user}
+          onSignOut={onSignOut}
+          onTerminalThemeChange={() => {
+            setPaletteEpoch((n) => n + 1);
+          }}
+        />
       </header>
 
       <main className="console__body">
@@ -173,7 +186,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           <p className="console__empty">Attaching…</p>
         ) : (
           <TerminalSurface
-            key={active.id}
+            key={`${active.id}:${paletteEpoch}`}
             driver={driver}
             label={`Session ${active.id} on ${active.kernel}`}
           />

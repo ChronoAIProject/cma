@@ -24,24 +24,44 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe('handleFor', () => {
-  it('shows the local part of an address', () => {
-    expect(handleFor('shining.wang@aelf.io')).toBe('shining.wang');
+  it('prefers the account name the person chose', () => {
+    expect(handleFor('76fe9d91', 'Shining Wang', 'shining@aelf.io')).toBe('Shining Wang');
   });
 
-  it('leaves an opaque subject alone rather than truncating it', () => {
-    expect(handleFor('subject-a')).toBe('subject-a');
-    expect(handleFor('@leading')).toBe('@leading');
+  it('falls back to the local part of an address', () => {
+    expect(handleFor('76fe9d91', undefined, 'shining.wang@aelf.io')).toBe('shining.wang');
+  });
+
+  it('shows the identifier only when the provider released nothing', () => {
+    // Visible rather than hidden: a raw identifier on screen means the
+    // provider gave us no name, which is worth noticing.
+    expect(handleFor('76fe9d91')).toBe('76fe9d91');
+  });
+
+  it('ignores blank claims', () => {
+    expect(handleFor('76fe9d91', '  ', '  ')).toBe('76fe9d91');
   });
 });
 
 describe('the identity adapter', () => {
   it('reports the signed-in subject', async () => {
-    stubFetch(() => jsonResponse(200, { authenticated: true, subject: 'user@example.com' }));
+    stubFetch(() =>
+      jsonResponse(200, {
+        authenticated: true,
+        subject: '76fe9d91',
+        display_name: 'Shining Wang',
+        email: 'shining@aelf.io',
+        avatar_url: 'https://example/a.png',
+      }),
+    );
     const state = await createNyxidAuthProvider().current();
     expect(state.status).toBe('authenticated');
     if (state.status === 'authenticated') {
-      expect(state.user.id).toBe('user@example.com');
-      expect(state.user.handle).toBe('user');
+      // The identifier is kept for keying state; the person is shown by name.
+      expect(state.user.id).toBe('76fe9d91');
+      expect(state.user.handle).toBe('Shining Wang');
+      expect(state.user.email).toBe('shining@aelf.io');
+      expect(state.user.avatarUrl).toBe('https://example/a.png');
     }
   });
 
