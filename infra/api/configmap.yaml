@@ -121,4 +121,19 @@ data:
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.
   CHRONO_SANDBOX_API_KEY_FILE: "/var/secrets/opensandbox-api-key"
+  # What this deployment calls itself on the sandboxes it creates.
+  #
+  # The sandbox provider is shared: one API key sees every sandbox provisioned
+  # against it, including any belonging to another control plane. Reconciliation
+  # reclaims runtimes no session is entitled to, so without a name on each one a
+  # second control plane would read every session it has never heard of as an
+  # orphan and tear it down. Any additional control plane sharing this provider
+  # must use a different name here and set CHRONO_ADOPT_UNTAGGED_RUNTIMES=false.
+  CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
+  # Whether sandboxes carrying no deployment name belong to this one.
+  #
+  # True here because this deployment owns the provider, so sandboxes created
+  # before names were recorded are still reclaimed once they are genuinely
+  # orphaned. A second control plane must set this false.
+  CHRONO_ADOPT_UNTAGGED_RUNTIMES: "true"
   RUST_LOG: "info"

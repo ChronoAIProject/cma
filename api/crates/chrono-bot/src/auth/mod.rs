@@ -167,10 +167,23 @@ impl AuthState {
     /// everyday set. Deliberately not the privileged set: a developer running
     /// locally should still have to opt into the admin surface.
     pub fn trusted_authorization() -> Authorization {
+        // What an ordinary person can do to their own work, and nothing that
+        // reaches anybody else's. A trusted deployment has a single subject,
+        // so "their own" is all of it — but the set is still written as a
+        // user's rather than an operator's, because this stands in for a
+        // signed-in person and a deployment developed against it should behave
+        // like the one that is not.
+        //
+        // Environment profiles are included for the reason permissions.rs
+        // gives for granting them alongside session creation: a bundle
+        // describes what the session a caller may already start will carry, so
+        // a deployment that could start sessions but not describe them would
+        // be one where half the product cannot be used at all.
         Authorization::from_capabilities([
             layer2_core::Capability::CreateSession,
             layer2_core::Capability::UseOwnSessions,
             layer2_core::Capability::TerminateOwnSession,
+            layer2_core::Capability::ManageOwnEnvironmentProfiles,
         ])
     }
 
