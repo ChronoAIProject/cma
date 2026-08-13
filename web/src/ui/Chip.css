@@ -1,0 +1,44 @@
+/*
+ * Status chip — docs/Web_Style.md section 6: monospace, xs, uppercase, 3px/8px
+ * padding, 1px border, radius 2px. Text and border take the semantic token;
+ * the background is that token at 0.12 alpha, which is why each tone repeats
+ * the value as a colour-mix rather than referencing a background token.
+ */
+
+.chip {
+  display: inline-block;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  white-space: nowrap;
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-chip);
+}
+
+.chip--inline {
+  margin-left: var(--space-2);
+}
+
+.chip--ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.chip--warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.chip--danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.chip--neutral {
+  color: var(--neutral);
+  background: color-mix(in srgb, var(--neutral) 12%, transparent);
+}
