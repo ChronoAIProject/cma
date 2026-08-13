@@ -70,7 +70,7 @@ pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort};
 pub use reconcile::Reclaimed;
-pub use service::{AttachmentHandle, ScreenFactory, SessionService};
+pub use service::{AttachmentHandle, Deployment, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{
     ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord, SessionStore,

@@ -92,12 +92,12 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
         Arc::new(FakeStore::default()),
         None,
         None,
-        None,
         crate::environment_service::EnvironmentProfileService::new(
             Arc::new(crate::test_support::FakeProfileStore::default()),
             crate::environment::Baseline::default(),
             None,
         ),
+        crate::test_support::owned(),
     )
 }
 
