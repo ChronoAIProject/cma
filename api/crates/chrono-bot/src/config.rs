@@ -26,6 +26,18 @@ pub struct Config {
     /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
     /// Arguments that make the agent resume rather than start fresh.
     pub runtime_resume_args: String,
+    /// What this deployment calls itself on the runtimes it creates.
+    ///
+    /// A sandbox provider is shared, so one key sees runtimes belonging to
+    /// other control planes. This is what tells them apart.
+    pub deployment_id: String,
+    /// Whether runtimes carrying no deployment name are this one's to reclaim.
+    ///
+    /// True for the deployment that owns the provider, so runtimes created
+    /// before names were recorded are still reclaimed once orphaned. Any
+    /// additional control plane sharing the provider must set this false, or it
+    /// will tear down sessions belonging to the first.
+    pub adopts_untagged_runtimes: bool,
     /// Software every session carries, whoever started it.
     ///
     /// Part of what a session *is* on this platform rather than something a
@@ -84,6 +96,9 @@ impl Config {
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
         let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume");
+        let deployment_id = var_or("CHRONO_DEPLOYMENT_ID", "chrono-bot");
+        let adopts_untagged_runtimes =
+            var_or("CHRONO_ADOPT_UNTAGGED_RUNTIMES", "true").trim() != "false";
         // Defaulted rather than required. These are what a session is expected
         // to have on this platform, and an environment that forgot to name them
         // must not silently produce sessions without them. A deployment that
@@ -163,6 +178,8 @@ impl Config {
             sandbox_api_key,
             sandbox_image,
             runtime_resume_args,
+            deployment_id,
+            adopts_untagged_runtimes,
             baseline_packages,
             baseline_skills,
             upstream_base_url,
@@ -244,6 +261,8 @@ mod tests {
             baseline_packages: vec![],
             baseline_skills: vec![],
             runtime_resume_args: "resume".into(),
+            deployment_id: "chrono-bot".into(),
+            adopts_untagged_runtimes: true,
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),
             upstream_wire_api: "responses".into(),
