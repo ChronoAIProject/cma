@@ -32,9 +32,15 @@ jobs:
           exit $fail
       - name: infra/ contains only the fixed file list
         run: |
+          # infra/runtime/ holds the bot-pod image only. It has no manifests of
+          # its own by design: the sandbox provider schedules that image, so
+          # this repository never declares a Deployment or Service for it.
           expected=$(printf '%s\n' \
             infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
             infra/api/secret.yaml infra/api/service.yaml \
+            infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
+            infra/api/httproute.yaml \
+            infra/runtime/Dockerfile \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
             infra/web/secret.yaml infra/web/service.yaml | sort)
           actual=$(find infra -type f | sort)
@@ -163,7 +169,15 @@ jobs:
           curl -sSL -o kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
           tar xzf kubeconform.tar.gz kubeconform
-          ./kubeconform -strict -summary -output text infra/api/*.yaml infra/web/*.yaml
+          # The routes and the secret-provider class are custom resources, and
+          # kubeconform ships schemas only for built-in kinds. They are given a
+          # schema catalogue rather than -ignore-missing-schemas: skipping
+          # validation for exactly the manifests most likely to be hand-edited
+          # would leave the gate reporting success on files it never read.
+          ./kubeconform -strict -summary -output text \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            infra/api/*.yaml infra/web/*.yaml
       - name: kube-linter
         uses: stackrox/kube-linter-action@v1
         with:
@@ -172,10 +186,16 @@ jobs:
   images:
     name: Images
     runs-on: ubuntu-latest
+    # A build that hangs should fail rather than occupy a runner for six hours.
+    # Well above a cold cacheless build, so this catches a stall, not slowness.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        component: [api, web]
+        # Adding a value here adds a check named "Images (<value>)" and leaves
+        # the existing names untouched, so branch protection keeps reporting.
+        # The new check is not required until it is added to the ruleset.
+        component: [api, web, runtime]
     steps:
       - uses: actions/checkout@v5
       # arm64 builds run under emulation on the amd64 runner.
@@ -185,17 +205,32 @@ jobs:
       # schedule onto. Discarded via cacheonly rather than loaded: the docker
       # exporter behind `load: true` cannot export a multi-platform manifest
       # list, so a combined build-and-load would fail outright.
+      #
+      # Architecture is chosen per component because emulation is not equally
+      # priced. arm64 runs under QEMU on an amd64 runner, which a Node build
+      # absorbs in minutes and a Rust release build does not — emulated, the
+      # api and runtime compiles ran for hours and timed out, while web
+      # finished normally.
+      #
+      # Every node in the target cluster is amd64 and there is no arm64 pool,
+      # so an emulated arm64 Rust image is spending the bulk of CI on an
+      # artifact nothing can schedule. web keeps both because it costs little
+      # and still exercises multi-platform assembly.
+      #
+      # If an arm64 pool ever appears, the place to restore this is a publish
+      # job on merge, not the PR path: the guarantee is worth having on images
+      # that ship, not on every push.
       - name: Build image for all target platforms
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/${{ matrix.component }}/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: false
           outputs: type=cacheonly
-          # Emulated arm64 is slow enough that an uncached Rust release build
-          # dominates CI time. Scoped per component so api and web never
-          # overwrite each other's cache.
+          # Scoped per component so api and web never overwrite each other's
+          # cache. A branch's first run is still cold, since it can only read
+          # what the base branch has already populated.
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
       # Reuses the layers just cached above, so this is near-free.

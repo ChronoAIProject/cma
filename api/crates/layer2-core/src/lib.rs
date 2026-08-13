@@ -1,76 +1,42 @@
 //! Layer 2 — core session model and events.
 //!
 //! The single tunnel every Layer 1 interface talks to. Protocol-agnostic and
-//! kernel-agnostic: no protocol name and no kernel name may appear here.
+//! kernel-agnostic: no protocol name and no kernel name may appear here, in
+//! identifiers, types, comments, or doc examples.
+//!
+//! The core is a superset, never an intersection: it models the union of what
+//! every interface and every runtime needs, so that an interface exposing a
+//! subset is a projection rather than a compromise.
 
-use serde::{Deserialize, Serialize};
+pub mod authz;
+mod clock;
+mod credentials;
+pub mod error;
+pub mod event;
+pub mod ids;
+mod lifecycle;
 
-/// Lifecycle state of a session. `Idle` means the runtime was reclaimed while
-/// the session itself remains valid and revivable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionStatus {
-    /// Runtime is being provisioned.
-    Provisioning,
-    /// Runtime is up and accepting work.
-    Ready,
-    /// A turn is in progress.
-    Running,
-    /// Runtime reclaimed; session intact and revivable.
-    Idle,
-    /// Terminal state.
-    Terminated,
-}
+#[cfg(test)]
+mod test_support;
 
-/// Identifier of a session. Stable across an idle to revive cycle.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SessionId(pub String);
+#[cfg(test)]
+#[path = "persistence_tests.rs"]
+mod persistence_tests;
 
-/// A durable, ordered event on a session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Event {
-    /// Session this event belongs to.
-    pub session_id: SessionId,
-    /// Monotonic sequence, per session.
-    pub seq: u64,
-    /// Event discriminator.
-    pub kind: EventKind,
-}
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;
+pub mod service;
+pub mod session;
+pub mod store;
+pub mod terminal;
+mod terminal_io;
 
-/// The semantic event vocabulary. Superset of what any single interface projects.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
-pub enum EventKind {
-    /// Session status changed.
-    StatusChanged {
-        /// The new status.
-        status: SessionStatus,
-    },
-    /// A turn began.
-    TurnStarted,
-    /// A turn completed.
-    TurnCompleted,
-    /// The runtime is blocked awaiting a decision from the client.
-    ApprovalRequested {
-        /// Correlates with the resolving decision.
-        request_id: String,
-    },
-    /// A pending approval was resolved.
-    ApprovalResolved {
-        /// The request that was resolved.
-        request_id: String,
-        /// Whether the action was permitted.
-        allowed: bool,
-    },
-}
-
-/// Errors surfaced by the core.
-#[derive(Debug, thiserror::Error)]
-pub enum CoreError {
-    /// No such session.
-    #[error("session not found")]
-    SessionNotFound,
-    /// The operation is not valid in the session's current state.
-    #[error("invalid state for operation")]
-    InvalidState,
-}
+pub use authz::{Authorization, Caller, Capability};
+pub use error::CoreError;
+pub use event::{Event, EventKind, LiveFrame};
+pub use ids::{KernelId, SessionId, SubjectId};
+pub use service::{AttachmentHandle, ScreenFactory, SessionService};
+pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+pub use store::{ContextStore, SessionRecord, SessionStore, StoreError};
+pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
