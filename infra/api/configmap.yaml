@@ -27,7 +27,19 @@ data:
   # Bucket holding each session's stored agent context, so a reopened session
   # can be restarted with its transcript loaded into a fresh sandbox. Reached
   # through the platform storage service, which brokers the credential.
-  CHRONO_CONTEXT_BUCKET: "chrono-platform-chrono-bot"
+  #
+  # The one bucket this service addresses. It writes objects into this bucket
+  # and nowhere else, and an unset value switches context storage off rather
+  # than inventing somewhere to write.
+  #
+  # It is owned by the machine identity below, which is what makes access work
+  # at all: the storage service authorises objects by bucket ownership, so a
+  # bucket created by any other identity is refused permanently.
+  CHRONO_CONTEXT_BUCKET: "chrono-platform-bot"
+  # This service's own machine identity on the identity platform, used to store
+  # session context. The identifier is not secret; its secret half lives in the
+  # Secret, and they are delivered separately for that reason.
+  CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Root of the identity platform. Session context is stored through its proxy,
   # and a session's CLI acts against it on the owner's behalf. Without this,
   # context storage stays switched off rather than half-configured.

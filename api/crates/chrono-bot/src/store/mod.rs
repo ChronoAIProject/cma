@@ -6,6 +6,7 @@
 
 pub mod context;
 pub mod mongo;
+pub mod token;
 
 pub use context::ChronoStorageContextStore;
 pub use mongo::MongoSessionStore;
