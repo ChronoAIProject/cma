@@ -1,0 +1,303 @@
+//! Owning environment profiles: create, read, replace, remove, resolve.
+//!
+//! Separate from the session service because a profile is a separate resource
+//! with its own lifetime — it is authored once and reused, and outlives every
+//! session that referenced it.
+//!
+//! Two rules live here and nowhere else, so no interface can forget either:
+//!
+//! * **Scoped to the owner.** Every operation reads the record first and
+//!   refuses unless the caller owns it. There is no privileged cross-subject
+//!   read, unlike sessions: a profile's values are where a caller is invited to
+//!   put a credential.
+//! * **The baseline is not optional.** It is merged on write so a stored
+//!   profile reads back honestly, and again on resolve so a profile written
+//!   before the platform mandated something still gets it.
+
+use std::sync::Arc;
+
+use crate::authz::{Caller, Capability};
+use crate::clock::now_rfc3339;
+use crate::environment::{
+    Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec, ResolvedEnvironment,
+    SkillCatalog,
+};
+use crate::error::CoreError;
+use crate::ids::{EnvironmentProfileId, SubjectId};
+use crate::store::{EnvironmentProfileStore, StoreError};
+
+/// Reusable environment bundles, and what a session is started with.
+pub struct EnvironmentProfileService {
+    store: Arc<dyn EnvironmentProfileStore>,
+    /// What every session carries whether or not anyone asked for it.
+    baseline: Baseline,
+    /// Where selectable skills are listed, when a deployment has one.
+    ///
+    /// Optional: without it profiles still store and resolve skill identifiers,
+    /// there is simply no list to choose from. That is a degraded picker, not a
+    /// broken session.
+    catalog: Option<Arc<dyn SkillCatalog>>,
+}
+
+impl EnvironmentProfileService {
+    /// Build the service over its ports.
+    pub fn new(
+        store: Arc<dyn EnvironmentProfileStore>,
+        baseline: Baseline,
+        catalog: Option<Arc<dyn SkillCatalog>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            baseline,
+            catalog,
+        })
+    }
+
+    /// What this deployment mandates in every session.
+    pub fn baseline(&self) -> &Baseline {
+        &self.baseline
+    }
+
+    /// Store a new profile for the caller.
+    pub async fn create(
+        &self,
+        caller: &Caller,
+        mut spec: EnvironmentProfileSpec,
+    ) -> Result<EnvironmentProfile, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        // Validated before the baseline is merged, so a caller is never told
+        // their request is too large because of entries the platform added.
+        spec.validate()?;
+        self.baseline.apply(&mut spec);
+
+        let now = now_rfc3339();
+        let profile = EnvironmentProfile {
+            id: EnvironmentProfileId::generate(),
+            owner: caller.subject.clone(),
+            name: spec.name.trim().to_string(),
+            variables: spec.variables,
+            packages: spec.packages,
+            skills: spec.skills,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.store.upsert(&profile).await.map_err(store_failed)?;
+        tracing::info!(
+            profile_id = %profile.id,
+            owner = %profile.owner,
+            variables = profile.variables.len(),
+            packages = profile.packages.len(),
+            skills = profile.skills.len(),
+            "environment profile created"
+        );
+        Ok(profile)
+    }
+
+    /// Read one of the caller's profiles.
+    pub async fn get(
+        &self,
+        caller: &Caller,
+        id: &EnvironmentProfileId,
+    ) -> Result<EnvironmentProfile, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        self.owned(caller, id).await
+    }
+
+    /// Every profile the caller owns, newest first.
+    pub async fn list(&self, caller: &Caller) -> Result<Vec<EnvironmentProfile>, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        self.store
+            .list_for(&caller.subject)
+            .await
+            .map_err(store_failed)
+    }
+
+    /// Replace a profile's contents, keeping its identity and creation time.
+    pub async fn update(
+        &self,
+        caller: &Caller,
+        id: &EnvironmentProfileId,
+        mut spec: EnvironmentProfileSpec,
+    ) -> Result<EnvironmentProfile, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let existing = self.owned(caller, id).await?;
+        spec.validate()?;
+        // Applied again on every write: this is what makes removing a mandatory
+        // entry impossible rather than merely discouraged.
+        self.baseline.apply(&mut spec);
+
+        let profile = EnvironmentProfile {
+            id: existing.id,
+            owner: existing.owner,
+            name: spec.name.trim().to_string(),
+            variables: spec.variables,
+            packages: spec.packages,
+            skills: spec.skills,
+            created_at: existing.created_at,
+            updated_at: now_rfc3339(),
+        };
+        self.store.upsert(&profile).await.map_err(store_failed)?;
+        tracing::info!(profile_id = %profile.id, owner = %profile.owner, "environment profile replaced");
+        Ok(profile)
+    }
+
+    /// Remove one of the caller's profiles.
+    pub async fn delete(
+        &self,
+        caller: &Caller,
+        id: &EnvironmentProfileId,
+    ) -> Result<(), CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        // Read first: deleting by id alone would let one subject remove
+        // another's profile by guessing an identifier.
+        self.owned(caller, id).await?;
+        self.store.delete(id).await.map_err(store_failed)?;
+        tracing::info!(profile_id = %id, owner = %caller.subject, "environment profile removed");
+        Ok(())
+    }
+
+    /// What a session started by this caller should be given.
+    ///
+    /// A caller who selected nothing still gets the baseline, and a caller who
+    /// selected a profile written before the baseline changed gets the current
+    /// one — resolving is the last point at which the platform's mandate can be
+    /// applied, so it is applied here regardless of what was stored.
+    pub async fn resolve(
+        &self,
+        caller: &Caller,
+        selection: Option<&EnvironmentProfileId>,
+    ) -> Result<ResolvedEnvironment, CoreError> {
+        let Some(id) = selection else {
+            return Ok(ResolvedEnvironment::baseline_only(&self.baseline));
+        };
+        // Selecting a profile is using it, which is a read of the caller's own
+        // resource — the same capability that governs every other read of it.
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let profile = self.owned(caller, id).await?;
+        let mut spec = profile.to_spec();
+        self.baseline.apply(&mut spec);
+        let resolved = ResolvedEnvironment::from_spec(&spec);
+        tracing::debug!(
+            profile_id = %id,
+            variables = resolved.variables.len(),
+            packages = resolved.packages.len(),
+            skills = resolved.skills.len(),
+            "environment profile resolved"
+        );
+        Ok(resolved)
+    }
+
+    /// Resolve on an owner's behalf, with no request behind it.
+    ///
+    /// The controller re-provisions and rotates sessions long after the request
+    /// that created them, so there is no caller to check — the check already
+    /// happened when the session recorded which profile it uses. Ownership is
+    /// still enforced: a profile that has since changed hands stops applying,
+    /// which is the safe direction.
+    pub async fn resolve_for_owner(
+        &self,
+        owner: &SubjectId,
+        selection: Option<&EnvironmentProfileId>,
+    ) -> Result<ResolvedEnvironment, CoreError> {
+        let Some(id) = selection else {
+            return Ok(ResolvedEnvironment::baseline_only(&self.baseline));
+        };
+        let profile = self
+            .store
+            .get(id)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::EnvironmentProfileNotFound)?;
+        if !profile.is_owned_by(owner) {
+            tracing::warn!(
+                profile_id = %id,
+                %owner,
+                "environment profile no longer belongs to this session's owner"
+            );
+            return Err(CoreError::EnvironmentProfileNotFound);
+        }
+        let mut spec = profile.to_spec();
+        self.baseline.apply(&mut spec);
+        Ok(ResolvedEnvironment::from_spec(&spec))
+    }
+
+    /// Skills this caller may choose from.
+    ///
+    /// The credential is the caller's own, when one has been delegated; it is
+    /// what lets the catalogue answer with what this subject can see rather
+    /// than only what is public.
+    pub async fn available_skills(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+    ) -> Result<Vec<CatalogSkill>, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let Some(catalog) = self.catalog.as_ref() else {
+            // No catalogue configured is not a failure: profiles still work,
+            // the caller simply has nothing to browse.
+            tracing::debug!("no skill catalogue is configured");
+            return Ok(Vec::new());
+        };
+        catalog
+            .available(&caller.subject, credential)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "cannot list selectable skills");
+                CoreError::RuntimeUnavailable(format!("skill catalogue: {e}"))
+            })
+    }
+
+    /// Read a profile and refuse unless this caller owns it.
+    ///
+    /// "Not yours" and "does not exist" collapse into one condition on purpose:
+    /// distinguishing them would confirm an identifier to someone who may not
+    /// see it.
+    async fn owned(
+        &self,
+        caller: &Caller,
+        id: &EnvironmentProfileId,
+    ) -> Result<EnvironmentProfile, CoreError> {
+        let profile = self
+            .store
+            .get(id)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::EnvironmentProfileNotFound)?;
+        if !profile.is_owned_by(&caller.subject) {
+            tracing::warn!(
+                profile_id = %id,
+                subject = %caller.subject,
+                "refused access to another subject's environment profile"
+            );
+            return Err(CoreError::EnvironmentProfileNotFound);
+        }
+        Ok(profile)
+    }
+}
+
+/// Render a storage failure as a core error.
+///
+/// Unreachable storage is reported as unavailability rather than as "not
+/// found", so a caller is never told their profile is gone when it is merely
+/// out of reach.
+fn store_failed(e: StoreError) -> CoreError {
+    CoreError::RuntimeUnavailable(format!("environment profile store: {e}"))
+}
+
+#[cfg(test)]
+#[path = "environment_service_tests.rs"]
+mod tests;

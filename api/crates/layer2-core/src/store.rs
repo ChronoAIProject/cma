@@ -10,8 +10,9 @@
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
+use crate::environment::EnvironmentProfile;
 use crate::event::Event;
-use crate::ids::{SessionId, SubjectId};
+use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
 use crate::session::Session;
 
 /// A session as it is stored.
@@ -81,6 +82,37 @@ pub trait SessionStore: Send + Sync {
     async fn events_since(&self, id: &SessionId, after: u64) -> Result<Vec<Event>, StoreError>;
 }
 
+/// Durable environment profiles.
+///
+/// A third port rather than a second collection behind the session store: a
+/// profile outlives every session that used it and is queried by owner, so
+/// conflating the two would mean one implementation could not be replaced
+/// without the other.
+///
+/// Nothing here filters by owner except `list_for`. Ownership is decided above
+/// this, exactly as it is for sessions, so that no store implementation can
+/// hold a different opinion about who may read what.
+#[async_trait::async_trait]
+pub trait EnvironmentProfileStore: Send + Sync {
+    /// Create or replace a profile.
+    async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError>;
+
+    /// Read one profile, whoever owns it.
+    async fn get(
+        &self,
+        id: &EnvironmentProfileId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError>;
+
+    /// Every profile owned by a subject, newest first.
+    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError>;
+
+    /// Remove a profile permanently.
+    ///
+    /// Sessions already started with it are unaffected: they were handed a
+    /// resolved bundle at creation and never read the profile again.
+    async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError>;
+}
+
 /// Where a session's credential comes from when nobody is asking for it.
 ///
 /// A session outlives the request that created it, so the credential it
@@ -128,6 +160,7 @@ mod tests {
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
             options: AgentOptions::default(),
+            environment_profile: None,
             geometry: TerminalGeometry::default(),
             last_seq: 0,
             runtime_version: None,
