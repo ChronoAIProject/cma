@@ -10,6 +10,7 @@ mod config;
 mod permissions;
 mod renewal;
 mod screen;
+mod store;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -101,7 +102,39 @@ async fn main() {
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
     });
-    let service = SessionService::new(adapters, screen_factory);
+    // Sessions outlive this process, so the store is opened before anything is
+    // served: starting without it would accept work we cannot keep.
+    let store = match crate::store::MongoSessionStore::connect(
+        &config.mongodb_uri,
+        &config.mongodb_database,
+    )
+    .await
+    {
+        Ok(s) => Arc::new(s) as Arc<dyn layer2_core::SessionStore>,
+        Err(e) => {
+            tracing::error!(error = %e, "cannot open the session store");
+            std::process::exit(2);
+        }
+    };
+
+    // Context storage is optional: without it a session still works, it simply
+    // cannot carry its transcript into a new sandbox.
+    let context: Option<Arc<dyn layer2_core::ContextStore>> =
+        if config.platform_base_url.trim().is_empty() {
+            tracing::warn!("no platform base url; session context will not be stored");
+            None
+        } else {
+            Some(Arc::new(crate::store::ChronoStorageContextStore::new(
+                format!(
+                    "{}/api/v1/proxy/s/chrono-storage-service",
+                    config.platform_base_url.trim_end_matches('/')
+                ),
+                config.context_bucket.clone(),
+                config.sandbox_api_key.clone(),
+            )))
+        };
+
+    let service = SessionService::new(adapters, screen_factory, store, context);
 
     let auth_state = AuthState::new(config.auth_mode.clone());
     if !auth_state.requires_credential() {
