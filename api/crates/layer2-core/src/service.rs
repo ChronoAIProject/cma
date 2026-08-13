@@ -93,6 +93,13 @@ pub struct SessionService {
     pub(crate) context: Option<Arc<dyn ContextStore>>,
     /// Where to get an owner's credential when the owner is not here to give one.
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
+    /// Sessions whose runtime has said it cannot be carried onto a newer one.
+    ///
+    /// Held in memory rather than recorded, deliberately: it is a fact about a
+    /// particular sandbox, not about the session, so it should not outlive the
+    /// sandbox. A restarted process asks again, which is right — by then the
+    /// runtime may well have been replaced by other means.
+    pub(crate) rotation_refused: RwLock<HashSet<SessionId>>,
     /// The runtime version sessions are expected to be running.
     ///
     /// Held by the control plane rather than asked of each sandbox: this is
@@ -131,6 +138,7 @@ impl SessionService {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
             starting: RwLock::new(HashSet::new()),
+            rotation_refused: RwLock::new(HashSet::new()),
             adapters,
             screen_factory,
             store,

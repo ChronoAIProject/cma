@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{AdapterError, RuntimeHandle};
+use layer3_adapter::RuntimeHandle;
 
 use crate::clock::now_rfc3339;
 use crate::event::{Event, EventKind};
@@ -72,6 +72,12 @@ impl SessionService {
         let Some(old) = record.runtime_id.clone().map(RuntimeHandle) else {
             return false;
         };
+        if self.rotation_refused.read().await.contains(&id) {
+            // This runtime has already said it cannot hand its conversation
+            // over. Asking again every few minutes would achieve nothing and
+            // would keep the question in the log forever.
+            return false;
+        }
         if !self.begin_start(&id).await {
             // Something else already has this session in hand.
             return false;
@@ -84,7 +90,26 @@ impl SessionService {
             "moving a session onto a newer runtime"
         );
 
-        // Announced first. Everything after this point is a handover the owner
+        // Tried before anything is announced, because capturing changes
+        // nothing and failing to capture means the move is off. Announcing
+        // first would show every session an "updating" state it then backs out
+        // of — and on a runtime that can never be captured, it would do that
+        // on every sweep forever.
+        let rehearsal = match adapter.snapshot(&old).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                // The session cannot be carried across, so it stays exactly
+                // where it is. A stale image is bad; losing the conversation
+                // is worse. Remembered so this is not retried every few
+                // minutes against a runtime that has already said it cannot.
+                tracing::warn!(session_id = %id, error = %e, "cannot move this session; leaving it in place");
+                self.rotation_refused.write().await.insert(id.clone());
+                self.finish_start(&id).await;
+                return false;
+            }
+        };
+
+        // Announced now. Everything after this point is a handover the owner
         // must not be typing into, and the interface cannot know to stop
         // accepting input until it has been told.
         let Some(rotating) = self.mark_rotating(&record).await else {
@@ -92,24 +117,16 @@ impl SessionService {
             return false;
         };
 
+        // Taken again, because the first was read before input stopped and
+        // anything typed since belongs to the session too. The rehearsal
+        // stands in if this one fails: a slightly older conversation is worth
+        // far more than none.
         let taken_at = now_rfc3339();
         let restore = match adapter.snapshot(&old).await {
             Ok(bytes) => bytes,
-            Err(AdapterError::Unsupported(reason)) => {
-                // The session cannot be carried across, so it is left exactly
-                // where it is. Running it on an old image indefinitely is a
-                // worse outcome than a stale image, but losing the
-                // conversation is worse than both.
-                tracing::warn!(session_id = %id, reason, "cannot move this session; leaving it in place");
-                self.restore_status(&rotating).await;
-                self.finish_start(&id).await;
-                return false;
-            }
             Err(e) => {
-                tracing::warn!(session_id = %id, error = %e, "could not capture the session; leaving it in place");
-                self.restore_status(&rotating).await;
-                self.finish_start(&id).await;
-                return false;
+                tracing::warn!(session_id = %id, error = %e, "carrying the conversation captured a moment earlier");
+                rehearsal
             }
         };
 
@@ -194,39 +211,6 @@ impl SessionService {
         }
         self.mark_entry(&id, SessionStatus::Rotating, seq).await;
         Some(rotating)
-    }
-
-    /// Put a session back the way it was, after a handover that never started.
-    ///
-    /// Nothing was torn down, so the session is exactly as usable as it was a
-    /// moment ago — and leaving it marked as rotating would make a healthy
-    /// session permanently refuse input.
-    async fn restore_status(&self, rotating: &SessionRecord) {
-        let mut back = rotating.clone();
-        back.session.status = SessionStatus::Ready;
-        back.session.last_seq += 1;
-        let seq = back.session.last_seq;
-        let id = back.session.id.clone();
-        if let Err(e) = self.store.upsert(&back).await {
-            tracing::error!(session_id = %id, error = %e, "cannot undo the handover marker");
-            return;
-        }
-        if let Err(e) = self
-            .store
-            .append_events(&[Event {
-                session_id: id.clone(),
-                seq,
-                kind: EventKind::StatusChanged {
-                    status: SessionStatus::Ready,
-                    stop_reason: None,
-                    detail: None,
-                },
-            }])
-            .await
-        {
-            tracing::warn!(session_id = %id, error = %e, "cannot announce the undo");
-        }
-        self.mark_entry(&id, SessionStatus::Ready, seq).await;
     }
 
     /// Keep a live entry's idea of its own status in step with the record.
