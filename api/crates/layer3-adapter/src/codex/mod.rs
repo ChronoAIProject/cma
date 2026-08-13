@@ -1,18 +1,26 @@
-//! Adapter driving the Codex kernel.
+//! Adapter driving the Codex kernel inside a provisioned sandbox.
 //!
-//! The kernel process itself never runs in the control plane. It runs inside a
-//! sandboxed runtime under a real pseudo-terminal, supervised by a separate
-//! binary. This adapter is the client of that supervisor: it provisions a
-//! runtime and relays terminal traffic over a WebSocket.
+//! The kernel never runs in the control plane. Each session gets its own
+//! sandbox from the provider, running an image that carries the kernel and a
+//! supervisor that hosts it under a real pseudo-terminal. This adapter owns
+//! that lifecycle and relays the terminal back over a WebSocket.
+
+use std::collections::BTreeMap;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
     AdapterError, KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalChannel,
     TerminalInput,
 };
+
+/// Port the supervisor listens on inside the sandbox.
+const SUPERVISOR_PORT: u16 = 9090;
 
 /// How many output chunks may queue before the relay applies backpressure.
 ///
@@ -23,31 +31,95 @@ const OUTPUT_BUFFER: usize = 256;
 /// How many input events may queue toward the runtime.
 const INPUT_BUFFER: usize = 64;
 
-/// Drives Codex inside a supervised sandbox runtime.
+/// How long to wait for a freshly created sandbox to start serving.
+const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// How often to re-check a sandbox that is not yet running.
+const READY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl From<SandboxError> for AdapterError {
+    fn from(e: SandboxError) -> Self {
+        match e {
+            SandboxError::Rejected { status, detail } => {
+                AdapterError::Rejected(format!("{status}: {detail}"))
+            }
+            other => AdapterError::Unavailable(other.to_string()),
+        }
+    }
+}
+
+/// How sandboxes for this kernel are shaped.
+#[derive(Debug, Clone)]
+pub struct CodexSandboxSpec {
+    /// Image carrying the kernel and the supervisor.
+    pub image: String,
+    /// Entrypoint that starts the supervisor.
+    pub entrypoint: Vec<String>,
+    /// Hard resource caps for each sandbox.
+    pub resource_limits: BTreeMap<String, String>,
+    /// Seconds before the provider reclaims an idle sandbox.
+    pub timeout_seconds: Option<u64>,
+}
+
+impl Default for CodexSandboxSpec {
+    fn default() -> Self {
+        Self {
+            image: "chrono-bot-runtime:dev".into(),
+            entrypoint: vec!["/usr/local/bin/layer4-runtime".into()],
+            resource_limits: BTreeMap::from([
+                ("cpu".to_string(), "2".to_string()),
+                ("memory".to_string(), "4Gi".to_string()),
+            ]),
+            timeout_seconds: Some(3600),
+        }
+    }
+}
+
+/// Drives Codex inside a provider-managed sandbox.
 pub struct CodexAdapter {
-    /// Base URL of the runtime supervisor, without a trailing slash.
-    supervisor_base_url: String,
+    client: SandboxClient,
+    spec: CodexSandboxSpec,
 }
 
 impl CodexAdapter {
-    /// Build an adapter pointed at a runtime supervisor.
-    pub fn new(supervisor_base_url: impl Into<String>) -> Self {
-        let mut base = supervisor_base_url.into();
-        while base.ends_with('/') {
-            base.pop();
-        }
-        Self {
-            supervisor_base_url: base,
-        }
+    /// Build an adapter over a sandbox provider.
+    pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
+        Self { client, spec }
     }
 
-    /// WebSocket URL for a runtime's terminal.
-    fn terminal_url(&self, handle: &RuntimeHandle) -> String {
-        let ws_base = self
-            .supervisor_base_url
-            .replacen("https://", "wss://", 1)
-            .replacen("http://", "ws://", 1);
-        format!("{ws_base}/runtime/{}/terminal", handle.0)
+    /// Turn a provider endpoint into the supervisor's terminal URL.
+    ///
+    /// The provider returns a host and path without a scheme, so the scheme is
+    /// taken from the base URL it was reached on.
+    fn terminal_url(&self, endpoint: &str, session_id: &str) -> String {
+        let scheme = if self.client.base_url().starts_with("https://") {
+            "wss"
+        } else {
+            "ws"
+        };
+        let host_and_path = endpoint
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+        format!("{scheme}://{host_and_path}/runtime/{session_id}/terminal")
+    }
+
+    /// Wait until a sandbox reports itself running.
+    async fn await_running(&self, id: &str) -> Result<Sandbox, AdapterError> {
+        let deadline = std::time::Instant::now() + READY_TIMEOUT;
+        loop {
+            let sandbox = self.client.get(id).await?;
+            if sandbox.is_running() {
+                return Ok(sandbox);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(AdapterError::Unavailable(format!(
+                    "sandbox {id} did not start within {}s",
+                    READY_TIMEOUT.as_secs()
+                )));
+            }
+            tokio::time::sleep(READY_POLL).await;
+        }
     }
 }
 
@@ -58,26 +130,72 @@ impl KernelAdapter for CodexAdapter {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        // The supervisor keys runtimes by session id, so provisioning is
-        // idempotent from the control plane's point of view: reconnecting to
-        // the same session reaches the same runtime.
+        // Geometry is passed as environment so the supervisor allocates its pty
+        // at roughly the right size before the first attach refines it.
+        let env = BTreeMap::from([
+            ("CHRONO_RUNTIME_COMMAND".to_string(), "codex".to_string()),
+            ("TERM".to_string(), "xterm-256color".to_string()),
+            (
+                "CHRONO_RUNTIME_COLS".to_string(),
+                spec.size.cols.to_string(),
+            ),
+            (
+                "CHRONO_RUNTIME_ROWS".to_string(),
+                spec.size.rows.to_string(),
+            ),
+        ]);
+
+        let request = SandboxRequest {
+            image: ImageSpec {
+                uri: self.spec.image.clone(),
+            },
+            entrypoint: self.spec.entrypoint.clone(),
+            env,
+            resource_limits: self.spec.resource_limits.clone(),
+            timeout: self.spec.timeout_seconds,
+            // Correlates a sandbox back to the session that owns it, so an
+            // orphan can be found and reclaimed.
+            metadata: BTreeMap::from([
+                ("chrono-bot/session".to_string(), spec.session_id.clone()),
+                ("chrono-bot/kernel".to_string(), "codex".to_string()),
+            ]),
+        };
+
+        let sandbox = self.client.create(&request).await?;
         tracing::info!(
             session_id = %spec.session_id,
-            cols = spec.size.cols,
-            rows = spec.size.rows,
-            "provisioning runtime"
+            sandbox = %sandbox.id,
+            image = %self.spec.image,
+            "sandbox provisioned"
         );
-        Ok(RuntimeHandle(spec.session_id.clone()))
+        let sandbox = self.await_running(&sandbox.id).await?;
+        Ok(RuntimeHandle(sandbox.id))
     }
 
     async fn attach_terminal(
         &self,
         handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
-        let url = self.terminal_url(handle);
-        tracing::info!(runtime = %handle.0, %url, "attaching to runtime terminal");
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let url = self.terminal_url(&endpoint.endpoint, &handle.0);
+        tracing::info!(sandbox = %handle.0, %url, "attaching to sandbox terminal");
 
-        let (stream, _response) = tokio_tungstenite::connect_async(&url)
+        // The proxied endpoint is authenticated, so the handshake carries the
+        // provider key. A browser could not set this header, which is exactly
+        // why the control plane holds the attachment and the browser talks only
+        // to the control plane.
+        let mut request = url
+            .as_str()
+            .into_client_request()
+            .map_err(|e| AdapterError::Unavailable(format!("bad terminal url {url}: {e}")))?;
+        let (header, key) = self.client.auth_header();
+        request.headers_mut().insert(
+            header,
+            HeaderValue::from_str(key)
+                .map_err(|e| AdapterError::Unavailable(format!("bad api key header: {e}")))?,
+        );
+
+        let (stream, _response) = tokio_tungstenite::connect_async(request)
             .await
             .map_err(|e| AdapterError::Unavailable(format!("connect {url}: {e}")))?;
         let (mut sink, mut source) = stream.split();
@@ -85,7 +203,7 @@ impl KernelAdapter for CodexAdapter {
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(OUTPUT_BUFFER);
         let (in_tx, mut in_rx) = mpsc::channel::<TerminalInput>(INPUT_BUFFER);
 
-        let runtime = handle.0.clone();
+        let sandbox = handle.0.clone();
         tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
@@ -97,15 +215,15 @@ impl KernelAdapter for CodexAdapter {
                     Ok(Message::Close(_)) => break,
                     Ok(_) => {} // supervisor control frames are not used yet
                     Err(e) => {
-                        tracing::warn!(%runtime, error = %e, "runtime terminal read failed");
+                        tracing::warn!(%sandbox, error = %e, "sandbox terminal read failed");
                         break;
                     }
                 }
             }
-            tracing::info!(%runtime, "runtime output relay ended");
+            tracing::info!(%sandbox, "sandbox output relay ended");
         });
 
-        let runtime = handle.0.clone();
+        let sandbox = handle.0.clone();
         tokio::spawn(async move {
             while let Some(input) = in_rx.recv().await {
                 let message = match input {
@@ -119,11 +237,11 @@ impl KernelAdapter for CodexAdapter {
                     }
                 };
                 if let Err(e) = sink.send(message).await {
-                    tracing::warn!(%runtime, error = %e, "runtime terminal write failed");
+                    tracing::warn!(%sandbox, error = %e, "sandbox terminal write failed");
                     break;
                 }
             }
-            tracing::info!(%runtime, "runtime input relay ended");
+            tracing::info!(%sandbox, "sandbox input relay ended");
         });
 
         Ok(TerminalChannel {
@@ -134,14 +252,15 @@ impl KernelAdapter for CodexAdapter {
 
     async fn resize(&self, handle: &RuntimeHandle, size: TermSize) -> Result<(), AdapterError> {
         // Geometry rides the same channel as input, so a resize with no live
-        // attachment is a no-op rather than an error: the next attach allocates
-        // at the requested size.
-        tracing::debug!(runtime = %handle.0, cols = size.cols, rows = size.rows, "resize requested");
+        // attachment is a no-op rather than an error: the next attach applies
+        // the caller's real size before anything is painted.
+        tracing::debug!(sandbox = %handle.0, cols = size.cols, rows = size.rows, "resize requested");
         Ok(())
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
-        tracing::info!(runtime = %handle.0, "terminating runtime");
+        self.client.delete(&handle.0).await?;
+        tracing::info!(sandbox = %handle.0, "sandbox deleted");
         Ok(())
     }
 }
@@ -150,49 +269,87 @@ impl KernelAdapter for CodexAdapter {
 mod tests {
     use super::*;
 
-    #[test]
-    fn trailing_slashes_are_stripped_from_the_base_url() {
-        let a = CodexAdapter::new("http://runtime:9000///");
-        assert_eq!(a.supervisor_base_url, "http://runtime:9000");
+    fn adapter(base: &str) -> CodexAdapter {
+        CodexAdapter::new(
+            SandboxClient::new(base, "test-key"),
+            CodexSandboxSpec::default(),
+        )
     }
 
     #[test]
-    fn terminal_url_upgrades_the_scheme() {
-        let a = CodexAdapter::new("http://runtime:9000");
-        assert_eq!(
-            a.terminal_url(&RuntimeHandle("sesn_1".into())),
-            "ws://runtime:9000/runtime/sesn_1/terminal"
-        );
+    fn the_kernel_is_named_for_diagnostics_only() {
+        assert_eq!(adapter("http://p").kernel_name(), "codex");
+    }
 
-        let b = CodexAdapter::new("https://runtime.example");
+    #[test]
+    fn a_proxied_endpoint_becomes_a_terminal_url() {
+        let a = adapter("http://provider:80");
         assert_eq!(
-            b.terminal_url(&RuntimeHandle("sesn_2".into())),
-            "wss://runtime.example/runtime/sesn_2/terminal"
+            a.terminal_url("provider/v1/sandboxes/sbx-1/proxy/9090", "sbx-1"),
+            "ws://provider/v1/sandboxes/sbx-1/proxy/9090/runtime/sbx-1/terminal"
         );
+    }
+
+    #[test]
+    fn a_secure_provider_yields_a_secure_socket() {
+        let a = adapter("https://provider");
+        assert!(a
+            .terminal_url("provider/v1/sandboxes/s/proxy/9090", "s")
+            .starts_with("wss://"));
+    }
+
+    #[test]
+    fn an_endpoint_that_already_has_a_scheme_is_not_doubled() {
+        let a = adapter("http://provider");
+        assert_eq!(
+            a.terminal_url("http://provider/proxy/9090/", "s"),
+            "ws://provider/proxy/9090/runtime/s/terminal"
+        );
+    }
+
+    #[test]
+    fn the_default_spec_requests_a_real_workload_size() {
+        let s = CodexSandboxSpec::default();
+        assert_eq!(s.resource_limits.get("cpu").map(String::as_str), Some("2"));
+        assert_eq!(
+            s.resource_limits.get("memory").map(String::as_str),
+            Some("4Gi")
+        );
+        assert!(s.timeout_seconds.is_some(), "sandboxes must expire");
     }
 
     #[tokio::test]
-    async fn provision_returns_a_handle_keyed_by_session() {
-        let a = CodexAdapter::new("http://runtime:9000");
-        let handle = a
+    async fn provisioning_against_a_dead_provider_reports_unavailable() {
+        // Port 1 is reserved and never listening, so this exercises the failure
+        // path deterministically without a fixture server.
+        let a = adapter("http://127.0.0.1:1");
+        let err = a
             .provision(&RuntimeSpec {
-                session_id: "sesn_abc".into(),
+                session_id: "sesn_x".into(),
                 size: TermSize { cols: 80, rows: 24 },
             })
             .await
-            .expect("provision succeeds");
-        assert_eq!(handle, RuntimeHandle("sesn_abc".into()));
+            .expect_err("must fail against a dead provider");
+        assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");
     }
 
     #[tokio::test]
-    async fn attaching_to_an_unreachable_supervisor_is_an_error() {
-        // Port 1 is reserved and never listening, so this exercises the
-        // failure path deterministically without a fixture server.
-        let a = CodexAdapter::new("http://127.0.0.1:1");
+    async fn attaching_against_a_dead_provider_reports_unavailable() {
+        let a = adapter("http://127.0.0.1:1");
         let err = a
-            .attach_terminal(&RuntimeHandle("sesn_x".into()))
+            .attach_terminal(&RuntimeHandle("sbx-1".into()))
             .await
-            .expect_err("must fail against a dead supervisor");
+            .expect_err("must fail against a dead provider");
         assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn terminating_an_unknown_sandbox_is_not_an_error() {
+        // The provider answers 404 for a sandbox already gone, and tearing down
+        // something that no longer exists is a success, not a failure.
+        let a = adapter("http://127.0.0.1:1");
+        // Against a dead provider this is unreachable rather than 404, which is
+        // still an error; the 404 tolerance is covered in the client's tests.
+        assert!(a.terminate(&RuntimeHandle("gone".into())).await.is_err());
     }
 }

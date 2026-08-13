@@ -18,7 +18,11 @@ use layer1_public::{
     rest::RestInterface, InterfaceProfile,
 };
 use layer2_core::{KernelId, ScreenModel, SessionService, TerminalGeometry};
-use layer3_adapter::{codex::CodexAdapter, KernelAdapter};
+use layer3_adapter::{
+    codex::{CodexAdapter, CodexSandboxSpec},
+    sandbox::SandboxClient,
+    KernelAdapter,
+};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::auth::AuthState;
@@ -57,7 +61,8 @@ async fn main() {
     tracing::info!(
         bind = %config.bind,
         public_url = %config.public_url,
-        runtime = %config.runtime_base_url,
+        sandbox = %config.sandbox_base_url,
+        sandbox_image = %config.sandbox_image,
         auth = config.auth_mode_name(),
         "configuration loaded"
     );
@@ -75,7 +80,16 @@ async fn main() {
     // upstream of here selects by opaque identifier.
     adapters.insert(
         KernelId::new("codex"),
-        Arc::new(CodexAdapter::new(config.runtime_base_url.clone())),
+        Arc::new(CodexAdapter::new(
+            SandboxClient::new(
+                config.sandbox_base_url.clone(),
+                config.sandbox_api_key.clone(),
+            ),
+            CodexSandboxSpec {
+                image: config.sandbox_image.clone(),
+                ..CodexSandboxSpec::default()
+            },
+        )),
     );
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
