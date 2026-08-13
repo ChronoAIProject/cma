@@ -129,6 +129,24 @@ describe('createSessionDriverRegistry', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('hands the opening turn over once, however often the driver is rebuilt', () => {
+    const { factory, requests } = recordingFactory();
+    const registry = createSessionDriverRegistry(factory);
+    const opening = { text: 'build me a web scraper', sessionId: 'a' };
+    registry.resolve([session('a', 'running')], opening);
+
+    // Stopped, then revived. Each is a different kind of driver, so each is a
+    // genuine rebuild — and neither may carry the prompt. The agent answered it
+    // the first time; asking again is a second instruction nobody typed.
+    registry.resolve([session('a', 'idle')], opening);
+    registry.resolve([session('a', 'running')], opening);
+
+    expect(requests).toHaveLength(3);
+    expect(requests[0]?.openingTurn).toBe('build me a web scraper');
+    expect(requests[1]?.openingTurn).toBeUndefined();
+    expect(requests[2]?.openingTurn).toBeUndefined();
+  });
+
   it('forgets a session that has been pruned', () => {
     const { factory } = recordingFactory();
     const registry = createSessionDriverRegistry(factory);
