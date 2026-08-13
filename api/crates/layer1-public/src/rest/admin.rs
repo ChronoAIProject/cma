@@ -1,0 +1,414 @@
+//! REST projection of the operator surface.
+//!
+//! Four reads and two controls, all under one path segment so a gateway can
+//! restrict the whole surface as a unit and so an operator acting on somebody
+//! else's work is doing it at a deliberately different address from the one
+//! they use on their own.
+//!
+//! Every handler is a thin translation onto one core call. Which capability
+//! each needs is decided in Layer 2 and checked there; nothing here holds an
+//! opinion about who may see what, and the two-capability endpoints simply
+//! make two core calls and let the first refusal answer.
+//!
+//! Refusals are rendered differently here than on the session surface, and the
+//! difference is deliberate. A session is addressed by an identifier, so a
+//! caller who may not see one is told it does not exist — confirming the
+//! identifier would itself be a disclosure. These collections are addressed by
+//! nothing: there is no identifier to protect, so a caller who is not an
+//! operator is told plainly that they are not one.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use layer2_core::{
+    ActivityQuery, ActivityRecord, ActivityService, CoreError, ProviderView, RegisteredUser,
+    RuntimeInventory, Session, SessionId, SessionService, SubjectId, UserDirectory,
+    DEFAULT_ACTIVITY_LIMIT,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::auth::AuthenticatedCaller;
+use crate::rest::{Problem, PROBLEM_BASE};
+
+/// What the operator surface reads from.
+///
+/// Three services rather than one god object: each answers for its own
+/// capability, and a deployment could replace any of them without the other
+/// two knowing.
+pub struct AdminState {
+    /// Sessions, and the runtimes serving them.
+    pub sessions: Arc<SessionService>,
+    /// The record of what the service was asked to do.
+    pub activity: Arc<ActivityService>,
+    /// Who has used the service.
+    pub users: Arc<UserDirectory>,
+}
+
+/// A refusal that names no resource.
+///
+/// Distinct from [`Problem`], which answers "not found" to protect an
+/// identifier. Nothing is being protected here, so saying so plainly is both
+/// more honest and more useful to whoever is holding the wrong role.
+struct NotAnOperator;
+
+impl IntoResponse for NotAnOperator {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "type": format!("{PROBLEM_BASE}/not-an-operator"),
+                "title": "not an operator",
+                "status": 403,
+                "detail": "This operation requires an operator capability this caller does not hold.",
+                "code": "forbidden",
+            })),
+        )
+            .into_response()
+    }
+}
+
+/// A refusal on an operator collection.
+///
+/// Anything that is not a bare lack of entitlement keeps the ordinary problem
+/// rendering, so an unreachable store still reads as unavailability rather
+/// than being flattened into "you may not".
+enum AdminProblem {
+    /// The caller holds no operator capability.
+    NotAnOperator,
+    /// Something else went wrong, rendered as it is everywhere else.
+    Other(Problem),
+}
+
+impl From<CoreError> for AdminProblem {
+    fn from(e: CoreError) -> Self {
+        match e {
+            CoreError::Forbidden => Self::NotAnOperator,
+            other => Self::Other(Problem(other)),
+        }
+    }
+}
+
+impl IntoResponse for AdminProblem {
+    fn into_response(self) -> Response {
+        match self {
+            Self::NotAnOperator => NotAnOperator.into_response(),
+            Self::Other(problem) => problem.into_response(),
+        }
+    }
+}
+
+/// Somebody who has used the service, as this interface renders them.
+///
+/// The identifier is present because clients key on it, and it is deliberately
+/// not what a person is shown by: `label` is what a screen draws, falling back
+/// to the identifier only when the provider released nothing at all.
+#[derive(Debug, Serialize)]
+pub struct UserView {
+    subject: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    first_seen: String,
+    last_seen: String,
+}
+
+impl From<RegisteredUser> for UserView {
+    fn from(u: RegisteredUser) -> Self {
+        Self {
+            subject: u.subject.0.clone(),
+            label: u.label().map(str::to_string),
+            display_name: u.display_name,
+            email: u.email,
+            first_seen: u.first_seen,
+            last_seen: u.last_seen,
+        }
+    }
+}
+
+/// One recorded action, as this interface renders it.
+///
+/// The core's own vocabulary is emitted directly rather than remapped: these
+/// strings are the record, and translating them here would mean two spellings
+/// of the same fact.
+#[derive(Debug, Serialize)]
+pub struct ActivityView {
+    id: String,
+    at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<String>,
+    action: layer2_core::ActivityAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<layer2_core::ActivityTarget>,
+    outcome: layer2_core::ActivityOutcome,
+    /// The parameters that were allowed to be kept. Never a secret: the core's
+    /// allowlist is what decides, and there is no key for one.
+    detail: layer2_core::ActivityDetail,
+}
+
+impl From<ActivityRecord> for ActivityView {
+    fn from(r: ActivityRecord) -> Self {
+        Self {
+            id: r.id.0,
+            at: r.at,
+            actor: r.actor.map(|s| s.0),
+            action: r.action,
+            target: r.target,
+            outcome: r.outcome,
+            detail: r.detail,
+        }
+    }
+}
+
+/// A session as the operator surface renders it.
+///
+/// Carries its owner, which the ordinary session view does not: a list of
+/// everybody's work is unreadable without saying whose each row is.
+#[derive(Debug, Serialize)]
+pub struct AdminSessionView {
+    id: String,
+    owner: String,
+    /// How the owner should be shown, when the directory knows a name for them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_label: Option<String>,
+    status: layer2_core::SessionStatus,
+    recovery_state: layer2_core::RecoveryState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_reason: Option<layer2_core::StopReason>,
+    kernel: String,
+    last_seq: u64,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_version: Option<String>,
+}
+
+impl AdminSessionView {
+    fn render(s: Session, names: &HashMap<SubjectId, String>) -> Self {
+        Self {
+            owner_label: names.get(&s.owner).cloned(),
+            owner: s.owner.0,
+            id: s.id.0,
+            status: s.status,
+            recovery_state: s.recovery_state,
+            stop_reason: s.stop_reason,
+            kernel: s.kernel.0,
+            last_seq: s.last_seq,
+            created_at: s.created_at,
+            runtime_version: s.runtime_version,
+        }
+    }
+}
+
+/// One runtime in service, as this interface renders it.
+#[derive(Debug, Serialize)]
+pub struct RuntimeView {
+    runtime: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<layer2_core::SessionStatus>,
+    /// Whether nothing in the record accounts for this runtime.
+    unaccounted: bool,
+}
+
+/// What one provider had to say, as this interface renders it.
+///
+/// `observable` is false when the provider could not be asked, and `runtimes`
+/// is then absent rather than empty. A client cannot accidentally read "we
+/// could not ask" as "there is nothing running", because there is no empty
+/// array there to read.
+#[derive(Debug, Serialize)]
+pub struct ProviderInventoryView {
+    kernel: String,
+    observable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtimes: Option<Vec<RuntimeView>>,
+}
+
+/// Everything in service, as this interface renders it.
+#[derive(Debug, Serialize)]
+pub struct InventoryView {
+    /// How many runtimes are in service. Absent when a provider could not be
+    /// asked, because a partial total presented as a total is the same lie as
+    /// an empty list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    running: Option<usize>,
+    /// Whether every provider answered.
+    fully_observed: bool,
+    providers: Vec<ProviderInventoryView>,
+}
+
+impl InventoryView {
+    fn render(inventory: RuntimeInventory) -> Self {
+        Self {
+            running: inventory.running(),
+            fully_observed: inventory.fully_observed(),
+            providers: inventory
+                .providers
+                .into_iter()
+                .map(|p| match p.view {
+                    ProviderView::Observed(runtimes) => ProviderInventoryView {
+                        kernel: p.kernel.0,
+                        observable: true,
+                        reason: None,
+                        runtimes: Some(
+                            runtimes
+                                .into_iter()
+                                .map(|r| RuntimeView {
+                                    unaccounted: r.is_unaccounted(),
+                                    runtime: r.runtime,
+                                    session: r.session.map(|s| s.0),
+                                    owner: r.owner.map(|o| o.0),
+                                    status: r.status,
+                                })
+                                .collect(),
+                        ),
+                    },
+                    ProviderView::Unobservable(reason) => ProviderInventoryView {
+                        kernel: p.kernel.0,
+                        observable: false,
+                        reason: Some(reason),
+                        runtimes: None,
+                    },
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Which entries a read of the record wants.
+#[derive(Debug, Deserialize)]
+pub struct ActivityParams {
+    /// Narrow to one subject.
+    #[serde(default)]
+    actor: Option<String>,
+    /// Most entries to return. The core clamps this; a client asking for more
+    /// than the log will serve gets as much as it will.
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// Every path this surface serves.
+///
+/// Named once so the router and the rule about them cannot drift: the whole
+/// surface lives under one segment precisely so a gateway can restrict it as a
+/// unit, and a route added outside that segment would escape whatever protects
+/// it without anything noticing.
+const OPERATOR_ROUTES: [&str; 6] = [
+    "/api/v1/admin/users",
+    "/api/v1/admin/activity",
+    "/api/v1/admin/runtimes",
+    "/api/v1/admin/sessions",
+    // The same core operations the owner's own routes project. A second
+    // address rather than second behaviour: an operator ending somebody else's
+    // session should be doing it somewhere a gateway can see.
+    "/api/v1/admin/sessions/{id}/stop",
+    "/api/v1/admin/sessions/{id}/terminate",
+];
+
+/// Routes this surface contributes.
+pub fn router(state: Arc<AdminState>) -> Router {
+    Router::new()
+        .route(OPERATOR_ROUTES[0], get(users))
+        .route(OPERATOR_ROUTES[1], get(activity))
+        .route(OPERATOR_ROUTES[2], get(runtimes))
+        .route(OPERATOR_ROUTES[3], get(sessions))
+        .route(OPERATOR_ROUTES[4], post(stop))
+        .route(OPERATOR_ROUTES[5], post(terminate))
+        .with_state(state)
+}
+
+async fn users(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+) -> Result<Json<Vec<UserView>>, AdminProblem> {
+    let users = state.users.list(&caller).await?;
+    Ok(Json(users.into_iter().map(UserView::from).collect()))
+}
+
+async fn activity(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Query(params): Query<ActivityParams>,
+) -> Result<Json<Vec<ActivityView>>, AdminProblem> {
+    let entries = state
+        .activity
+        .list(
+            &caller,
+            ActivityQuery {
+                actor: params.actor.map(SubjectId),
+                limit: params.limit.unwrap_or(DEFAULT_ACTIVITY_LIMIT),
+            },
+        )
+        .await?;
+    Ok(Json(entries.into_iter().map(ActivityView::from).collect()))
+}
+
+async fn runtimes(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+) -> Result<Json<InventoryView>, AdminProblem> {
+    let inventory = state.sessions.runtime_inventory(&caller).await?;
+    Ok(Json(InventoryView::render(inventory)))
+}
+
+async fn sessions(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+) -> Result<Json<Vec<AdminSessionView>>, AdminProblem> {
+    // Two core calls, each answering for its own capability. Reading everyone's
+    // work and reading who those people are stay separate grants, and this
+    // surface simply needs both.
+    let sessions = state.sessions.list_all_sessions(&caller).await?;
+    let names = state.users.labels(&caller).await?;
+    Ok(Json(
+        sessions
+            .into_iter()
+            .map(|s| AdminSessionView::render(s, &names))
+            .collect(),
+    ))
+}
+
+/// End somebody's session.
+///
+/// Refusals keep the session surface's rendering: this route does address an
+/// identifier, so a caller who may not act on it must not be able to learn
+/// whether it exists by the shape of the answer.
+async fn terminate(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Problem> {
+    state
+        .sessions
+        .terminate_session(&caller, &SessionId(id))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Release somebody's session's runtime, keeping the session.
+async fn stop(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Problem> {
+    state.sessions.stop_session(&caller, &SessionId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+#[path = "admin_tests.rs"]
+mod tests;
