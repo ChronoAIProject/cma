@@ -23,6 +23,16 @@ data:
   # can be restarted with its transcript loaded into a fresh sandbox. Reached
   # through the platform storage service, which brokers the credential.
   CHRONO_CONTEXT_BUCKET: "chrono-platform-chrono-bot"
+  # Root of the identity platform. Session context is stored through its proxy,
+  # and a session's CLI acts against it on the owner's behalf. Without this,
+  # context storage stays switched off rather than half-configured.
+  CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
+  # Where a sandbox forwards the agent's model calls, on the owner's behalf.
+  # The owner's own credential is what authorises the call; this is only the
+  # address it is sent to.
+  CHRONO_UPSTREAM_BASE_URL: "https://llm.aelf.dev/v1"
+  CHRONO_UPSTREAM_MODEL: "gpt-5.6-sol"
+  CHRONO_UPSTREAM_WIRE_API: "responses"
   # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
   # never leaves the cluster, and the sandbox provider terminates no TLS of its
   # own. This mirrors how the neighbouring control plane reaches it.
