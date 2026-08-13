@@ -176,6 +176,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   /** End the open session, leaving it readable. */
   const endSession = useCallback(
     async (id: string) => {
+      // Cleared on the way in, as every action does, so the line above the
+      // surface describes the attempt being watched rather than an older
+      // failure sitting over a console that has since recovered.
+      setNotice(null);
       setActing(true);
       try {
         // Stop rather than terminate: ending a session releases what it is
@@ -195,6 +199,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   /** Give a stopped session a sandbox again, and follow it back up. */
   const reviveSessionById = useCallback(
     async (id: string) => {
+      setNotice(null);
       setActing(true);
       try {
         const revived = await reviveSession(id);
@@ -213,6 +218,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   /** Remove the session and its history. */
   const removeSession = useCallback(
     async (id: string) => {
+      setNotice(null);
       setActing(true);
       try {
         await deleteSession(id);
@@ -346,11 +352,20 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         />
 
         <main className="console__surface">
+          {/*
+           * Above the surface, never in place of it. A failure belongs to one
+           * request about one session, and the surface below may hold a dozen
+           * live terminals: rendering the sentence instead of it unmounted
+           * every one of them, so a stop that came back 409 cost eleven other
+           * sessions their connection and their scrollback.
+           */}
           {notice !== null ? (
-            <p className="console__empty" role="alert">
+            <p className="console__notice" role="alert">
               {notice}
             </p>
-          ) : loading ? (
+          ) : null}
+
+          {loading ? (
             <p className="console__empty">Loading your sessions…</p>
           ) : mode === 'canvas' && canvasNodes.length > 0 ? (
             <SessionCanvas
