@@ -6,12 +6,27 @@
 
 use std::sync::Arc;
 
+use crate::authz::{Authorization, Caller, Capability};
 use crate::error::CoreError;
-use crate::ids::SessionId;
+use crate::ids::{SessionId, SubjectId};
 use crate::session::SessionStatus;
 use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+
+/// Somebody who runs the service: they may stop anyone's work and nothing else.
+///
+/// Built without the everyday grants on purpose, so these tests prove the
+/// operator capability is doing the work rather than riding on ownership.
+fn operator() -> Caller {
+    Caller::new(
+        SubjectId("operator".into()),
+        Authorization::from_capabilities([
+            Capability::ControlAnySession,
+            Capability::ReadAllSessions,
+        ]),
+    )
+}
 
 #[tokio::test]
 async fn a_terminated_session_remains_listed_until_it_is_deleted() {
@@ -223,5 +238,123 @@ async fn terminating_records_the_status_change_durably() {
     assert!(
         after.len() > before,
         "terminating must append to the durable log"
+    );
+}
+#[tokio::test]
+async fn an_operator_can_terminate_a_session_another_subject_owns() {
+    // The reason the capability exists: work that is costing money or running
+    // away has to be stoppable by whoever runs the service, and waiting for
+    // its owner to come back is not an answer.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let owner = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&owner, spec()).await.expect("created");
+    await_settled(&svc, &owner, &created.id).await;
+
+    svc.terminate_session(&operator(), &created.id)
+        .await
+        .expect("an operator may end a session it does not own");
+
+    let after = svc
+        .get_session(&owner, &created.id)
+        .await
+        .expect("still readable by its owner");
+    assert_eq!(after.status, SessionStatus::Terminated);
+    assert_eq!(
+        adapter.terminated.lock().await.len(),
+        1,
+        "the runtime must actually be torn down"
+    );
+}
+#[tokio::test]
+async fn an_operator_can_stop_a_session_another_subject_owns() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let owner = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&owner, spec()).await.expect("created");
+    await_settled(&svc, &owner, &created.id).await;
+
+    svc.stop_session(&operator(), &created.id)
+        .await
+        .expect("an operator may pause a session it does not own");
+
+    let after = svc
+        .get_session(&owner, &created.id)
+        .await
+        .expect("still readable by its owner");
+    assert_eq!(
+        after.status,
+        SessionStatus::Idle,
+        "stopping stays reversible whoever asked for it"
+    );
+}
+#[tokio::test]
+async fn an_operator_may_not_delete_another_subjects_session() {
+    // Stopping is reversible and removing is not. Running the service needs
+    // the first and never the second.
+    let store = Arc::new(FakeStore::default());
+    let owner = user("alice");
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc.create_session(&owner, spec()).await.expect("created");
+
+    assert!(matches!(
+        svc.delete_session(&operator(), &created.id).await,
+        Err(CoreError::Forbidden)
+    ));
+    assert!(
+        svc.get_session(&owner, &created.id).await.is_ok(),
+        "the session must survive a refused deletion"
+    );
+}
+#[tokio::test]
+async fn one_subject_still_cannot_stop_another_subjects_session() {
+    // The operator capability must not have widened what an ordinary caller
+    // can reach. This is the check that would silently disappear if the two
+    // grants were ever collapsed into one.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc
+        .create_session(&user("alice"), spec())
+        .await
+        .expect("created");
+    await_settled(&svc, &user("alice"), &created.id).await;
+
+    assert!(matches!(
+        svc.stop_session(&user("mallory"), &created.id).await,
+        Err(CoreError::Forbidden)
+    ));
+    assert!(
+        adapter.terminated.lock().await.is_empty(),
+        "a forbidden request must not reach the runtime"
+    );
+}
+#[tokio::test]
+async fn a_caller_entitled_to_nothing_is_refused_without_the_session_being_read() {
+    // A caller holding neither control grant is turned away before the record
+    // is touched, so a real identifier and an invented one produce the same
+    // refusal and neither confirms the other.
+    let store = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc
+        .create_session(&user("alice"), spec())
+        .await
+        .expect("created");
+
+    let onlooker = Caller::new(
+        SubjectId("onlooker".into()),
+        Authorization::from_capabilities([Capability::UseOwnSessions]),
+    );
+    assert_eq!(
+        svc.terminate_session(&onlooker, &created.id).await,
+        Err(CoreError::Forbidden)
+    );
+    assert_eq!(
+        svc.terminate_session(&onlooker, &SessionId("sesn_invented".into()))
+            .await,
+        Err(CoreError::Forbidden),
+        "an identifier that does not exist must be indistinguishable from one that does"
     );
 }
