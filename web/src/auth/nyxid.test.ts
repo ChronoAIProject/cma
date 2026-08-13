@@ -11,7 +11,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function stubFetch(impl: () => Promise<Response> | Response) {
+function stubFetch(impl: (url?: unknown, init?: RequestInit) => Promise<Response> | Response) {
   vi.stubGlobal('fetch', vi.fn(impl));
 }
 
@@ -85,6 +85,24 @@ describe('the identity adapter', () => {
 
     stubFetch(() => jsonResponse(200, { authenticated: false }));
     expect((await createNyxidAuthProvider().current()).status).toBe('anonymous');
+  });
+
+  it('reports a hung control plane rather than waiting forever', async () => {
+    // The app renders nothing while this is outstanding, so an unbounded wait
+    // is a blank page with no way to act on it — which is what a user sees when
+    // the backend is unreachable.
+    stubFetch((_url?: unknown, init?: RequestInit) => {
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      // Mimic the browser: the signal reports itself aborted on timeout.
+      Object.defineProperty(init?.signal ?? {}, 'aborted', { value: true, configurable: true });
+      throw err;
+    });
+    const state = await createNyxidAuthProvider().current();
+    expect(state.status).toBe('error');
+    if (state.status === 'error') {
+      expect(state.message).toMatch(/did not respond|cannot reach/i);
+    }
   });
 
   it('never throws, whatever happens', async () => {
