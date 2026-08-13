@@ -95,8 +95,10 @@ interface Entry {
  * though they share a kind.
  *
  * The opening turn is deliberately not part of it. That prompt belongs to the
- * first driver a session is ever given; treating a later one as grounds to
- * rebuild would reconnect a live socket and resubmit the prompt.
+ * first driver a session is ever given, and treating a later one as grounds to
+ * rebuild would reconnect a live socket for no reason. What keeps the prompt
+ * off a driver built later — after a revive, or a reconnect — is
+ * `openingDelivered` rather than anything in this signature.
  */
 function signatureFor(session: Session, kind: DriverKind): string {
   return `${kind}:${abilitiesFor(session).reason ?? ''}`;
@@ -118,6 +120,19 @@ export function createSessionDriverRegistry(
   build: DriverFactory = defaultFactory,
 ): SessionDriverRegistry {
   const entries = new Map<string, Entry>();
+  /*
+   * Whether the visitor's opening prompt has already been handed to a driver.
+   *
+   * It belongs to the first driver its session is ever given, and a session
+   * gets another one whenever it comes back from being stopped. Handing the
+   * prompt over again would not repaint anything — the driver submits it — so
+   * an agent that already answered the question would be asked it a second
+   * time, minutes or hours later, with no one having typed anything.
+   *
+   * One flag rather than a set, because an opening turn names exactly one
+   * session.
+   */
+  let openingDelivered = false;
 
   return {
     resolve(sessions, opening) {
@@ -133,12 +148,16 @@ export function createSessionDriverRegistry(
           return { session, driver: held.driver };
         }
 
+        const carriesOpening =
+          !openingDelivered && opening !== null && opening.sessionId === session.id;
         const driver = build({
           session,
           kind,
-          openingTurn:
-            opening !== null && opening.sessionId === session.id ? opening.text : undefined,
+          openingTurn: carriesOpening ? opening.text : undefined,
         });
+        if (carriesOpening) {
+          openingDelivered = true;
+        }
         entries.set(session.id, { signature, driver });
         return { session, driver };
       });
