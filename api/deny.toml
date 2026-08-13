@@ -22,6 +22,21 @@ unused-allowed-license = "allow"
 # would otherwise report them as unlicensed.
 private = { ignore = true }
 
+# One narrowly scoped exception, not a widened allowlist.
+#
+# tiny-keccak is CC0-1.0, which is a public-domain dedication and strictly more
+# permissive than anything already allowed. It is absent from the list only
+# because nothing had pulled it in before.
+#
+# It reaches us solely through a proc-macro's build-time tree:
+#   mongodb -> mongodb-internal-macros -> macro_magic -> const-random -> tiny-keccak
+# so it is never linked into a shipped artifact and carries no distribution
+# obligation. Scoped to this one crate deliberately: a blanket CC0-1.0 entry, or
+# skipping build dependencies wholesale, would hide the next such arrival.
+[[licenses.exceptions]]
+name = "tiny-keccak"
+allow = ["CC0-1.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
