@@ -165,6 +165,8 @@ REST exposes these for clients that need terminal state without holding a stream
 
 `resize` with a zero dimension is rejected with `422`.
 
+**Both are owner-only, and no operator capability reaches them.** A screen carries whatever the agent has printed, and a session started from an environment bundle has that bundle's values in its process environment — so what is on a screen may be its owner's secrets. This is the same rule `transcript` follows, for the same content by another route.
+
 ---
 
 ## 7. Usage
@@ -254,12 +256,20 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
 
-**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists.
+`chrono-bot:admin:events` opens the durable event log of a session the caller does not own (`GET /api/v1/sessions/{id}/events`). It is not implied by `chrono-bot:admin:sessions`: knowing which sessions exist and reading everything one of them has ever done are different questions, and the second is the one the log answers.
+
+Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the two controls — a caller ending their own session does that at `/api/v1/sessions/{id}/terminate`. That is what lets the whole segment be restricted in front of the service without the gateway and the application disagreeing about who may call it.
+
+**Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `chrono-bot:admin:sessions`. A caller who also holds `chrono-bot:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
+
+**No read is unbounded.** `GET /api/v1/admin/users` and `GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default to 100.
+
+**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists. That `404` is byte-for-byte the one a session that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
 
 ### Registered users
 
 ```http
-GET /api/v1/admin/users
+GET /api/v1/admin/users?limit=100
 ```
 
 ```json
@@ -269,6 +279,8 @@ GET /api/v1/admin/users
 ```
 
 Recorded on sign-in, since that is the only moment the identity provider's account details are in hand. `label` is what a client displays; `subject` is what it keys on. A person the provider released no details for carries no `label`, and a client falls back rather than presenting an opaque identifier as a name.
+
+Most recently seen first, `limit` clamped to 500. Entries do not expire: one is a person rather than an event, and dropping one would lose the first time they were seen and make them look new on their return.
 
 ### Activity log
 
