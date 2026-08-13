@@ -53,9 +53,12 @@ infra/api/deployment.yaml
 infra/api/configmap.yaml
 infra/api/secret.yaml
 infra/api/service.yaml
+infra/runtime/Dockerfile
 ```
 
-No subdirectories, no additional manifests, no Helm charts, no kustomize overlays.
+No additional manifests, no Helm charts, no kustomize overlays.
+
+`infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the bot pod is scheduled by the sandbox provider, not by this repository. chrono-bot hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
 ### `docs/`
 
