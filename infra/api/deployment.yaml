@@ -31,6 +31,9 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        # Secret volumes are owned by root; without an fsGroup the mounted key
+        # is unreadable to a non-root container no matter what mode it carries.
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -75,6 +78,22 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # Read-only so a compromised process cannot rewrite the credential
+            # it authenticates with.
+            - name: opensandbox-api-key
+              mountPath: /var/secrets
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        # The OpenSandbox API key arrives as a file rather than an environment
+        # variable, keeping it out of the pod spec and the process environment.
+        # The Secret is populated out of band; nothing here carries a value.
+        - name: opensandbox-api-key
+          secret:
+            secretName: chrono-bot-opensandbox
+            items:
+              - key: api-key
+                path: opensandbox-api-key
+            # Group-readable, paired with fsGroup above. Never world-readable.
+            defaultMode: 0440
