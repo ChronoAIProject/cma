@@ -19,6 +19,15 @@ data:
   CHRONO_NYXID_CLIENT_ID: "chrono-bot"
   # MongoDB database name. The connection URI is a secret.
   CHRONO_MONGODB_DATABASE: "chrono_bot"
-  # OpenSandbox control plane base URL.
-  CHRONO_SANDBOX_BASE_URL: "https://opensandbox.internal"
+  # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
+  # never leaves the cluster, and the sandbox provider terminates no TLS of its
+  # own. This mirrors how the neighbouring control plane reaches it.
+  CHRONO_SANDBOX_BASE_URL: "http://example-host-02.example-namespace.svc.cluster.local"
+  # Image each session's sandbox runs: the agent kernel plus the supervisor that
+  # hosts it under a pseudo-terminal. Built from infra/runtime/Dockerfile.
+  CHRONO_SANDBOX_IMAGE: "ghcr.io/chronoaiproject/chrono-bot-runtime:0.1.0"
+  # Path to the mounted OpenSandbox API key. Read from a file rather than an
+  # environment variable so the credential can be delivered by a secret volume
+  # and rotated without rewriting this ConfigMap.
+  CHRONO_SANDBOX_API_KEY_FILE: "/var/secrets/opensandbox-api-key"
   RUST_LOG: "info"
