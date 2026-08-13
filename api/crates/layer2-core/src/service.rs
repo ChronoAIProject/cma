@@ -322,6 +322,25 @@ impl SessionService {
         }
     }
 
+    /// Every session there is, whoever owns it.
+    ///
+    /// Distinct from `list_sessions` in two ways that matter to whoever is
+    /// watching the service rather than using it. It refuses a caller who is
+    /// not entitled to see across subjects instead of quietly narrowing to
+    /// their own work, and it reports a store it could not read instead of
+    /// answering with an empty list — an operator told there are no sessions
+    /// will act on that, and "the record is unreachable" is a different fact.
+    pub async fn list_all_sessions(&self, caller: &Caller) -> Result<Vec<Session>, CoreError> {
+        caller.authorization.require(Capability::ReadAllSessions)?;
+        let records = self.store.list_all().await.map_err(store_failed)?;
+        tracing::info!(
+            reader = %caller.subject,
+            returned = records.len(),
+            "every session was listed"
+        );
+        Ok(records.into_iter().map(|r| r.session).collect())
+    }
+
     /// Durable events for a session, optionally from a cursor.
     pub async fn events_since(
         &self,
