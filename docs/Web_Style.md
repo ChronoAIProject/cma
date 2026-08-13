@@ -422,6 +422,23 @@ looks identical whichever session is open.
 **Below 60rem the three columns stack**, because a terminal squeezed between
 two panels on a narrow window is not a terminal anyone can work in.
 
+**A failed action is reported above the middle column, never in place of it.**
+One line in `sm` `--danger` on `--surface` with a 1px `--rule` underline,
+carrying `role="alert"`, at the head of the column and outside whatever the
+column is showing. Measured against `--surface`: 6.16:1 in light, 5.47:1 in
+dark.
+
+Placement is the substantive part of this rule. A failure belongs to one
+request about one session, and the surface beneath it holds live terminals —
+on the canvas, up to twelve of them, each with a connection. Replacing that
+surface with a sentence tears every one of them down, so a stop that came back
+409 would cost eleven sessions their connection to say something about the
+twelfth. Nothing that reports a failure may destroy work that did not fail.
+
+The line reports the most recent attempt. Every action clears it before it
+starts, so it is never an older failure sitting above a surface that has since
+recovered.
+
 ---
 
 ## 13. The platform typeface
@@ -483,6 +500,198 @@ almost always open because someone wants it back.
 
 ---
 
+## 15. Canvas — every session at once
+
+The console has **two arrangements of the same sessions**, and no third.
+
+| Mode | What it is |
+|---|---|
+| **Tabs** | Default. One terminal owns the middle column; the session rail chooses which. |
+| **Canvas** | Every listed session is a framed node on one pannable surface, each showing its own terminal. |
+
+**The canvas replaces the middle column and nothing else.** The top bar, the
+session rail and the details panel keep their places and their behaviour,
+because they are the same facts in either arrangement: the same list, the same
+session being described, the same lifecycle controls beside it. A mode that
+rearranged the whole page would be a second route, and §1 allows only one.
+
+**One selection, two views.** The session the rail marks active and the node the
+canvas focuses are the same fact. Changing arrangement never changes which
+session is selected, and selecting in one view selects in the other.
+
+**Which sessions appear is §14's answer, not a second one.** The canvas shows
+exactly what the rail lists. A session that has ended and left the list has left
+the canvas too.
+
+### Mode toggle
+
+- Two quiet buttons at the trailing edge of the top bar, before the account
+  control. Never a switch: a switch implies on and off, and neither mode is the
+  absence of the other.
+- Labels `Tabs` and `Canvas`, `xs` uppercase, `0.12em` tracking, 1px `--rule`
+  border, radius `2px`, `--ink-3` text.
+- The current mode takes `--accent` border and `--ink` text, and carries
+  `aria-pressed` — the state is never colour alone.
+- Pressing the mode already showing does nothing rather than toggling away from
+  it. Someone who cannot tell which mode they are in reaches for the label of
+  the one they want.
+- The choice persists per browser and is **validated when it is read**. Web
+  storage is untrusted input; a value this build does not recognise falls back
+  to `Tabs` rather than rendering a mode that does not exist.
+
+### Node framing
+
+| Property | Value |
+|---|---|
+| Size | `--canvas-node-w` 420px × `--canvas-node-h` 280px |
+| Gap between nodes, surface padding | `--space-4` |
+| Background | `--surface` |
+| Border | 1px `--rule` |
+| Radius | `--radius` (0) |
+
+Fixed size rather than fluid: a node is a terminal, and a terminal that changes
+its column count as siblings come and go reflows everything the agent has drawn.
+
+Each node carries a header above its terminal on a 1px `--rule` underline, with
+`--space-1`/`--space-2` padding: the time the session started in `sm` `--ink-2`
+— **the same label the rail uses**, because the two are views of one list and a
+session called one thing in one place and another thing elsewhere is two
+sessions as far as anyone reading can tell — then the kernel and the lifecycle
+word in `xs` uppercase `--ink-3`.
+
+Inside a node the terminal drops its own 1px border from §6 and keeps everything
+else. The node frame is that border; drawing both would put two hairlines a
+padding-width apart.
+
+Nodes are arranged in a square-ish grid, so the surface overflows in both
+directions and panning means something in both.
+
+**A node's size is the geometry its runtime is told to draw at.** A terminal
+reports its own measurements to the other end, so a 420×280 node — about 402×221
+once the frame, the header and the terminal's own padding are taken out — asks
+for roughly 47 columns and a dozen rows, where the single terminal of tabs mode
+asks for the full width of the column. **Choosing the canvas therefore resizes
+every attached session**, and each agent redraws at the new width.
+
+That is correct rather than a defect: a terminal shown in a small frame is a
+small terminal, and telling the runtime otherwise would wrap its output against
+a width the frame does not have. But it is a real cost of this arrangement and
+it does not undo. Output an agent has already wrapped at 47 columns stays
+wrapped at 47 columns, on the canvas and in the transcript afterwards.
+
+Two consequences follow, and both are intended. A session left on the canvas
+keeps producing narrow output for as long as it is shown there. And a session
+that was attached when the arrangement changed keeps the last geometry it was
+given until something attaches to it again — which re-declares its size before
+the first frame, so what is on screen is never wrong. Nothing restores a
+geometry behind the owner's back, because there is no arrangement to restore it
+to: the size a terminal should be is the size of the frame showing it, and while
+no frame is showing it the question has no answer.
+
+The mode toggle is still a display preference and adds nothing to the console's
+chrome. It is not, however, a control that stops at the browser, and it must
+never be described as one.
+
+### Focus, and how it differs from selection
+
+Exactly one node is focused. **The focused node is the only one that receives
+keyboard input** — this is a correctness property, not a styling one, and the
+visual treatment exists to make it impossible to be wrong about which terminal
+is listening.
+
+| State | Treatment |
+|---|---|
+| Resting | 1px `--rule` border, `--ink-2` header |
+| **Selection** — pointer is over the node | 1px `--rule-2` border. Border weight only. |
+| **Focus** — this node takes the keys | 1px `--accent` border **and** `--glow-rest`, `--ink` header, `aria-pressed` on its handle |
+
+Hover changes only the border's weight within the neutral ramp, while focus
+changes hue, adds the live glow, and lifts the header text. Glow is permitted
+here for the reason §3 gives — the node is live — and appears on nothing else on
+the canvas.
+
+**Focus is never a second opinion on §14.** A session that is provisioning,
+rotating, idle or terminated does not accept keystrokes on the canvas either,
+however plainly it is being looked at, and its node says `read-only` in words in
+its header. On a canvas the details panel describes one session out of many, so
+a node that quietly ignored typing would have nothing nearby saying why.
+
+**A session with no sandbox shows its stored transcript**, read-only, exactly as
+§14 requires of the single terminal. A frame with nothing in it would answer
+"what did this session do" by hiding the answer.
+
+**Unfocused terminals are never dimmed, tinted, greyed or covered.** They are
+attached and rendering live output, and §1 forbids styling anything a kernel
+emitted. An overlay would also be interactive UI over a terminal viewport, which
+§6 forbids. Everything that distinguishes a node is drawn on its frame and
+header, outside the viewport.
+
+### Keyboard
+
+- The canvas is one tab stop. The focused node's header handle is that stop;
+  every other handle is removed from the tab order, as is every terminal that is
+  not the focused, interactive one.
+- Arrow keys move focus between nodes from the handle: left and right by one, up
+  and down by a row. Home and End jump to the first and last node. Movement
+  clamps at the edges and never wraps — a wrap turns "I am at the right-hand
+  edge" into a silent jump to the other side of a surface that may be panned
+  away.
+- Arrow keys are **not** intercepted inside a terminal — there they are shell
+  history, and taking them would be a defect.
+- Tab from the handle enters the focused terminal.
+- A move is announced through a polite live region naming the session and its
+  position, because the focus treatment above is visual only.
+
+### Pointer
+
+- A gesture on a node's header or frame focuses the node and parks the caret on
+  its handle.
+- A gesture on a node's terminal focuses the node **and leaves the caret in that
+  terminal**, so one click is enough to start typing.
+- Focus placement is always explicit. It is never left to the browser's default,
+  which differs by engine and drops the caret to the page body when the gesture
+  lands on something unfocusable.
+
+### Panning
+
+- The canvas viewport scrolls within itself. **The page still does not scroll** —
+  this is the same exemption §5 grants a column, applied to a surface that is
+  genuinely larger than the space it has.
+- Dragging the bare surface pans it: `grab` at rest, `grabbing` while dragging. A
+  drag that begins inside a node belongs to that node's terminal, which uses it
+  to select text.
+- Wheel and trackpad scroll the viewport normally. Keyboard navigation scrolls
+  the focused node into view through the browser's own focus handling, never as
+  a scripted animation.
+
+### Motion
+
+The only motion the canvas has is the 150ms border and glow transition when
+focus moves, wrapped in `prefers-reduced-motion: no-preference` per §7.
+Everything else it does is direct manipulation or the browser's own scrolling,
+so under reduced motion there is nothing left to suppress and nothing lost.
+
+### Cost, and saying what it cost
+
+Every attached node holds a terminal and, for a running session, a connection.
+**At most 12 nodes are attached at once.** Sessions past that budget still
+appear — the canvas exists to show the whole fleet — but render as a framed,
+labelled node with no terminal and no connection, saying so in `sm` `--ink-3`
+text and inviting selection. Focusing one attaches it and detaches whichever
+attached node has gone longest without focus. The focused node is never the one
+detached.
+
+A session that holds nothing to attach to — still starting, or being moved —
+spends none of the budget, and shows §14's reason where its terminal would be.
+
+**Truncation is never silent.** Alongside the individual nodes, a line below the
+viewport states how many sessions are unattached and why, outside the scroll
+area so it cannot be panned out of sight. A frame with no terminal in it and no
+account of why reads as sessions having broken rather than as a limit being
+enforced.
+
+---
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -497,3 +706,6 @@ Append-only. Never edit or delete an entry.
 | 2026-08-14 | Added §12 Page frame and layout and §13 The platform typeface. Established a persistent top bar in both signed-out and signed-in states, a 10% inset on page content with terminal output exempt, a vertical session column on the left labelled by creation time in Singapore time (newest first, reversible, date shown only once not from today), and a collapsible session details panel on the right that collapses to a handle. Columns stack below 60rem. Adopted Geist Pixel as the platform typeface, self-hosted under the SIL Open Font License with a system fallback and `font-display: swap`; terminal content keeps its monospace stack because cell metrics govern its rendering. Replaced the horizontal session tab strip specified in the 2026-08-13 redesign, which truncated labels once sessions accumulated. |
 | 2026-08-14 | Corrected §12: the console obeys the page inset like every other surface, so the session column aligns with the product mark and the details panel with the account control. The earlier entry exempted terminal output from the inset on the grounds that cropping it wasted width; alignment between the bar and the page beneath it matters more, and a full-bleed console under an inset bar reads as a detached bar. Also moved the session lifecycle controls out of the top bar and into the details panel, beside the session they act on. |
 | 2026-08-14 | Added §14 Session states and what they allow: a single table binding each of the six session states to what the terminal does and which controls are available, with one rule shared by the terminal, the buttons and the list so they cannot disagree. Established that controls are disabled rather than removed and that every disabled control and every non-interactive terminal states its reason in the owner's terms; that a session with no sandbox still shows its history read-only, with keystrokes dropped rather than buffered; that ended sessions leave the list unless they ended by failing; and that revive is the primary action wherever it is offered. Adds the `rotating` state, during which the session is neither usable nor stopped and no control acts on it. |
+| 2026-08-14 | Added §15 Canvas — every session at once: a second arrangement of the same sessions, in which each listed session is a 420×280 framed node on a pannable surface hosting its own terminal, chosen by a two-button toggle at the trailing edge of the top bar whose stored value is validated on read. The canvas replaces the console's middle column only, so the rail, the details panel and the bar keep their places and one selection serves both arrangements. Established that exactly one node is focused and only it receives keystrokes, with hover distinguished from focus by border weight rather than hue; that focus is never a second opinion on §14, so a provisioning, rotating, idle or ended session stays read-only on the canvas, says so on the node, and shows its stored transcript rather than an empty frame; that the canvas is one tab stop with clamped arrow navigation and a polite live region announcing moves; that unfocused terminals are never dimmed, tinted or covered; that the only motion is the 150ms focus transition, wrapped in `prefers-reduced-motion: no-preference`; and that at most 12 nodes hold a terminal at once, evicted by least recent focus, with the count of unattached sessions stated below the viewport because silent truncation reads as breakage. Adds the `--canvas-node-w` and `--canvas-node-h` tokens, and labels nodes by start time as §12 labels the rail rather than by identifier, so one session is not called two things in two views. |
+| 2026-08-14 | Specified in §12 where a failed action is reported: one `sm` `--danger` line with a `--rule` underline at the head of the middle column, above whatever the column is showing and never in place of it, recording 6.16:1 light and 5.47:1 dark against `--surface`. The console previously rendered the failure instead of the surface, which was survivable when the surface was one terminal and is not now that §15 puts up to twelve attached terminals there — a stop returning 409 detached eleven sessions that had not failed. Also established that the line reports the most recent attempt, cleared by every action as it starts, so a stale failure never sits above a console that has recovered. |
+| 2026-08-14 | Recorded in §15 that a node's size is the geometry its runtime is told to draw at, so choosing the canvas resizes every attached session to roughly 47 columns and a dozen rows and each agent redraws at that width. Kept the behaviour — a terminal in a small frame is a small terminal, and declaring anything else wraps output against a width the frame does not have — but stated its two consequences: output already wrapped narrow stays wrapped, and a session detached mid-arrangement keeps its last geometry until something attaches to it and re-declares one. The mode toggle was previously described in the code as reaching nothing beyond the arrangement; it reaches the runtime of every session on the canvas, and may not be described as a browser-only control. |

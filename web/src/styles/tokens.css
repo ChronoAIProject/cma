@@ -88,6 +88,14 @@
   /* Chrome */
   --header-height: 40px;
   --frame-inset: 12px;
+
+  /*
+   * Canvas node size, per Web_Style.md §15. Fixed rather than fluid: a node is
+   * a terminal, and a terminal that changes its column count as siblings come
+   * and go reflows everything the agent has drawn.
+   */
+  --canvas-node-w: 420px;
+  --canvas-node-h: 280px;
 }
 
 /*
