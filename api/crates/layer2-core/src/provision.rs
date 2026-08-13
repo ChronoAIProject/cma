@@ -200,6 +200,7 @@ impl SessionService {
                 subject_credential: spec.subject_credential.clone(),
                 options: runtime_options(&spec.options),
                 restore_from: restore.cloned(),
+                created_by: self.identity.clone(),
             })
             .await
             .map_err(|e| format!("could not provision a runtime: {e}"))?;

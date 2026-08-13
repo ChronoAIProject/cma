@@ -173,14 +173,20 @@ async fn main() {
         store,
         context,
         Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
-        // The runtime image reference is the runtime version. Deriving it
-        // rather than configuring it separately means the two cannot drift:
-        // any deployment that changes the image is one whose sessions are
-        // carried onto it, and one that does not is not.
-        Some(config.sandbox_image.clone()),
+        layer2_core::Deployment {
+            // The runtime image reference is the runtime version. Deriving it
+            // rather than configuring it separately means the two cannot drift:
+            // any deployment that changes the image is one whose sessions are
+            // carried onto it, and one that does not is not.
+            runtime_version: Some(config.sandbox_image.clone()),
+            identity: Some(config.deployment_id.clone()),
+            adopts_untagged: config.adopts_untagged_runtimes,
+        },
     );
     tracing::info!(
         runtime_version = %config.sandbox_image,
+        deployment = %config.deployment_id,
+        adopts_untagged = config.adopts_untagged_runtimes,
         "sessions on any other runtime will be moved onto this one"
     );
 

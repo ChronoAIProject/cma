@@ -74,6 +74,7 @@ async fn provisioning_against_a_dead_provider_reports_unavailable() {
     let err = a
         .provision(&RuntimeSpec {
             restore_from: None,
+            created_by: None,
             session_id: "sesn_x".into(),
             size: TermSize { cols: 80, rows: 24 },
             subject_credential: None,
@@ -128,6 +129,7 @@ async fn permission_intent_is_rendered_into_this_kernels_own_names() {
         let a = adapter("http://127.0.0.1:1");
         let spec = RuntimeSpec {
             restore_from: None,
+            created_by: None,
             session_id: "sesn_x".into(),
             size: TermSize { cols: 80, rows: 24 },
             subject_credential: None,
@@ -158,6 +160,7 @@ async fn a_session_model_overrides_the_deployment_default() {
     let a = adapter("http://127.0.0.1:1");
     let spec = RuntimeSpec {
         restore_from: None,
+        created_by: None,
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
         subject_credential: None,

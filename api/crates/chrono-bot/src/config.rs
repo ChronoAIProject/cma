@@ -26,6 +26,18 @@ pub struct Config {
     /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
     /// Arguments that make the agent resume rather than start fresh.
     pub runtime_resume_args: String,
+    /// What this deployment calls itself on the runtimes it creates.
+    ///
+    /// A sandbox provider is shared, so one key sees runtimes belonging to
+    /// other control planes. This is what tells them apart.
+    pub deployment_id: String,
+    /// Whether runtimes carrying no deployment name are this one's to reclaim.
+    ///
+    /// True for the deployment that owns the provider, so runtimes created
+    /// before names were recorded are still reclaimed once orphaned. Any
+    /// additional control plane sharing the provider must set this false, or it
+    /// will tear down sessions belonging to the first.
+    pub adopts_untagged_runtimes: bool,
     pub upstream_base_url: String,
     /// Model the agent selects.
     pub upstream_model: String,
@@ -73,6 +85,9 @@ impl Config {
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
         let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume");
+        let deployment_id = var_or("CHRONO_DEPLOYMENT_ID", "chrono-bot");
+        let adopts_untagged_runtimes =
+            var_or("CHRONO_ADOPT_UNTAGGED_RUNTIMES", "true").trim() != "false";
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
@@ -146,6 +161,8 @@ impl Config {
             sandbox_api_key,
             sandbox_image,
             runtime_resume_args,
+            deployment_id,
+            adopts_untagged_runtimes,
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
@@ -209,6 +226,8 @@ mod tests {
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
             runtime_resume_args: "resume".into(),
+            deployment_id: "chrono-bot".into(),
+            adopts_untagged_runtimes: true,
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),
             upstream_wire_api: "responses".into(),
