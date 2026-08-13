@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
 import { SkillPicker } from './SkillPicker';
+import { Chip } from '../ui/Chip';
 import type { CatalogSkill, MandatoryEntries, ProfileDraft, ProfileVariable } from './types';
 import { isValidKey } from './types';
 
@@ -178,9 +179,9 @@ export function ProfileEditor({
               {' '}
               Every session also carries{' '}
               {mandatory.packages.map((name) => (
-                <span className="chip chip--neutral" key={name}>
+                <Chip inline key={name}>
                   {name}
-                </span>
+                </Chip>
               ))}
             </>
           )}

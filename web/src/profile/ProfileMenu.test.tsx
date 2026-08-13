@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { ProfileMenu } from './ProfileMenu';
 import type { User } from '../auth/types';
 
-const USER: User = { id: 'subject-1', handle: 'operator' };
+const USER: User = { id: 'subject-1', handle: 'operator', capabilities: [] };
 
 describe('ProfileMenu', () => {
   it('stays closed until asked', () => {
@@ -85,14 +85,19 @@ describe('ProfileMenu', () => {
   });
 
   it('falls back to initials when there is no avatar', () => {
-    render(<ProfileMenu user={{ id: 'x', handle: 'ada.lovelace' }} onSignOut={vi.fn()} />);
+    render(
+      <ProfileMenu
+        user={{ id: 'x', handle: 'ada.lovelace', capabilities: [] }}
+        onSignOut={vi.fn()}
+      />,
+    );
     expect(screen.getByRole('button', { name: /account menu/i }).textContent).toContain('AL');
   });
 
   it('renders an avatar when one is supplied', () => {
     render(
       <ProfileMenu
-        user={{ id: 'x', handle: 'ada', avatarUrl: 'https://example.test/a.png' }}
+        user={{ id: 'x', handle: 'ada', avatarUrl: 'https://example.test/a.png', capabilities: [] }}
         onSignOut={vi.fn()}
       />,
     );
@@ -103,7 +108,31 @@ describe('ProfileMenu', () => {
   });
 
   it('survives a blank handle rather than rendering an empty control', () => {
-    render(<ProfileMenu user={{ id: 'x', handle: '   ' }} onSignOut={vi.fn()} />);
+    render(<ProfileMenu user={{ id: 'x', handle: '   ', capabilities: [] }} onSignOut={vi.fn()} />);
     expect(screen.getByRole('button', { name: /account menu/i }).textContent).toContain('?');
+  });
+});
+
+describe('the operator entry point', () => {
+  it('is absent unless the control plane says the caller may operate', async () => {
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: /operations/i })).toBeNull();
+  });
+
+  it('opens the panel as an account action, closing the menu behind it', async () => {
+    // An account action rather than navigation: the product is one page, and
+    // this menu must not grow into a nav menu.
+    const user = userEvent.setup();
+    const onOperate = vi.fn();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperate={onOperate} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: /operations/i }));
+
+    expect(onOperate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });

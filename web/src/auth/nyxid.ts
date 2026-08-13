@@ -11,7 +11,8 @@
  * a single line in main.tsx, which is what the seam was for.
  */
 
-import type { AuthProvider, AuthState } from './types';
+import type { AuthProvider, AuthState, Capability } from './types';
+import { isCapability } from './types';
 
 /** Where the control plane answers questions about the current session. */
 const SESSION_ENDPOINT = '/auth/session';
@@ -36,6 +37,19 @@ interface SessionResponse {
   display_name?: unknown;
   email?: unknown;
   avatar_url?: unknown;
+  capabilities?: unknown;
+}
+
+/**
+ * What this caller may do, as the control plane reports it.
+ *
+ * Anything that is not a capability this client models is dropped, and a
+ * missing or malformed field yields none at all. Failing closed is the only
+ * safe direction: the worst outcome is a control that is not offered, where the
+ * alternative is offering one the control plane will refuse.
+ */
+export function capabilitiesFrom(raw: unknown): readonly Capability[] {
+  return Array.isArray(raw) ? raw.filter(isCapability) : [];
 }
 
 /**
@@ -117,6 +131,7 @@ export function createNyxidAuthProvider(): AuthProvider {
           displayName,
           email,
           avatarUrl: optionalText(body.avatar_url),
+          capabilities: capabilitiesFrom(body.capabilities),
         },
       };
     },
