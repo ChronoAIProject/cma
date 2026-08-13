@@ -14,10 +14,23 @@ mod credentials;
 pub mod error;
 pub mod event;
 pub mod ids;
+mod lifecycle;
+
+#[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
+#[path = "persistence_tests.rs"]
+mod persistence_tests;
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;
 pub mod service;
 pub mod session;
 pub mod store;
 pub mod terminal;
+mod terminal_io;
 
 pub use authz::{Authorization, Caller, Capability};
 pub use error::CoreError;
