@@ -8,6 +8,11 @@
  * The driver owns the socket and nothing else. Rendering, hardening and
  * geometry belong to the surface, so this file contains no escape handling —
  * bytes are passed through exactly as received.
+ *
+ * A dropped connection is recovered rather than reported. The control plane
+ * keeps the screen for as long as the session runs and repaints it on
+ * reattach, so reconnecting restores what was there; announcing every blip
+ * would make a recoverable interruption look like lost work.
  */
 
 import type { TerminalDriver, TerminalSink } from '../types';
@@ -28,6 +33,18 @@ interface ServerControl {
 const FALLBACK_COLS = 80;
 const FALLBACK_ROWS = 24;
 
+/** Backoff between reattach attempts. */
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 8000;
+
+/**
+ * How many times to reattach before giving up and saying so.
+ *
+ * Bounded, because retrying forever against a session that has genuinely ended
+ * hides the ending behind an interface that merely looks slow.
+ */
+const RECONNECT_ATTEMPTS = 6;
+
 export interface WebSocketDriverOptions {
   /** Absolute ws:// or wss:// URL of the session's terminal. */
   readonly url: string;
@@ -40,10 +57,13 @@ export interface WebSocketDriverOptions {
   readonly openingTurn?: string;
   /** Injected so tests can supply a double rather than a real socket. */
   readonly connect?: (url: string) => WebSocket;
+  /** Injected so tests do not wait out the backoff. */
+  readonly schedule?: (fn: () => void, ms: number) => void;
 }
 
 export function createWebSocketDriver(options: WebSocketDriverOptions): TerminalDriver {
   const open = options.connect ?? ((url: string) => new WebSocket(url));
+  const later = options.schedule ?? ((fn: () => void, ms: number) => void setTimeout(fn, ms));
 
   let socket: WebSocket | null = null;
   let sink: TerminalSink | null = null;
@@ -56,6 +76,10 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
   // Input typed before the relay is ready. Sending it early is a protocol
   // error, and dropping it would silently lose what someone typed.
   const queued: string[] = [];
+  let attempts = 0;
+  // The opening turn belongs to the first connection only. Replaying it on a
+  // reconnect would resubmit a prompt nobody typed twice.
+  let openingSent = false;
 
   function sendControl(message: object): void {
     if (socket !== null && socket.readyState === WebSocket.OPEN) {
@@ -94,7 +118,11 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
     switch (frame.t) {
       case 'ready': {
         ready = true;
-        if (options.openingTurn !== undefined && options.openingTurn !== '') {
+        // A successful attach is what proves the connection is good, so the
+        // backoff resets here rather than merely on open.
+        attempts = 0;
+        if (!openingSent && options.openingTurn !== undefined && options.openingTurn !== '') {
+          openingSent = true;
           // Sent as ordinary input, newline included, so the agent receives it
           // exactly as though it had been typed.
           sendBytes(`${options.openingTurn}\n`);
@@ -123,68 +151,97 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
     }
   }
 
+  /** Try again, unless this has stopped looking like an interruption. */
+  function scheduleReconnect(): void {
+    if (detached) {
+      return;
+    }
+    if (attempts >= RECONNECT_ATTEMPTS) {
+      sink?.fail('lost the terminal connection and could not restore it');
+      return;
+    }
+    const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempts, RECONNECT_MAX_MS);
+    attempts += 1;
+    later(() => {
+      if (!detached) {
+        connect();
+      }
+    }, delay);
+  }
+
+  /** Open a connection and wire it to the sink. */
+  function connect(): void {
+    ready = false;
+    opened = false;
+
+    let ws: WebSocket;
+    try {
+      ws = open(options.url);
+    } catch (cause) {
+      sink?.fail(`cannot open the terminal: ${String(cause)}`);
+      return;
+    }
+    socket = ws;
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      opened = true;
+      declareGeometry();
+    };
+
+    ws.onmessage = (event: MessageEvent) => {
+      if (typeof event.data === 'string') {
+        handleControl(event.data);
+        return;
+      }
+      // Terminal output. Decoded as UTF-8 with replacement, never validated:
+      // the surface is responsible for what is safe to render.
+      //
+      // Both a buffer and a view over one are accepted. An `instanceof` check
+      // against ArrayBuffer is not reliable here: a buffer created in another
+      // realm fails it and would silently decode as empty, which reads as a
+      // terminal producing nothing rather than as a bug.
+      const data: unknown = event.data;
+      let bytes: Uint8Array;
+      if (ArrayBuffer.isView(data)) {
+        const view = data as ArrayBufferView;
+        bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+      } else if (data != null && typeof (data as ArrayBuffer).byteLength === 'number') {
+        bytes = new Uint8Array(data as ArrayBuffer);
+      } else {
+        bytes = new Uint8Array();
+      }
+      sink?.write(new TextDecoder().decode(bytes));
+    };
+
+    ws.onerror = () => {
+      // Deliberately silent: an error is always followed by a close, and the
+      // close is what decides whether this is worth telling anyone about.
+    };
+
+    ws.onclose = (event: CloseEvent) => {
+      if (detached) {
+        return;
+      }
+      if (event.wasClean && event.code === 1000) {
+        // The session itself ended. Reconnecting would reopen something that
+        // is over.
+        sink?.finish(event.reason === '' ? 'session ended' : event.reason);
+        return;
+      }
+      // Anything else is an interruption — an idle proxy reclaiming the
+      // socket, a network blip, a rollout. The screen is held server-side and
+      // repainted on reattach, so this is recovered rather than announced.
+      scheduleReconnect();
+    };
+  }
+
   return {
     attach(next: TerminalSink): void {
       sink = next;
       detached = false;
-      ready = false;
-
-      let ws: WebSocket;
-      try {
-        ws = open(options.url);
-      } catch (cause) {
-        sink.fail(`cannot open the terminal: ${String(cause)}`);
-        return;
-      }
-      socket = ws;
-      ws.binaryType = 'arraybuffer';
-
-      ws.onopen = () => {
-        opened = true;
-        declareGeometry();
-      };
-
-      ws.onmessage = (event: MessageEvent) => {
-        if (typeof event.data === 'string') {
-          handleControl(event.data);
-          return;
-        }
-        // Terminal output. Decoded as UTF-8 with replacement, never validated:
-        // the surface is responsible for what is safe to render.
-        //
-        // Both a buffer and a view over one are accepted. An `instanceof`
-        // check against ArrayBuffer is not reliable here: a buffer created in
-        // another realm fails it and would silently decode as empty, which
-        // reads as a terminal producing nothing rather than as a bug.
-        const data: unknown = event.data;
-        let bytes: Uint8Array;
-        if (ArrayBuffer.isView(data)) {
-          const view = data as ArrayBufferView;
-          bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-        } else if (data != null && typeof (data as ArrayBuffer).byteLength === 'number') {
-          bytes = new Uint8Array(data as ArrayBuffer);
-        } else {
-          bytes = new Uint8Array();
-        }
-        sink?.write(new TextDecoder().decode(bytes));
-      };
-
-      ws.onerror = () => {
-        // The event carries no useful detail by design, so this says what is
-        // actionable rather than inventing a cause.
-        sink?.fail('the terminal connection failed');
-      };
-
-      ws.onclose = (event: CloseEvent) => {
-        if (detached) {
-          return;
-        }
-        if (event.wasClean) {
-          sink?.finish(event.reason === '' ? 'session ended' : event.reason);
-        } else {
-          sink?.fail('the terminal connection closed unexpectedly');
-        }
-      };
+      attempts = 0;
+      connect();
     },
 
     send(data: string): void {
@@ -205,8 +262,8 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
     },
 
     detach(): void {
-      // Marked before closing so the close handler stays silent: a detach is
-      // not a failure the user needs to be told about.
+      // Marked before closing so the close handler stays silent and schedules
+      // no reconnect: a detach is the app's own doing.
       detached = true;
       ready = false;
       opened = false;

@@ -40,7 +40,9 @@ class FakeSocket {
 }
 
 function harness(openingTurn?: string) {
-  const socket = new FakeSocket();
+  // Every connect yields a fresh socket, as a real one would, and they are all
+  // kept so a test can drive whichever is current.
+  const sockets: FakeSocket[] = [];
   const sink: TerminalSink & { written: string[]; failures: string[]; finishes: string[] } = {
     written: [],
     failures: [],
@@ -58,9 +60,19 @@ function harness(openingTurn?: string) {
   const driver = createWebSocketDriver({
     url: 'wss://example/terminal',
     openingTurn,
-    connect: () => socket as unknown as WebSocket,
+    connect: () => {
+      const next = new FakeSocket();
+      sockets.push(next);
+      return next as unknown as WebSocket;
+    },
+    // Run the backoff immediately so tests do not wait it out.
+    schedule: (fn) => {
+      fn();
+    },
   });
-  return { socket, sink, driver };
+  /** The connection currently in use. */
+  const current = () => sockets[sockets.length - 1] as FakeSocket;
+  return { sockets, current, sink, driver };
 }
 
 function textOf(frame: unknown): string {
@@ -71,8 +83,9 @@ function textOf(frame: unknown): string {
 
 describe('the websocket terminal driver', () => {
   it('renders binary frames as terminal output', () => {
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.output('hello');
     expect(sink.written).toEqual(['hello']);
   });
@@ -80,8 +93,9 @@ describe('the websocket terminal driver', () => {
   it('never renders control frames as output', () => {
     // The split between text and binary is what stops a control message being
     // painted into the user's terminal.
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.control({ t: 'ready', cols: 80, rows: 24 });
     expect(sink.written).toEqual([]);
   });
@@ -90,8 +104,9 @@ describe('the websocket terminal driver', () => {
     // The relay will not announce itself until it has a size, so waiting for
     // that announcement before sending one leaves both sides waiting. This is
     // the deadlock the ordering exists to prevent.
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     driver.resize(120, 40);
     expect(socket.sent).toHaveLength(0);
 
@@ -102,15 +117,17 @@ describe('the websocket terminal driver', () => {
   it('declares a conventional size when the surface has not measured yet', () => {
     // Opening at the wrong size and correcting a frame later beats stalling
     // the handshake until something reports a size.
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.open();
     expect(socket.sent.map(textOf)).toEqual([JSON.stringify({ t: 'resize', cols: 80, rows: 24 })]);
   });
 
   it('sends a later resize immediately', () => {
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.open();
     socket.control({ t: 'ready', cols: 80, rows: 24 });
     socket.sent.length = 0;
@@ -121,8 +138,9 @@ describe('the websocket terminal driver', () => {
   it('never sends data before the relay is ready', () => {
     // The relay rejects a data frame that arrives before it is ready, which is
     // exactly what filled the terminal with protocol errors.
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.open();
     driver.send('ls\n');
     const beforeReady = socket.sent.map(textOf);
@@ -135,16 +153,18 @@ describe('the websocket terminal driver', () => {
   it('submits the opening turn as ordinary typed input', () => {
     // It must be indistinguishable from typing, newline included, or the agent
     // receives a prompt nobody submitted.
-    const { socket, sink, driver } = harness('summarise this repo');
+    const { current, sink, driver } = harness('summarise this repo');
     driver.attach(sink);
+    const socket = current();
     socket.open();
     socket.control({ t: 'ready', cols: 80, rows: 24 });
     expect(socket.sent.map(textOf)).toContain('summarise this repo\n');
   });
 
   it('sends keystrokes as binary', () => {
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.open();
     socket.control({ t: 'ready', cols: 80, rows: 24 });
     socket.sent.length = 0;
@@ -155,46 +175,76 @@ describe('the websocket terminal driver', () => {
   });
 
   it('surfaces a relay error rather than freezing', () => {
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.control({ t: 'error', code: 'forbidden', detail: 'not your session' });
     expect(sink.failures).toEqual(['forbidden: not your session']);
   });
 
   it('reports an unreadable control frame', () => {
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.onmessage?.({ data: 'not json' } as MessageEvent);
     expect(sink.failures).toHaveLength(1);
   });
 
   it('ignores control frames it does not know', () => {
     // The protocol may grow; an unknown frame is not a terminal failure.
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.control({ t: 'something-new' });
     socket.control({ t: 'pong' });
     expect(sink.failures).toEqual([]);
     expect(sink.written).toEqual([]);
   });
 
-  it('reports a clean close as finished and an abrupt one as a failure', () => {
-    const { socket, sink, driver } = harness();
+  it('treats a clean close as the session ending', () => {
+    const { current, sink, driver } = harness();
     driver.attach(sink);
-    socket.onclose?.({ wasClean: true, reason: 'session ended' } as CloseEvent);
+    const socket = current();
+    socket.onclose?.({ wasClean: true, code: 1000, reason: 'session ended' } as CloseEvent);
     expect(sink.finishes).toEqual(['session ended']);
+  });
 
-    const second = harness();
-    second.driver.attach(second.sink);
-    second.socket.onclose?.({ wasClean: false, reason: '' } as CloseEvent);
-    expect(second.sink.failures).toHaveLength(1);
+  it('reattaches after an interruption instead of reporting it', () => {
+    // A terminal is mostly idle, and idle connections get reclaimed by
+    // proxies. The screen is held server-side and repainted on reattach, so a
+    // drop is recoverable — telling the user would make a blip look like lost
+    // work.
+    const { current, sockets, sink, driver } = harness();
+    driver.attach(sink);
+    const socket = current();
+    socket.onclose?.({ wasClean: false, code: 1006, reason: '' } as CloseEvent);
+
+    expect(sink.failures).toEqual([]);
+    expect(sink.finishes).toEqual([]);
+    expect(sockets.length).toBeGreaterThan(1);
+  });
+
+  it('gives up and says so rather than retrying forever', () => {
+    // A session that has genuinely ended must not hide behind an interface
+    // that merely looks slow.
+    const { sockets, sink, driver } = harness();
+    driver.attach(sink);
+    // Fail every attempt: each reconnect opens a socket, which is closed at
+    // once, until the driver stops trying.
+    for (let i = 0; i < 20 && sink.failures.length === 0; i += 1) {
+      const current = sockets[sockets.length - 1];
+      current?.onclose?.({ wasClean: false, code: 1006, reason: '' } as CloseEvent);
+    }
+    expect(sink.failures).toHaveLength(1);
+    expect(sink.failures[0]).toContain('could not restore');
   });
 
   it('stays silent when the close follows a detach', () => {
     // Detaching is the app's own doing; reporting it would show the user an
     // error for switching tabs.
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     driver.detach();
     socket.onclose?.({ wasClean: false, reason: '' } as CloseEvent);
     expect(sink.failures).toEqual([]);
@@ -202,8 +252,9 @@ describe('the websocket terminal driver', () => {
   });
 
   it('closes the socket on detach and tolerates a second detach', () => {
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     driver.detach();
     expect(socket.closed).toBe(true);
     expect(() => driver.detach()).not.toThrow();
@@ -229,8 +280,9 @@ describe('the websocket terminal driver', () => {
   });
 
   it('does not throw when the socket is gone', () => {
-    const { socket, sink, driver } = harness();
+    const { current, sink, driver } = harness();
     driver.attach(sink);
+    const socket = current();
     socket.open();
     socket.control({ t: 'ready', cols: 80, rows: 24 });
     socket.readyState = 3;
