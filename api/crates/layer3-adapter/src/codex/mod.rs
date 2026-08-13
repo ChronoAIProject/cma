@@ -90,15 +90,18 @@ pub struct CodexSandboxSpec {
     /// Empty means the session gets a terminal and a model but cannot use the
     /// owner's connected capabilities.
     pub platform_base_url: String,
-    /// Arguments that make the agent continue a conversation rather than start
-    /// one, when a runtime is handed a conversation to resume.
+    /// The subcommand that makes the agent continue a named conversation.
     ///
-    /// Configured rather than fixed, because which flag continues a
-    /// conversation belongs to the agent and changes between its versions.
-    /// Getting it wrong means every handover silently starts fresh, and that
-    /// has to be correctable without building a new image.
+    /// The conversation's own identifier is appended to this, so it must be a
+    /// form that takes one. Asking for "the latest" instead does not work: the
+    /// agent selects among conversations recorded in the current working
+    /// directory, and one carried from another pod was recorded somewhere
+    /// else, so it finds nothing, starts a fresh conversation and reports
+    /// success — silent loss rather than a failure.
     ///
-    /// Empty leaves the runtime's own default in place.
+    /// Configured rather than fixed, because this belongs to the agent and
+    /// changes between its versions, and getting it wrong has to be
+    /// correctable without building a new image.
     pub resume_args: String,
 }
 
@@ -116,7 +119,7 @@ impl Default for CodexSandboxSpec {
             upstream_model: "gpt-5.6-sol".into(),
             upstream_wire_api: "responses".into(),
             platform_base_url: String::new(),
-            resume_args: "resume --last".into(),
+            resume_args: "resume".into(),
         }
     }
 }
