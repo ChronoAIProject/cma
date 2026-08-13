@@ -23,6 +23,8 @@ use layer2_core::{Authorization, SubjectId};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
+use token::random_token;
+
 /// Name of the session cookie this service issues.
 pub const SESSION_COOKIE: &str = "chrono_bot_session";
 
@@ -300,33 +302,6 @@ fn rebase(endpoint: &str, base: &str) -> String {
     }
 }
 
-/// Length of a generated token, in hexadecimal characters.
-///
-/// Two v4 UUIDs' worth. The lower bound is set by PKCE rather than by the
-/// cookie: RFC 7636 requires a verifier of 43 to 128 unreserved characters, so
-/// a single UUID's 32 would be rejected by a conforming provider.
-const TOKEN_HEX_CHARS: usize = 64;
-
-/// A random, unguessable token.
-///
-/// Used for session cookies, OAuth `state` and PKCE verifiers. Every one of
-/// those is a bearer secret: whoever can predict a session cookie is signed in
-/// as its owner, and whoever can predict a verifier can complete somebody
-/// else's authorization code exchange.
-///
-/// Drawn from the operating system's CSPRNG, which is what `Uuid::new_v4`
-/// uses. Deriving one from the clock and a process address would be neither —
-/// the clock is public to within the round trip that observes it, and address
-/// layout is randomised per process rather than per call, so a single token
-/// observed by an attacker would fix the non-time half of every later one.
-fn random_token() -> String {
-    let mut token = String::with_capacity(TOKEN_HEX_CHARS);
-    while token.len() < TOKEN_HEX_CHARS {
-        token.push_str(&uuid::Uuid::new_v4().simple().to_string());
-    }
-    token
-}
-
 fn session_cookie(headers: &HeaderMap) -> Option<String> {
     let raw = headers.get(header::COOKIE)?.to_str().ok()?;
     raw.split(';')
@@ -364,6 +339,7 @@ pub mod entitlements;
 pub mod flow;
 pub mod records;
 pub mod refresh;
+mod token;
 
 pub use records::SignInRecords;
 
@@ -493,60 +469,5 @@ mod tests {
     fn rebase_leaves_an_unparseable_endpoint_alone() {
         // Failing loudly at request time beats silently rewriting nonsense.
         assert_eq!(rebase("not-a-url", "http://internal:1"), "not-a-url");
-    }
-
-    #[test]
-    fn a_token_is_long_enough_for_the_strictest_thing_it_is_used_as() {
-        // PKCE sets the bar, not the cookie: a verifier outside 43..=128
-        // unreserved characters is rejected by a conforming provider, so a
-        // shorter token would break sign-in rather than merely weaken it.
-        let token = random_token();
-        assert_eq!(token.len(), TOKEN_HEX_CHARS);
-        assert!(
-            (43..=128).contains(&token.len()),
-            "outside the PKCE verifier length RFC 7636 allows: {}",
-            token.len()
-        );
-        assert!(
-            token.chars().all(|c| c.is_ascii_hexdigit()),
-            "a verifier may only carry unreserved characters"
-        );
-    }
-
-    #[test]
-    fn a_token_carries_no_fixed_run_an_observer_could_learn() {
-        // The failure this replaced: a token built from the clock and a stack
-        // address repeated that address on every call, so one token observed
-        // by an attacker fixed a sixteen-character tail of every later one.
-        // Uniqueness never caught it, because the clock moved — so what is
-        // asserted is that no position is constant across a large batch,
-        // beyond the one nibble per UUID that names its own version.
-        const SAMPLES: usize = 256;
-        let tokens: Vec<String> = (0..SAMPLES).map(|_| random_token()).collect();
-        assert_eq!(
-            tokens
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            SAMPLES,
-            "tokens repeated"
-        );
-
-        let constant: Vec<usize> = (0..TOKEN_HEX_CHARS)
-            .filter(|&position| {
-                tokens
-                    .iter()
-                    .filter_map(|t| t.as_bytes().get(position))
-                    .collect::<std::collections::HashSet<_>>()
-                    .len()
-                    == 1
-            })
-            .collect();
-        assert_eq!(
-            constant,
-            vec![12, 44],
-            "only each UUID's version nibble may be constant; anything else is \
-             a run of the token that is not secret"
-        );
     }
 }
