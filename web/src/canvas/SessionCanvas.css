@@ -1,0 +1,166 @@
+/*
+ * Canvas mode — docs/Web_Style.md §15 is the source of truth for every value
+ * here.
+ *
+ * The canvas takes the console's middle column, so the rail and the details
+ * panel keep their places. The page still does not scroll: the canvas viewport
+ * scrolls inside itself, which is the same exemption §5 already grants a
+ * column.
+ */
+
+.canvas {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ground);
+}
+
+.canvas__viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.canvas__surface {
+  display: grid;
+  grid-template-columns: repeat(var(--canvas-columns, 1), var(--canvas-node-w));
+  grid-auto-rows: var(--canvas-node-h);
+  gap: var(--space-4);
+  width: max-content;
+  padding: var(--space-4);
+  /* The background is draggable; a node is not. */
+  cursor: grab;
+}
+
+.canvas__surface[data-panning='true'] {
+  cursor: grabbing;
+}
+
+/*
+ * Outside the scrolling viewport, so what the budget cost cannot be panned out
+ * of sight.
+ */
+.canvas__budget {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  border-top: 1px solid var(--rule);
+}
+
+.node {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  cursor: default;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+/*
+ * Mere selection — the pointer is over this node but it holds no keys. Border
+ * weight only, so it can never be mistaken for the focused node.
+ */
+.node:hover {
+  border-color: var(--rule-2);
+}
+
+/*
+ * Focus — this node, and only this node, receives keystrokes. The accent border
+ * and glow together separate it from a hover, and the handle's aria-pressed
+ * carries the same fact without colour.
+ */
+.node[data-focused='true'] {
+  border-color: var(--accent);
+  box-shadow: var(--glow-rest);
+}
+
+.node__head {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.node__handle {
+  display: flex;
+  flex: 1;
+  gap: var(--space-2);
+  align-items: baseline;
+  min-width: 0;
+  min-height: 32px;
+  font-family: var(--font-ui);
+  text-align: left;
+  white-space: nowrap;
+  background: none;
+  border: none;
+}
+
+.node__started {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.node[data-focused='true'] .node__started {
+  color: var(--ink);
+}
+
+.node__meta,
+.node__readonly {
+  overflow: hidden;
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.node__body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * The terminal itself is never dimmed, tinted or covered, focused or not.
+ * Web_Style.md §1 forbids restyling kernel output, and an overlay would also be
+ * interactive UI over the viewport, which §6 forbids. The node frame is the
+ * terminal's border here; drawing both would put two hairlines a padding-width
+ * apart.
+ */
+.node .terminal {
+  border: none;
+}
+
+.node__note {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  padding: var(--space-4);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+/*
+ * The only motion the canvas has. Everything else it does — panning, and
+ * scrolling a node into view when focus reaches it — is direct manipulation or
+ * the browser's own focus handling, so there is nothing else to suppress.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .node {
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+}
