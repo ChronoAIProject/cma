@@ -6,10 +6,10 @@
 //! working is the normal case, and a client that reattaches must find the
 //! screen already correct rather than replaying history.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use layer3_adapter::{KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalInput};
+use layer3_adapter::{KernelAdapter, RuntimeHandle, TermSize, TerminalInput};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
 use crate::authz::{Caller, Capability};
@@ -18,13 +18,13 @@ use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
-use crate::store::{ContextStore, SessionRecord, SessionStore, StoreError};
+use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
 /// dropped from the live fan-out. It can always recover from a fresh snapshot,
 /// so lagging is survivable; unbounded buffering is not.
-const LIVE_BUFFER: usize = 512;
+pub(crate) const LIVE_BUFFER: usize = 512;
 
 /// Builds a screen model at a given geometry.
 ///
@@ -75,6 +75,8 @@ pub(crate) struct SessionEntry {
     pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
     /// Where this session's stored context lives, once any has been captured.
     pub(crate) context_ref: Option<String>,
+    /// Transcript length at the last capture, so an unchanged one is not rewritten.
+    pub(crate) captured_len: usize,
     pub(crate) live: broadcast::Sender<Vec<u8>>,
     pub(crate) attached: bool,
 }
@@ -84,11 +86,40 @@ pub struct SessionService {
     /// Live sessions, keyed by id. Only those with a running runtime appear.
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
     pub(crate) adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
-    screen_factory: ScreenFactory,
+    pub(crate) screen_factory: ScreenFactory,
     /// The durable record. Source of truth for anything that outlives a process.
     pub(crate) store: Arc<dyn SessionStore>,
     /// Where an agent's accumulated context is kept, when a deployment has one.
     pub(crate) context: Option<Arc<dyn ContextStore>>,
+    /// Where to get an owner's credential when the owner is not here to give one.
+    pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
+    /// Sessions whose runtime has said it cannot be carried onto a newer one.
+    ///
+    /// Held in memory rather than recorded, deliberately: it is a fact about a
+    /// particular sandbox, not about the session, so it should not outlive the
+    /// sandbox. A restarted process asks again, which is right — by then the
+    /// runtime may well have been replaced by other means.
+    pub(crate) rotation_refused: RwLock<HashSet<SessionId>>,
+    /// The runtime version sessions are expected to be running.
+    ///
+    /// Held by the control plane rather than asked of each sandbox: this is
+    /// the version being deployed, and a session on anything else is one to
+    /// carry forward. `None` disables rotation entirely, which is what a
+    /// deployment that does not version its runtime image wants.
+    pub(crate) runtime_version: Option<String>,
+    /// Sessions this process is currently bringing up.
+    ///
+    /// Bring-up is detached and takes minutes, during which the record says
+    /// `provisioning` and no entry exists yet — which is indistinguishable, to
+    /// anything reading state, from a bring-up that died with an earlier
+    /// process. The controller would then start a second runtime for a session
+    /// that is already getting one. This set is the difference between the two.
+    pub(crate) starting: RwLock<HashSet<SessionId>>,
+    /// Milliseconds to wait before the first provisioning retry.
+    ///
+    /// Held here rather than as a constant so a test can exercise the retry
+    /// path without waiting out a delay meant for a provider under load.
+    pub(crate) retry_backoff_ms: std::sync::atomic::AtomicU64,
 }
 
 impl SessionService {
@@ -101,14 +132,37 @@ impl SessionService {
         screen_factory: ScreenFactory,
         store: Arc<dyn SessionStore>,
         context: Option<Arc<dyn ContextStore>>,
+        credentials: Option<Arc<dyn CredentialSource>>,
+        runtime_version: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            starting: RwLock::new(HashSet::new()),
+            rotation_refused: RwLock::new(HashSet::new()),
             adapters,
             screen_factory,
             store,
             context,
+            credentials,
+            runtime_version,
+            retry_backoff_ms: std::sync::atomic::AtomicU64::new(
+                crate::provision::DEFAULT_RETRY_BACKOFF_MS,
+            ),
         })
+    }
+
+    /// Claim a session for bring-up, if nothing else has.
+    ///
+    /// Returns false when another bring-up already holds it, which is what
+    /// stops two concurrent sweeps — or a sweep racing a request — from
+    /// provisioning a session twice.
+    pub(crate) async fn begin_start(&self, id: &SessionId) -> bool {
+        self.starting.write().await.insert(id.clone())
+    }
+
+    /// Release a bring-up claim, whatever its outcome.
+    pub(crate) async fn finish_start(&self, id: &SessionId) {
+        self.starting.write().await.remove(id);
     }
 
     /// Read a session's durable record.
@@ -127,14 +181,26 @@ impl SessionService {
         ids
     }
 
-    /// Provision a session and start relaying its terminal.
+    /// Create a session and bring its runtime up in the background.
+    ///
+    /// Returns as soon as the session exists, before any runtime does. Bringing
+    /// a runtime up means pulling an image and scheduling a pod, which takes as
+    /// long as it takes; holding a request open for it ties the work to a
+    /// connection, and when that connection goes away — a timeout, a closed tab
+    /// — the work is cancelled halfway, leaving a runtime nothing refers to.
+    ///
+    /// The record is written before anything is provisioned, so every runtime
+    /// that comes to exist is already accounted for. Callers follow the rest
+    /// through the event log.
     pub async fn create_session(
         self: &Arc<Self>,
         caller: &Caller,
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
         caller.authorization.require(Capability::CreateSession)?;
-        let owner = caller.subject.clone();
+        // Resolved before the record is written: an unknown kernel is the
+        // caller's mistake and should be refused outright rather than accepted
+        // and then failed asynchronously.
         let adapter =
             self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
                 CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
@@ -142,98 +208,65 @@ impl SessionService {
 
         let geometry = spec.geometry.unwrap_or_default();
         let id = SessionId::generate();
-
-        let handle = adapter
-            .provision(&RuntimeSpec {
-                session_id: id.0.clone(),
-                size: TermSize {
-                    cols: geometry.columns(),
-                    rows: geometry.rows(),
-                },
-                subject_credential: spec.subject_credential.clone(),
-            })
-            .await
-            .map_err(|e| CoreError::RuntimeUnavailable(e.to_string()))?;
-
-        let handle_id = handle.0.clone();
-        let channel = adapter
-            .attach_terminal(&handle)
-            .await
-            .map_err(|e| CoreError::RuntimeUnavailable(e.to_string()))?;
-
-        let (live, _) = broadcast::channel(LIVE_BUFFER);
-        let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
-            Arc::new(Mutex::new((self.screen_factory)(geometry)));
-
         let session = Session {
             id: id.clone(),
-            owner,
+            owner: caller.subject.clone(),
             kernel: spec.kernel.clone(),
-            status: SessionStatus::Ready,
+            status: SessionStatus::Provisioning,
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
+            options: spec.options.clone(),
             geometry,
             last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: now_rfc3339(),
         };
 
-        let mut entry = SessionEntry {
-            session: session.clone(),
-            subject_credential: spec.subject_credential.clone(),
-            events: Vec::new(),
-            screen: Arc::clone(&screen),
-            runtime: Some(handle),
-            input: Some(channel.input.clone()),
-            live: live.clone(),
-            attached: false,
-            context_ref: None,
-        };
-        append(&mut entry, EventKind::SessionCreated);
-        append(
-            &mut entry,
-            EventKind::StatusChanged {
-                status: SessionStatus::Ready,
-                stop_reason: None,
-            },
-        );
-        let session = entry.session.clone();
-        // Persist before the session is reachable: a record that exists only in
-        // memory is one a restart loses along with its sandbox.
         let mut record = SessionRecord::new(session.clone());
-        record.runtime_id = Some(handle_id.clone());
+        record.session.last_seq = 3;
         self.store.upsert(&record).await.map_err(store_failed)?;
         self.store
-            .append_events(&entry.events)
+            .append_events(&[
+                Event {
+                    session_id: id.clone(),
+                    seq: 1,
+                    kind: EventKind::SessionCreated,
+                },
+                Event {
+                    session_id: id.clone(),
+                    seq: 2,
+                    kind: EventKind::StatusChanged {
+                        status: SessionStatus::Provisioning,
+                        stop_reason: None,
+                        detail: None,
+                    },
+                },
+                Event {
+                    session_id: id.clone(),
+                    seq: 3,
+                    kind: EventKind::Progress {
+                        stage: crate::session::ProvisioningStage::Accepted,
+                    },
+                },
+            ])
             .await
             .map_err(store_failed)?;
-        entry.events.clear();
-        self.entries.write().await.insert(id.clone(), entry);
 
-        // The relay runs for the session's life, independent of any client.
-        // This is what makes a reattach cheap and a detached session correct.
-        spawn_relay(id.clone(), channel.output, screen, live);
-
-        // Hand over the owner's credential before the agent can need it, so the
-        // first turn is already authenticated.
-        if let Some(credential) = spec.subject_credential.clone() {
-            let _ = channel
-                .input
-                .send(TerminalInput::Credential(credential))
+        // Detached deliberately. The caller's connection may end at any moment
+        // and must not take the runtime with it.
+        self.begin_start(&id).await;
+        let service = Arc::clone(self);
+        let spawned = record.session.clone();
+        tokio::spawn(async move {
+            service
+                .bring_up(spawned, spec, adapter, geometry, None)
                 .await;
-        }
+        });
 
-        // Ask the runtime to match the requested geometry before anything is
-        // painted, so the first frame is never rendered at the wrong size.
-        let _ = channel
-            .input
-            .send(TerminalInput::Resize(TermSize {
-                cols: geometry.columns(),
-                rows: geometry.rows(),
-            }))
-            .await;
-
-        tracing::info!(session_id = %id, kernel = %spec.kernel, "session created");
-        Ok(session)
+        tracing::info!(session_id = %id, kernel = %record.session.kernel, "session created, runtime starting");
+        Ok(record.session)
     }
 
     /// Read a session, scoped to its owner.
@@ -306,9 +339,27 @@ impl SessionService {
             return Err(CoreError::SessionTerminated);
         }
         if !self.entries.read().await.contains_key(id) {
-            return Err(CoreError::RuntimeUnavailable(
-                "session has no live runtime; revive it first".to_string(),
-            ));
+            // The sandbox outlives this process, so a restart loses the
+            // attachment and not the runtime. Re-adopting it here is what makes
+            // a session survive a deployment: the alternative is a session that
+            // reports itself ready, still has a runtime running, and refuses to
+            // open — which is a lie the person cannot act on.
+            self.readopt(&record).await?;
+        }
+
+        // The session may have been recovered before its owner had signed back
+        // in, when there was no credential to be had. This is the moment they
+        // are demonstrably here, so it is the moment to check: without it the
+        // session opens, looks healthy, and refuses every model call until a
+        // sweep happens to notice minutes later.
+        let unfunded = self
+            .entries
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|e| e.subject_credential.is_none());
+        if unfunded {
+            self.supply_credential(id, &caller.subject).await;
         }
 
         let (screen, live) = {
@@ -454,7 +505,7 @@ pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
 }
 
 /// Pump runtime output into the screen model and out to any live subscriber.
-fn spawn_relay(
+pub(crate) fn spawn_relay(
     id: SessionId,
     mut output: mpsc::Receiver<Vec<u8>>,
     screen: Arc<Mutex<Box<dyn ScreenModel>>>,

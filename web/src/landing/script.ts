@@ -146,7 +146,21 @@ export const TIMING = {
    *  moment someone is composing, which is the definition of nagging. */
   hintMinChars: 3,
   hintIdleMs: 400,
+
+  /** Pace of the opening line typing itself into the prompt. Slower than the
+   *  boot text, because this is meant to read as someone typing rather than as
+   *  a machine printing. */
+  typeInterval: 55,
 } as const;
+
+/**
+ * What the prompt suggests, typed in once the introduction finishes.
+ *
+ * A suggestion rather than a script: it stays editable, and a visitor who has
+ * something else in mind can replace it. An empty field with a blinking caret
+ * asks a question the page has not yet earned.
+ */
+export const OPENING_LINE = "Let's get started";
 
 /** Extra pause owed after a given character. */
 export function holdAfter(char: string): number {

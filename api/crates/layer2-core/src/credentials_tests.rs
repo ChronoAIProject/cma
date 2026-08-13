@@ -10,7 +10,7 @@ use crate::ids::{KernelId, SubjectId};
 use crate::service::SessionService;
 use crate::session::SessionSpec;
 use crate::terminal::ScreenModel;
-use crate::test_support::{FakeStore, NullScreen};
+use crate::test_support::{await_settled, FakeStore, NullScreen};
 
 /// A runtime that records what it was asked to do, so the service's behaviour
 /// is observable without a real sandbox.
@@ -91,6 +91,8 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
         Arc::new(FakeStore::default()),
         None,
+        None,
+        None,
     )
 }
 
@@ -115,6 +117,7 @@ async fn the_owner_credential_reaches_the_runtime_at_creation() {
         SessionSpec {
             kernel: KernelId::new("recording"),
             geometry: None,
+            options: Default::default(),
             subject_credential: Some("first-token".into()),
         },
     )
@@ -141,12 +144,16 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
             SessionSpec {
                 kernel: KernelId::new("recording"),
                 geometry: None,
+                options: Default::default(),
                 subject_credential: Some("first-token".into()),
             },
         )
         .await
         .expect("session created");
 
+    // A renewal reaches sessions that are running, and the runtime only starts
+    // after creation returns.
+    await_settled(&svc, &owner, &session.id).await;
     let pushed = svc
         .refresh_subject_credential(&owner.subject, "second-token".into())
         .await;
@@ -176,6 +183,7 @@ async fn a_renewal_does_not_leak_across_subjects() {
         SessionSpec {
             kernel: KernelId::new("recording"),
             geometry: None,
+            options: Default::default(),
             subject_credential: Some("a-token".into()),
         },
     )
@@ -204,6 +212,7 @@ async fn a_terminated_session_is_not_renewed() {
             SessionSpec {
                 kernel: KernelId::new("recording"),
                 geometry: None,
+                options: Default::default(),
                 subject_credential: Some("token".into()),
             },
         )
@@ -230,6 +239,7 @@ async fn a_session_created_without_a_credential_is_still_usable() {
             kernel: KernelId::new("recording"),
             geometry: None,
             subject_credential: None,
+            options: Default::default(),
         },
     )
     .await

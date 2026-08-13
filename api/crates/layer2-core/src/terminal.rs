@@ -87,12 +87,17 @@ pub trait ScreenModel: Send + Sync {
     /// Read the current screen in structured form.
     fn snapshot(&self) -> ScreenSnapshot;
 
-    /// Produce the byte sequence that repaints the current screen from scratch.
+    /// Produce the byte sequence that restores everything a client should see.
     ///
-    /// This is what a newly attached client receives. It must be the exact wire
-    /// form, because deciding how to render structured cells into an escape
-    /// sequence would be business logic, and that does not belong in an
-    /// interface layer.
+    /// This is what a newly attached client receives, and it covers the
+    /// scrollback as well as the visible screen: a terminal that comes back
+    /// with only its current viewport has silently thrown away the
+    /// conversation above it, and the person reattaching cannot tell whether
+    /// their history is gone or merely out of reach.
+    ///
+    /// It must be the exact wire form, because deciding how to render
+    /// structured cells into an escape sequence would be business logic, and
+    /// that does not belong in an interface layer.
     fn repaint_bytes(&self) -> Vec<u8>;
 }
 

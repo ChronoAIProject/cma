@@ -103,7 +103,7 @@ describe('IntroTerminal', () => {
 
   it('does not offer the Enter hint before anything is typed', async () => {
     await renderIntro();
-    expect(screen.queryByText(/enter — sign in/i)).toBeNull();
+    expect(screen.queryByText(/enter to continue/i)).toBeNull();
   });
 
   it('offers the Enter hint once intent is established', async () => {
@@ -115,7 +115,7 @@ describe('IntroTerminal', () => {
 
     await waitFor(
       () => {
-        expect(screen.getByText(/enter — sign in/i)).toBeDefined();
+        expect(screen.getByText(/enter to continue/i)).toBeDefined();
       },
       { timeout: 2000 },
     );
@@ -131,6 +131,6 @@ describe('IntroTerminal', () => {
     // Nothing to skip, so no skip control.
     expect(screen.queryByRole('button', { name: /skip/i })).toBeNull();
     // And the affordance is visible immediately rather than gated on typing.
-    expect(screen.getByText(/enter — sign in/i)).toBeDefined();
+    expect(screen.getByText(/enter to continue/i)).toBeDefined();
   });
 });

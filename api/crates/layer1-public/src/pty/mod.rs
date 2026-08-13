@@ -58,6 +58,12 @@ impl InterfaceProfile for PtyInterface {
     }
 }
 
+/// How often the server proves the connection is still there.
+///
+/// Under the shortest idle timeout these connections pass through, so a silent
+/// terminal is never mistaken for a dead one. Cheap: an empty frame.
+const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Inbound control vocabulary.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
@@ -254,17 +260,37 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, c
 
     let mut output = attachment.output.resubscribe();
     let mut pump_out = tokio::spawn(async move {
+        // A terminal is mostly silent — someone reading output produces no
+        // traffic at all — and an idle connection is exactly what proxies and
+        // load balancers reclaim. Without this the session dies mid-thought
+        // for no reason the user can see.
+        //
+        // A protocol-level ping rather than an application one, because
+        // browsers answer it themselves: the reply proves the path is still
+        // open in both directions without the page having to do anything.
+        let mut heartbeat = tokio::time::interval(KEEPALIVE_INTERVAL);
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // The first tick is immediate and would send a ping before anything
+        // has had a chance to go idle.
+        heartbeat.tick().await;
         loop {
-            match output.recv().await {
-                Ok(chunk) => {
-                    if sink.send(Message::Binary(chunk.into())).await.is_err() {
+            tokio::select! {
+                received = output.recv() => match received {
+                    Ok(chunk) => {
+                        if sink.send(Message::Binary(chunk.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "terminal client lagged");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                },
+                _ = heartbeat.tick() => {
+                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                         break;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    tracing::warn!(skipped, "terminal client lagged");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -300,6 +326,10 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, c
                     Ok(ClientControl::Signal { sig }) => {
                         let _ = svc.send_signal(&caller_in, &sid, sig).await;
                     }
+                    // Answered by the heartbeat above rather than here: this
+                    // half of the socket cannot write. A client ping still
+                    // serves its purpose, since the traffic itself is what
+                    // keeps an intermediary from reclaiming the connection.
                     Ok(ClientControl::Ping) => {}
                     Err(e) => tracing::debug!(error = %e, "malformed control ignored"),
                 },
