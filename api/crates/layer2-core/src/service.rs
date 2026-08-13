@@ -82,6 +82,28 @@ pub(crate) struct SessionEntry {
     pub(crate) attached: bool,
 }
 
+/// What distinguishes one deployment of this service from another.
+///
+/// Grouped rather than passed alongside the ports because they are the same
+/// kind of thing — facts about this installation — and because a constructor
+/// taking eight positional arguments, most of them `Option<String>`, is one
+/// where two of them eventually get swapped without the compiler noticing.
+#[derive(Debug, Clone, Default)]
+pub struct Deployment {
+    /// The runtime version sessions are expected to be running.
+    ///
+    /// `None` disables rotation, which is what a deployment that does not
+    /// version its runtime image wants.
+    pub runtime_version: Option<String>,
+    /// Who this control plane says it is, on the runtimes it creates.
+    pub identity: Option<String>,
+    /// Whether runtimes carrying no identity are this control plane's to judge.
+    ///
+    /// True for the deployment that owns a provider. False for any additional
+    /// control plane sharing it, which must confine itself to what it created.
+    pub adopts_untagged: bool,
+}
+
 /// The core service.
 pub struct SessionService {
     /// Live sessions, keyed by id. Only those with a running runtime appear.
@@ -101,6 +123,20 @@ pub struct SessionService {
     /// sandbox. A restarted process asks again, which is right — by then the
     /// runtime may well have been replaced by other means.
     pub(crate) rotation_refused: RwLock<HashSet<SessionId>>,
+    /// Who this control plane says it is, on the runtimes it creates.
+    ///
+    /// A sandbox provider is shared: one key sees everything provisioned
+    /// against it, including runtimes belonging to another control plane
+    /// entirely. Without an identity on each one, a second control plane reads
+    /// every session it has never heard of as an orphan and tears it down.
+    pub(crate) identity: Option<String>,
+    /// Whether runtimes carrying no identity are this control plane's to judge.
+    ///
+    /// True for the deployment that owns a provider, so runtimes created before
+    /// identities were recorded are still reclaimed when they are genuinely
+    /// orphaned. False for any additional control plane sharing the same
+    /// provider, which must confine itself to what it created.
+    pub(crate) adopts_untagged: bool,
     /// The environment profiles this service resolves sessions against.
     pub(crate) environments: Arc<EnvironmentProfileService>,
     /// The runtime version sessions are expected to be running.
@@ -136,8 +172,8 @@ impl SessionService {
         store: Arc<dyn SessionStore>,
         context: Option<Arc<dyn ContextStore>>,
         credentials: Option<Arc<dyn CredentialSource>>,
-        runtime_version: Option<String>,
         environments: Arc<EnvironmentProfileService>,
+        deployment: Deployment,
     ) -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
@@ -148,8 +184,10 @@ impl SessionService {
             store,
             context,
             credentials,
-            runtime_version,
             environments,
+            runtime_version: deployment.runtime_version,
+            identity: deployment.identity,
+            adopts_untagged: deployment.adopts_untagged,
             retry_backoff_ms: std::sync::atomic::AtomicU64::new(
                 crate::provision::DEFAULT_RETRY_BACKOFF_MS,
             ),

@@ -19,6 +19,7 @@ fn observed_provider() -> ProviderInventory {
     ProviderInventory {
         kernel: KernelId::new("example-runtime"),
         view: ProviderView::Observed(vec![RuntimeEntry {
+            created_by: None,
             runtime: "runtime-1".into(),
             session: Some(SessionId("sesn_1".into())),
             owner: Some(SubjectId("subject-a".into())),
@@ -89,6 +90,7 @@ fn a_runtime_nothing_accounts_for_says_so() {
     let view = InventoryView::render(inventory(vec![ProviderInventory {
         kernel: KernelId::new("example-runtime"),
         view: ProviderView::Observed(vec![RuntimeEntry {
+            created_by: None,
             runtime: "runtime-stray".into(),
             session: Some(SessionId("sesn_forgotten".into())),
             owner: None,
