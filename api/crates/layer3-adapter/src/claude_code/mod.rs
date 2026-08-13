@@ -47,6 +47,7 @@ mod tests {
             session_id: "sesn_1".into(),
             size: TermSize { cols: 80, rows: 24 },
             subject_credential: None,
+            options: Default::default(),
         };
         assert!(a.provision(&spec).await.is_err());
 

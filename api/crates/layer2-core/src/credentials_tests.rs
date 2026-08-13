@@ -115,6 +115,7 @@ async fn the_owner_credential_reaches_the_runtime_at_creation() {
         SessionSpec {
             kernel: KernelId::new("recording"),
             geometry: None,
+            options: Default::default(),
             subject_credential: Some("first-token".into()),
         },
     )
@@ -141,6 +142,7 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
             SessionSpec {
                 kernel: KernelId::new("recording"),
                 geometry: None,
+                options: Default::default(),
                 subject_credential: Some("first-token".into()),
             },
         )
@@ -179,6 +181,7 @@ async fn a_renewal_does_not_leak_across_subjects() {
         SessionSpec {
             kernel: KernelId::new("recording"),
             geometry: None,
+            options: Default::default(),
             subject_credential: Some("a-token".into()),
         },
     )
@@ -207,6 +210,7 @@ async fn a_terminated_session_is_not_renewed() {
             SessionSpec {
                 kernel: KernelId::new("recording"),
                 geometry: None,
+                options: Default::default(),
                 subject_credential: Some("token".into()),
             },
         )
@@ -233,6 +237,7 @@ async fn a_session_created_without_a_credential_is_still_usable() {
             kernel: KernelId::new("recording"),
             geometry: None,
             subject_credential: None,
+            options: Default::default(),
         },
     )
     .await
