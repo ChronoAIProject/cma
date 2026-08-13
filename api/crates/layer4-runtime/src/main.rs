@@ -35,27 +35,35 @@ struct AppState {
     credential: CredentialHolder,
     /// This pod's home directory, where the agent keeps its conversation.
     home: std::path::PathBuf,
-    /// Set once a conversation has been handed to this pod.
+    /// The conversation this pod is taking over, once one has been handed to it.
     ///
     /// The agent is not started until something attaches, which is what makes
     /// a handover possible over HTTP at all: the conversation can arrive after
     /// the pod is running and still be there before the agent reads it.
-    resuming: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    resuming: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl AppState {
     /// The command to start the agent with, given what this pod has been told.
     fn agent_command(&self) -> String {
-        if !self.resuming.load(std::sync::atomic::Ordering::SeqCst) {
+        let carried = match self.resuming.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let Some(conversation) = carried else {
             return self.command.clone();
-        }
-        // Configuration rather than a constant: which flag continues a
-        // conversation is the agent's decision, it differs between kernels,
-        // and it changes between agent versions. Getting it wrong must be
+        };
+        // Configuration rather than a constant: how a conversation is
+        // continued is the agent's decision, it differs between kernels, and
+        // it changes between agent versions. Getting it wrong must be
         // correctable without shipping a new binary.
-        let resume = std::env::var("CHRONO_RUNTIME_RESUME_ARGS")
-            .unwrap_or_else(|_| "resume --last".to_string());
-        format!("{} {resume}", self.command)
+        let resume =
+            std::env::var("CHRONO_RUNTIME_RESUME_ARGS").unwrap_or_else(|_| "resume".to_string());
+        // Named, never "the latest". The agent selects among conversations
+        // recorded in the current working directory, and one carried from
+        // another pod was recorded somewhere else — so "the latest" finds
+        // nothing, starts a fresh conversation, and reports success.
+        format!("{} {resume} {conversation}", self.command)
     }
 }
 
@@ -185,7 +193,7 @@ async fn main() {
         command: command.clone(),
         credential,
         home: home.clone(),
-        resuming: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
     };
 
     let app = Router::new()
@@ -234,10 +242,22 @@ async fn conversation_restore(
             .into_response();
     }
     match conversation::restore(&state.home, &body, &stamp()) {
-        Ok(_) => {
-            state
-                .resuming
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(restored) => {
+            let Some(conversation) = restored.session_id else {
+                // Accepting this would start a fresh conversation while the
+                // caller believes the old one was carried across — and the
+                // runtime it came from is about to be torn down.
+                tracing::error!("the conversation handed over does not name itself");
+                return (
+                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                    "the conversation does not name itself, so the agent cannot be told to continue it",
+                )
+                    .into_response();
+            };
+            match state.resuming.lock() {
+                Ok(mut guard) => *guard = Some(conversation),
+                Err(poisoned) => *poisoned.into_inner() = Some(conversation),
+            }
             axum::http::StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
