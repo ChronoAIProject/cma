@@ -197,13 +197,17 @@ impl SessionService {
             }
         };
 
-        // A session that is running, but not on what it should be running. Done
+        // A session that is running, but not on what it should be running. Tried
         // before the checks below because it is the one case where a healthy,
         // attached, perfectly alive session still has to be acted on.
-        if alive != Some(false) && self.needs_rotation(&record) {
-            if self.rotate(record).await {
-                reclaimed.rotated_sessions += 1;
-            }
+        //
+        // A refusal falls through rather than returning. A session that cannot
+        // be carried forward still has to be adopted and watched like any
+        // other — it is going to keep running on the old image, and leaving it
+        // unattended because it could not be moved would be the worse failure.
+        if alive != Some(false) && self.needs_rotation(&record) && self.rotate(record.clone()).await
+        {
+            reclaimed.rotated_sessions += 1;
             return;
         }
 
