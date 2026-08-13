@@ -199,8 +199,19 @@ impl SessionService {
         let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
             Arc::new(Mutex::new((self.screen_factory)(geometry)));
 
+        // Sequence numbers are allocated from one place or they collide. This
+        // task has been appending progress against the stored record while the
+        // copy passed in still carries the count from before any of it, so the
+        // entry starts from what is actually written down rather than from a
+        // stale number. Two allocators sharing a starting point is exactly how
+        // a session ends up ready with nothing recording that it is.
+        let mut seeded = session.clone();
+        if let Ok(Some(record)) = self.store.get(&id).await {
+            seeded.last_seq = record.session.last_seq;
+        }
+
         let mut entry = SessionEntry {
-            session: session.clone(),
+            session: seeded,
             subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
