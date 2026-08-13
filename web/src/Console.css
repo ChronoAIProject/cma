@@ -1,0 +1,30 @@
+.console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--ground);
+}
+
+.console__bar {
+  display: flex;
+  flex: none;
+  gap: var(--space-3);
+  align-items: center;
+  height: var(--header-height);
+  padding: 0 var(--frame-inset);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.console__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: var(--frame-inset);
+}
+
+.console__empty {
+  margin: auto;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
