@@ -112,6 +112,13 @@ pub enum AdapterError {
     /// The runtime rejected the request.
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    /// The provider cannot answer this question at all.
+    ///
+    /// Distinct from a failure: nothing went wrong, the capability is simply
+    /// absent. Callers that would otherwise read a negative answer into silence
+    /// need to be able to tell the two apart.
+    #[error("not supported by this runtime: {0}")]
+    Unsupported(String),
 }
 
 /// A kernel runtime, abstracted. Layer 2 depends on this trait and never on an
@@ -145,10 +152,15 @@ pub trait KernelAdapter: Send + Sync {
     /// provisioning time and may be absent, in which case nothing links the
     /// runtime to a session and it is an orphan by definition.
     ///
-    /// Defaults to reporting nothing so an adapter that cannot enumerate is
-    /// not forced to pretend. Such an adapter simply has no orphan recovery.
+    /// Defaults to saying it cannot answer, rather than to an empty list. The
+    /// difference matters more than it looks: an empty list is a statement that
+    /// nothing is running, and a caller acting on that would tear down or
+    /// replace every live session behind an adapter whose only fault is not
+    /// implementing this.
     async fn list_runtimes(&self) -> Result<Vec<(RuntimeHandle, Option<String>)>, AdapterError> {
-        Ok(Vec::new())
+        Err(AdapterError::Unsupported(
+            "this runtime cannot enumerate what it is running".to_string(),
+        ))
     }
 }
 
