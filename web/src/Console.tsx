@@ -29,6 +29,10 @@ import { abilitiesFor, listable } from './sessions/availability';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
 import { createRestProfileStore } from './environment/rest';
 import type { EnvironmentProfile, EnvironmentProfileStore } from './environment/types';
+import { OperatorPanel } from './operator/OperatorPanel';
+import { canOperate } from './operator/access';
+import { createRestOperatorStore } from './operator/rest';
+import type { OperatorStore } from './operator/types';
 import './Console.css';
 
 /**
@@ -84,6 +88,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   const [profileStore] = useState<EnvironmentProfileStore>(() => createRestProfileStore());
   const [profiles, setProfiles] = useState<readonly EnvironmentProfile[]>([]);
   const [managingProfiles, setManagingProfiles] = useState(false);
+  // Built once, for the same reason the profile store is.
+  const [operatorStore] = useState<OperatorStore>(() => createRestOperatorStore());
+  const [operating, setOperating] = useState(false);
 
   useEffect(() => {
     void profileStore
@@ -306,6 +313,17 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           onManageEnvironments={() => {
             setManagingProfiles(true);
           }}
+          // Absent unless the control plane reported a capability the panel
+          // can act on, so the item is not drawn rather than drawn and
+          // refused. It is not what makes the surface safe: every view and
+          // control behind it is checked again server-side.
+          onOperate={
+            canOperate(user.capabilities)
+              ? () => {
+                  setOperating(true);
+                }
+              : undefined
+          }
         />
       </TopBar>
 
@@ -405,6 +423,16 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 // Already reported inside the manager; failing to refresh the
                 // selector is not worth a second message about the same thing.
               });
+          }}
+        />
+      ) : null}
+
+      {operating ? (
+        <OperatorPanel
+          store={operatorStore}
+          capabilities={user.capabilities}
+          onClose={() => {
+            setOperating(false);
           }}
         />
       ) : null}
