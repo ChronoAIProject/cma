@@ -103,7 +103,10 @@ async fn main() {
     } else {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/home/chrono".to_string());
         let agent_config = AgentConfig {
-            proxy_base_url: format!("http://{proxy_bind}/v1"),
+            // No version segment here. The upstream is a brokered service whose own
+            // base URL already carries one, and the broker appends whatever path
+            // arrives; adding /v1 produces .../v1/v1/responses and a 404.
+            proxy_base_url: format!("http://{proxy_bind}"),
             model: std::env::var("CHRONO_UPSTREAM_MODEL")
                 .unwrap_or_else(|_| "gpt-5.6-sol".to_string()),
             wire_api: std::env::var("CHRONO_UPSTREAM_WIRE_API")
@@ -115,21 +118,29 @@ async fn main() {
             std::process::exit(2);
         }
 
-        let upstream = UpstreamState::new(upstream_base.clone(), credential.clone());
-        let proxy_app = Router::new()
-            .fallback(axum::routing::any(upstream::proxy))
-            .with_state(upstream);
-        tokio::spawn(async move {
-            match tokio::net::TcpListener::bind(proxy_bind).await {
-                Ok(listener) => {
-                    tracing::info!(%proxy_bind, upstream = %upstream_base, "upstream proxy listening");
-                    if let Err(e) = axum::serve(listener, proxy_app).await {
-                        tracing::error!(error = %e, "upstream proxy stopped");
-                    }
-                }
-                Err(e) => tracing::error!(%proxy_bind, error = %e, "upstream proxy cannot bind"),
-            }
-        });
+        spawn_credential_proxy(
+            "model",
+            proxy_bind,
+            upstream_base.clone(),
+            credential.clone(),
+        );
+    }
+
+    // The agent also drives a CLI that acts on the owner's behalf against the
+    // identity platform itself. It gets its own listener onto the platform root,
+    // sharing one credential so a single renewal updates both.
+    let platform_upstream = std::env::var("CHRONO_PLATFORM_BASE_URL").unwrap_or_default();
+    if !platform_upstream.trim().is_empty() {
+        let platform_bind: std::net::SocketAddr = std::env::var("CHRONO_PLATFORM_PROXY_BIND")
+            .unwrap_or_else(|_| "127.0.0.1:9092".to_string())
+            .parse()
+            .expect("CHRONO_PLATFORM_PROXY_BIND must be a socket address");
+        spawn_credential_proxy(
+            "platform",
+            platform_bind,
+            platform_upstream,
+            credential.clone(),
+        );
     }
 
     let state = AppState {
@@ -152,6 +163,35 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("runtime supervisor must serve");
+}
+
+/// Start a listener that forwards to `upstream` with the owner's credential.
+///
+/// Several of these run at once, one per upstream the agent talks to, all
+/// sharing a single credential holder so one renewal reaches every consumer.
+fn spawn_credential_proxy(
+    name: &'static str,
+    bind: std::net::SocketAddr,
+    upstream_base: String,
+    credential: CredentialHolder,
+) {
+    let state = UpstreamState::new(upstream_base.clone(), credential);
+    let app = Router::new()
+        .fallback(axum::routing::any(upstream::proxy))
+        .with_state(state);
+    tokio::spawn(async move {
+        match tokio::net::TcpListener::bind(bind).await {
+            Ok(listener) => {
+                tracing::info!(proxy = name, %bind, upstream = %upstream_base, "credential proxy listening");
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::error!(proxy = name, error = %e, "credential proxy stopped");
+                }
+            }
+            Err(e) => {
+                tracing::error!(proxy = name, %bind, error = %e, "credential proxy cannot bind")
+            }
+        }
+    });
 }
 
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {

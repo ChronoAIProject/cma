@@ -91,6 +91,7 @@ async fn main() {
                 upstream_base_url: config.upstream_base_url.clone(),
                 upstream_model: config.upstream_model.clone(),
                 upstream_wire_api: config.upstream_wire_api.clone(),
+                platform_base_url: config.platform_base_url.clone(),
                 ..CodexSandboxSpec::default()
             },
         )),
