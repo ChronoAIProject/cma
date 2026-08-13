@@ -8,9 +8,10 @@ import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
 import type { Stage } from './sessions/progress';
 import { SessionActions } from './sessions/SessionActions';
-import { DEFAULT_OPTIONS, type AgentOptions } from './sessions/options';
+import type { AgentOptions } from './sessions/options';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { createWebSocketDriver } from './terminal/drivers/websocket';
+import { createTranscriptDriver } from './terminal/drivers/transcript';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
@@ -20,9 +21,11 @@ import {
   deleteSession,
   followSession,
   listSessions,
+  reviveSession,
+  stopSession,
   terminalUrl,
-  terminateSession,
 } from './api/client';
+import { abilitiesFor, listable } from './sessions/availability';
 import './Console.css';
 
 /**
@@ -72,11 +75,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // Why a session ended, when it ended badly. Kept per session so switching
   // tabs does not carry one session's failure onto another.
   const [endings, setEndings] = useState<Record<string, string>>({});
-  // The settings the open session was started with, so "start again" can make
-  // another like it rather than a default one.
-  const [lastChoice, setLastChoice] = useState<{ kernel: Kernel; options: AgentOptions } | null>(
-    null,
-  );
   const [acting, setActing] = useState(false);
   // The last startup step each session reported. Kept per session so switching
   // tabs shows that session's progress rather than another's.
@@ -142,9 +140,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         setSessions((prev) => [session, ...prev]);
         setActiveId(session.id);
         setOpeningForId((prev) => prev ?? session.id);
-        // Remembered so "start again" reproduces the session someone had,
-        // rather than a default one.
-        setLastChoice({ kernel, options });
       } catch (cause) {
         report(cause);
       }
@@ -157,8 +152,11 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     async (id: string) => {
       setActing(true);
       try {
-        await terminateSession(id);
-        applyLifecycle(id, 'terminated');
+        // Stop rather than terminate: ending a session releases what it is
+        // costing without throwing away what it did, and the owner can pick it
+        // up again. Terminating is what delete does on the way out.
+        await stopSession(id);
+        applyLifecycle(id, 'idle');
       } catch (cause) {
         report(cause);
       } finally {
@@ -166,6 +164,24 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       }
     },
     [applyLifecycle, report],
+  );
+
+  /** Give a stopped session a sandbox again, and follow it back up. */
+  const reviveSessionById = useCallback(
+    async (id: string) => {
+      setActing(true);
+      try {
+        const revived = await reviveSession(id);
+        // Back to provisioning, which is what the effect below follows: the
+        // progress of a revive is the progress of a start, because it is one.
+        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...revived } : s)));
+      } catch (cause) {
+        report(cause);
+      } finally {
+        setActing(false);
+      }
+    },
+    [report],
   );
 
   /** Remove the session and its history. */
@@ -194,7 +210,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * it any more.
    */
   useEffect(() => {
-    if (active === null || active.lifecycle !== 'provisioning') {
+    if (active === null || (active.lifecycle !== 'provisioning' && active.lifecycle !== 'rotating')) {
       return;
     }
     const id = active.id;
@@ -218,7 +234,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     // every render, and depending on it would tear the stream down and reopen
     // it continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, active?.lifecycle === 'provisioning', applyLifecycle]);
+  }, [active?.id, active?.lifecycle, applyLifecycle]);
 
   /*
    * Built only once a runtime exists. Attaching earlier would open a socket
@@ -226,19 +242,30 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    */
   // Whether this session has a runtime to attach to. Hoisted out of the memo
   // so the dependency is a plain value the linter can reason about.
-  const attachable =
-    active !== null && active.lifecycle !== 'provisioning' && active.lifecycle !== 'terminated';
+  // One rule for whether a session can be typed into, shared with the buttons
+  // that act on it. A terminal that accepts keystrokes the control plane will
+  // refuse is worse than one that plainly says it is not accepting them.
+  const attachable = active !== null && abilitiesFor(active).interactive;
 
   const driver = useMemo(() => {
-    if (active === null || !attachable) {
+    if (active === null) {
       return null;
+    }
+    if (!attachable) {
+      // No sandbox to attach to, but a history to read. Someone who stopped a
+      // session did not ask to lose sight of it, and someone whose session
+      // failed usually wants to read the last thing it said.
+      const can = abilitiesFor(active);
+      return can.canRevive || active.lifecycle === 'terminated'
+        ? createTranscriptDriver(active.id, can.reason ?? '')
+        : null;
     }
     const turn = openingTurn !== null && active.id === openingForId ? openingTurn : undefined;
     return createWebSocketDriver({ url: terminalUrl(active.id), openingTurn: turn });
     // Rebuilt per session, not per render: an unrelated update must not tear
     // down a live terminal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, attachable]);
+  }, [active?.id, active?.lifecycle, attachable]);
 
   return (
     <div className="console">
@@ -254,7 +281,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
       <div className="console__body">
         <SessionRail
-          sessions={sessions}
+          sessions={listable(sessions)}
           activeId={activeId}
           order={order}
           onSelect={setActiveId}
@@ -278,12 +305,11 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               message="Starting a sandbox for this session. This can take a minute the first time."
               stage={stages[active.id] ?? null}
             />
-          ) : active.lifecycle === 'terminated' ? (
-            <p className="console__empty">
-              {endings[active.id] !== undefined
-                ? `This session could not continue: ${endings[active.id]}`
-                : 'This session has ended.'}
-            </p>
+          ) : active.lifecycle === 'rotating' ? (
+            <StartupProgress
+              message="Moving this session to an updated runtime. It will come back where it left off."
+              stage={stages[active.id] ?? null}
+            />
           ) : driver === null ? (
             <p className="console__empty">Attaching…</p>
           ) : (
@@ -313,16 +339,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                   setNotice(null);
                   setPaletteEpoch((n) => n + 1);
                 }}
-                onTerminate={() => void endSession(active.id)}
+                onRevive={() => void reviveSessionById(active.id)}
+                onStop={() => void endSession(active.id)}
                 onDelete={() => void removeSession(active.id)}
-                onStartAgain={() => {
-                  // Same settings as the session being replaced, since someone
-                  // reopening a session wants the one they had.
-                  void start(
-                    lastChoice?.kernel ?? (active.kernel as Kernel),
-                    lastChoice?.options ?? DEFAULT_OPTIONS,
-                  );
-                }}
               />
             }
           />

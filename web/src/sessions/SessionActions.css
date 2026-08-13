@@ -38,14 +38,33 @@
   outline-offset: 1px;
 }
 
+/*
+ * Disabled rather than removed, so the panel keeps its shape as a session
+ * moves between states and nobody has to hunt for a control that was there a
+ * moment ago. The hint beneath each one says why it is unavailable, since a
+ * greyed button on its own only communicates refusal.
+ */
 .actions__button:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .actions__hint {
   font-size: var(--text-xs);
   color: var(--ink-3);
+}
+
+/*
+ * The action that gets someone moving again. Marked because when it is offered
+ * it is almost always what the person came to the panel for: their session is
+ * stopped and they want it back.
+ */
+.actions__button--primary {
+  border-color: var(--accent);
+}
+
+.actions__button--primary:hover:not(:disabled) {
+  background: var(--surface-2);
 }
 
 /*
