@@ -17,7 +17,13 @@ spec:
         app.kubernetes.io/name: chrono-bot-api
         app.kubernetes.io/part-of: chrono-bot
     spec:
-      automountServiceAccountToken: false
+      # The sandbox key is delivered by the platform's secret provider, which
+      # identifies the workload by its service account. Running as "default"
+      # would present the wrong principal and the mount would be refused
+      # however correct the provider configuration is, so the token is mounted
+      # deliberately rather than switched off.
+      serviceAccountName: chrono-bot-ksa
+      automountServiceAccountToken: true
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -88,12 +94,19 @@ spec:
           emptyDir: {}
         # The OpenSandbox API key arrives as a file rather than an environment
         # variable, keeping it out of the pod spec and the process environment.
-        # The Secret is populated out of band; nothing here carries a value.
+        # It is delivered by the cluster's secret provider straight from the
+        # secret manager, so no Kubernetes Secret holds it and nothing here
+        # carries a value.
+        #
+        # The SecretProviderClass below must resolve chrono-bot's OWN key,
+        # opensandbox-chrono-bot-api-key. Several namespaces define a class of
+        # the same name over a different underlying secret, so copying this
+        # block between namespaces silently changes which key is delivered with
+        # no visible difference. Verify the class it binds to before changing
+        # this line.
         - name: opensandbox-api-key
-          secret:
-            secretName: chrono-bot-opensandbox
-            items:
-              - key: api-key
-                path: opensandbox-api-key
-            # Group-readable, paired with fsGroup above. Never world-readable.
-            defaultMode: 0440
+          csi:
+            driver: secrets-store-gke.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: opensandbox-api-key
