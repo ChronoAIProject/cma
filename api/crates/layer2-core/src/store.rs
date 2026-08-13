@@ -1,15 +1,19 @@
 //! Where sessions and their history are kept.
 //!
-//! The core defines what durable storage must do and never how. Two ports,
-//! because the two kinds of state have genuinely different shapes: session
-//! records are small, queryable documents, while an agent's accumulated
-//! context is an opaque blob that grows without bound and is only ever read
-//! whole.
+//! The core defines what durable storage must do and never how. A port per
+//! kind of state rather than one store with many methods, because the kinds
+//! have genuinely different shapes and lifetimes: session records are small
+//! queryable documents, an agent's accumulated context is an opaque blob read
+//! and written whole, a reusable bundle outlives every session that used it,
+//! and the record of what was asked for is append-only and expires on its own.
+//! Split this way, any one of them can be replaced without the others.
 //!
 //! Nothing here is live state. A screen model, a socket, and an attachment
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
+use crate::activity::{ActivityQuery, ActivityRecord};
+use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::EnvironmentProfile;
 use crate::event::Event;
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
@@ -111,6 +115,71 @@ pub trait EnvironmentProfileStore: Send + Sync {
     /// Sessions already started with it are unaffected: they were handed a
     /// resolved bundle at creation and never read the profile again.
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError>;
+}
+
+/// The durable record of what the service was asked to do.
+///
+/// Append-only by construction: there is no method that edits or removes an
+/// entry, because an account of what happened that can be rewritten is not an
+/// account of anything.
+///
+/// **Entries do not accumulate forever.** An implementation is required to
+/// expire them, and how long it keeps them is its own decision to state — an
+/// unbounded collection of one document per request is an outage waiting for a
+/// busy week. Nothing in the core reads an expired entry back, and nothing
+/// depends on one being there.
+#[async_trait::async_trait]
+pub trait ActivityStore: Send + Sync {
+    /// Keep one entry.
+    async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError>;
+
+    /// The most recent entries matching a query, newest first.
+    ///
+    /// Newest first because that is the only order this is ever read in: the
+    /// question is always "what has been happening", never "what happened at
+    /// the beginning".
+    async fn recent(&self, query: &ActivityQuery) -> Result<Vec<ActivityRecord>, StoreError>;
+}
+
+/// The subjects that have used this service.
+///
+/// The core models no user directory of its own — identity belongs to whoever
+/// issues it — so this is a record of who has turned up, not an authority on
+/// who exists. Nothing is authorised against it and no decision is made on the
+/// strength of a name in it.
+///
+/// **No read of this is unbounded.** It holds one document per person rather
+/// than one per request, so it grows more slowly than the record of actions —
+/// but it still only grows, and a listing with no ceiling is a listing that
+/// works until the day it does not. Both reads below are bounded by
+/// construction: one by an explicit limit, the other by the subjects actually
+/// being asked about.
+///
+/// Deliberately *not* expired, unlike the record of actions. An entry is a
+/// person, not an event, and dropping one would both lose the earliest arrival
+/// this exists to remember and make somebody who came back look new.
+#[async_trait::async_trait]
+pub trait UserDirectoryStore: Send + Sync {
+    /// Record that a subject was seen, creating the entry if it is new.
+    ///
+    /// The implementation keeps the earliest `first_seen` it has ever held for
+    /// a subject. Overwriting it on each sign-in would make everybody look new
+    /// and lose the one fact this record exists to hold.
+    async fn record_sign_in(&self, user: &RegisteredUser) -> Result<(), StoreError>;
+
+    /// The most recently seen subjects, newest first, at most `query.limit`.
+    ///
+    /// The limit is pushed into the query rather than applied to the answer:
+    /// truncating afterwards still reads the whole table, which is the cost
+    /// worth avoiding.
+    async fn recent(&self, query: &DirectoryQuery) -> Result<Vec<RegisteredUser>, StoreError>;
+
+    /// The subjects named, in whatever order the store finds them.
+    ///
+    /// For naming a page of work by its owners. Asking for the whole table to
+    /// resolve a screenful of names costs more every day the service runs,
+    /// and asking one query per row costs more every row.
+    async fn by_subjects(&self, subjects: &[SubjectId]) -> Result<Vec<RegisteredUser>, StoreError>;
 }
 
 /// Where a session's credential comes from when nobody is asking for it.

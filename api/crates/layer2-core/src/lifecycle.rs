@@ -10,30 +10,85 @@ use layer3_adapter::RuntimeHandle;
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
-use crate::ids::SessionId;
+use crate::ids::{SessionId, SubjectId};
 use crate::service::{append, store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::SessionRecord;
 
 impl SessionService {
+    /// Fail unless this caller may end or pause this particular session.
+    ///
+    /// One place rather than repeated at each call site, so that stopping and
+    /// terminating can never drift into holding different opinions about who
+    /// may do which. An operator acting on work that is not theirs is logged
+    /// at warning: it is legitimate, it is rare, and it is exactly the line in
+    /// a log somebody will later want to find.
+    fn authorize_control(
+        &self,
+        caller: &Caller,
+        record: &SessionRecord,
+        operation: &'static str,
+    ) -> Result<(), CoreError> {
+        let owner = &record.session.owner;
+        caller.require_control_of(owner)?;
+        if caller.is_acting_for_another(owner) {
+            tracing::warn!(
+                session_id = %record.session.id,
+                actor = %caller.subject,
+                %owner,
+                operation,
+                "a session is being acted on by somebody other than its owner"
+            );
+        }
+        Ok(())
+    }
+
     /// End a session and tear its runtime down.
     ///
     /// Works whether or not this process is the one that started the session.
     /// A sandbox outlives the process that provisioned it, so after a restart
     /// the durable record is the only route to it — and refusing to terminate
     /// there would leave a runtime nobody can reach still consuming resources.
+    ///
+    /// An operator may end a session they do not own. That is a real power and
+    /// it is checked in two stages: entitlement to end anything at all before
+    /// the record is read, and entitlement to end *this* one once its owner is
+    /// known.
     pub async fn terminate_session(
         &self,
         caller: &Caller,
         id: &SessionId,
     ) -> Result<(), CoreError> {
+        caller.require_any_control()?;
+        self.end_session(caller, id).await.map(|_| ())
+    }
+
+    /// End a session as an operator, whoever owns it.
+    ///
+    /// Separate from [`Self::terminate_session`] only in the gate it opens
+    /// with: the everyday grant does not reach this one, so a caller arriving
+    /// here is exercising the operator capability whatever the session turns
+    /// out to be. That is what makes it worth having its own entry point —
+    /// the surface projecting it can be restricted as an operator surface, and
+    /// a record of a call to it means what it appears to mean.
+    ///
+    /// Returns the subject whose work was ended, which the caller needs in
+    /// order to write down whose it was.
+    pub async fn terminate_any_session(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SubjectId, CoreError> {
         caller
             .authorization
-            .require(Capability::TerminateOwnSession)?;
+            .require(Capability::ControlAnySession)?;
+        self.end_session(caller, id).await
+    }
+
+    async fn end_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
         let record = self.record(id).await?;
-        if !record.session.is_owned_by(&caller.subject) {
-            return Err(CoreError::Forbidden);
-        }
+        self.authorize_control(caller, &record, "terminate")?;
+        let owner = record.session.owner.clone();
         let adapter = self.adapters.get(&record.session.kernel).cloned();
 
         // A live entry is the fast path; a record alone is the post-restart
@@ -81,7 +136,7 @@ impl SessionService {
             }
         }
         tracing::info!(session_id = %id, "session terminated");
-        Ok(())
+        Ok(owner)
     }
 
     /// Write a session straight to its terminal state in the store.
@@ -120,16 +175,33 @@ impl SessionService {
     /// listed and can be picked up again — which is the difference between
     /// putting work down and throwing it away.
     pub async fn stop_session(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+        caller.require_any_control()?;
+        self.rest_session(caller, id).await.map(|_| ())
+    }
+
+    /// Stop a session's runtime as an operator, whoever owns it.
+    ///
+    /// The reversible control, on the same terms as
+    /// [`Self::terminate_any_session`]: the everyday grant does not open it,
+    /// and it reports whose work was stopped.
+    pub async fn stop_any_session(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SubjectId, CoreError> {
         caller
             .authorization
-            .require(Capability::TerminateOwnSession)?;
+            .require(Capability::ControlAnySession)?;
+        self.rest_session(caller, id).await
+    }
+
+    async fn rest_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
         let record = self.record(id).await?;
-        if !record.session.is_owned_by(&caller.subject) {
-            return Err(CoreError::Forbidden);
-        }
+        self.authorize_control(caller, &record, "stop")?;
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        let owner = record.session.owner.clone();
 
         let adapter = self.adapters.get(&record.session.kernel).cloned();
         let runtime = {
@@ -180,7 +252,7 @@ impl SessionService {
             }
         }
         tracing::info!(session_id = %id, "session stopped");
-        Ok(())
+        Ok(owner)
     }
 
     /// Write a session to its stopped state in the store.
@@ -216,6 +288,11 @@ impl SessionService {
     ///
     /// Returns the context reference, if the session had one, so the caller can
     /// see what was removed alongside the record.
+    ///
+    /// Unlike stopping and terminating, this stays with the owner. An operator
+    /// needs to be able to stop work that is costing money or misbehaving, and
+    /// stopping is reversible; destroying somebody else's history is not, and
+    /// nothing about running the service requires it.
     pub async fn delete_session(
         &self,
         caller: &Caller,

@@ -8,16 +8,22 @@
 //! every interface and every runtime needs, so that an interface exposing a
 //! subset is a projection rather than a compromise.
 
+pub mod activity;
+pub mod activity_detail;
+pub mod activity_service;
 pub mod authz;
 mod clock;
 mod credentials;
+pub mod directory;
 pub mod environment;
 pub mod environment_service;
 pub mod error;
 pub mod event;
 pub mod ids;
+pub mod inventory;
 mod lifecycle;
 mod provision;
+mod reading;
 mod readopt;
 pub mod reconcile;
 mod rotate;
@@ -30,6 +36,8 @@ mod provision_tests;
 mod environment_support;
 #[cfg(test)]
 mod screen_support;
+#[cfg(test)]
+mod service_support;
 #[cfg(test)]
 mod test_support;
 
@@ -58,7 +66,16 @@ mod transcript;
 #[path = "transcript_tests.rs"]
 mod transcript_tests;
 
+pub use activity::{
+    ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityTarget,
+    DEFAULT_ACTIVITY_LIMIT, MAX_ACTIVITY_LIMIT,
+};
+pub use activity_detail::{ActivityDetail, DetailKey};
+pub use activity_service::ActivityService;
 pub use authz::{Authorization, Caller, Capability};
+pub use directory::{
+    DirectoryQuery, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT, MAX_DIRECTORY_LIMIT,
+};
 pub use environment::{
     Baseline, CatalogError, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
     EnvironmentVariable, ResolvedEnvironment, SkillCatalog, SkillId, SoftwarePackage,
@@ -68,12 +85,13 @@ pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame};
 pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
+pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort};
 pub use reconcile::Reclaimed;
 pub use service::{AttachmentHandle, Deployment, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{
-    ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord, SessionStore,
-    StoreError,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
+    SessionStore, StoreError, UserDirectoryStore,
 };
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

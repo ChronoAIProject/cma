@@ -18,7 +18,7 @@ use crate::authz::{Authorization, Caller, Capability};
 use crate::environment_service::EnvironmentProfileService;
 use crate::event::Event;
 use crate::ids::{KernelId, SessionId, SubjectId};
-use crate::service::{Deployment, ScreenFactory, SessionService};
+use crate::service::{ScreenFactory, SessionService};
 use crate::session::SessionSpec;
 use crate::store::{SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
@@ -299,131 +299,10 @@ impl ScreenModel for NullScreen {
     }
 }
 
-/// A service that stores transcripts, over a screen model that keeps them.
-pub(crate) fn service_with_context(
-    store: Arc<FakeStore>,
-    adapter: Arc<FakeAdapter>,
-    context: Arc<dyn crate::store::ContextStore>,
-) -> Arc<SessionService> {
-    let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
-    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    adapters.insert(kernel(), adapter);
-    let service = SessionService::new(
-        adapters,
-        factory,
-        store,
-        Some(context),
-        None,
-        no_environments(),
-        owned(),
-    );
-    service
-        .retry_backoff_ms
-        .store(1, std::sync::atomic::Ordering::Relaxed);
-    service
-}
-
-/// A service that expects a particular runtime version.
-///
-/// Two of these over one store is an upgrade: the second expects a version the
-/// first's sessions are not on.
-pub(crate) fn service_on_version(
-    store: Arc<FakeStore>,
-    adapter: Arc<FakeAdapter>,
-    version: &str,
-) -> Arc<SessionService> {
-    let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
-    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    adapters.insert(kernel(), adapter);
-    let service = SessionService::new(
-        adapters,
-        factory,
-        store,
-        None,
-        None,
-        no_environments(),
-        Deployment {
-            runtime_version: Some(version.to_string()),
-            ..owned()
-        },
-    );
-    service
-        .retry_backoff_ms
-        .store(1, std::sync::atomic::Ordering::Relaxed);
-    service
-}
-
-/// A service that can supply an owner's credential without the owner present.
-pub(crate) fn service_with_credentials(
-    store: Arc<FakeStore>,
-    adapter: Arc<FakeAdapter>,
-    credential: &str,
-) -> Arc<SessionService> {
-    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
-    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    adapters.insert(kernel(), adapter);
-    let service = SessionService::new(
-        adapters,
-        factory,
-        store,
-        None,
-        Some(Arc::new(FixedCredential(credential.to_string()))),
-        no_environments(),
-        owned(),
-    );
-    service
-        .retry_backoff_ms
-        .store(1, std::sync::atomic::Ordering::Relaxed);
-    service
-}
-
-/// Put bytes on a session's screen, as its runtime would.
-pub(crate) async fn write_screen(svc: &Arc<SessionService>, id: &SessionId, bytes: &[u8]) {
-    let entries = svc.entries.read().await;
-    let entry = entries.get(id).expect("the session is live");
-    entry.screen.lock().await.apply(bytes);
-}
-
-/// The credential a live session is currently holding.
-pub(crate) async fn credential_on(svc: &Arc<SessionService>, id: &SessionId) -> Option<String> {
-    svc.entries
-        .read()
-        .await
-        .get(id)
-        .and_then(|e| e.subject_credential.clone())
-}
-
-/// A service identifying itself as a particular deployment.
-pub(crate) fn service_as(
-    store: Arc<FakeStore>,
-    adapter: Arc<FakeAdapter>,
-    deployment: Deployment,
-) -> Arc<SessionService> {
-    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
-    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    adapters.insert(kernel(), adapter);
-    let service = SessionService::new(
-        adapters,
-        factory,
-        store,
-        None,
-        None,
-        no_environments(),
-        deployment,
-    );
-    service
-        .retry_backoff_ms
-        .store(1, std::sync::atomic::Ordering::Relaxed);
-    service
-}
-
-/// A deployment that owns its provider, which is what most tests are about.
-pub(crate) fn owned() -> Deployment {
-    Deployment {
-        adopts_untagged: true,
-        ..Deployment::default()
-    }
-}
+pub(crate) use crate::service_support::{
+    credential_on, owned, service_as, service_on_version, service_with_context,
+    service_with_credentials, write_screen,
+};
 
 pub(crate) fn kernel() -> KernelId {
     KernelId::new("fake")
