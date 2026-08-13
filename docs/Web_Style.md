@@ -352,6 +352,33 @@ gets.
 
 ---
 
+## 11. Waiting for a session
+
+Provisioning a sandbox takes seconds on a warm node and a minute on a cold one,
+and nothing can say in advance which it will be. A static line held for that
+long reads as a page that has stopped working.
+
+The wait is therefore animated: the characters of the message lift in sequence,
+left to right, on a 1.4s loop with each character starting 45ms after the one
+before it. The displacement is `0.28em` — a sense of life, not a bouncing ball,
+because this sits beside someone for a minute.
+
+It is a wave rather than a spinner because §5 forbids a full-page spinner, and
+because a wave makes no claim about progress. A progress bar would imply the
+system knows how far along it is, which it does not.
+
+**The motion never carries information.** The sentence is exposed once to
+assistive technology as ordinary text, and under `prefers-reduced-motion` the
+animation is removed entirely while the message stays. Nothing is lost by not
+seeing it move.
+
+**A session that ends badly says why.** Terminating normally and failing to
+start are different events and must not read the same: the control plane
+records a reason on the failure, and the surface shows it rather than the bare
+statement that the session has ended.
+
+---
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -362,3 +389,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-13 | Terminal-first cyberpunk redesign. Reframed the frontend as a single full-bleed terminal page with no navigation, in two states (scripted introduction and live session). Replaced the colour system with a cyan/magenta-on-near-black palette, recording measured WCAG ratios and raising `--ink-3` to `#7C8A9E` in dark to clear AA for 11px metadata. Added the `--emphasis` token, a bounded three-step glow system with an ambient overlay cap, and an authoritative 16-slot ANSI palette. Promoted the monospace stack to primary and retuned the type scale. Made the page non-scrolling and the terminal full-bleed, and set radii to 0/2px. Specified the intro sequence timing, skip behaviour and reduced-motion equivalence, the session tab strip, and the profile menu. Added §8 Terminal safety covering OSC 52, tab-title suppression, scrollback caps and OSC 8 validation. Removed the data table component and the "information density over whitespace" premise, both of which described a dashboard this frontend no longer is. |
 | 2026-08-13 | Documented one focus-state variant in §7: the terminal prompt row carries its 2px accent indicator on the row's leading edge rather than as a ring around the input, because a ring around a full-width borderless field boxes in the whole prompt line and breaks the terminal illusion. A relocation, not a removal, scoped to that one input. |
 | 2026-08-13 | Added §10 Selectable terminal themes: six vendored palettes (Dracula, Nord, Solarized Dark, Solarized Light, GitHub Light) alongside the product's own, selectable per person and scoped to the terminal canvas only. Vendored as data rather than taken as a dependency. Themes are filtered by the current appearance so a dark palette cannot be placed on a light page. Also specified the appearance control in the profile menu, cycling system → light → dark, where "system" is the absence of a choice rather than a third palette. |
+| 2026-08-14 | Added §11 Waiting for a session: the provisioning message animates as a left-to-right character wave (1.4s loop, 45ms stagger, 0.28em lift), chosen over a spinner because §5 forbids one and because a wave claims no knowledge of progress. Motion carries no information — the sentence is exposed once to assistive technology and the animation is removed under reduced-motion. Also specified that a session which fails to start must show the recorded reason rather than the same wording as one that ended normally. |

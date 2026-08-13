@@ -77,9 +77,11 @@ data:
   # No /v1 suffix: the proxy already resolves to the service's versioned root,
   # and adding one produces a duplicated path that answers 404.
   CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm"
-  # A model the service actually publishes, and one tuned for this kernel. The
-  # previous value existed on no upstream and was inherited from a neighbour.
-  CHRONO_UPSTREAM_MODEL: "gpt-5.3-codex"
+  # Verified against the live service rather than taken from its model list:
+  # that listing is incomplete, and the model it does advertise for this kernel
+  # currently answers 503 while this one answers normally. Checking the list
+  # alone would have picked the broken one.
+  CHRONO_UPSTREAM_MODEL: "gpt-5.6-sol"
   CHRONO_UPSTREAM_WIRE_API: "responses"
   # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
   # never leaves the cluster, and the sandbox provider terminates no TLS of its

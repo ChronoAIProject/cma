@@ -88,10 +88,13 @@ async fn a_runtime_that_cannot_be_attached_to_is_torn_down() {
 
     let settled = await_settled(&svc, &caller, &created.id).await;
     assert_eq!(settled.status, SessionStatus::Terminated);
-    assert_eq!(
-        adapter.terminated.lock().await.clone(),
-        vec![format!("runtime-for-{}", created.id.0)],
-        "a runtime whose session failed must not be left running"
+    let torn_down = adapter.terminated.lock().await.clone();
+    assert!(
+        !torn_down.is_empty()
+            && torn_down
+                .iter()
+                .all(|r| *r == format!("runtime-for-{}", created.id.0)),
+        "every runtime the attempts created must be torn down, got {torn_down:?}"
     );
 }
 
@@ -168,4 +171,77 @@ async fn an_unknown_kernel_is_refused_immediately_rather_than_asynchronously() {
         store.list_all().await.expect("readable").is_empty(),
         "a refused request must leave no record behind"
     );
+}
+
+#[tokio::test]
+async fn a_transient_provider_failure_is_retried_rather_than_reported() {
+    // Someone asking for a session wants a session. A provider under load is
+    // nobody's decision and usually passes, so it must not be the answer they
+    // get — this is the failure that ended sessions with no explanation.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let adapter = Arc::new(FakeAdapter {
+        fail_first: std::sync::atomic::AtomicUsize::new(2),
+        ..FakeAdapter::default()
+    });
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(
+        settled.status,
+        SessionStatus::Ready,
+        "a session must survive a provider that failed twice"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_attempt_does_not_leave_a_runtime_behind() {
+    // Each retry starts clean. Without discarding what the previous attempt
+    // created, a session that eventually succeeds costs several sandboxes.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let adapter = Arc::new(FakeAdapter {
+        // Provisioning succeeds and attaching fails, so a runtime exists each
+        // time the attempt is abandoned.
+        refuse_attach: true,
+        ..FakeAdapter::default()
+    });
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+
+    let torn_down = adapter.terminated.lock().await.len();
+    assert!(
+        torn_down >= 2,
+        "every runtime a failed attempt created must be torn down, got {torn_down}"
+    );
+}
+
+#[tokio::test]
+async fn a_session_that_cannot_start_says_why() {
+    // The reason travels with the event, so the person watching learns what
+    // the log already knew instead of seeing a session end for no stated
+    // reason.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let svc = service(
+        Arc::clone(&store),
+        Arc::new(FakeAdapter {
+            refuse_provision: true,
+            ..FakeAdapter::default()
+        }),
+    );
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+
+    let events = svc
+        .events_since(&caller, &created.id, None)
+        .await
+        .expect("history readable");
+    let explained = events.iter().any(|e| {
+        matches!(&e.kind, crate::event::EventKind::StatusChanged { detail: Some(d), .. }
+            if d.contains("no capacity") || d.contains("attempts"))
+    });
+    assert!(explained, "the failure carried no explanation: {events:?}");
 }

@@ -24,9 +24,12 @@ pub enum ReasoningEffort {
     /// Barely any. For mechanical work where latency dominates.
     Minimal,
     Low,
-    /// The default, and what an unconfigured session gets.
-    #[default]
     Medium,
+    /// The default, and what an unconfigured session gets.
+    ///
+    /// Deliberately not the middle setting. This runs coding work, where a
+    /// wrong answer costs far more than the extra seconds spent avoiding it.
+    #[default]
     High,
     /// As much as the model offers.
     XHigh,
@@ -159,6 +162,9 @@ mod tests {
         assert_eq!(ReasoningEffort::Minimal.as_str(), "minimal");
         assert_eq!(ReasoningEffort::Medium.as_str(), "medium");
         assert_eq!(ReasoningEffort::XHigh.as_str(), "xhigh");
+        // The default is stated rather than assumed, since it is what most
+        // sessions will actually run with.
+        assert_eq!(ReasoningEffort::default(), ReasoningEffort::High);
     }
 
     #[test]
