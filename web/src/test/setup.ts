@@ -1,0 +1,58 @@
+import { afterEach, vi } from 'vitest';
+import { cleanup } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+
+/**
+ * jsdom implements neither matchMedia nor ResizeObserver, and both are load
+ * bearing here: the intro branches on prefers-reduced-motion before it starts
+ * animating, and the terminal refits on container resize. Without these the
+ * component throws on mount rather than failing a meaningful assertion.
+ */
+
+let reducedMotion = false;
+
+/** Drive the prefers-reduced-motion branch from a test. */
+export function setReducedMotion(value: boolean): void {
+  reducedMotion = value;
+}
+
+if (!window.matchMedia) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: (query: string) => ({
+      matches: query.includes('prefers-reduced-motion: reduce') ? reducedMotion : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      // xterm's CoreBrowserService tracks device-pixel-ratio through the
+      // deprecated listener API, so omitting these makes Terminal.open() throw.
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  });
+}
+
+/*
+ * jsdom has no canvas implementation and logs a "Not implemented" error for
+ * every getContext call. xterm degrades correctly without one, so stub it to
+ * keep genuine failures visible in test output.
+ */
+const canvasProto = globalThis.HTMLCanvasElement?.prototype;
+if (canvasProto) {
+  canvasProto.getContext = (() => null) as unknown as typeof canvasProto.getContext;
+}
+
+if (!globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    disconnect(): void {}
+    unobserve(): void {}
+  } as unknown as typeof ResizeObserver;
+}
+
+afterEach(() => {
+  cleanup();
+  setReducedMotion(false);
+});
