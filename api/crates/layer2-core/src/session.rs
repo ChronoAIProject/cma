@@ -5,6 +5,47 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::terminal::TerminalGeometry;
 
+/// A named step in bringing a session up.
+///
+/// Ordered, and each knows its position, so a client can show how far along
+/// something is without hard-coding the sequence — adding a step here changes
+/// what every client displays rather than requiring each to be taught.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProvisioningStage {
+    /// The request arrived and the session exists.
+    Accepted,
+    /// A runtime has been asked for.
+    RuntimeRequested,
+    /// The provider gave us one.
+    RuntimeCreated,
+    /// Connecting to its terminal.
+    Attaching,
+    /// Usable.
+    Ready,
+}
+
+impl ProvisioningStage {
+    /// Every stage, in the order they happen.
+    pub const ALL: [Self; 5] = [
+        Self::Accepted,
+        Self::RuntimeRequested,
+        Self::RuntimeCreated,
+        Self::Attaching,
+        Self::Ready,
+    ];
+
+    /// How far through the sequence this stage sits, counting from one.
+    pub fn position(self) -> usize {
+        Self::ALL.iter().position(|s| *s == self).unwrap_or(0) + 1
+    }
+
+    /// How many stages there are in total.
+    pub fn total() -> usize {
+        Self::ALL.len()
+    }
+}
+
 /// Lifecycle state of a session. `Idle` means the runtime was reclaimed while
 /// the session itself remains valid and revivable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -14,6 +14,7 @@
 
 import type { Kernel, Session, SessionLifecycle } from '../sessions/types';
 import type { AgentOptions } from '../sessions/options';
+import { isStage, type Stage } from '../sessions/progress';
 
 /** A request that failed, carrying enough to tell the user why. */
 export class ApiError extends Error {
@@ -170,15 +171,18 @@ export async function deleteSession(id: string): Promise<void> {
  */
 export function followSession(
   id: string,
-  onStatus: (lifecycle: SessionLifecycle) => void,
+  onStatus: (lifecycle: SessionLifecycle, detail?: string) => void,
   onError: (message: string) => void,
+  onStage?: (stage: Stage) => void,
 ): () => void {
   const source = new EventSource(`/api/v1/sessions/${encodeURIComponent(id)}/events`, {
     withCredentials: true,
   });
 
   source.onmessage = (message: MessageEvent) => {
-    let payload: { event?: { type?: string; status?: string } };
+    let payload: {
+      event?: { type?: string; status?: string; detail?: string; stage?: string };
+    };
     try {
       payload = JSON.parse(String(message.data)) as typeof payload;
     } catch {
@@ -186,9 +190,18 @@ export function followSession(
       // next one carries the same state.
       return;
     }
+    // A step on the way to ready, reported so the interface can say which
+    // part is taking the time rather than only that something is.
+    const stage = payload.event?.stage;
+    if (isStage(stage)) {
+      onStage?.(stage);
+    }
+
     const status = payload.event?.status;
     if (typeof status === 'string' && LIFECYCLES.includes(status as SessionLifecycle)) {
-      onStatus(status as SessionLifecycle);
+      // The detail explains a failure. Without it a session that could not
+      // start is indistinguishable from one that ended normally.
+      onStatus(status as SessionLifecycle, payload.event?.detail);
     }
   };
 
