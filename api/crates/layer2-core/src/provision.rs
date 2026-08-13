@@ -19,6 +19,7 @@ use layer3_adapter::{
 };
 use tokio::sync::{broadcast, Mutex};
 
+use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
@@ -26,6 +27,7 @@ use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
 use crate::session::{
     ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus, StopReason,
 };
+use crate::store::SessionRecord;
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How long a runtime may take to become usable.
@@ -371,5 +373,65 @@ fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
             PermissionMode::Unrestricted => RuntimePermission::Unrestricted,
         },
         own_credential: matches!(options.credential, crate::options::CredentialMode::Own),
+    }
+}
+
+impl SessionService {
+    /// Take an existing runtime back under management after losing track of it.
+    ///
+    /// A sandbox belongs to the provider, not to this process, so it is still
+    /// there after a restart while the attachment that was driving it is not.
+    /// Rebuilding that attachment is the difference between a deployment being
+    /// invisible and every open session becoming unusable while still claiming
+    /// to be ready.
+    ///
+    /// The screen is deliberately empty at first: the transcript this process
+    /// held is gone with it, and inventing one would be worse than an honest
+    /// blank that the agent repaints on its next output.
+    pub(crate) async fn readopt(&self, record: &SessionRecord) -> Result<(), CoreError> {
+        let id = record.session.id.clone();
+        let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
+            // Nothing to reclaim: the session never got a runtime, or its
+            // runtime was already torn down.
+            return Err(CoreError::RuntimeUnavailable(
+                "this session has no runtime to reconnect to".to_string(),
+            ));
+        };
+        let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
+            return Err(CoreError::RuntimeUnavailable(format!(
+                "no runtime {}",
+                record.session.kernel
+            )));
+        };
+
+        let channel = adapter.attach_terminal(&handle).await.map_err(|e| {
+            // The sandbox is genuinely gone. Say so in terms of what the person
+            // can do rather than repeating the provider's wording.
+            tracing::warn!(session_id = %id, error = %e, "cannot reconnect to the runtime");
+            CoreError::RuntimeUnavailable(
+                "the sandbox for this session is no longer running".to_string(),
+            )
+        })?;
+
+        let (live, _) = broadcast::channel(LIVE_BUFFER);
+        let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
+            Arc::new(Mutex::new((self.screen_factory)(record.session.geometry)));
+
+        let entry = SessionEntry {
+            session: record.session.clone(),
+            subject_credential: None,
+            events: Vec::new(),
+            screen: Arc::clone(&screen),
+            runtime: Some(handle),
+            input: Some(channel.input.clone()),
+            live: live.clone(),
+            attached: false,
+            context_ref: record.context_ref.clone(),
+        };
+        self.entries.write().await.insert(id.clone(), entry);
+        spawn_relay(id.clone(), channel.output, screen, live);
+
+        tracing::info!(session_id = %id, "reconnected to an existing runtime");
+        Ok(())
     }
 }

@@ -307,6 +307,12 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               <SessionActions
                 session={active}
                 busy={acting}
+                onReconnect={() => {
+                  // Rebuilding the driver reattaches, which asks the control
+                  // plane to take the sandbox back under management.
+                  setNotice(null);
+                  setPaletteEpoch((n) => n + 1);
+                }}
                 onTerminate={() => void endSession(active.id)}
                 onDelete={() => void removeSession(active.id)}
                 onStartAgain={() => {

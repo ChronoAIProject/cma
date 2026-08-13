@@ -1,77 +1,46 @@
 /*
  * Session actions, per docs/Web_Style.md.
  *
- * Mirrors the profile menu: a small trigger in the bar and a dropdown that
- * closes on outside click or Escape. Every value is a token from that document.
+ * A stack of full-width buttons at the foot of the details panel. Full width
+ * because they are the panel's actions rather than controls competing for a
+ * row, and stacked because their order carries meaning: least destructive
+ * first.
  */
 
 .actions {
-  position: relative;
-}
-
-.actions__trigger {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  font-family: var(--font-mono);
-  font-size: var(--text-base);
-  color: var(--ink-2);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 2px;
-  cursor: pointer;
-}
-
-.actions__trigger:hover:not(:disabled) {
-  color: var(--ink);
-  border-color: var(--rule-2);
-}
-
-.actions__trigger:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.actions__trigger:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.actions__menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + var(--space-1));
-  min-width: 16rem;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: 2px;
   display: flex;
   flex-direction: column;
-  z-index: 5;
+  gap: var(--space-1);
 }
 
-.actions__item {
+.actions__button {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  width: 100%;
   text-align: left;
   font-family: var(--font-ui);
   font-size: var(--text-sm);
   color: var(--ink);
   background: transparent;
-  border: 0;
-  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule-2);
+  border-radius: 2px;
+  padding: var(--space-2);
   cursor: pointer;
 }
 
-.actions__item:hover {
-  background: var(--surface-2);
+.actions__button:hover:not(:disabled) {
+  border-color: var(--accent);
 }
 
-.actions__item:focus-visible {
+.actions__button:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline-offset: 1px;
+}
+
+.actions__button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .actions__hint {
@@ -80,13 +49,39 @@
 }
 
 /*
- * The destructive act is marked, but the wording carries the warning too —
- * colour alone would say nothing to someone who cannot distinguish it.
+ * The destructive action is marked, and its wording says so too — colour alone
+ * would carry nothing to someone who cannot distinguish it.
  */
-.actions__item--danger {
+.actions__button--danger {
+  color: var(--emphasis);
+  border-color: var(--rule-2);
+}
+
+.actions__button--danger:hover:not(:disabled) {
+  border-color: var(--emphasis);
+}
+
+.actions__button--danger .actions__hint {
   color: var(--emphasis);
 }
 
-.actions__item--danger .actions__hint {
-  color: var(--emphasis);
+.actions__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--emphasis);
+  border-radius: 2px;
+}
+
+.actions__question {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.actions__row {
+  display: flex;
+  gap: var(--space-2);
 }
