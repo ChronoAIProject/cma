@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useImperativeHandle, useRef } from 'react';
+import type { Ref } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -16,14 +17,74 @@ import './TerminalSurface.css';
  * the driver owns content.
  */
 
+/**
+ * What a container may ask of a surface it does not own.
+ *
+ * Deliberately one method. A caller placing the caret is a legitimate need —
+ * a canvas of terminals has to decide which of them a click lands in — whereas
+ * reaching for the buffer or the driver from outside would dissolve the seam.
+ */
+export interface TerminalHandle {
+  focus(): void;
+}
+
+/**
+ * Apply the input mode to a live terminal.
+ *
+ * Shared by construction and by later changes so the two can never disagree —
+ * a rebuilt terminal that kept its default tab stop would put a session nobody
+ * is working in back in the tab order without anything in the diff saying so.
+ */
+function applyInputMode(term: Terminal, interactive: boolean): void {
+  // xterm drops the data event entirely while this is set and marks its input
+  // textarea read-only, so a surface that is not the focused one cannot
+  // originate a keystroke even before the driver sees one.
+  term.options.disableStdin = !interactive;
+  if (term.textarea) {
+    // Out of the tab order while not interactive, so Tab walks the containing
+    // view rather than every terminal in it. Still click-focusable, which is
+    // how a pointer moves focus between them.
+    term.textarea.tabIndex = interactive ? 0 : -1;
+  }
+}
+
 interface TerminalSurfaceProps {
   readonly driver: TerminalDriver;
   /** Accessible name, since a terminal is otherwise an unlabelled region. */
   readonly label: string;
+  /**
+   * Whether this surface may take keyboard input. Defaults to true, which is
+   * every case where one terminal owns the view.
+   *
+   * A non-interactive surface stays attached and keeps rendering: the canvas
+   * shows many sessions at once and only one of them may receive keys, and a
+   * session that §14 says cannot be typed into is never interactive at all.
+   */
+  readonly interactive?: boolean;
+  readonly ref?: Ref<TerminalHandle>;
 }
 
-export function TerminalSurface({ driver, label }: TerminalSurfaceProps) {
+export function TerminalSurface({ driver, label, interactive = true, ref }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  /*
+   * Read at construction without joining the effect's dependency list. Putting
+   * `interactive` in those dependencies would rebuild the whole terminal every
+   * time focus moved, discarding the scrollback and re-attaching the driver.
+   */
+  const interactiveRef = useRef(interactive);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus() {
+        // A no-op before the terminal exists, which is the frame between mount
+        // and the construction effect. A caller cannot usefully act on that.
+        termRef.current?.focus();
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const host = hostRef.current;
@@ -58,6 +119,8 @@ export function TerminalSurface({ driver, label }: TerminalSurfaceProps) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
+    // After open(), which is what creates the textarea this touches.
+    applyInputMode(term, interactiveRef.current);
 
     const sink: TerminalSink = {
       write(data) {
@@ -120,6 +183,7 @@ export function TerminalSurface({ driver, label }: TerminalSurfaceProps) {
       frame = requestAnimationFrame(safeFit);
     });
     observer.observe(host);
+    termRef.current = term;
 
     /*
      * React 19 StrictMode runs this effect twice in development. Without a
@@ -134,8 +198,31 @@ export function TerminalSurface({ driver, label }: TerminalSurfaceProps) {
       driver.detach();
       hardening.dispose();
       term.dispose();
+      termRef.current = null;
     };
   }, [driver]);
+
+  /*
+   * Declared after the effect that builds the terminal, so on mount the
+   * instance already exists by the time this runs.
+   */
+  useEffect(() => {
+    interactiveRef.current = interactive;
+    const term = termRef.current;
+    if (term === null) {
+      return;
+    }
+
+    applyInputMode(term, interactive);
+    if (!interactive) {
+      /*
+       * Blur as well as disable. A read-only textarea still holds the caret,
+       * and leaving one in a terminal that ignores input reads as a frozen
+       * session rather than as one nobody is working in.
+       */
+      term.blur();
+    }
+  }, [interactive]);
 
   return <div className="terminal" ref={hostRef} role="group" aria-label={label} />;
 }
