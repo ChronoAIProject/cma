@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
+import { MAX_LIVE_NODES } from './canvas/layout';
 import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
 import { capturePendingTurn } from './auth/pendingTurn';
@@ -25,14 +26,16 @@ const streams: FakeEventSource[] = [];
  */
 class FakeEventSource {
   static readonly CLOSED = 2;
+  /** What the next session reports reaching. Not every start succeeds. */
+  static outcome = 'ready';
   readyState = 1;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
 
   constructor(readonly url: string) {
     streams.push(this);
-    // Announce readiness on the next tick, as a real runtime would.
-    queueMicrotask(() => this.announce('ready'));
+    // Announce the outcome on the next tick, as a real runtime would.
+    queueMicrotask(() => this.announce(FakeEventSource.outcome));
   }
   announce(status: string): void {
     this.onmessage?.({
@@ -80,10 +83,45 @@ function sentText(): string {
 
 let created = 0;
 
+/**
+ * Sessions the control plane already has, as the list endpoint reports them.
+ *
+ * Seeded per test rather than fixed, because the behaviours that only appear
+ * with a fleet — the canvas attachment budget, one session's action reaching
+ * another — cannot be reached from an owner with nothing running.
+ */
+let listing: Record<string, unknown>[] = [];
+
+/** `count` running sessions, distinguishable by start time as the rail shows them. */
+function seedSessions(count: number): void {
+  listing = Array.from({ length: count }, (_, i) => ({
+    id: `sesn_${i}`,
+    kernel: 'codex',
+    status: 'running',
+    created_at: new Date(Date.UTC(2026, 7, 14, 3, i)).toISOString(),
+  }));
+}
+
+/** A canvas node by session id, the way the canvas's own tests find one. */
+function canvasNode(id: string): HTMLElement {
+  const node = document.querySelector(`[data-node-id="${id}"]`);
+  if (node === null) {
+    throw new Error(`no node for session ${id}`);
+  }
+  return node as HTMLElement;
+}
+
+/** An attached node holds a terminal; an unattached one holds a sentence saying so. */
+function isAttached(id: string): boolean {
+  return within(canvasNode(id)).queryByRole('group') !== null;
+}
+
 beforeEach(() => {
   sockets.length = 0;
   created = 0;
   streams.length = 0;
+  listing = [];
+  FakeEventSource.outcome = 'ready';
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
@@ -94,8 +132,11 @@ beforeEach(() => {
         ({ ok: status < 400, status, json: async () => body }) as Response;
 
       if (url.endsWith('/api/v1/sessions') && (init?.method ?? 'GET') === 'GET') {
-        // A fresh owner with nothing running, so the console opens one.
-        return json(200, { sessions: [] });
+        // Empty unless a test seeded a fleet, which is the fresh-owner case.
+        return json(200, { sessions: listing });
+      }
+      if (init?.method === 'DELETE') {
+        return json(204, {});
       }
       if (url.endsWith('/api/v1/sessions') && init?.method === 'POST') {
         created += 1;
@@ -114,6 +155,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // The arrangement and the terminal palette persist per browser, so a test
+  // that chooses one would otherwise choose it for every test after it.
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -258,5 +302,141 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('tab')).toHaveLength(before + 1);
     });
+  });
+
+  it('arranges the same sessions on a canvas when asked', async () => {
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Canvas' }));
+
+    // The session is a framed node now, and it is still the same session: the
+    // rail still lists it and the details panel still describes it.
+    expect(await screen.findByRole('region', { name: /on codex/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.getByRole('complementary', { name: /session details/i })).toBeInTheDocument();
+  });
+
+  it('opens in the arrangement this browser last chose', async () => {
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(screen.getByRole('button', { name: 'Canvas' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps showing a session that ended on its own', async () => {
+    // Such a session leaves the rail — a list of everything ever run is not a
+    // list of someone's sessions — but whoever had it open is still owed the
+    // last thing it said, so the terminal stays rather than becoming a wait.
+    FakeEventSource.outcome = 'terminated';
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+
+    await waitFor(() => {
+      expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    });
+    expect(screen.getByRole('group', { name: /^Session .* on codex$/ })).toBeInTheDocument();
+    expect(screen.queryByText('Attaching…')).toBeNull();
+  });
+
+  it('ignores a stored arrangement this build does not have', async () => {
+    // Untrusted input: an older build, or another script on the origin, may
+    // have written it. Falling through to tabs is what keeps the console from
+    // rendering a mode that does not exist.
+    window.localStorage.setItem('chrono-bot:view-mode', 'split-screen');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(screen.getByRole('button', { name: 'Tabs' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('reconnects one session without redialling the rest of the canvas', async () => {
+    seedSessions(3);
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(sockets).toHaveLength(3);
+    });
+
+    await user.click(screen.getByRole('button', { name: /^reconnect/i }));
+
+    /*
+     * One more socket, not four more. Reconnect is a per-session button in a
+     * per-session panel; rebuilding the canvas would clear every scrollback on
+     * it and redial every session for one session's hiccup.
+     */
+    await waitFor(() => {
+      expect(sockets).toHaveLength(4);
+    });
+  });
+
+  it('reports a failed action without disconnecting the sessions that did not fail', async () => {
+    seedSessions(3);
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(sockets).toHaveLength(3);
+    });
+
+    // Nothing stubs the stop endpoint, so the request comes back 404 — the
+    // same shape as a 409, an expired token or a network blip.
+    await user.click(screen.getByRole('button', { name: /^end session/i }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    /*
+     * One session's request failed. Rendering the notice in place of the
+     * surface unmounted the canvas, so the other two lost their terminals and
+     * their connections to report something that was not about them.
+     */
+    expect(document.querySelectorAll('[data-node-id]')).toHaveLength(3);
+    expect(isAttached('sesn_1')).toBe(true);
+    expect(isAttached('sesn_2')).toBe(true);
+  });
+
+  it('keeps the node that inherits focus attached when a session is deleted', async () => {
+    /*
+     * The canvas spends its attachment budget from the focus history, so a
+     * session promoted to focused without entering that history is evicted the
+     * moment the history is full — the one node §15 says is never detached.
+     */
+    seedSessions(MAX_LIVE_NODES + 2);
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-node-id]')).toHaveLength(MAX_LIVE_NODES + 2);
+    });
+
+    // Every session except the first is put ahead of it in the history, so
+    // recency alone exhausts the budget once the focused one is gone.
+    for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
+      await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
+    }
+    await user.click(screen.getByRole('button', { name: /delete session/i }));
+    await user.click(screen.getByRole('button', { name: /delete permanently/i }));
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-node-id]')).toHaveLength(MAX_LIVE_NODES + 1);
+    });
+    expect(within(canvasNode('sesn_0')).getByRole('button')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(isAttached('sesn_0')).toBe(true);
   });
 });
