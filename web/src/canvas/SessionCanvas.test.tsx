@@ -359,6 +359,29 @@ describe('SessionCanvas attachment budget', () => {
     expect(sent.get(last)).toEqual(['z']);
   });
 
+  it('attaches the focused node even when the history has no room left for it', () => {
+    /*
+     * The budget is spent from the history the caller supplies, and a caller
+     * can hand over one that does not lead with the focused node — a session
+     * removed from the list, a restored history, a route that forgot to record
+     * a selection. §15's promise is about this component, so it holds anyway.
+     */
+    const { nodes, attached } = makeFleet(OVER);
+    const withoutFocused = nodes.slice(1).map((node) => node.session.id);
+
+    render(
+      <SessionCanvas
+        nodes={nodes}
+        focusedId="s-0"
+        focusHistory={withoutFocused}
+        onFocus={() => undefined}
+      />,
+    );
+
+    expect(attached.has('s-0')).toBe(true);
+    expect(attached.size).toBe(MAX_LIVE_NODES);
+  });
+
   it('evicts the node that has gone longest without focus', async () => {
     const user = userEvent.setup();
     const { nodes, attached } = makeFleet(OVER);
