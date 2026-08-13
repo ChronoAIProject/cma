@@ -121,6 +121,13 @@ pub struct AuthState {
     /// The state parameter is what binds a callback to the login that started
     /// it. Without it a callback from an unrelated flow would be accepted.
     pending: RwLock<HashMap<String, String>>,
+    /// Where a sign-in is written down, when this deployment keeps a record.
+    ///
+    /// Optional because a control plane can be stood up with a fixed subject
+    /// and no database in front of it, and in that mode nobody ever signs in —
+    /// so there is genuinely nothing to record rather than somewhere missing
+    /// to record it.
+    records: Option<records::SignInRecords>,
 }
 
 /// Derive the PKCE challenge for a verifier, per S256.
@@ -132,10 +139,11 @@ fn code_challenge(verifier: &str) -> String {
 }
 
 impl AuthState {
-    /// Build auth state for a mode.
-    pub fn new(mode: AuthMode) -> Arc<Self> {
+    /// Build auth state for a mode, and for wherever sign-ins are recorded.
+    pub fn new(mode: AuthMode, records: Option<records::SignInRecords>) -> Arc<Self> {
         Arc::new(Self {
             mode,
+            records,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
@@ -344,7 +352,10 @@ pub async fn attach_subject(
 
 pub mod capabilities;
 pub mod flow;
+pub mod records;
 pub mod refresh;
+
+pub use records::SignInRecords;
 
 pub use flow::router;
 
@@ -373,9 +384,12 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_mode_attributes_every_request_to_one_subject() {
-        let auth = AuthState::new(AuthMode::Trusted {
-            subject: "local-developer".into(),
-        });
+        let auth = AuthState::new(
+            AuthMode::Trusted {
+                subject: "local-developer".into(),
+            },
+            None,
+        );
         assert!(!auth.requires_credential());
         let got = auth.resolve(&HeaderMap::new()).await;
         assert_eq!(got, Some(SubjectId("local-developer".into())));
@@ -383,24 +397,30 @@ mod tests {
 
     #[tokio::test]
     async fn provider_mode_rejects_a_request_with_no_cookie() {
-        let auth = AuthState::new(AuthMode::Provider {
-            base_url: "http://provider.invalid".into(),
-            client_id: "client".into(),
-            client_secret: "secret".into(),
-            public_url: "http://service.invalid".into(),
-        });
+        let auth = AuthState::new(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "client".into(),
+                client_secret: "secret".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+        );
         assert!(auth.requires_credential());
         assert_eq!(auth.resolve(&HeaderMap::new()).await, None);
     }
 
     #[tokio::test]
     async fn an_issued_session_resolves_and_stops_resolving_after_logout() {
-        let auth = AuthState::new(AuthMode::Provider {
-            base_url: "http://provider.invalid".into(),
-            client_id: "client".into(),
-            client_secret: "secret".into(),
-            public_url: "http://service.invalid".into(),
-        });
+        let auth = AuthState::new(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "client".into(),
+                client_secret: "secret".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+        );
         let token = auth.issue_session(SubjectId("subject-a".into())).await;
         let h = headers_with_cookie(&format!("{SESSION_COOKIE}={token}"));
         assert_eq!(auth.resolve(&h).await, Some(SubjectId("subject-a".into())));
@@ -411,12 +431,15 @@ mod tests {
 
     #[tokio::test]
     async fn discovery_against_an_unreachable_provider_reports_why() {
-        let auth = AuthState::new(AuthMode::Provider {
-            base_url: "http://127.0.0.1:1".into(),
-            client_id: "c".into(),
-            client_secret: "s".into(),
-            public_url: "http://service.invalid".into(),
-        });
+        let auth = AuthState::new(
+            AuthMode::Provider {
+                base_url: "http://127.0.0.1:1".into(),
+                client_id: "c".into(),
+                client_secret: "s".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+        );
         let err = auth.metadata().await.expect_err("must fail");
         assert!(err.contains("discovery request"), "got {err}");
     }

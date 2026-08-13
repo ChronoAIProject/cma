@@ -48,6 +48,13 @@ pub struct Config {
     pub mongodb_uri: String,
     /// Database holding session records and their history.
     pub mongodb_database: String,
+    /// How long a recorded action is kept.
+    ///
+    /// Configuration rather than a constant because how far back a deployment
+    /// must be able to account for itself is a decision about that deployment.
+    /// It reaches the database as an index, so lowering it removes what is
+    /// already stored rather than only affecting what is stored next.
+    pub activity_retention: std::time::Duration,
     /// Bucket holding stored session context.
     ///
     /// Named explicitly rather than defaulted, and the only bucket this
@@ -100,6 +107,11 @@ impl Config {
         // store would accept work it silently cannot keep.
         let mongodb_uri = require("CHRONO_MONGODB_URI")?;
         let mongodb_database = var_or("CHRONO_MONGODB_DATABASE", "chrono_bot");
+        // Ninety days by default: long enough to investigate something nobody
+        // noticed at the time, short enough that a collection holding one
+        // document per request does not grow without limit. A deployment with
+        // a longer obligation raises it deliberately.
+        let activity_retention = days("CHRONO_ACTIVITY_RETENTION_DAYS", 90)?;
         // No default. The bucket is created and owned by whoever runs the
         // platform, and every object this service writes lands in it, so
         // guessing a name would mean writing somewhere nobody chose.
@@ -171,6 +183,7 @@ impl Config {
             platform_base_url,
             mongodb_uri,
             mongodb_database,
+            activity_retention,
             context_bucket,
             storage_client_id,
             storage_client_secret,
@@ -199,6 +212,28 @@ fn require(key: &str) -> Result<String, String> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
+/// Read a number of days as a duration.
+fn days(key: &str, default: u64) -> Result<std::time::Duration, String> {
+    parse_days(key, &var_or(key, &default.to_string()))
+}
+
+/// Turn a written number of days into a duration.
+///
+/// A value that is not a positive whole number of days is refused rather than
+/// silently replaced by the default: a retention set to `"ninety"` or to `0`
+/// is somebody trying to say something, and quietly ignoring it would keep or
+/// discard records against their intent.
+fn parse_days(key: &str, raw: &str) -> Result<std::time::Duration, String> {
+    let days: u64 = raw
+        .trim()
+        .parse()
+        .map_err(|e| format!("{key} must be a whole number of days, got {raw:?}: {e}"))?;
+    if days == 0 {
+        return Err(format!("{key} must be at least one day, got {raw:?}"));
+    }
+    Ok(std::time::Duration::from_secs(days * 86_400))
 }
 
 /// Read a comma-separated list, dropping blank entries.
@@ -233,6 +268,36 @@ mod tests {
     }
 
     #[test]
+    fn a_retention_falls_back_to_its_default_in_whole_days() {
+        let d = days("CHRONO_TEST_ABSENT_RETENTION", 90).expect("the default is usable");
+        assert_eq!(d.as_secs(), 90 * 86_400);
+        assert_eq!(
+            parse_days("CHRONO_ACTIVITY_RETENTION_DAYS", " 7 ")
+                .expect("whitespace is not a value")
+                .as_secs(),
+            7 * 86_400
+        );
+    }
+
+    #[test]
+    fn a_retention_that_is_not_a_number_of_days_is_refused_rather_than_defaulted() {
+        // Quietly ignoring it would keep records for a length of time nobody
+        // chose, which is the failure mode this exists to prevent.
+        for raw in ["ninety", "-1", "90d", ""] {
+            let err = parse_days("CHRONO_ACTIVITY_RETENTION_DAYS", raw)
+                .expect_err("{raw:?} is not a number of days");
+            assert!(err.contains("CHRONO_ACTIVITY_RETENTION_DAYS"), "got {err}");
+        }
+    }
+
+    #[test]
+    fn a_retention_of_no_days_is_refused_rather_than_deleting_everything() {
+        let err =
+            parse_days("CHRONO_ACTIVITY_RETENTION_DAYS", "0").expect_err("zero is not a retention");
+        assert!(err.contains("at least one day"), "got {err}");
+    }
+
+    #[test]
     fn auth_mode_names_match_the_variants() {
         let c = Config {
             bind: "0.0.0.0:8080".into(),
@@ -250,6 +315,7 @@ mod tests {
             platform_base_url: "http://p".into(),
             mongodb_uri: "mongodb://h/db".into(),
             mongodb_database: "db".into(),
+            activity_retention: std::time::Duration::from_secs(90 * 86_400),
             context_bucket: "bkt".into(),
             storage_client_id: "sa-id".into(),
             storage_client_secret: "sa-secret".into(),
