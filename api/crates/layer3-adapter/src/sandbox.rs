@@ -1,0 +1,302 @@
+//! Client for the sandbox provider that isolates agent runtimes.
+//!
+//! Shared infrastructure rather than a kernel: every kernel runs inside a
+//! sandbox, so this sits beside the kernel modules instead of inside one. It is
+//! not part of the abstraction in `lib.rs` — that file stays free of anything a
+//! particular deployment depends on.
+//!
+//! The wire contract follows the provider's published lifecycle API: an API key
+//! in a header, camelCase bodies, 202 on create and 204 on delete.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+/// Header carrying the provider API key.
+const API_KEY_HEADER: &str = "OPEN-SANDBOX-API-KEY";
+
+/// How a sandbox is described at creation.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxRequest {
+    /// Image the sandbox runs.
+    pub image: ImageSpec,
+    /// Process started inside it.
+    pub entrypoint: Vec<String>,
+    /// Environment for that process.
+    pub env: BTreeMap<String, String>,
+    /// Hard resource caps.
+    pub resource_limits: BTreeMap<String, String>,
+    /// Seconds before the provider reclaims the sandbox.
+    pub timeout: Option<u64>,
+    /// Free-form tags, used for correlation and cleanup.
+    pub metadata: BTreeMap<String, String>,
+}
+
+/// Image reference for a sandbox.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImageSpec {
+    /// Image URI in standard form.
+    pub uri: String,
+}
+
+/// Lifecycle facts, nested under `status` rather than reported at top level.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SandboxStatus {
+    /// Provider lifecycle state.
+    #[serde(default)]
+    pub state: String,
+    /// Machine-readable reason for that state.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// A sandbox as the provider reports it.
+///
+/// Deliberately forward-compatible: fields the provider adds later are ignored
+/// rather than breaking deserialization.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Sandbox {
+    /// Provider-assigned identifier.
+    pub id: String,
+    /// Current lifecycle status.
+    #[serde(default)]
+    pub status: Option<SandboxStatus>,
+}
+
+impl Sandbox {
+    /// Whether the sandbox is serving.
+    pub fn is_running(&self) -> bool {
+        self.status
+            .as_ref()
+            .map(|s| s.state.eq_ignore_ascii_case("running"))
+            .unwrap_or(false)
+    }
+}
+
+/// Where a port inside a sandbox can be reached.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Endpoint {
+    /// Host and path to reach the service.
+    pub endpoint: String,
+}
+
+/// Failures talking to the provider.
+#[derive(Debug, thiserror::Error)]
+pub enum SandboxError {
+    /// The provider could not be reached.
+    #[error("sandbox provider unreachable: {0}")]
+    Unreachable(String),
+    /// The provider rejected the request.
+    #[error("sandbox provider returned {status}: {detail}")]
+    Rejected {
+        /// HTTP status returned.
+        status: u16,
+        /// Body, truncated. Never contains the API key.
+        detail: String,
+    },
+    /// The response did not match the expected shape.
+    #[error("sandbox provider response not usable: {0}")]
+    Malformed(String),
+}
+
+/// Thin client over the sandbox lifecycle API.
+pub struct SandboxClient {
+    base_url: String,
+    api_key: String,
+    http: reqwest::Client,
+}
+
+impl SandboxClient {
+    /// Build a client.
+    ///
+    /// The key is held here and sent only as a header; it never appears in a
+    /// URL, a log line, or an error body.
+    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            api_key: api_key.into(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("http client builds"),
+        }
+    }
+
+    /// Base URL this client talks to.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Create a sandbox.
+    pub async fn create(&self, request: &SandboxRequest) -> Result<Sandbox, SandboxError> {
+        let url = format!("{}/v1/sandboxes", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(format!("POST {url}: {e}")))?;
+        Self::decode(resp).await
+    }
+
+    /// Read a sandbox back.
+    pub async fn get(&self, id: &str) -> Result<Sandbox, SandboxError> {
+        let url = format!("{}/v1/sandboxes/{id}", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(format!("GET {url}: {e}")))?;
+        Self::decode(resp).await
+    }
+
+    /// Resolve how to reach a port inside the sandbox.
+    ///
+    /// The server-proxied form is requested deliberately. The direct form
+    /// returns a pod address that changes whenever the sandbox is rescheduled,
+    /// and reaching it bypasses the provider's own access control.
+    pub async fn endpoint(&self, id: &str, port: u16) -> Result<Endpoint, SandboxError> {
+        let url = format!(
+            "{}/v1/sandboxes/{id}/endpoints/{port}?use_server_proxy=true",
+            self.base_url
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(format!("GET {url}: {e}")))?;
+        Self::decode(resp).await
+    }
+
+    /// Delete a sandbox. A sandbox already gone is not an error.
+    pub async fn delete(&self, id: &str) -> Result<(), SandboxError> {
+        let url = format!("{}/v1/sandboxes/{id}", self.base_url);
+        let resp = self
+            .http
+            .delete(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| SandboxError::Unreachable(format!("DELETE {url}: {e}")))?;
+        let status = resp.status();
+        if status.is_success() || status.as_u16() == 404 {
+            return Ok(());
+        }
+        Err(SandboxError::Rejected {
+            status: status.as_u16(),
+            detail: truncate(&resp.text().await.unwrap_or_default()),
+        })
+    }
+
+    /// The header name callers must set to reach a proxied endpoint.
+    pub fn auth_header(&self) -> (&'static str, &str) {
+        (API_KEY_HEADER, &self.api_key)
+    }
+
+    async fn decode<T: serde::de::DeserializeOwned>(
+        resp: reqwest::Response,
+    ) -> Result<T, SandboxError> {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(SandboxError::Rejected {
+                status: status.as_u16(),
+                detail: truncate(&body),
+            });
+        }
+        serde_json::from_str(&body).map_err(|e| SandboxError::Malformed(format!("{e}")))
+    }
+}
+
+/// Keep an error body short enough to log without dumping a response.
+fn truncate(body: &str) -> String {
+    const MAX: usize = 300;
+    if body.len() <= MAX {
+        return body.to_string();
+    }
+    format!("{}…", &body[..MAX])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_url_loses_its_trailing_slash() {
+        let c = SandboxClient::new("http://provider/", "k");
+        assert_eq!(c.base_url(), "http://provider");
+    }
+
+    #[test]
+    fn the_api_key_travels_as_a_header_not_a_url() {
+        let c = SandboxClient::new("http://provider", "super-secret");
+        let (name, value) = c.auth_header();
+        assert_eq!(name, "OPEN-SANDBOX-API-KEY");
+        assert_eq!(value, "super-secret");
+        assert!(
+            !c.base_url().contains("super-secret"),
+            "the key must never be part of a URL"
+        );
+    }
+
+    #[test]
+    fn a_running_sandbox_is_recognised_case_insensitively() {
+        let s: Sandbox =
+            serde_json::from_str(r#"{"id":"a","status":{"state":"Running","reason":"RUNNING"}}"#)
+                .expect("parses");
+        assert!(s.is_running());
+    }
+
+    #[test]
+    fn a_pending_sandbox_is_not_running() {
+        let s: Sandbox =
+            serde_json::from_str(r#"{"id":"a","status":{"state":"Pending"}}"#).expect("parses");
+        assert!(!s.is_running());
+
+        let no_status: Sandbox = serde_json::from_str(r#"{"id":"a"}"#).expect("parses");
+        assert!(!no_status.is_running());
+    }
+
+    #[test]
+    fn unknown_response_fields_are_ignored() {
+        // The provider adds fields over time; a new one must not break us.
+        let s: Sandbox = serde_json::from_str(
+            r#"{"id":"a","status":{"state":"Running","somethingNew":1},"expiresAt":"x"}"#,
+        )
+        .expect("forward-compatible");
+        assert_eq!(s.id, "a");
+    }
+
+    #[test]
+    fn a_request_serializes_with_camel_case_keys() {
+        let r = SandboxRequest {
+            image: ImageSpec {
+                uri: "example/image:1".into(),
+            },
+            entrypoint: vec!["/bin/run".into()],
+            env: BTreeMap::from([("A".to_string(), "1".to_string())]),
+            resource_limits: BTreeMap::from([("cpu".to_string(), "1".to_string())]),
+            timeout: Some(3600),
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_value(&r).expect("serializes");
+        assert!(json.get("resourceLimits").is_some(), "got {json}");
+        assert_eq!(json["image"]["uri"], "example/image:1");
+    }
+
+    #[test]
+    fn long_error_bodies_are_truncated() {
+        let long = "x".repeat(1000);
+        let t = truncate(&long);
+        assert!(t.len() < 400, "got {} chars", t.len());
+        assert!(t.ends_with('…'));
+        assert_eq!(truncate("short"), "short");
+    }
+}
