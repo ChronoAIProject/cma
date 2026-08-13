@@ -49,10 +49,24 @@ export function SessionCanvas({ nodes, focusedId, focusHistory, onFocus }: Sessi
     () => nodes.filter((node) => node.driver !== null).map((node) => node.session.id),
     [nodes],
   );
-  const live = useMemo(
-    () => selectLiveWindow(connectable, focusHistory),
-    [connectable, focusHistory],
+  /*
+   * The focused node heads the list the budget is spent from. That is the
+   * definition of the list applied rather than a special case — the focused
+   * node is the most recently focused one — but stating it here is what makes
+   * §15's "the focused node is never the one detached" a property of this
+   * component instead of a promise about how every caller maintains a history.
+   * A caller that hands over a stale or out-of-order history gets a canvas that
+   * attaches the wrong nodes; it must never get one that detaches the node
+   * somebody is typing into.
+   */
+  const recency = useMemo(
+    () =>
+      focusedId === null
+        ? focusHistory
+        : [focusedId, ...focusHistory.filter((id) => id !== focusedId)],
+    [focusHistory, focusedId],
   );
+  const live = useMemo(() => selectLiveWindow(connectable, recency), [connectable, recency]);
   const dropped = connectable.length - live.size;
 
   const registerHandle = useCallback((id: string, element: HTMLButtonElement | null) => {
