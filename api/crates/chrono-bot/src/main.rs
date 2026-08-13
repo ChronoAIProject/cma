@@ -7,6 +7,7 @@
 
 mod auth;
 mod config;
+mod renewal;
 mod screen;
 
 use std::collections::HashMap;
@@ -87,6 +88,9 @@ async fn main() {
             ),
             CodexSandboxSpec {
                 image: config.sandbox_image.clone(),
+                upstream_base_url: config.upstream_base_url.clone(),
+                upstream_model: config.upstream_model.clone(),
+                upstream_wire_api: config.upstream_wire_api.clone(),
                 ..CodexSandboxSpec::default()
             },
         )),
@@ -104,6 +108,10 @@ async fn main() {
              to the same principal. This must never be used outside local development."
         );
     }
+
+    // Keeps delegated credentials valid underneath running sessions, and pushes
+    // each renewal into the runtimes already using the old value.
+    renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(config.cors_origins.clone()))

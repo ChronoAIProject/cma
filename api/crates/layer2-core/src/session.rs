@@ -102,6 +102,14 @@ pub struct SessionSpec {
     /// Terminal geometry to start the runtime at.
     #[serde(default)]
     pub geometry: Option<TerminalGeometry>,
+    /// A credential the owner has delegated to the runtime, if any.
+    ///
+    /// The core stores and forwards this without interpreting it. It is never
+    /// serialized back out, never logged, and never rendered by an interface:
+    /// it exists so the runtime can act on the owner's behalf, not so anything
+    /// here can read it.
+    #[serde(skip)]
+    pub subject_credential: Option<String>,
 }
 
 /// A session and everything the core knows about it.

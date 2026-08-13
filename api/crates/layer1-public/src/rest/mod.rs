@@ -18,7 +18,7 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::AuthenticatedSubject;
+use crate::auth::{AuthenticatedSubject, DelegatedCredential};
 use crate::{InterfaceProfile, Operation};
 
 /// Base URI for problem types this interface returns.
@@ -151,6 +151,9 @@ pub fn router(service: Arc<SessionService>) -> Router {
 async fn create(
     State(service): State<Arc<SessionService>>,
     AuthenticatedSubject(subject): AuthenticatedSubject,
+    // Optional on purpose: a deployment with no delegation configured still
+    // creates sessions, they simply cannot call out as the owner.
+    credential: Option<axum::Extension<DelegatedCredential>>,
     Json(body): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionView>), Problem> {
     let geometry = match (body.cols, body.rows) {
@@ -163,6 +166,7 @@ async fn create(
             SessionSpec {
                 kernel: KernelId::new(body.kernel),
                 geometry,
+                subject_credential: credential.map(|axum::Extension(c)| c.0),
             },
         )
         .await?;

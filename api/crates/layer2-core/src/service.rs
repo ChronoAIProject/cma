@@ -57,19 +57,22 @@ impl Drop for AttachmentHandle {
     }
 }
 
-struct SessionEntry {
-    session: Session,
+pub(crate) struct SessionEntry {
+    pub(crate) session: Session,
+    /// Owner-delegated credential last handed to the runtime. Held so a refresh
+    /// can be pushed without the caller tracking which sessions exist.
+    pub(crate) subject_credential: Option<String>,
     events: Vec<Event>,
     screen: Arc<Mutex<Box<dyn ScreenModel>>>,
     runtime: Option<RuntimeHandle>,
-    input: Option<mpsc::Sender<TerminalInput>>,
+    pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
     live: broadcast::Sender<Vec<u8>>,
     attached: bool,
 }
 
 /// The core service.
 pub struct SessionService {
-    entries: RwLock<HashMap<SessionId, SessionEntry>>,
+    pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
     adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
     screen_factory: ScreenFactory,
 }
@@ -118,6 +121,7 @@ impl SessionService {
                     cols: geometry.columns(),
                     rows: geometry.rows(),
                 },
+                subject_credential: spec.subject_credential.clone(),
             })
             .await
             .map_err(|e| CoreError::RuntimeUnavailable(e.to_string()))?;
@@ -145,6 +149,7 @@ impl SessionService {
 
         let mut entry = SessionEntry {
             session: session.clone(),
+            subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle),
@@ -166,6 +171,15 @@ impl SessionService {
         // The relay runs for the session's life, independent of any client.
         // This is what makes a reattach cheap and a detached session correct.
         spawn_relay(id.clone(), channel.output, screen, live);
+
+        // Hand over the owner's credential before the agent can need it, so the
+        // first turn is already authenticated.
+        if let Some(credential) = spec.subject_credential.clone() {
+            let _ = channel
+                .input
+                .send(TerminalInput::Credential(credential))
+                .await;
+        }
 
         // Ask the runtime to match the requested geometry before anything is
         // painted, so the first frame is never rendered at the wrong size.
