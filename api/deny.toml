@@ -37,6 +37,31 @@ private = { ignore = true }
 name = "tiny-keccak"
 allow = ["CC0-1.0"]
 
+# A second narrowly scoped exception, on the same terms.
+#
+# webpki-roots is Mozilla's CA root store. Its licence is CDLA-Permissive-2.0
+# because the crate is data rather than code: the certificates are the content,
+# and that licence exists for exactly this case. It is permissive — use,
+# modification and redistribution are granted with no copyleft and no
+# obligation beyond preserving disclaimers — so it is no more restrictive than
+# anything already allowed.
+#
+# Unlike tiny-keccak this one *is* linked into shipped binaries, which is why it
+# is stated explicitly rather than waved through as a build dependency. It is
+# the trust anchor set for outbound TLS and arrives through two independent
+# paths:
+#   mongodb  -> webpki-roots
+#   reqwest  -> hyper-rustls -> webpki-roots
+# Removing it would mean shipping without a CA bundle or sourcing one at
+# runtime, both of which are worse than accepting a permissive data licence.
+#
+# Scoped to this crate on purpose: a blanket CDLA-Permissive-2.0 entry would
+# silently accept the next piece of bundled data, which is the thing this gate
+# exists to make someone look at.
+[[licenses.exceptions]]
+name = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
