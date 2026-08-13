@@ -11,7 +11,7 @@
 use futures_util::TryStreamExt;
 use layer2_core::{
     store::{StoreError, UserDirectoryStore},
-    RegisteredUser, SubjectId,
+    DirectoryQuery, RegisteredUser, SubjectId,
 };
 use mongodb::bson::doc;
 use mongodb::options::{IndexOptions, UpdateOptions};
@@ -101,23 +101,46 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
         Ok(())
     }
 
-    async fn list(&self) -> Result<Vec<RegisteredUser>, StoreError> {
-        let mut cursor = self
+    async fn recent(&self, query: &DirectoryQuery) -> Result<Vec<RegisteredUser>, StoreError> {
+        // The limit goes to the server. Reading the collection and truncating
+        // here would leave the cost this bound exists to remove.
+        let cursor = self
             .users
             .find(doc! {})
             .sort(doc! { "last_seen": -1 })
+            .limit(i64::try_from(query.limit).unwrap_or(i64::MAX))
             .await
             .map_err(|e| StoreError::Unavailable(format!("list users: {e}")))?;
-        let mut out = Vec::new();
-        while let Some(d) = cursor
-            .try_next()
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("user cursor: {e}")))?
-        {
-            out.push(from_doc(d));
-        }
-        Ok(out)
+        collect(cursor).await
     }
+
+    async fn by_subjects(&self, subjects: &[SubjectId]) -> Result<Vec<RegisteredUser>, StoreError> {
+        if subjects.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Bounded by what was asked about, and served from the `_id` index the
+        // collection already has.
+        let ids: Vec<&str> = subjects.iter().map(SubjectId::as_str).collect();
+        let cursor = self
+            .users
+            .find(doc! { "_id": { "$in": ids } })
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("name users: {e}")))?;
+        collect(cursor).await
+    }
+}
+
+/// Drain a cursor into the core's model.
+async fn collect(mut cursor: mongodb::Cursor<UserDoc>) -> Result<Vec<RegisteredUser>, StoreError> {
+    let mut out = Vec::new();
+    while let Some(d) = cursor
+        .try_next()
+        .await
+        .map_err(|e| StoreError::Unavailable(format!("user cursor: {e}")))?
+    {
+        out.push(from_doc(d));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

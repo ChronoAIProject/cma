@@ -28,9 +28,9 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    ActivityQuery, ActivityRecord, ActivityService, Caller, CoreError, ProviderView,
-    RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId, UserDirectory,
-    DEFAULT_ACTIVITY_LIMIT,
+    ActivityQuery, ActivityRecord, ActivityService, Caller, CoreError, DirectoryQuery,
+    ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId,
+    UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
@@ -289,6 +289,14 @@ impl InventoryView {
     }
 }
 
+/// Which entries a read of the directory wants.
+#[derive(Debug, Deserialize)]
+pub struct DirectoryParams {
+    /// Most entries to return. The core clamps this, as it does for the record.
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
 /// Which entries a read of the record wants.
 #[derive(Debug, Deserialize)]
 pub struct ActivityParams {
@@ -334,8 +342,17 @@ pub fn router(state: Arc<AdminState>) -> Router {
 async fn users(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    Query(params): Query<DirectoryParams>,
 ) -> Result<Json<Vec<UserView>>, AdminProblem> {
-    let users = state.users.list(&caller).await?;
+    let users = state
+        .users
+        .list(
+            &caller,
+            DirectoryQuery {
+                limit: params.limit.unwrap_or(DEFAULT_DIRECTORY_LIMIT),
+            },
+        )
+        .await?;
     Ok(Json(users.into_iter().map(UserView::from).collect()))
 }
 
@@ -370,10 +387,13 @@ async fn sessions(
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Result<Json<Vec<AdminSessionView>>, AdminProblem> {
     // Two core calls, each answering for its own capability. Reading everyone's
-    // work and reading who those people are stay separate grants, and this
-    // surface simply needs both.
+    // work and reading who those people are stay separate grants: the list is
+    // opened by the first, and the second only decides whether the owners come
+    // back named or as identifiers. Naming is scoped to the page, so a bounded
+    // list stays bounded rather than dragging the whole directory behind it.
     let sessions = state.sessions.list_all_sessions(&caller).await?;
-    let names = state.users.labels(&caller).await?;
+    let owners: Vec<SubjectId> = sessions.iter().map(|s| s.owner.clone()).collect();
+    let names = state.users.names_known_to(&caller, &owners).await?;
     Ok(Json(
         sessions
             .into_iter()
