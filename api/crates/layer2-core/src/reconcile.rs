@@ -139,9 +139,18 @@ impl SessionService {
                 Ok(runtimes) => {
                     let mut owners = HashMap::new();
                     let mut handles = HashSet::new();
-                    for (handle, session) in runtimes {
-                        handles.insert(handle.0.clone());
-                        owners.insert(handle.0, session);
+                    for listing in runtimes {
+                        // A runtime this control plane did not create is not
+                        // its business. It still counts as alive — a session of
+                        // ours pointing at it is not lost — but it is never
+                        // reclaimed, because the only thing that knows whether
+                        // it should exist is whoever made it.
+                        if !self.may_judge(listing.created_by.as_deref()) {
+                            handles.insert(listing.handle.0);
+                            continue;
+                        }
+                        handles.insert(listing.handle.0.clone());
+                        owners.insert(listing.handle.0, listing.session);
                     }
                     RuntimeCensus {
                         handles,
@@ -162,6 +171,19 @@ impl SessionService {
             census.insert(kernel.clone(), view);
         }
         census
+    }
+
+    /// Whether a runtime carrying this creator is this control plane's to judge.
+    ///
+    /// Its own, always. One carrying no identity only if this deployment owns
+    /// the provider — otherwise a second control plane sharing the key would
+    /// tear down every session that predates identities being recorded.
+    fn may_judge(&self, created_by: Option<&str>) -> bool {
+        match (created_by, self.identity.as_deref()) {
+            (Some(theirs), Some(ours)) => theirs == ours,
+            (Some(_), None) => false,
+            (None, _) => self.adopts_untagged,
+        }
     }
 
     /// Give one session whatever it is missing.
