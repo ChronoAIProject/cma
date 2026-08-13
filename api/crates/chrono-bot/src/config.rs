@@ -31,6 +31,12 @@ pub struct Config {
     pub upstream_wire_api: String,
     /// Root of the identity platform a session's CLI acts against.
     pub platform_base_url: String,
+    /// Connection string for the durable session store.
+    pub mongodb_uri: String,
+    /// Database holding session records and their history.
+    pub mongodb_database: String,
+    /// Bucket holding stored session context.
+    pub context_bucket: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
 }
@@ -51,6 +57,11 @@ impl Config {
         // Defaults to the same provider this service authenticates against, so
         // a session acts on the platform as the person who signed in.
         let platform_base_url = var_or("CHRONO_PLATFORM_BASE_URL", "");
+        // Required: sessions are durable, and a service that starts without a
+        // store would accept work it silently cannot keep.
+        let mongodb_uri = require("CHRONO_MONGODB_URI")?;
+        let mongodb_database = var_or("CHRONO_MONGODB_DATABASE", "chrono_bot");
+        let context_bucket = var_or("CHRONO_CONTEXT_BUCKET", "chrono-platform-chrono-bot");
         // The key is read from a file rather than an environment variable so it
         // can be delivered by a mounted secret and rotated without a restart of
         // the surrounding config, matching how neighbouring control planes do it.
@@ -111,6 +122,9 @@ impl Config {
             upstream_model,
             upstream_wire_api,
             platform_base_url,
+            mongodb_uri,
+            mongodb_database,
+            context_bucket,
             auth_mode,
         })
     }
@@ -168,6 +182,9 @@ mod tests {
             upstream_model: "m".into(),
             upstream_wire_api: "responses".into(),
             platform_base_url: "http://p".into(),
+            mongodb_uri: "mongodb://h/db".into(),
+            mongodb_database: "db".into(),
+            context_bucket: "bkt".into(),
             auth_mode: AuthMode::Trusted {
                 subject: "s".into(),
             },
