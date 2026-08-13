@@ -12,6 +12,7 @@
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
+use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::directory::RegisteredUser;
 use crate::environment::EnvironmentProfile;
 use crate::event::Event;
@@ -114,6 +115,30 @@ pub trait EnvironmentProfileStore: Send + Sync {
     /// Sessions already started with it are unaffected: they were handed a
     /// resolved bundle at creation and never read the profile again.
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError>;
+}
+
+/// The durable record of what the service was asked to do.
+///
+/// Append-only by construction: there is no method that edits or removes an
+/// entry, because an account of what happened that can be rewritten is not an
+/// account of anything.
+///
+/// **Entries do not accumulate forever.** An implementation is required to
+/// expire them, and how long it keeps them is its own decision to state — an
+/// unbounded collection of one document per request is an outage waiting for a
+/// busy week. Nothing in the core reads an expired entry back, and nothing
+/// depends on one being there.
+#[async_trait::async_trait]
+pub trait ActivityStore: Send + Sync {
+    /// Keep one entry.
+    async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError>;
+
+    /// The most recent entries matching a query, newest first.
+    ///
+    /// Newest first because that is the only order this is ever read in: the
+    /// question is always "what has been happening", never "what happened at
+    /// the beginning".
+    async fn recent(&self, query: &ActivityQuery) -> Result<Vec<ActivityRecord>, StoreError>;
 }
 
 /// The subjects that have used this service.
