@@ -25,14 +25,16 @@ const streams: FakeEventSource[] = [];
  */
 class FakeEventSource {
   static readonly CLOSED = 2;
+  /** What the next session reports reaching. Not every start succeeds. */
+  static outcome = 'ready';
   readyState = 1;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
 
   constructor(readonly url: string) {
     streams.push(this);
-    // Announce readiness on the next tick, as a real runtime would.
-    queueMicrotask(() => this.announce('ready'));
+    // Announce the outcome on the next tick, as a real runtime would.
+    queueMicrotask(() => this.announce(FakeEventSource.outcome));
   }
   announce(status: string): void {
     this.onmessage?.({
@@ -84,6 +86,7 @@ beforeEach(() => {
   sockets.length = 0;
   created = 0;
   streams.length = 0;
+  FakeEventSource.outcome = 'ready';
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
@@ -258,5 +261,61 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('tab')).toHaveLength(before + 1);
     });
+  });
+
+  it('arranges the same sessions on a canvas when asked', async () => {
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Canvas' }));
+
+    // The session is a framed node now, and it is still the same session: the
+    // rail still lists it and the details panel still describes it.
+    expect(await screen.findByRole('region', { name: /on codex/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.getByRole('complementary', { name: /session details/i })).toBeInTheDocument();
+  });
+
+  it('opens in the arrangement this browser last chose', async () => {
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(screen.getByRole('button', { name: 'Canvas' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps showing a session that ended on its own', async () => {
+    // Such a session leaves the rail — a list of everything ever run is not a
+    // list of someone's sessions — but whoever had it open is still owed the
+    // last thing it said, so the terminal stays rather than becoming a wait.
+    FakeEventSource.outcome = 'terminated';
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+
+    await waitFor(() => {
+      expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    });
+    expect(screen.getByRole('group', { name: /^Session .* on codex$/ })).toBeInTheDocument();
+    expect(screen.queryByText('Attaching…')).toBeNull();
+  });
+
+  it('ignores a stored arrangement this build does not have', async () => {
+    // Untrusted input: an older build, or another script on the origin, may
+    // have written it. Falling through to tabs is what keeps the console from
+    // rendering a mode that does not exist.
+    window.localStorage.setItem('chrono-bot:view-mode', 'split-screen');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(screen.getByRole('button', { name: 'Tabs' })).toHaveAttribute('aria-pressed', 'true');
   });
 });
