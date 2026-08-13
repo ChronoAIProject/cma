@@ -8,6 +8,9 @@
 //! every interface and every runtime needs, so that an interface exposing a
 //! subset is a projection rather than a compromise.
 
+pub mod activity;
+pub mod activity_detail;
+pub mod activity_service;
 pub mod authz;
 mod clock;
 mod credentials;
@@ -59,6 +62,12 @@ mod transcript;
 #[path = "transcript_tests.rs"]
 mod transcript_tests;
 
+pub use activity::{
+    ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityTarget,
+    DEFAULT_ACTIVITY_LIMIT, MAX_ACTIVITY_LIMIT,
+};
+pub use activity_detail::{ActivityDetail, DetailKey};
+pub use activity_service::ActivityService;
 pub use authz::{Authorization, Caller, Capability};
 pub use directory::{RegisteredUser, UserDirectory};
 pub use environment::{
@@ -75,7 +84,7 @@ pub use reconcile::Reclaimed;
 pub use service::{AttachmentHandle, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{
-    ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord, SessionStore,
-    StoreError, UserDirectoryStore,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
+    SessionStore, StoreError, UserDirectoryStore,
 };
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
