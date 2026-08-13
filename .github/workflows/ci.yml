@@ -38,6 +38,8 @@ jobs:
           expected=$(printf '%s\n' \
             infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
             infra/api/secret.yaml infra/api/service.yaml \
+            infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
+            infra/api/httproute.yaml \
             infra/runtime/Dockerfile \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
             infra/web/secret.yaml infra/web/service.yaml | sort)
@@ -167,7 +169,15 @@ jobs:
           curl -sSL -o kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
           tar xzf kubeconform.tar.gz kubeconform
-          ./kubeconform -strict -summary -output text infra/api/*.yaml infra/web/*.yaml
+          # The routes and the secret-provider class are custom resources, and
+          # kubeconform ships schemas only for built-in kinds. They are given a
+          # schema catalogue rather than -ignore-missing-schemas: skipping
+          # validation for exactly the manifests most likely to be hand-edited
+          # would leave the gate reporting success on files it never read.
+          ./kubeconform -strict -summary -output text \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            infra/api/*.yaml infra/web/*.yaml
       - name: kube-linter
         uses: stackrox/kube-linter-action@v1
         with:
