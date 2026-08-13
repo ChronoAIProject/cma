@@ -16,6 +16,7 @@ pub mod event;
 pub mod ids;
 pub mod service;
 pub mod session;
+pub mod store;
 pub mod terminal;
 
 pub use authz::{Authorization, Caller, Capability};
@@ -24,4 +25,5 @@ pub use event::{Event, EventKind, LiveFrame};
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use service::{AttachmentHandle, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+pub use store::{ContextStore, SessionRecord, SessionStore, StoreError};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
