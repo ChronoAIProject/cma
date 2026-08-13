@@ -15,6 +15,17 @@ import type { AuthProvider, AuthState } from './types';
 
 /** Where the control plane answers questions about the current session. */
 const SESSION_ENDPOINT = '/auth/session';
+
+/**
+ * How long the identity check may take before it is called a failure.
+ *
+ * The app renders nothing while the check is outstanding, on the reasoning
+ * that it resolves in milliseconds against a cookie. When the control plane is
+ * unreachable that reasoning inverts: the request hangs, and the user is left
+ * looking at a blank page with nothing to act on. A bounded wait turns that
+ * into a message.
+ */
+const IDENTITY_TIMEOUT_MS = 8000;
 const LOGIN_ENDPOINT = '/auth/login';
 const LOGOUT_ENDPOINT = '/auth/logout';
 
@@ -40,12 +51,22 @@ export function createNyxidAuthProvider(): AuthProvider {
   return {
     async current(): Promise<AuthState> {
       let response: Response;
+      const timeout = AbortSignal.timeout(IDENTITY_TIMEOUT_MS);
       try {
-        response = await fetch(SESSION_ENDPOINT, { credentials: 'include' });
+        response = await fetch(SESSION_ENDPOINT, {
+          credentials: 'include',
+          signal: timeout,
+        });
       } catch (cause) {
         // Unreachable is not anonymous. Saying "signed out" here would invite
         // a sign-in attempt that cannot succeed either.
-        return { status: 'error', message: `cannot reach the control plane: ${String(cause)}` };
+        const timedOut = timeout.aborted;
+        return {
+          status: 'error',
+          message: timedOut
+            ? 'The control plane did not respond. It may be starting up — reload in a moment.'
+            : `cannot reach the control plane: ${String(cause)}`,
+        };
       }
 
       if (response.status === 401) {
