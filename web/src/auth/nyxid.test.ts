@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createNyxidAuthProvider, handleFor } from './nyxid';
+import { capabilitiesFrom, createNyxidAuthProvider, handleFor } from './nyxid';
 
 /**
  * The identity adapter decides what the whole app believes about who is
@@ -43,6 +43,31 @@ describe('handleFor', () => {
   });
 });
 
+describe('what the control plane says a caller may do', () => {
+  it('keeps the capabilities it recognises', () => {
+    expect(capabilitiesFrom(['read_all_sessions', 'control_any_session'])).toEqual([
+      'read_all_sessions',
+      'control_any_session',
+    ]);
+  });
+
+  it('drops a name this client does not model', () => {
+    // A capability the frontend has no behaviour for is not worth carrying, and
+    // keeping the string would invite a comparison that never matches.
+    expect(capabilitiesFrom(['read_all_sessions', 'read_the_future', 7])).toEqual([
+      'read_all_sessions',
+    ]);
+  });
+
+  it('reports none when the field is missing or not a list', () => {
+    // Fails closed. The worst outcome is a control that is not offered; the
+    // alternative is offering one the control plane will refuse.
+    expect(capabilitiesFrom(undefined)).toEqual([]);
+    expect(capabilitiesFrom('read_all_sessions')).toEqual([]);
+    expect(capabilitiesFrom(null)).toEqual([]);
+  });
+});
+
 describe('the identity adapter', () => {
   it('reports the signed-in subject', async () => {
     stubFetch(() =>
@@ -52,6 +77,7 @@ describe('the identity adapter', () => {
         display_name: 'Shining Wang',
         email: 'shining@aelf.io',
         avatar_url: 'https://example/a.png',
+        capabilities: ['use_own_sessions', 'read_activity_log'],
       }),
     );
     const state = await createNyxidAuthProvider().current();
@@ -62,6 +88,17 @@ describe('the identity adapter', () => {
       expect(state.user.handle).toBe('Shining Wang');
       expect(state.user.email).toBe('shining@aelf.io');
       expect(state.user.avatarUrl).toBe('https://example/a.png');
+      expect(state.user.capabilities).toEqual(['use_own_sessions', 'read_activity_log']);
+    }
+  });
+
+  it('gives a caller no capabilities when the control plane names none', async () => {
+    // An older control plane that does not report them must leave the client
+    // offering nothing privileged, rather than assuming the best.
+    stubFetch(() => jsonResponse(200, { authenticated: true, subject: '76fe9d91' }));
+    const state = await createNyxidAuthProvider().current();
+    if (state.status === 'authenticated') {
+      expect(state.user.capabilities).toEqual([]);
     }
   });
 

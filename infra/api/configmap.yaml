@@ -44,6 +44,23 @@ data:
   # then refused on first write — which reads as a permissions problem rather
   # than the typo it is.
   CHRONO_MONGODB_DATABASE: "chrono-bot"
+  # How many days a recorded action is kept before the database removes it.
+  #
+  # Every request this control plane serves is recorded — who asked, when, for
+  # what, with which parameters, and how it came out — so this collection grows
+  # with traffic rather than with usage and would grow without limit if nothing
+  # expired it. Ninety days is long enough to investigate something nobody
+  # noticed at the time, and short enough that a busy month is not an outage.
+  #
+  # Applied as a TTL index, so lowering this removes entries that are already
+  # stored rather than only affecting the ones written afterwards. Raising it
+  # keeps entries longer from that moment on; it cannot bring back ones the
+  # database has already removed.
+  #
+  # Values are never recorded, whatever this is set to: what may be kept is an
+  # allowlist in the code, and there is no key in it for a credential, a token
+  # or an environment variable's value.
+  CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Bucket holding each session's stored agent context, so a reopened session
   # can be restarted with its transcript loaded into a fresh sandbox. Reached
   # through the platform storage service, which brokers the credential.

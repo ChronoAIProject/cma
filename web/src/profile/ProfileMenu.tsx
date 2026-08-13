@@ -37,6 +37,16 @@ interface ProfileMenuProps {
    * page and this must not grow a navigation menu.
    */
   readonly onManageEnvironments?: () => void;
+  /**
+   * Open the operator panel.
+   *
+   * Absent unless the control plane reports a capability the panel can act on,
+   * which is why this is optional and why the item is simply not rendered
+   * rather than rendered disabled: a control nobody can use should not be
+   * drawn. This is presentation and never protection — the API refuses on its
+   * own, and would refuse a hand-written request just the same.
+   */
+  readonly onOperate?: () => void;
 }
 
 /**
@@ -79,6 +89,7 @@ export function ProfileMenu({
   onSignOut,
   onTerminalThemeChange,
   onManageEnvironments,
+  onOperate,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
@@ -226,6 +237,19 @@ export function ProfileMenu({
               }}
             >
               Environment profiles
+            </button>
+          ) : null}
+          {onOperate !== undefined ? (
+            <button
+              type="button"
+              className="profile__item"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onOperate();
+              }}
+            >
+              Operations
             </button>
           ) : null}
           <button

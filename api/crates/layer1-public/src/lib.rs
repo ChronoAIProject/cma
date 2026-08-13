@@ -15,7 +15,7 @@ pub mod mcp;
 pub mod pty;
 pub mod rest;
 
-pub use auth::AuthenticatedSubject;
+pub use auth::{ActedUpon, AuthenticatedSubject};
 
 /// A semantic operation on the core session model. Each interface declares the
 /// subset it projects.
