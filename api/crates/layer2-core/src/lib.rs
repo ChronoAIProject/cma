@@ -8,6 +8,7 @@
 //! every interface and every runtime needs, so that an interface exposing a
 //! subset is a projection rather than a compromise.
 
+pub mod authz;
 mod clock;
 mod credentials;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod service;
 pub mod session;
 pub mod terminal;
 
+pub use authz::{Authorization, Caller, Capability};
 pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame};
 pub use ids::{KernelId, SessionId, SubjectId};

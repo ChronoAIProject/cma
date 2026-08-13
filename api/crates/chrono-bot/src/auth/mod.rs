@@ -17,7 +17,7 @@ use axum::{
     response::Response,
 };
 use layer1_public::AuthenticatedSubject;
-use layer2_core::SubjectId;
+use layer2_core::{Authorization, SubjectId};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
@@ -109,6 +109,8 @@ pub struct AuthState {
     sessions: RwLock<HashMap<String, SubjectId>>,
     /// Provider tokens held per subject, for delegation and renewal.
     tokens: RwLock<HashMap<SubjectId, SubjectTokens>>,
+    /// Capabilities resolved at sign-in, per subject.
+    authorizations: RwLock<HashMap<SubjectId, Authorization>>,
     /// In-flight authorization attempts: state to PKCE verifier.
     ///
     /// The state parameter is what binds a callback to the login that started
@@ -136,6 +138,7 @@ impl AuthState {
             metadata: RwLock::new(None),
             sessions: RwLock::new(HashMap::new()),
             tokens: RwLock::new(HashMap::new()),
+            authorizations: RwLock::new(HashMap::new()),
             pending: RwLock::new(HashMap::new()),
         })
     }
@@ -143,6 +146,19 @@ impl AuthState {
     /// Whether this service requires a real credential.
     pub fn requires_credential(&self) -> bool {
         matches!(self.mode, AuthMode::Provider { .. })
+    }
+
+    /// Capabilities granted in trusted mode.
+    ///
+    /// Local bring-up has no provider to ask, so the fixed subject is given the
+    /// everyday set. Deliberately not the privileged set: a developer running
+    /// locally should still have to opt into the admin surface.
+    pub fn trusted_authorization() -> Authorization {
+        Authorization::from_capabilities([
+            layer2_core::Capability::CreateSession,
+            layer2_core::Capability::UseOwnSessions,
+            layer2_core::Capability::TerminateOwnSession,
+        ])
     }
 
     /// Resolve the subject for a request, if any.
@@ -228,71 +244,6 @@ impl AuthState {
             .collect()
     }
 
-    /// Exchange a refresh token for a new access token.
-    ///
-    /// A provider that refuses the exchange has withdrawn the delegation, so
-    /// the stored tokens are dropped rather than retried forever.
-    pub async fn refresh(
-        &self,
-        subject: &SubjectId,
-        refresh_token: &str,
-    ) -> Result<String, String> {
-        let AuthMode::Provider {
-            client_id,
-            client_secret,
-            ..
-        } = &self.mode
-        else {
-            return Err("no provider configured".into());
-        };
-        let meta = self.metadata().await?;
-        let form = [
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
-        ];
-        let resp = self
-            .http
-            .post(&meta.token_endpoint)
-            .form(&form)
-            .send()
-            .await
-            .map_err(|e| format!("refresh request failed: {e}"))?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            self.tokens.write().await.remove(subject);
-            return Err(format!("provider refused refresh with {status}"));
-        }
-        #[derive(Deserialize)]
-        struct RefreshResponse {
-            access_token: String,
-            #[serde(default)]
-            refresh_token: Option<String>,
-            #[serde(default)]
-            expires_in: Option<u64>,
-        }
-        let body: RefreshResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("refresh response not usable: {e}"))?;
-
-        let mut store = self.tokens.write().await;
-        let existing_refresh = store.get(subject).and_then(|t| t.refresh_token.clone());
-        store.insert(
-            subject.clone(),
-            SubjectTokens {
-                access_token: body.access_token.clone(),
-                // A provider that rotates refresh tokens returns a new one; one
-                // that does not expects the original to keep working.
-                refresh_token: body.refresh_token.or(existing_refresh),
-                expires_at: std::time::Instant::now()
-                    + std::time::Duration::from_secs(body.expires_in.unwrap_or(3600)),
-            },
-        );
-        Ok(body.access_token)
-    }
-
     async fn issue_session(&self, subject: SubjectId) -> String {
         let token = uuid_v4();
         self.sessions
@@ -361,12 +312,19 @@ pub async fn attach_subject(
             req.extensions_mut()
                 .insert(layer1_public::auth::DelegatedCredential(token));
         }
+        let authorization = match auth.mode {
+            AuthMode::Trusted { .. } => AuthState::trusted_authorization(),
+            AuthMode::Provider { .. } => auth.authorization(&subject).await,
+        };
+        req.extensions_mut().insert(authorization);
         req.extensions_mut().insert(AuthenticatedSubject(subject));
     }
     next.run(req).await
 }
 
+pub mod capabilities;
 pub mod flow;
+pub mod refresh;
 
 pub use flow::router;
 
