@@ -28,6 +28,11 @@ pub struct SandboxRequest {
     /// Hard resource caps.
     pub resource_limits: BTreeMap<String, String>,
     /// Seconds before the provider reclaims the sandbox.
+    ///
+    /// Deliberately has no `skip_serializing_if`: `None` must travel as a
+    /// literal `null`, which the provider reads as "never expire". Omitting the
+    /// field instead means "server default", which would quietly restore a
+    /// timer and kill live sessions.
     pub timeout: Option<u64>,
     /// Free-form tags, used for correlation and cleanup.
     pub metadata: BTreeMap<String, String>,
@@ -289,6 +294,24 @@ mod tests {
         let json = serde_json::to_value(&r).expect("serializes");
         assert!(json.get("resourceLimits").is_some(), "got {json}");
         assert_eq!(json["image"]["uri"], "example/image:1");
+    }
+
+    #[test]
+    fn an_absent_timeout_serializes_as_null_not_omitted() {
+        let r = SandboxRequest {
+            image: ImageSpec { uri: "x".into() },
+            entrypoint: vec![],
+            env: BTreeMap::new(),
+            resource_limits: BTreeMap::new(),
+            timeout: None,
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_value(&r).expect("serializes");
+        assert!(
+            json.get("timeout").is_some(),
+            "timeout must be present as null, not omitted: {json}"
+        );
+        assert!(json["timeout"].is_null(), "got {json}");
     }
 
     #[test]
