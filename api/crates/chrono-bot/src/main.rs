@@ -120,34 +120,39 @@ async fn main() {
     // Context storage is optional: without it a session still works, it simply
     // cannot carry its transcript into a new sandbox.
     //
-    // Both the address and the credential are required to enable it. Half a
-    // configuration would build a store that authenticates against nothing and
-    // fails on first write, which is worse than knowingly running without one.
-    let context: Option<Arc<dyn layer2_core::ContextStore>> = match (
-        config.platform_base_url.trim(),
-        config.context_credential.trim(),
-    ) {
-        ("", _) => {
-            tracing::warn!("no platform base url; session context will not be stored");
-            None
-        }
-        (_, "") => {
-            tracing::warn!(
-                "no platform credential; session context will not be stored. \
-                     CHRONO_CONTEXT_CREDENTIAL must carry an identity-platform \
-                     credential — no other service's key is valid here."
-            );
-            None
-        }
-        (base, credential) => Some(Arc::new(crate::store::ChronoStorageContextStore::new(
-            format!(
-                "{}/api/v1/proxy/s/chrono-storage-service",
-                base.trim_end_matches('/')
-            ),
-            config.context_bucket.clone(),
-            credential.to_string(),
-        ))),
-    };
+    // It needs both an address and an identity, and switches off unless both
+    // are present. Half a configuration would build a store that authenticates
+    // as nobody and fails on first write, long after startup and precisely
+    // when a transcript was being kept.
+    let identity = crate::store::token::from_config(
+        &config.platform_base_url,
+        &config.storage_client_id,
+        &config.storage_client_secret,
+    );
+    // The bucket is as load-bearing as the identity: this service writes only
+    // into the one it is given and creates none, so an unnamed bucket is not a
+    // default to fall back on.
+    let context: Option<Arc<dyn layer2_core::ContextStore>> =
+        match identity.filter(|_| !config.context_bucket.trim().is_empty()) {
+            Some(tokens) => Some(Arc::new(crate::store::ChronoStorageContextStore::new(
+                format!(
+                    "{}/api/v1/proxy/s/chrono-storage-service",
+                    config.platform_base_url.trim_end_matches('/')
+                ),
+                config.context_bucket.clone(),
+                tokens,
+            ))),
+            None => {
+                tracing::warn!(
+                    "session context will not be stored. CHRONO_PLATFORM_BASE_URL, \
+                 CHRONO_STORAGE_CLIENT_ID, CHRONO_STORAGE_CLIENT_SECRET and \
+                 CHRONO_CONTEXT_BUCKET are all required. The bucket must already \
+                 exist and be owned by this identity — nothing here creates one. \
+                 No other service's credential is valid here."
+                );
+                None
+            }
+        };
 
     let service = SessionService::new(adapters, screen_factory, store, context);
 
