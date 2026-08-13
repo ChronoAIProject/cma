@@ -320,9 +320,15 @@ async fn session(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Resp
             // details ride alongside so nothing has to render a UUID at a
             // person.
             let profile = auth.profiles.read().await.get(&subject).cloned();
+            // What this caller may do, so a client can offer only what will be
+            // permitted rather than guessing from a role name it has no
+            // business knowing. Advisory: every one of these is checked again
+            // by the core on the request that uses it.
+            let entitled = auth.effective_authorization(&subject).await;
             let mut body = serde_json::json!({
                 "authenticated": true,
                 "subject": subject.as_str(),
+                "capabilities": super::entitlements::reported(&entitled),
             });
             if let (Some(profile), Some(map)) = (profile, body.as_object_mut()) {
                 if let Ok(serde_json::Value::Object(fields)) = serde_json::to_value(&profile) {
@@ -371,6 +377,95 @@ fn urlencode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Read a handler's response body as JSON.
+    async fn body_of(response: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+        serde_json::from_slice(&bytes).expect("json")
+    }
+
+    fn provider_auth() -> Arc<AuthState> {
+        AuthState::new(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "c".into(),
+                client_secret: "not-a-real-value".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn the_identity_answer_says_what_this_caller_may_do() {
+        // Without this a client has to guess, and the only things it could
+        // guess from are a role name it should never see or a refusal it would
+        // have to provoke.
+        let auth = provider_auth();
+        let subject = SubjectId("subject-a".into());
+        auth.store_authorization(
+            &subject,
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ReadAllSessions,
+                layer2_core::Capability::ControlAnySession,
+            ]),
+        )
+        .await;
+        let token = auth.issue_session(subject).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("{SESSION_COOKIE}={token}")
+                .parse()
+                .expect("valid header"),
+        );
+
+        let json = body_of(session(State(auth), headers).await).await;
+        assert_eq!(json["authenticated"], true);
+        assert_eq!(json["subject"], "subject-a");
+        let capabilities = json["capabilities"].as_array().expect("an array");
+        assert!(capabilities.iter().any(|c| c == "read_all_sessions"));
+        assert!(capabilities.iter().any(|c| c == "control_any_session"));
+        assert_eq!(capabilities.len(), 2, "got {json}");
+    }
+
+    #[tokio::test]
+    async fn a_caller_granted_nothing_is_told_they_may_do_nothing() {
+        // An empty list rather than an absent field: a client that reads a
+        // missing key as "unknown" and one that reads it as "nothing" would
+        // behave differently, and only one of them fails closed.
+        let auth = provider_auth();
+        let token = auth.issue_session(SubjectId("stranger".into())).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("{SESSION_COOKIE}={token}")
+                .parse()
+                .expect("valid header"),
+        );
+
+        let json = body_of(session(State(auth), headers).await).await;
+        assert_eq!(json["authenticated"], true);
+        assert!(
+            json["capabilities"]
+                .as_array()
+                .expect("an array")
+                .is_empty(),
+            "got {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unauthenticated_caller_is_told_nothing_at_all() {
+        let json = body_of(session(State(provider_auth()), HeaderMap::new()).await).await;
+        assert_eq!(json["authenticated"], false);
+        assert!(
+            json.get("capabilities").is_none(),
+            "a caller with no identity has no entitlement to report: {json}"
+        );
+    }
 
     #[test]
     fn urlencoding_escapes_what_a_redirect_uri_needs() {

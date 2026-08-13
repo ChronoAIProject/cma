@@ -340,17 +340,18 @@ pub async fn attach_subject(
             req.extensions_mut()
                 .insert(layer1_public::auth::DelegatedCredential(token));
         }
-        let authorization = match auth.mode {
-            AuthMode::Trusted { .. } => AuthState::trusted_authorization(),
-            AuthMode::Provider { .. } => auth.authorization(&subject).await,
-        };
-        req.extensions_mut().insert(authorization);
+        // The same resolution the identity endpoint reports, so what a client
+        // was told it may do and what this request is allowed to do cannot
+        // drift apart.
+        req.extensions_mut()
+            .insert(auth.effective_authorization(&subject).await);
         req.extensions_mut().insert(AuthenticatedSubject(subject));
     }
     next.run(req).await
 }
 
 pub mod capabilities;
+pub mod entitlements;
 pub mod flow;
 pub mod records;
 pub mod refresh;
