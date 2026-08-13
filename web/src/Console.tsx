@@ -8,7 +8,6 @@ import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
 import type { Stage } from './sessions/progress';
 import { SessionActions } from './sessions/SessionActions';
-import type { AgentOptions } from './sessions/options';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
@@ -18,16 +17,9 @@ import type { ViewMode } from './view/mode';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
-import {
-  ApiError,
-  createSession,
-  deleteSession,
-  followSession,
-  listSessions,
-  reviveSession,
-  stopSession,
-} from './api/client';
+import { ApiError, followSession, listSessions } from './api/client';
 import { abilitiesFor, listable } from './sessions/availability';
+import { useSessionActions } from './sessions/useSessionActions';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
 import { createRestProfileStore } from './environment/rest';
 import type { EnvironmentProfile, EnvironmentProfileStore } from './environment/types';
@@ -61,8 +53,6 @@ interface ConsoleProps {
  * holds any resize until the relay is ready, so this is only ever the opening
  * request rather than a size the terminal is stuck with.
  */
-const INITIAL_COLS = 80;
-const INITIAL_ROWS = 24;
 
 export function Console({ user, onSignOut }: ConsoleProps) {
   /*
@@ -181,107 +171,19 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = useCallback(
-    async (kernel: Kernel, options: AgentOptions, environmentProfile: string | null = null) => {
-      setNotice(null);
-      try {
-        // Returns as soon as the session exists, before its runtime does, so the
-        // tab appears immediately and reports its own progress.
-        const session = await createSession(
-          kernel,
-          INITIAL_COLS,
-          INITIAL_ROWS,
-          options,
-          environmentProfile,
-        );
-        setSessions((prev) => [session, ...prev]);
-        select(session.id);
-        setOpeningForId((prev) => prev ?? session.id);
-      } catch (cause) {
-        report(cause);
-      }
-    },
-    [report, select],
-  );
-
-  /** End the open session, leaving it readable. */
-  const endSession = useCallback(
-    async (id: string) => {
-      // Cleared on the way in, as every action does, so the line above the
-      // surface describes the attempt being watched rather than an older
-      // failure sitting over a console that has since recovered.
-      setNotice(null);
-      setActing(true);
-      try {
-        // Stop rather than terminate: ending a session releases what it is
-        // costing without throwing away what it did, and the owner can pick it
-        // up again. Terminating is what delete does on the way out.
-        await stopSession(id);
-        applyLifecycle(id, 'idle');
-      } catch (cause) {
-        report(cause);
-      } finally {
-        setActing(false);
-      }
-    },
-    [applyLifecycle, report],
-  );
-
-  /** Give a stopped session a sandbox again, and follow it back up. */
-  const reviveSessionById = useCallback(
-    async (id: string) => {
-      setNotice(null);
-      setActing(true);
-      try {
-        const revived = await reviveSession(id);
-        // Back to provisioning, which is what the effect below follows: the
-        // progress of a revive is the progress of a start, because it is one.
-        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...revived } : s)));
-      } catch (cause) {
-        report(cause);
-      } finally {
-        setActing(false);
-      }
-    },
-    [report],
-  );
-
-  /** Remove the session and its history. */
-  const removeSession = useCallback(
-    async (id: string) => {
-      setNotice(null);
-      setActing(true);
-      try {
-        await deleteSession(id);
-        setSessions((prev) => prev.filter((s) => s.id !== id));
-        // Out of the history as well as out of the list: a deleted id left
-        // there is a slot of the canvas's attachment budget spent remembering
-        // a session nobody can open.
-        setFocusHistory((prev) => prev.filter((seen) => seen !== id));
-        if (activeId === id) {
-          /*
-           * The successor is *selected*, not merely made active. `activeId` is
-           * not the whole selection — the canvas spends its attachment budget
-           * from `focusHistory` — so a session promoted straight into
-           * `activeId` would be the focused node while sitting at the back of
-           * that list, and with a full history it is evicted at once. That is
-           * the one node §15 promises is never detached.
-           */
-          const successor = sessions.find((s) => s.id !== id);
-          if (successor === undefined) {
-            setActiveId(null);
-          } else {
-            select(successor.id);
-          }
-        }
-      } catch (cause) {
-        report(cause);
-      } finally {
-        setActing(false);
-      }
-    },
-    [activeId, report, select, sessions],
-  );
+  const { start, endSession, reviveSessionById, removeSession } = useSessionActions({
+    sessions,
+    activeId,
+    setSessions,
+    setActiveId,
+    setOpeningForId,
+    setNotice,
+    setActing,
+    select,
+    report,
+    applyLifecycle,
+    setFocusHistory,
+  });
 
   /*
    * Follow whichever session is still starting. The stream is the only thing
