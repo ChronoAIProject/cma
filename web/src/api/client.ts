@@ -160,10 +160,20 @@ export async function createSession(
   cols: number,
   rows: number,
   options?: AgentOptions,
+  environmentProfile?: string | null,
 ): Promise<Session> {
   const body = await request('/api/v1/sessions', {
     method: 'POST',
-    body: JSON.stringify({ kernel, cols, rows, options }),
+    body: JSON.stringify({
+      kernel,
+      cols,
+      rows,
+      options,
+      // Omitted rather than sent as null when nothing was chosen: absent means
+      // "whatever the platform mandates", which is not the same as a caller
+      // naming a bundle that does not exist.
+      environment_profile: environmentProfile ?? undefined,
+    }),
   });
   return toSession(body);
 }

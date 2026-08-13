@@ -21,6 +21,8 @@ pub mod permission {
     pub const SESSION_USE: &str = "chrono-bot:session:use";
     /// End your own session.
     pub const SESSION_TERMINATE: &str = "chrono-bot:session:terminate";
+    /// Author and reuse your own environment profiles.
+    pub const ENVIRONMENT_PROFILE_MANAGE: &str = "chrono-bot:environment-profile:manage";
     /// Read every session, whoever owns it.
     pub const ADMIN_SESSIONS: &str = "chrono-bot:admin:sessions";
     /// Read the sandbox inventory and its status.
@@ -53,7 +55,19 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             continue;
         }
         match p {
-            permission::SESSION_CREATE => granted.push(Capability::CreateSession),
+            permission::SESSION_CREATE => {
+                granted.push(Capability::CreateSession);
+                // An environment profile is an input to creating a session:
+                // it describes what the session a caller may already start
+                // will carry, and reaches nothing but that caller's own
+                // profiles. Granting it alongside keeps a permission set
+                // issued before profiles existed from producing a caller who
+                // can start sessions but not describe them.
+                granted.push(Capability::ManageOwnEnvironmentProfiles);
+            }
+            permission::ENVIRONMENT_PROFILE_MANAGE => {
+                granted.push(Capability::ManageOwnEnvironmentProfiles)
+            }
             permission::SESSION_USE => granted.push(Capability::UseOwnSessions),
             permission::SESSION_TERMINATE => granted.push(Capability::TerminateOwnSession),
             permission::ADMIN_SESSIONS => granted.push(Capability::ReadAllSessions),
@@ -68,6 +82,7 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             Capability::CreateSession,
             Capability::UseOwnSessions,
             Capability::TerminateOwnSession,
+            Capability::ManageOwnEnvironmentProfiles,
             Capability::ReadAllSessions,
             Capability::ReadRuntimeInventory,
             Capability::ReadEventLog,
@@ -102,6 +117,10 @@ mod tests {
         assert!(a.allows(Capability::UseOwnSessions));
         assert!(a.allows(Capability::TerminateOwnSession));
         assert!(
+            a.allows(Capability::ManageOwnEnvironmentProfiles),
+            "describing what your own session carries is part of starting one"
+        );
+        assert!(
             !a.is_privileged(),
             "a daily user must not see other people's sessions"
         );
@@ -134,6 +153,18 @@ mod tests {
         assert!(!a.allows(Capability::CreateSession));
         assert!(!a.allows(Capability::UseOwnSessions));
         assert!(!a.allows(Capability::TerminateOwnSession));
+        assert!(!a.allows(Capability::ManageOwnEnvironmentProfiles));
+    }
+
+    #[test]
+    fn the_profile_permission_grants_profiles_and_nothing_else() {
+        // Its own permission so a deployment can hand out profile authoring
+        // without handing out the ability to start a session with one.
+        let a = capabilities_from_permissions([permission::ENVIRONMENT_PROFILE_MANAGE]);
+        assert!(a.allows(Capability::ManageOwnEnvironmentProfiles));
+        assert!(!a.allows(Capability::CreateSession));
+        assert!(!a.allows(Capability::UseOwnSessions));
+        assert!(!a.is_privileged());
     }
 
     #[test]
@@ -143,6 +174,7 @@ mod tests {
             Capability::CreateSession,
             Capability::UseOwnSessions,
             Capability::TerminateOwnSession,
+            Capability::ManageOwnEnvironmentProfiles,
             Capability::ReadAllSessions,
             Capability::ReadRuntimeInventory,
             Capability::ReadEventLog,
