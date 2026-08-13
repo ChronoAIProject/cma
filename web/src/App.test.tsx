@@ -382,6 +382,31 @@ describe('App', () => {
     });
   });
 
+  it('reports a failed action without disconnecting the sessions that did not fail', async () => {
+    seedSessions(3);
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(sockets).toHaveLength(3);
+    });
+
+    // Nothing stubs the stop endpoint, so the request comes back 404 — the
+    // same shape as a 409, an expired token or a network blip.
+    await user.click(screen.getByRole('button', { name: /^end session/i }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    /*
+     * One session's request failed. Rendering the notice in place of the
+     * surface unmounted the canvas, so the other two lost their terminals and
+     * their connections to report something that was not about them.
+     */
+    expect(document.querySelectorAll('[data-node-id]')).toHaveLength(3);
+    expect(isAttached('sesn_1')).toBe(true);
+    expect(isAttached('sesn_2')).toBe(true);
+  });
+
   it('keeps the node that inherits focus attached when a session is deleted', async () => {
     /*
      * The canvas spends its attachment budget from the focus history, so a
