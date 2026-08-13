@@ -119,20 +119,35 @@ async fn main() {
 
     // Context storage is optional: without it a session still works, it simply
     // cannot carry its transcript into a new sandbox.
-    let context: Option<Arc<dyn layer2_core::ContextStore>> =
-        if config.platform_base_url.trim().is_empty() {
+    //
+    // Both the address and the credential are required to enable it. Half a
+    // configuration would build a store that authenticates against nothing and
+    // fails on first write, which is worse than knowingly running without one.
+    let context: Option<Arc<dyn layer2_core::ContextStore>> = match (
+        config.platform_base_url.trim(),
+        config.context_credential.trim(),
+    ) {
+        ("", _) => {
             tracing::warn!("no platform base url; session context will not be stored");
             None
-        } else {
-            Some(Arc::new(crate::store::ChronoStorageContextStore::new(
-                format!(
-                    "{}/api/v1/proxy/s/chrono-storage-service",
-                    config.platform_base_url.trim_end_matches('/')
-                ),
-                config.context_bucket.clone(),
-                config.sandbox_api_key.clone(),
-            )))
-        };
+        }
+        (_, "") => {
+            tracing::warn!(
+                "no platform credential; session context will not be stored. \
+                     CHRONO_CONTEXT_CREDENTIAL must carry an identity-platform \
+                     credential — no other service's key is valid here."
+            );
+            None
+        }
+        (base, credential) => Some(Arc::new(crate::store::ChronoStorageContextStore::new(
+            format!(
+                "{}/api/v1/proxy/s/chrono-storage-service",
+                base.trim_end_matches('/')
+            ),
+            config.context_bucket.clone(),
+            credential.to_string(),
+        ))),
+    };
 
     let service = SessionService::new(adapters, screen_factory, store, context);
 
