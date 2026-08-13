@@ -264,7 +264,7 @@ async fn callback(
         .into_response()
 }
 
-async fn resolve_subject(
+pub(crate) async fn resolve_subject(
     auth: &AuthState,
     meta: &ProviderMetadata,
     access_token: &str,
