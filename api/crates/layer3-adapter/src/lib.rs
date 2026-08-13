@@ -8,6 +8,8 @@ pub mod claude_code;
 pub mod codex;
 pub mod sandbox;
 
+use std::collections::BTreeMap;
+
 use tokio::sync::mpsc;
 
 /// Size of the runtime's terminal, in character cells.
@@ -17,6 +19,47 @@ pub struct TermSize {
     pub cols: u16,
     /// Rows.
     pub rows: u16,
+}
+
+/// What the runtime should already have when the agent starts.
+///
+/// The caller states intent; how it is applied — environment entries, an
+/// install step, a fetch — is the implementing adapter's business. Nothing
+/// here interprets a value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeEnvironment {
+    /// Variables to set for the agent process, by name.
+    ///
+    /// Values are opaque and frequently secret: an adapter forwards them and
+    /// never logs one.
+    pub variables: BTreeMap<String, String>,
+    /// Software the runtime should carry, as the installer names it.
+    pub packages: Vec<String>,
+    /// Skill identifiers the runtime should load.
+    pub skills: Vec<String>,
+}
+
+impl RuntimeEnvironment {
+    /// Add these variables to a map an adapter controls, refusing collisions.
+    ///
+    /// The adapter's own entries always win. They are how the runtime finds its
+    /// upstream, its proxy and its credential, so a caller who could overwrite
+    /// one could redirect the agent's traffic — or the credential attached to
+    /// it — somewhere of their choosing. A refusal is logged rather than
+    /// silently applied, because a variable that vanishes without explanation
+    /// is the kind of thing an operator hunts for twice.
+    pub fn apply_to(&self, controlled: &mut BTreeMap<String, String>) {
+        for (key, value) in &self.variables {
+            if controlled.contains_key(key) {
+                tracing::warn!(
+                    variable = %key,
+                    "environment variable refused: the runtime controls this name"
+                );
+                continue;
+            }
+            controlled.insert(key.clone(), value.clone());
+        }
+    }
 }
 
 /// What a caller asks for when provisioning a runtime.
@@ -46,6 +89,8 @@ pub struct RuntimeSpec {
     /// Passed through the control plane rather than fetched by the runtime, so
     /// the sandbox needs no storage credential of its own.
     pub restore_from: Option<Vec<u8>>,
+    /// What the runtime should already carry when the agent starts.
+    pub environment: RuntimeEnvironment,
 }
 
 /// What a runtime should be told about how to behave.

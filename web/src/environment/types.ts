@@ -1,0 +1,142 @@
+/**
+ * Environment profiles, as the console models them.
+ *
+ * A projection of the Layer 2 resource for display and editing. It must not
+ * invent state the core does not have, and it must not enforce a rule the
+ * server does not: the non-revocable baseline is rendered here so a user is
+ * not invited to attempt something that will be undone, but the server applies
+ * it whatever this code does.
+ */
+
+/** One environment variable in a profile. */
+export interface ProfileVariable {
+  readonly key: string;
+  readonly value: string;
+}
+
+/** A piece of software a session should carry. */
+export interface ProfilePackage {
+  readonly name: string;
+  /** Absent means whatever version the runtime provides. */
+  readonly version?: string;
+}
+
+/** What the platform mandates, which no profile may remove. */
+export interface MandatoryEntries {
+  readonly packages: readonly string[];
+  readonly skills: readonly string[];
+}
+
+/** A stored environment profile. */
+export interface EnvironmentProfile {
+  readonly id: string;
+  readonly name: string;
+  readonly variables: readonly ProfileVariable[];
+  readonly packages: readonly ProfilePackage[];
+  readonly skills: readonly string[];
+  readonly mandatory: MandatoryEntries;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** What a caller supplies when creating or replacing a profile. */
+export interface ProfileDraft {
+  readonly name: string;
+  readonly variables: readonly ProfileVariable[];
+  readonly packages: readonly ProfilePackage[];
+  readonly skills: readonly string[];
+}
+
+/** A skill the registry offers, as the picker renders it. */
+export interface CatalogSkill {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  /** Why this user can see it — owner, public, shared. Display only. */
+  readonly access?: string;
+}
+
+/**
+ * What the editor needs before it has a profile to read from.
+ *
+ * The mandated entries ride with the catalogue rather than only with a stored
+ * profile, so a user authoring their first one is told what it will carry
+ * instead of discovering it after saving.
+ */
+export interface SkillCatalogue {
+  readonly skills: readonly CatalogSkill[];
+  readonly mandatory: MandatoryEntries;
+}
+
+/**
+ * Where profiles come from.
+ *
+ * A port, mirroring the auth seam: components consume this and never a
+ * concrete implementation, so the in-memory store the console is developed
+ * against and a REST-backed one are interchangeable without touching a single
+ * consumer.
+ *
+ * Implementations must not throw. A failure is reported by rejecting with an
+ * Error whose message is fit to show a user.
+ */
+export interface EnvironmentProfileStore {
+  /** Every profile the signed-in user owns, newest first. */
+  list(): Promise<readonly EnvironmentProfile[]>;
+  /** Store a new profile. */
+  create(draft: ProfileDraft): Promise<EnvironmentProfile>;
+  /** Replace a profile's contents. */
+  update(id: string, draft: ProfileDraft): Promise<EnvironmentProfile>;
+  /** Remove a profile. */
+  remove(id: string): Promise<void>;
+  /** Skills this user may select, and what the platform mandates. */
+  catalogue(): Promise<SkillCatalogue>;
+}
+
+/** An empty draft, for the "new profile" form. */
+export function emptyDraft(): ProfileDraft {
+  return { name: '', variables: [], packages: [], skills: [] };
+}
+
+/** The draft that would replace an existing profile unchanged. */
+export function draftOf(profile: EnvironmentProfile): ProfileDraft {
+  return {
+    name: profile.name,
+    variables: [...profile.variables],
+    packages: [...profile.packages],
+    skills: [...profile.skills],
+  };
+}
+
+/**
+ * Whether a variable name is one the session will actually see.
+ *
+ * The same POSIX shape the core enforces. Checked here too so a user is told
+ * at the field rather than after a round trip — never *instead* of the server
+ * checking, which is the rule that matters.
+ */
+export function isValidKey(key: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
+}
+
+/**
+ * What is wrong with a draft, or null when nothing is.
+ *
+ * One message at a time: a form that reports six problems at once is read as
+ * one problem by most people, and the first is the one they can act on.
+ */
+export function validate(draft: ProfileDraft): string | null {
+  if (draft.name.trim().length === 0) {
+    return 'Give the profile a name.';
+  }
+  const seen = new Set<string>();
+  for (const variable of draft.variables) {
+    if (!isValidKey(variable.key)) {
+      return `"${variable.key}" is not a usable variable name. Use letters, digits and underscores, starting with a letter or underscore.`;
+    }
+    if (seen.has(variable.key)) {
+      return `${variable.key} is set twice. Remove one of them.`;
+    }
+    seen.add(variable.key);
+  }
+  return null;
+}
