@@ -6,6 +6,7 @@
 
 pub mod claude_code;
 pub mod codex;
+pub mod sandbox;
 
 use tokio::sync::mpsc;
 
