@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { ProfileMenu } from './ProfileMenu';
 import type { User } from '../auth/types';
 
-const USER: User = { id: 'subject-1', handle: 'operator' };
+const USER: User = { id: 'subject-1', handle: 'operator', capabilities: [] };
 
 describe('ProfileMenu', () => {
   it('stays closed until asked', () => {
@@ -85,14 +85,19 @@ describe('ProfileMenu', () => {
   });
 
   it('falls back to initials when there is no avatar', () => {
-    render(<ProfileMenu user={{ id: 'x', handle: 'ada.lovelace' }} onSignOut={vi.fn()} />);
+    render(
+      <ProfileMenu
+        user={{ id: 'x', handle: 'ada.lovelace', capabilities: [] }}
+        onSignOut={vi.fn()}
+      />,
+    );
     expect(screen.getByRole('button', { name: /account menu/i }).textContent).toContain('AL');
   });
 
   it('renders an avatar when one is supplied', () => {
     render(
       <ProfileMenu
-        user={{ id: 'x', handle: 'ada', avatarUrl: 'https://example.test/a.png' }}
+        user={{ id: 'x', handle: 'ada', avatarUrl: 'https://example.test/a.png', capabilities: [] }}
         onSignOut={vi.fn()}
       />,
     );
@@ -103,7 +108,7 @@ describe('ProfileMenu', () => {
   });
 
   it('survives a blank handle rather than rendering an empty control', () => {
-    render(<ProfileMenu user={{ id: 'x', handle: '   ' }} onSignOut={vi.fn()} />);
+    render(<ProfileMenu user={{ id: 'x', handle: '   ', capabilities: [] }} onSignOut={vi.fn()} />);
     expect(screen.getByRole('button', { name: /account menu/i }).textContent).toContain('?');
   });
 });
