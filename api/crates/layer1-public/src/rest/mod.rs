@@ -24,7 +24,7 @@ use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::{InterfaceProfile, Operation};
 
 /// Base URI for problem types this interface returns.
-const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/problems";
+pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/problems";
 
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[
@@ -176,6 +176,13 @@ impl From<CoreError> for Problem {
 /// outlives every session that used one — so it has its own router, mounted
 /// beside this one.
 pub mod environments;
+
+/// What somebody running the service can see and do.
+///
+/// Its own router under its own path segment, mounted beside this one, so the
+/// whole surface can be restricted in front of the service rather than one
+/// route at a time.
+pub mod admin;
 
 /// Routes this interface contributes.
 pub fn router(service: Arc<SessionService>) -> Router {
