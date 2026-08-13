@@ -101,25 +101,6 @@
   align-items: center;
 }
 
-/* Status chip — Web_Style.md section 6. */
-
-.chip {
-  display: inline-block;
-  margin-left: var(--space-2);
-  padding: 3px 8px;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  vertical-align: middle;
-  border: 1px solid currentcolor;
-  border-radius: var(--radius-chip);
-}
-
-.chip--neutral {
-  color: var(--neutral);
-}
-
 /* Selection list */
 
 .picker {
