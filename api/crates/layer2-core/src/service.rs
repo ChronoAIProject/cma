@@ -6,7 +6,7 @@
 //! working is the normal case, and a client that reattaches must find the
 //! screen already correct rather than replaying history.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, RuntimeHandle, TermSize, TerminalInput};
@@ -18,7 +18,7 @@ use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
-use crate::store::{ContextStore, SessionRecord, SessionStore, StoreError};
+use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
@@ -75,6 +75,8 @@ pub(crate) struct SessionEntry {
     pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
     /// Where this session's stored context lives, once any has been captured.
     pub(crate) context_ref: Option<String>,
+    /// Transcript length at the last capture, so an unchanged one is not rewritten.
+    pub(crate) captured_len: usize,
     pub(crate) live: broadcast::Sender<Vec<u8>>,
     pub(crate) attached: bool,
 }
@@ -89,6 +91,16 @@ pub struct SessionService {
     pub(crate) store: Arc<dyn SessionStore>,
     /// Where an agent's accumulated context is kept, when a deployment has one.
     pub(crate) context: Option<Arc<dyn ContextStore>>,
+    /// Where to get an owner's credential when the owner is not here to give one.
+    pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
+    /// Sessions this process is currently bringing up.
+    ///
+    /// Bring-up is detached and takes minutes, during which the record says
+    /// `provisioning` and no entry exists yet — which is indistinguishable, to
+    /// anything reading state, from a bring-up that died with an earlier
+    /// process. The controller would then start a second runtime for a session
+    /// that is already getting one. This set is the difference between the two.
+    pub(crate) starting: RwLock<HashSet<SessionId>>,
     /// Milliseconds to wait before the first provisioning retry.
     ///
     /// Held here rather than as a constant so a test can exercise the retry
@@ -106,17 +118,34 @@ impl SessionService {
         screen_factory: ScreenFactory,
         store: Arc<dyn SessionStore>,
         context: Option<Arc<dyn ContextStore>>,
+        credentials: Option<Arc<dyn CredentialSource>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            starting: RwLock::new(HashSet::new()),
             adapters,
             screen_factory,
             store,
             context,
+            credentials,
             retry_backoff_ms: std::sync::atomic::AtomicU64::new(
                 crate::provision::DEFAULT_RETRY_BACKOFF_MS,
             ),
         })
+    }
+
+    /// Claim a session for bring-up, if nothing else has.
+    ///
+    /// Returns false when another bring-up already holds it, which is what
+    /// stops two concurrent sweeps — or a sweep racing a request — from
+    /// provisioning a session twice.
+    pub(crate) async fn begin_start(&self, id: &SessionId) -> bool {
+        self.starting.write().await.insert(id.clone())
+    }
+
+    /// Release a bring-up claim, whatever its outcome.
+    pub(crate) async fn finish_start(&self, id: &SessionId) {
+        self.starting.write().await.remove(id);
     }
 
     /// Read a session's durable record.
@@ -169,6 +198,7 @@ impl SessionService {
             status: SessionStatus::Provisioning,
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
+            options: spec.options.clone(),
             geometry,
             last_seq: 0,
             created_at: now_rfc3339(),
@@ -206,6 +236,7 @@ impl SessionService {
 
         // Detached deliberately. The caller's connection may end at any moment
         // and must not take the runtime with it.
+        self.begin_start(&id).await;
         let service = Arc::clone(self);
         let spawned = record.session.clone();
         tokio::spawn(async move {

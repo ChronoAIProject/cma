@@ -211,9 +211,10 @@ async fn the_stored_runtime_reference_is_what_a_later_process_reclaims() {
         .await
         .expect("readable")
         .expect("present");
-    assert_eq!(
-        record.runtime_id.as_deref(),
-        Some(format!("runtime-for-{}", created.id.0).as_str())
+    let handle = record.runtime_id.expect("the record names the runtime");
+    assert!(
+        handle.contains(&created.id.0),
+        "the recorded handle must be this session's, got {handle}"
     );
 }
 

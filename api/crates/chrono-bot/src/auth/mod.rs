@@ -261,6 +261,20 @@ impl AuthState {
     }
 }
 
+/// Supply the core with an owner's credential when the owner is absent.
+///
+/// The core recovers sessions on its own — after a restart, or when a runtime
+/// has to be replaced — and a recovered session that presents no credential is
+/// a session whose every model call fails. So the credential is fetched from
+/// wherever it is currently held rather than being carried along from the
+/// request that happened to create the session.
+#[async_trait::async_trait]
+impl layer2_core::CredentialSource for AuthState {
+    async fn credential_for(&self, subject: &SubjectId) -> Option<String> {
+        self.access_token(subject).await
+    }
+}
+
 /// Move a URL onto another origin, keeping its path and query.
 ///
 /// Used for back-channel endpoints only. Returns the original string when it

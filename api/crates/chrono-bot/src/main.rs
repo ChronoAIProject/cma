@@ -155,8 +155,9 @@ async fn main() {
             }
         };
 
-    let service = SessionService::new(adapters, screen_factory, store, context);
-
+    // Built before the service because the service asks it for an owner's
+    // credential whenever it has to put a runtime back under a session that
+    // nobody is currently watching.
     let auth_state = AuthState::new(config.auth_mode.clone());
     if !auth_state.requires_credential() {
         tracing::warn!(
@@ -164,6 +165,14 @@ async fn main() {
              to the same principal. This must never be used outside local development."
         );
     }
+
+    let service = SessionService::new(
+        adapters,
+        screen_factory,
+        store,
+        context,
+        Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+    );
 
     // Keeps delegated credentials valid underneath running sessions, and pushes
     // each renewal into the runtimes already using the old value.
