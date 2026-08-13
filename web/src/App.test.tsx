@@ -360,6 +360,28 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Tabs' })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('reconnects one session without redialling the rest of the canvas', async () => {
+    seedSessions(3);
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(sockets).toHaveLength(3);
+    });
+
+    await user.click(screen.getByRole('button', { name: /^reconnect/i }));
+
+    /*
+     * One more socket, not four more. Reconnect is a per-session button in a
+     * per-session panel; rebuilding the canvas would clear every scrollback on
+     * it and redial every session for one session's hiccup.
+     */
+    await waitFor(() => {
+      expect(sockets).toHaveLength(4);
+    });
+  });
+
   it('keeps the node that inherits focus attached when a session is deleted', async () => {
     /*
      * The canvas spends its attachment budget from the focus history, so a

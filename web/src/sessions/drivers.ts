@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Session } from './types';
 import type { LiveSession } from './live';
 import type { TerminalDriver } from '../terminal/types';
@@ -68,15 +68,31 @@ function defaultFactory({ session, kind, openingTurn }: DriverRequest): Terminal
     : createTranscriptDriver(session.id, abilitiesFor(session).reason ?? '');
 }
 
+/**
+ * How many times each session has been asked to reconnect.
+ *
+ * Carried into the driver's signature rather than handled as a side channel:
+ * "reconnect" already means "build this session another driver", which is what
+ * a changed signature does. Naming the session in the key is what keeps the act
+ * scoped to it, so the other drivers — and the terminals holding them — are not
+ * touched.
+ */
+export type ReconnectCounts = Readonly<Record<string, number>>;
+
 export interface SessionDriverRegistry {
   /**
    * Drivers for these sessions, reusing every one already built for a session
-   * whose state still calls for the same kind.
+   * whose state still calls for the same kind and has not been asked to
+   * reconnect since.
    *
    * Idempotent: resolving the same sessions twice returns the same drivers and
    * builds nothing, which is what makes it safe to call while rendering.
    */
-  resolve(sessions: readonly Session[], opening: OpeningTurn | null): readonly LiveSession[];
+  resolve(
+    sessions: readonly Session[],
+    opening: OpeningTurn | null,
+    reconnects?: ReconnectCounts,
+  ): readonly LiveSession[];
   /** Forget every session not in this set. */
   prune(ids: Iterable<string>): void;
 }
@@ -94,14 +110,18 @@ interface Entry {
  * closing line, so an idle session and an ended one do not share a driver even
  * though they share a kind.
  *
+ * The reconnect count is part of it because reconnecting is exactly the request
+ * for a different driver, and the count is per session so the request reaches
+ * one.
+ *
  * The opening turn is deliberately not part of it. That prompt belongs to the
  * first driver a session is ever given, and treating a later one as grounds to
  * rebuild would reconnect a live socket for no reason. What keeps the prompt
  * off a driver built later — after a revive, or a reconnect — is
  * `openingDelivered` rather than anything in this signature.
  */
-function signatureFor(session: Session, kind: DriverKind): string {
-  return `${kind}:${abilitiesFor(session).reason ?? ''}`;
+function signatureFor(session: Session, kind: DriverKind, attempt: number): string {
+  return `${kind}:${String(attempt)}:${abilitiesFor(session).reason ?? ''}`;
 }
 
 /**
@@ -135,14 +155,14 @@ export function createSessionDriverRegistry(
   let openingDelivered = false;
 
   return {
-    resolve(sessions, opening) {
+    resolve(sessions, opening, reconnects = {}) {
       return sessions.map((session): LiveSession => {
         const kind = driverKindFor(session);
         if (kind === 'none') {
           return { session, driver: null };
         }
 
-        const signature = signatureFor(session, kind);
+        const signature = signatureFor(session, kind, reconnects[session.id] ?? 0);
         const held = entries.get(session.id);
         if (held !== undefined && held.signature === signature) {
           return { session, driver: held.driver };
@@ -174,20 +194,43 @@ export function createSessionDriverRegistry(
   };
 }
 
+export interface SessionDrivers {
+  /** Every session paired with its driver, in the order given. */
+  readonly nodes: readonly LiveSession[];
+  /**
+   * Give one session a new driver, so whichever surface holds it releases its
+   * transport and dials again.
+   *
+   * Named per session because reconnecting is a per-session act, offered in a
+   * panel describing one session. The canvas may have a dozen others attached,
+   * and clearing their scrollbacks and redialling their sockets is not what
+   * anyone pressing this asked for.
+   */
+  reconnect(id: string): void;
+}
+
 /** The registry, bound to a component's lifetime. */
 export function useSessionDrivers(
   sessions: readonly Session[],
   opening: OpeningTurn | null,
-): readonly LiveSession[] {
+): SessionDrivers {
   // Created once and never replaced: the drivers it holds are the live
   // connections, and a registry rebuilt on a re-render would drop them all.
   const [registry] = useState(createSessionDriverRegistry);
+  const [reconnects, setReconnects] = useState<ReconnectCounts>({});
 
-  const nodes = useMemo(() => registry.resolve(sessions, opening), [registry, sessions, opening]);
+  const nodes = useMemo(
+    () => registry.resolve(sessions, opening, reconnects),
+    [registry, sessions, opening, reconnects],
+  );
 
   useEffect(() => {
     registry.prune(sessions.map((session) => session.id));
   }, [registry, sessions]);
 
-  return nodes;
+  const reconnect = useCallback((id: string) => {
+    setReconnects((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+  }, []);
+
+  return { nodes, reconnect };
 }
