@@ -166,6 +166,7 @@ impl SessionService {
             kernel: moved.session.kernel.clone(),
             geometry: Some(geometry),
             options: moved.session.options.clone(),
+            environment_profile: moved.session.environment_profile.clone(),
             subject_credential: None,
         };
         let service = Arc::clone(self);

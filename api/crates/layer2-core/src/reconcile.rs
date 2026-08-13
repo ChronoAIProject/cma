@@ -299,6 +299,7 @@ impl SessionService {
             kernel: starting.session.kernel.clone(),
             geometry: Some(geometry),
             options: starting.session.options.clone(),
+            environment_profile: starting.session.environment_profile.clone(),
             // Nobody is here to delegate one; the renewal loop supplies it.
             subject_credential: None,
         };

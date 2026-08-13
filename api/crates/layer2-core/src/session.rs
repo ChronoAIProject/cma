@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{KernelId, SessionId, SubjectId};
+use crate::ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 use crate::options::AgentOptions;
 use crate::terminal::TerminalGeometry;
 
@@ -189,6 +189,13 @@ pub struct SessionSpec {
     /// Terminal geometry to start the runtime at.
     #[serde(default)]
     pub geometry: Option<TerminalGeometry>,
+    /// A reusable environment bundle to start the session with.
+    ///
+    /// Absent does not mean bare: what the platform mandates is applied either
+    /// way, so this selects what to add rather than whether to have anything
+    /// at all.
+    #[serde(default)]
+    pub environment_profile: Option<EnvironmentProfileId>,
     /// A credential the owner has delegated to the runtime, if any.
     ///
     /// The core stores and forwards this without interpreting it. It is never
@@ -226,6 +233,14 @@ pub struct Session {
     pub geometry: TerminalGeometry,
     /// Highest sequence number appended for this session.
     pub last_seq: u64,
+    /// The environment bundle this session was started with, if any.
+    ///
+    /// Held with the session rather than only in the request that created it,
+    /// for the same reason as its options: a runtime replaced later has to be
+    /// built the same way, and a session that quietly lost its tools would be
+    /// a different session wearing the same identifier.
+    #[serde(default)]
+    pub environment_profile: Option<EnvironmentProfileId>,
     /// Which runtime version is serving this session.
     ///
     /// The control plane knows which version it expects; this says which one
@@ -313,6 +328,7 @@ mod tests {
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
             options: AgentOptions::default(),
+            environment_profile: None,
             geometry: TerminalGeometry::default(),
             last_seq: 0,
             runtime_version: None,

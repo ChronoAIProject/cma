@@ -10,6 +10,7 @@ mod config;
 mod permissions;
 mod renewal;
 mod screen;
+mod skills;
 mod store;
 mod sweep;
 
@@ -21,7 +22,10 @@ use layer1_public::{
     a2a::A2aInterface, agui::AguiInterface, mcp::McpInterface, pty::PtyInterface,
     rest::RestInterface, InterfaceProfile,
 };
-use layer2_core::{KernelId, ScreenModel, SessionService, TerminalGeometry};
+use layer2_core::{
+    Baseline, EnvironmentProfileService, KernelId, ScreenModel, SessionService, SkillId,
+    SoftwarePackage, TerminalGeometry,
+};
 use layer3_adapter::{
     codex::{CodexAdapter, CodexSandboxSpec},
     sandbox::SandboxClient,
@@ -104,20 +108,19 @@ async fn main() {
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
     });
-    // Sessions outlive this process, so the store is opened before anything is
-    // served: starting without it would accept work we cannot keep.
-    let store = match crate::store::MongoSessionStore::connect(
-        &config.mongodb_uri,
-        &config.mongodb_database,
-    )
-    .await
-    {
-        Ok(s) => Arc::new(s) as Arc<dyn layer2_core::SessionStore>,
+    // Sessions outlive this process, so the stores are opened before anything
+    // is served: starting without them would accept work we cannot keep, and a
+    // control plane that opened one and not the other would serve half its
+    // surface with the failure found by a user rather than at startup.
+    let stores = match crate::store::connect(&config.mongodb_uri, &config.mongodb_database).await {
+        Ok(s) => s,
         Err(e) => {
-            tracing::error!(error = %e, "cannot open the session store");
+            tracing::error!(error = %e, "cannot open the stores");
             std::process::exit(2);
         }
     };
+    let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
+    let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
 
     // Context storage is optional: without it a session still works, it simply
     // cannot carry its transcript into a new sandbox.
@@ -131,6 +134,10 @@ async fn main() {
         &config.storage_client_id,
         &config.storage_client_secret,
     );
+    // The catalogue shares this identity rather than minting a second one:
+    // both act as this service against the same platform, and two machine
+    // identities for one process is two things to rotate.
+    let identity_for_catalog = identity.clone();
     // The bucket is as load-bearing as the identity: this service writes only
     // into the one it is given and creates none, so an unnamed bucket is not a
     // default to fall back on.
@@ -167,12 +174,40 @@ async fn main() {
         );
     }
 
+    // What every session carries whether or not its owner asked for it. Read
+    // from configuration so the list is a deployment fact, while "these cannot
+    // be removed" stays a rule of the core.
+    let baseline = Baseline::new(
+        config.baseline_packages.iter().map(SoftwarePackage::new),
+        config.baseline_skills.iter().map(SkillId::new),
+    );
+    tracing::info!(
+        packages = ?config.baseline_packages,
+        skills = ?config.baseline_skills,
+        "every session carries these, and no profile can remove them"
+    );
+
+    // The registry a caller picks skills from. It shares this service's machine
+    // identity, and prefers the caller's own credential per request so the
+    // answer is what they can see rather than only what is public.
+    let catalog = crate::skills::from_config(&config.platform_base_url, identity_for_catalog);
+    if catalog.is_none() {
+        tracing::warn!(
+            "no skill registry is configured, so the profile editor will offer \
+             nothing to choose from. CHRONO_PLATFORM_BASE_URL, \
+             CHRONO_STORAGE_CLIENT_ID and CHRONO_STORAGE_CLIENT_SECRET are all \
+             required. Profiles still store and apply skills chosen by other means."
+        );
+    }
+
+    let environments = EnvironmentProfileService::new(profile_store, baseline, catalog);
     let service = SessionService::new(
         adapters,
         screen_factory,
         store,
         context,
         Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+        Arc::clone(&environments),
         layer2_core::Deployment {
             // The runtime image reference is the runtime version. Deriving it
             // rather than configuring it separately means the two cannot drift:
@@ -213,6 +248,9 @@ async fn main() {
         .route("/livez", get(|| async { "ok" }))
         .route("/ready", get(ready))
         .merge(layer1_public::rest::router(Arc::clone(&service)))
+        .merge(layer1_public::rest::environments::router(Arc::clone(
+            &environments,
+        )))
         .merge(layer1_public::pty::router(Arc::clone(&service)))
         .merge(auth::router(Arc::clone(&auth_state)))
         .layer(axum::middleware::from_fn_with_state(
