@@ -71,6 +71,40 @@ impl RegisteredUser {
     }
 }
 
+/// Most entries a single read of the directory may ask for.
+pub const MAX_DIRECTORY_LIMIT: usize = 500;
+
+/// Entries a read of the directory returns when it asks for no particular
+/// number.
+pub const DEFAULT_DIRECTORY_LIMIT: usize = 100;
+
+/// Which entries a read of the directory wants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryQuery {
+    /// Most entries to return, most recently seen first.
+    pub limit: usize,
+}
+
+impl Default for DirectoryQuery {
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_DIRECTORY_LIMIT,
+        }
+    }
+}
+
+impl DirectoryQuery {
+    /// Bring the limit inside what a read may ask for.
+    ///
+    /// Clamped rather than refused, matching the record of actions: a caller
+    /// asking for more than will be handed over wants as much as they can get,
+    /// and a zero would otherwise ask the store for nothing at all.
+    pub fn clamped(mut self) -> Self {
+        self.limit = self.limit.clamp(1, MAX_DIRECTORY_LIMIT);
+        self
+    }
+}
+
 /// The record of who has used the service.
 pub struct UserDirectory {
     store: Arc<dyn UserDirectoryStore>,
@@ -110,35 +144,59 @@ impl UserDirectory {
         }
     }
 
-    /// Everybody known, most recently seen first.
-    pub async fn list(&self, caller: &Caller) -> Result<Vec<RegisteredUser>, CoreError> {
+    /// The most recently seen subjects, newest first, bounded by the query.
+    ///
+    /// Bounded because this only ever grows. A read with no ceiling is fine
+    /// for as long as the service is young and is an outage afterwards, and
+    /// the point at which it stops being fine is not announced.
+    pub async fn list(
+        &self,
+        caller: &Caller,
+        query: DirectoryQuery,
+    ) -> Result<Vec<RegisteredUser>, CoreError> {
         caller
             .authorization
             .require(Capability::ReadUserDirectory)?;
-        let users = self.store.list().await.map_err(store_failed)?;
+        let query = query.clamped();
+        let users = self.store.recent(&query).await.map_err(store_failed)?;
         tracing::info!(
             reader = %caller.subject,
             returned = users.len(),
+            limit = query.limit,
             "the directory of subjects was read"
         );
         Ok(users)
     }
 
-    /// How to name each subject known, keyed by subject.
+    /// How to name the given subjects, as far as this caller may know.
     ///
-    /// For a surface that lists work by owner. A page of opaque identifiers is
-    /// a page nobody can act on, and asking for one name at a time would be a
-    /// query per row — so the whole mapping is handed over at once and joined
-    /// by whoever is rendering.
+    /// For a surface that lists work by owner. Scoped to the subjects on the
+    /// page rather than reading the whole directory to resolve a screenful of
+    /// them: the page is bounded and the directory is not, and this runs on
+    /// every read of that surface.
+    ///
+    /// Naming people is its own grant, and a caller without it gets no names
+    /// rather than no page. The list of work is offered on the capability that
+    /// opens the list of work; refusing it outright because a *second* grant is
+    /// missing would leave a view drawn empty by entitlement, which teaches
+    /// whoever is reading it that empty means "nothing here".
     ///
     /// Subjects the provider released no details for are simply absent, which
     /// leaves the surface to decide what to draw rather than handing it an
     /// identifier dressed up as a name.
-    pub async fn labels(&self, caller: &Caller) -> Result<HashMap<SubjectId, String>, CoreError> {
-        caller
-            .authorization
-            .require(Capability::ReadUserDirectory)?;
-        let users = self.store.list().await.map_err(store_failed)?;
+    pub async fn names_known_to(
+        &self,
+        caller: &Caller,
+        subjects: &[SubjectId],
+    ) -> Result<HashMap<SubjectId, String>, CoreError> {
+        if !caller.authorization.allows(Capability::ReadUserDirectory) || subjects.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let users = self
+            .store
+            .by_subjects(subjects)
+            .await
+            .map_err(store_failed)?;
         Ok(users
             .into_iter()
             .filter_map(|u| u.label().map(|l| (u.subject.clone(), l.to_string())))

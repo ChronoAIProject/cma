@@ -70,7 +70,9 @@ pub use activity::{
 pub use activity_detail::{ActivityDetail, DetailKey};
 pub use activity_service::ActivityService;
 pub use authz::{Authorization, Caller, Capability};
-pub use directory::{RegisteredUser, UserDirectory};
+pub use directory::{
+    DirectoryQuery, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT, MAX_DIRECTORY_LIMIT,
+};
 pub use environment::{
     Baseline, CatalogError, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
     EnvironmentVariable, ResolvedEnvironment, SkillCatalog, SkillId, SoftwarePackage,

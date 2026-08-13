@@ -13,7 +13,7 @@
 //! persisting them would be persisting a snapshot of something already gone.
 
 use crate::activity::{ActivityQuery, ActivityRecord};
-use crate::directory::RegisteredUser;
+use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::EnvironmentProfile;
 use crate::event::Event;
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
@@ -147,6 +147,17 @@ pub trait ActivityStore: Send + Sync {
 /// issues it — so this is a record of who has turned up, not an authority on
 /// who exists. Nothing is authorised against it and no decision is made on the
 /// strength of a name in it.
+///
+/// **No read of this is unbounded.** It holds one document per person rather
+/// than one per request, so it grows more slowly than the record of actions —
+/// but it still only grows, and a listing with no ceiling is a listing that
+/// works until the day it does not. Both reads below are bounded by
+/// construction: one by an explicit limit, the other by the subjects actually
+/// being asked about.
+///
+/// Deliberately *not* expired, unlike the record of actions. An entry is a
+/// person, not an event, and dropping one would both lose the earliest arrival
+/// this exists to remember and make somebody who came back look new.
 #[async_trait::async_trait]
 pub trait UserDirectoryStore: Send + Sync {
     /// Record that a subject was seen, creating the entry if it is new.
@@ -156,8 +167,19 @@ pub trait UserDirectoryStore: Send + Sync {
     /// and lose the one fact this record exists to hold.
     async fn record_sign_in(&self, user: &RegisteredUser) -> Result<(), StoreError>;
 
-    /// Every subject known, most recently seen first.
-    async fn list(&self) -> Result<Vec<RegisteredUser>, StoreError>;
+    /// The most recently seen subjects, newest first, at most `query.limit`.
+    ///
+    /// The limit is pushed into the query rather than applied to the answer:
+    /// truncating afterwards still reads the whole table, which is the cost
+    /// worth avoiding.
+    async fn recent(&self, query: &DirectoryQuery) -> Result<Vec<RegisteredUser>, StoreError>;
+
+    /// The subjects named, in whatever order the store finds them.
+    ///
+    /// For naming a page of work by its owners. Asking for the whole table to
+    /// resolve a screenful of names costs more every day the service runs,
+    /// and asking one query per row costs more every row.
+    async fn by_subjects(&self, subjects: &[SubjectId]) -> Result<Vec<RegisteredUser>, StoreError>;
 }
 
 /// Where a session's credential comes from when nobody is asking for it.
