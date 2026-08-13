@@ -218,6 +218,35 @@ async fn a_session_that_cannot_be_carried_is_left_running() {
 }
 
 #[tokio::test]
+async fn a_session_that_cannot_be_carried_is_still_adopted() {
+    // The case a deployment actually hits: every session running an image from
+    // before the handover existed refuses to be carried. Those sessions keep
+    // running, so the control plane still has to take them back over and watch
+    // them — leaving one unattended because it could not be moved would be a
+    // worse failure than the stale image it is stuck on.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        refuse_snapshot: true,
+        ..FakeAdapter::default()
+    });
+    let alice = user("alice");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    drop(old);
+
+    let new = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    let recovered = new.reconcile().await;
+
+    assert_eq!(recovered.rotated_sessions, 0, "it cannot be carried");
+    assert_eq!(
+        recovered.readopted_sessions, 1,
+        "but it must still be taken back over"
+    );
+}
+
+#[tokio::test]
 async fn a_runtime_that_cannot_be_carried_is_asked_only_once() {
     // The sweep runs every few minutes for as long as the process does. A
     // session on a runtime that has already refused would otherwise be shown
