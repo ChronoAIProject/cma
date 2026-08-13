@@ -17,3 +17,6 @@ web/coverage/
 .env.*
 !.env.example
 .gstack/
+# Agent tool scratch, including git worktrees. A root-level entry here would
+# fail the repository-structure gate if it were ever committed.
+.claude/
