@@ -28,13 +28,13 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    ActivityQuery, ActivityRecord, ActivityService, CoreError, ProviderView, RegisteredUser,
-    RuntimeInventory, Session, SessionId, SessionService, SubjectId, UserDirectory,
+    ActivityQuery, ActivityRecord, ActivityService, Caller, CoreError, ProviderView,
+    RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId, UserDirectory,
     DEFAULT_ACTIVITY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::AuthenticatedCaller;
+use crate::auth::{ActedUpon, AuthenticatedCaller};
 use crate::rest::{Problem, PROBLEM_BASE};
 
 /// What the operator surface reads from.
@@ -391,12 +391,12 @@ async fn terminate(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-) -> Result<StatusCode, Problem> {
-    state
+) -> Result<Response, Problem> {
+    let owner = state
         .sessions
-        .terminate_session(&caller, &SessionId(id))
+        .terminate_any_session(&caller, &SessionId(id))
         .await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(acted(&caller, owner))
 }
 
 /// Release somebody's session's runtime, keeping the session.
@@ -404,9 +404,26 @@ async fn stop(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-) -> Result<StatusCode, Problem> {
-    state.sessions.stop_session(&caller, &SessionId(id)).await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Response, Problem> {
+    let owner = state
+        .sessions
+        .stop_any_session(&caller, &SessionId(id))
+        .await?;
+    Ok(acted(&caller, owner))
+}
+
+/// The answer to a control, naming whose work it reached.
+///
+/// The subject rides in an extension rather than the body: the client asked
+/// to stop a session and has nothing to learn from being told who owns it,
+/// while whatever writes the record down cannot see it any other way. Omitted
+/// when the two are the same, so the presence of the name means what it says.
+fn acted(caller: &Caller, owner: SubjectId) -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    if caller.is_acting_for_another(&owner) {
+        response.extensions_mut().insert(ActedUpon(owner));
+    }
+    response
 }
 
 #[cfg(test)]
