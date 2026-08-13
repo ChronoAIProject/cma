@@ -8,11 +8,23 @@
 //! Reached through the identity platform's proxy, the same way every other
 //! service on this platform is reached, so the credential is brokered rather
 //! than held here.
+//!
+//! The object key travels as a query parameter, not a path segment, because
+//! that is the contract the storage service exposes. Reads use the dedicated
+//! download route: the plain object route returns *metadata* as JSON, and
+//! treating that as a transcript would be a success status carrying the wrong
+//! bytes — the one failure mode here that would not announce itself.
 
 use layer2_core::{
     store::{ContextStore, StoreError},
     SessionId,
 };
+
+/// Content type recorded for a stored transcript.
+///
+/// The transcript is newline-delimited JSON, and saying so means anything that
+/// later inspects the bucket sees what it is rather than opaque bytes.
+const CONTENT_TYPE: &str = "application/x-ndjson";
 
 /// Object store for session context, via the platform's storage service.
 pub struct ChronoStorageContextStore {
@@ -20,7 +32,11 @@ pub struct ChronoStorageContextStore {
     base_url: String,
     /// Bucket that holds this deployment's session context.
     bucket: String,
-    /// Credential presented to the platform.
+    /// Credential presented to the identity platform.
+    ///
+    /// Belongs to the platform's trust domain and nothing else. It is passed in
+    /// rather than derived so that a credential issued for another service can
+    /// never be spent here by accident.
     credential: String,
     http: reqwest::Client,
 }
@@ -52,11 +68,14 @@ impl ChronoStorageContextStore {
         format!("sessions/{}/context.jsonl", id.0)
     }
 
-    fn object_url(&self, key: &str) -> String {
-        format!(
-            "{}/api/buckets/{}/objects/{}",
-            self.base_url, self.bucket, key
-        )
+    /// The collection endpoint, which every operation addresses by key.
+    fn objects_url(&self) -> String {
+        format!("{}/api/buckets/{}/objects", self.base_url, self.bucket)
+    }
+
+    /// The endpoint that streams an object's raw bytes.
+    fn download_url(&self) -> String {
+        format!("{}/download", self.objects_url())
     }
 }
 
@@ -64,17 +83,20 @@ impl ChronoStorageContextStore {
 impl ContextStore for ChronoStorageContextStore {
     async fn put(&self, id: &SessionId, bytes: Vec<u8>) -> Result<String, StoreError> {
         let key = Self::key_for(id);
-        let url = self.object_url(&key);
+        let url = self.objects_url();
         let len = bytes.len();
+        // A create is an overwrite on this service, which suits a transcript
+        // that is always written whole rather than appended to.
         let resp = self
             .http
-            .put(&url)
+            .post(&url)
+            .query(&[("key", key.as_str()), ("contentType", CONTENT_TYPE)])
             .bearer_auth(&self.credential)
-            .header(reqwest::header::CONTENT_TYPE, "application/x-ndjson")
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(bytes)
             .send()
             .await
-            .map_err(|e| StoreError::Unavailable(format!("PUT {url}: {e}")))?;
+            .map_err(|e| StoreError::Unavailable(format!("POST {url}: {e}")))?;
         if !resp.status().is_success() {
             return Err(StoreError::Unavailable(format!(
                 "context upload returned {}",
@@ -86,10 +108,11 @@ impl ContextStore for ChronoStorageContextStore {
     }
 
     async fn get(&self, reference: &str) -> Result<Option<Vec<u8>>, StoreError> {
-        let url = self.object_url(reference);
+        let url = self.download_url();
         let resp = self
             .http
             .get(&url)
+            .query(&[("key", reference)])
             .bearer_auth(&self.credential)
             .send()
             .await
@@ -113,10 +136,11 @@ impl ContextStore for ChronoStorageContextStore {
     }
 
     async fn delete(&self, reference: &str) -> Result<(), StoreError> {
-        let url = self.object_url(reference);
+        let url = self.objects_url();
         let resp = self
             .http
             .delete(&url)
+            .query(&[("key", reference)])
             .bearer_auth(&self.credential)
             .send()
             .await
@@ -152,8 +176,32 @@ mod tests {
     #[test]
     fn a_trailing_slash_on_the_base_does_not_double_up() {
         assert_eq!(
-            store().object_url("sessions/a/context.jsonl"),
-            "http://platform/api/v1/proxy/s/storage/api/buckets/bkt/objects/sessions/a/context.jsonl"
+            store().objects_url(),
+            "http://platform/api/v1/proxy/s/storage/api/buckets/bkt/objects"
+        );
+    }
+
+    #[test]
+    fn the_key_is_never_a_path_segment() {
+        // The service takes the key as a query parameter. Building it into the
+        // path is the mistake this asserts against: it produced 404s on write
+        // and delete, and the endpoint it did reach on read returns metadata.
+        let s = store();
+        assert!(
+            !s.objects_url().contains("context.jsonl"),
+            "the key must not appear in the path"
+        );
+        assert!(s.objects_url().ends_with("/objects"));
+    }
+
+    #[test]
+    fn reads_use_the_download_route_not_the_metadata_route() {
+        // The plain object route answers with metadata JSON. Reading a
+        // transcript from it would succeed and return the wrong bytes, which is
+        // worse than failing.
+        assert_eq!(
+            store().download_url(),
+            "http://platform/api/v1/proxy/s/storage/api/buckets/bkt/objects/download"
         );
     }
 
@@ -170,12 +218,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_something_already_gone_is_not_an_error() {
-        // Reconciliation deletes optimistically; an object already reaped by
-        // another pass must not fail the sweep.
+    async fn an_unreachable_store_fails_a_read_rather_than_reporting_no_context() {
+        // Reporting None here would tell a reviving session it had no history
+        // when it simply could not be reached.
         let s = ChronoStorageContextStore::new("http://127.0.0.1:1", "b", "t");
-        // Unreachable still errors; the 404 tolerance is exercised where a real
-        // status is available.
+        assert!(s.get("sessions/a/context.jsonl").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn deleting_against_an_unreachable_store_is_reported() {
+        let s = ChronoStorageContextStore::new("http://127.0.0.1:1", "b", "t");
         assert!(s.delete("sessions/gone/context.jsonl").await.is_err());
     }
 }
