@@ -237,14 +237,26 @@ fn an_unreachable_store_is_not_flattened_into_a_refusal() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
-#[test]
-fn acting_on_a_session_keeps_the_session_surfaces_refusal() {
+#[tokio::test]
+async fn acting_on_a_session_keeps_the_session_surfaces_refusal() {
     // These routes do address an identifier, so a refusal must not reveal
-    // whether the session exists.
-    let forbidden = Problem(CoreError::Forbidden).into_response();
-    let missing = Problem(CoreError::SessionNotFound).into_response();
-    assert_eq!(forbidden.status(), StatusCode::NOT_FOUND);
-    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    // whether the session exists — and "must not reveal" means the whole
+    // document, not the status line. An operator control route is reachable
+    // by any caller entitled to end their own session, so the caller who
+    // would exploit a difference here is an ordinary one.
+    let mut bodies = Vec::new();
+    for error in [CoreError::Forbidden, CoreError::SessionNotFound] {
+        let response = Problem(error).into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("problem documents are small");
+        bodies.push(bytes);
+    }
+    assert_eq!(
+        bodies[0], bodies[1],
+        "a refusal that reads differently confirms the identifier exists"
+    );
 }
 
 #[test]
