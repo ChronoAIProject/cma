@@ -358,3 +358,62 @@ async fn a_caller_entitled_to_nothing_is_refused_without_the_session_being_read(
         "an identifier that does not exist must be indistinguishable from one that does"
     );
 }
+#[tokio::test]
+async fn the_operator_entry_point_refuses_a_caller_acting_on_their_own_session() {
+    // Its own gate rather than the everyday one. The surface projecting this
+    // is restricted as an operator surface in front of the service as well as
+    // inside it, and a caller who succeeds here while that restriction would
+    // have refused them means the two disagree about who may call it. Ending
+    // their own session is still available to them at their own address.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    assert_eq!(
+        svc.terminate_any_session(&alice, &created.id).await,
+        Err(CoreError::Forbidden)
+    );
+    assert_eq!(
+        svc.stop_any_session(&alice, &created.id).await,
+        Err(CoreError::Forbidden)
+    );
+    assert!(
+        adapter.terminated.lock().await.is_empty(),
+        "a refused request must not reach the runtime"
+    );
+
+    svc.terminate_session(&alice, &created.id)
+        .await
+        .expect("their own session is still theirs to end");
+}
+#[tokio::test]
+async fn the_operator_entry_point_reports_whose_work_it_ended() {
+    // Without this the record cannot tell an operator ending somebody else's
+    // session from that person ending their own: same action, same target,
+    // and the owner is knowable only here, before the session is gone.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+
+    let stopped = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &stopped.id).await;
+    assert_eq!(
+        svc.stop_any_session(&operator(), &stopped.id)
+            .await
+            .expect("an operator may pause work it does not own"),
+        SubjectId("alice".into())
+    );
+
+    let ended = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &ended.id).await;
+    assert_eq!(
+        svc.terminate_any_session(&operator(), &ended.id)
+            .await
+            .expect("an operator may end work it does not own"),
+        SubjectId("alice".into())
+    );
+}

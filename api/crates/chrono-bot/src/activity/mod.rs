@@ -31,8 +31,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use layer1_public::AuthenticatedSubject;
-use layer2_core::{ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, SubjectId};
+use layer1_public::{ActedUpon, AuthenticatedSubject};
+use layer2_core::{
+    ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, DetailKey, SubjectId,
+};
 
 use crate::activity::classify::{classify, detail_from_body, detail_from_query, Classified};
 
@@ -109,6 +111,15 @@ pub async fn record(
 
     let response = next.run(req).await;
     let outcome = outcome_of(response.status());
+    // Whose work it reached, when a handler established that it was not the
+    // caller's own. Nothing here could derive it: the operator controls and
+    // the owner's own controls are the same operation on the same shape of
+    // address, so an entry for one would otherwise be indistinguishable from
+    // an entry for the other — and which of the two happened is the whole
+    // reason somebody reads this back.
+    if let Some(ActedUpon(subject)) = response.extensions().get::<ActedUpon>() {
+        detail.record(DetailKey::Subject, subject.as_str());
+    }
     store(&recorder, &classified, actor, detail, outcome).await;
     response
 }

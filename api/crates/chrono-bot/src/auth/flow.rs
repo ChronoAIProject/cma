@@ -17,7 +17,8 @@ use layer2_core::SubjectId;
 use serde::Deserialize;
 
 use super::{
-    code_challenge, random_token, session_cookie, AuthMode, AuthState, ProviderMetadata, SESSION_COOKIE,
+    code_challenge, random_token, session_cookie, AuthMode, AuthState, ProviderMetadata,
+    SESSION_COOKIE,
 };
 
 /// Query parameters returned by the provider on the redirect back.
