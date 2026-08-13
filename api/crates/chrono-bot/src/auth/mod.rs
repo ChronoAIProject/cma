@@ -603,7 +603,10 @@ mod tests {
         const SAMPLES: usize = 256;
         let tokens: Vec<String> = (0..SAMPLES).map(|_| random_token()).collect();
         assert_eq!(
-            tokens.iter().collect::<std::collections::HashSet<_>>().len(),
+            tokens
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
             SAMPLES,
             "tokens repeated"
         );
