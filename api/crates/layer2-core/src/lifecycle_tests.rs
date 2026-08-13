@@ -160,6 +160,14 @@ async fn a_session_can_be_terminated_after_a_restart() {
         .expect("session is created");
     await_settled(&first, &caller, &created.id).await;
 
+    let recorded = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("the session has a runtime");
+
     let adapter = Arc::new(FakeAdapter::default());
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
     restarted
@@ -169,7 +177,7 @@ async fn a_session_can_be_terminated_after_a_restart() {
 
     assert_eq!(
         adapter.terminated.lock().await.clone(),
-        vec![format!("runtime-for-{}", created.id.0)],
+        vec![recorded],
         "the runtime recorded in the store must actually be torn down"
     );
 

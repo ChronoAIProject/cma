@@ -36,6 +36,12 @@ struct SessionDoc {
     rows: u32,
     last_seq: i64,
     created_at: String,
+    /// The agent configuration, stored as the core serialises it.
+    ///
+    /// Optional because records written before options were persisted have no
+    /// such field; those load on defaults rather than failing to load at all.
+    #[serde(default)]
+    options: Option<mongodb::bson::Bson>,
     runtime_id: Option<String>,
     context_ref: Option<String>,
 }
@@ -112,6 +118,10 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         rows: s.geometry.rows() as u32,
         last_seq: s.last_seq as i64,
         created_at: s.created_at.clone(),
+        options: Some(
+            mongodb::bson::serialize_to_bson(&s.options)
+                .map_err(|e| StoreError::Malformed(e.to_string()))?,
+        ),
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
     })
@@ -150,6 +160,11 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             stop_reason: match d.stop_reason {
                 Some(v) => Some(parse_plain(&v)?),
                 None => None,
+            },
+            options: match d.options {
+                Some(v) => mongodb::bson::deserialize_from_bson(v)
+                    .map_err(|e| StoreError::Malformed(e.to_string()))?,
+                None => Default::default(),
             },
             geometry,
             last_seq: d.last_seq.max(0) as u64,
