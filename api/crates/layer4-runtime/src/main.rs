@@ -112,6 +112,14 @@ async fn main() {
             wire_api: std::env::var("CHRONO_UPSTREAM_WIRE_API")
                 .unwrap_or_else(|_| "responses".to_string()),
             provider_name: "Chrono LLM".to_string(),
+            // Defaults here match the core's own: a runtime started without
+            // these must not be more permissive than one configured
+            // explicitly.
+            effort: std::env::var("CHRONO_AGENT_EFFORT").unwrap_or_else(|_| "medium".to_string()),
+            approval_policy: std::env::var("CHRONO_AGENT_APPROVAL")
+                .unwrap_or_else(|_| "on-request".to_string()),
+            sandbox_mode: std::env::var("CHRONO_AGENT_SANDBOX")
+                .unwrap_or_else(|_| "read-only".to_string()),
         };
         if let Err(e) = agent_config.write(std::path::Path::new(&home)) {
             tracing::error!(error = %e, "cannot write agent configuration");

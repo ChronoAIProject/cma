@@ -31,6 +31,42 @@ pub struct RuntimeSpec {
     ///
     /// Opaque here: this layer forwards it and never inspects or logs it.
     pub subject_credential: Option<String>,
+    /// How the agent should behave.
+    ///
+    /// Stated as intent rather than as a rendered configuration, so each
+    /// adapter can express it in whatever its own runtime understands.
+    pub options: RuntimeOptions,
+}
+
+/// What a runtime should be told about how to behave.
+///
+/// Declared here rather than taken from the core, because this layer must not
+/// depend on the core — the dependency runs the other way. The two are
+/// deliberately separate vocabularies that the caller maps between: the core
+/// says what a person asked for, and this says what a runtime is given.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeOptions {
+    /// Model to select, or `None` for the deployment's default.
+    pub model: Option<String>,
+    /// How much deliberation to ask for, already in its wire form.
+    pub reasoning_effort: Option<String>,
+    /// How much the agent may do unattended.
+    pub permission: RuntimePermission,
+    /// Whether the agent authenticates with the owner's own vendor account
+    /// instead of being handed a delegated credential.
+    pub own_credential: bool,
+}
+
+/// How much the agent may do without asking.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimePermission {
+    /// Ask before reaching outside the workspace. The safe default.
+    #[default]
+    Guarded,
+    /// Work within the workspace unattended.
+    Autonomous,
+    /// No approvals and no confinement inside the sandbox.
+    Unrestricted,
 }
 
 /// An opaque reference to a provisioned runtime.

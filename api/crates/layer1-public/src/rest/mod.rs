@@ -58,6 +58,9 @@ impl InterfaceProfile for RestInterface {
 /// Request body for creating a session.
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
+    /// How the agent should behave. Omitted means the safe defaults.
+    #[serde(default)]
+    options: Option<layer2_core::AgentOptions>,
     /// Which runtime should back the session.
     pub kernel: String,
     /// Initial terminal width.
@@ -175,6 +178,10 @@ async fn create(
             SessionSpec {
                 kernel: KernelId::new(body.kernel),
                 geometry,
+                // Absent options mean the deployment's defaults, which are the
+                // cautious ones. A client that omits them never lands on a
+                // session that can act without asking.
+                options: body.options.unwrap_or_default(),
                 subject_credential: credential.map(|axum::Extension(c)| c.0),
             },
         )

@@ -32,6 +32,7 @@ mod persistence_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
+pub mod options;
 pub mod service;
 pub mod session;
 pub mod store;
@@ -42,6 +43,7 @@ pub use authz::{Authorization, Caller, Capability};
 pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame};
 pub use ids::{KernelId, SessionId, SubjectId};
+pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort};
 pub use reconcile::Reclaimed;
 pub use service::{AttachmentHandle, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
