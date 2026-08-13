@@ -17,7 +17,8 @@ use layer2_core::SubjectId;
 use serde::Deserialize;
 
 use super::{
-    code_challenge, session_cookie, uuid_v4, AuthMode, AuthState, ProviderMetadata, SESSION_COOKIE,
+    code_challenge, random_token, session_cookie, AuthMode, AuthState, ProviderMetadata,
+    SESSION_COOKIE,
 };
 
 /// Query parameters returned by the provider on the redirect back.
@@ -53,8 +54,8 @@ async fn login(State(auth): State<Arc<AuthState>>) -> Response {
                 let redirect_uri = format!("{}/auth/callback", public_url.trim_end_matches('/'));
                 // PKCE is mandatory at this provider. The verifier stays here;
                 // only its digest travels through the browser.
-                let verifier = uuid_v4();
-                let state = uuid_v4();
+                let verifier = random_token();
+                let state = random_token();
                 auth.pending
                     .write()
                     .await
