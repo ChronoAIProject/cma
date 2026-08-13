@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-web:2e7b976
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-web:d115eca
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
