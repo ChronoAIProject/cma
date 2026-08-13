@@ -9,6 +9,7 @@
 //! subset is a projection rather than a compromise.
 
 mod clock;
+mod credentials;
 pub mod error;
 pub mod event;
 pub mod ids;
