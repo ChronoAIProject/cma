@@ -19,6 +19,15 @@ interface ServerControl {
   detail?: unknown;
 }
 
+/**
+ * Geometry declared when the surface has not measured itself yet.
+ *
+ * The relay will not proceed without a size, so it is better to open at a
+ * conventional one and correct it a frame later than to stall the handshake.
+ */
+const FALLBACK_COLS = 80;
+const FALLBACK_ROWS = 24;
+
 export interface WebSocketDriverOptions {
   /** Absolute ws:// or wss:// URL of the session's terminal. */
   readonly url: string;
@@ -39,15 +48,38 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
   let socket: WebSocket | null = null;
   let sink: TerminalSink | null = null;
   let detached = false;
-  // Geometry can be set before the socket opens. It is held and sent on ready
-  // rather than dropped, so the first frame is painted at the right size.
+  // Geometry is held until the socket can carry it. The relay requires it
+  // before anything else, so it is sent the moment the connection opens.
   let pending: { cols: number; rows: number } | null = null;
+  let opened = false;
   let ready = false;
+  // Input typed before the relay is ready. Sending it early is a protocol
+  // error, and dropping it would silently lose what someone typed.
+  const queued: string[] = [];
 
   function sendControl(message: object): void {
     if (socket !== null && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(message));
     }
+  }
+
+  function sendBytes(data: string): void {
+    if (socket !== null && socket.readyState === WebSocket.OPEN) {
+      socket.send(new TextEncoder().encode(data));
+    }
+  }
+
+  /**
+   * Declare geometry, which the relay requires before it will do anything else.
+   *
+   * Sent on open rather than on ready. The relay does not announce itself until
+   * it has a size, so waiting for that announcement before sending one leaves
+   * both sides waiting for the other — and any keystroke in the meantime is
+   * rejected as arriving before the first resize.
+   */
+  function declareGeometry(): void {
+    const size = pending ?? { cols: FALLBACK_COLS, rows: FALLBACK_ROWS };
+    sendControl({ t: 'resize', cols: size.cols, rows: size.rows });
   }
 
   function handleControl(raw: string): void {
@@ -62,13 +94,17 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
     switch (frame.t) {
       case 'ready': {
         ready = true;
-        if (pending !== null) {
-          sendControl({ t: 'resize', cols: pending.cols, rows: pending.rows });
-        }
         if (options.openingTurn !== undefined && options.openingTurn !== '') {
           // Sent as ordinary input, newline included, so the agent receives it
           // exactly as though it had been typed.
-          socket?.send(new TextEncoder().encode(`${options.openingTurn}\n`));
+          sendBytes(`${options.openingTurn}\n`);
+        }
+        // Anything typed while the relay was still coming up.
+        while (queued.length > 0) {
+          const next = queued.shift();
+          if (next !== undefined) {
+            sendBytes(next);
+          }
         }
         break;
       }
@@ -102,6 +138,11 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
       }
       socket = ws;
       ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        opened = true;
+        declareGeometry();
+      };
 
       ws.onmessage = (event: MessageEvent) => {
         if (typeof event.data === 'string') {
@@ -147,14 +188,18 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
     },
 
     send(data: string): void {
-      if (socket !== null && socket.readyState === WebSocket.OPEN) {
-        socket.send(new TextEncoder().encode(data));
+      if (!ready) {
+        // Held rather than sent: the relay rejects data before it is ready,
+        // and losing a keystroke is worse than delivering it a moment late.
+        queued.push(data);
+        return;
       }
+      sendBytes(data);
     },
 
     resize(cols: number, rows: number): void {
       pending = { cols, rows };
-      if (ready) {
+      if (opened) {
         sendControl({ t: 'resize', cols, rows });
       }
     },
@@ -164,10 +209,13 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
       // not a failure the user needs to be told about.
       detached = true;
       ready = false;
+      opened = false;
+      queued.length = 0;
       sink = null;
       if (socket !== null) {
         const ws = socket;
         socket = null;
+        ws.onopen = null;
         ws.onmessage = null;
         ws.onerror = null;
         ws.onclose = null;
