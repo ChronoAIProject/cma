@@ -181,7 +181,7 @@ describe('App', () => {
     await waitForConsole();
 
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
-    expect(await screen.findByText(/press \+ to start one/i)).toBeInTheDocument();
+    expect(await screen.findByText(/start one from the left/i)).toBeInTheDocument();
   });
 
   it('says a session is starting rather than appearing to hang', async () => {

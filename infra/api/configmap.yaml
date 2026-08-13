@@ -93,7 +93,7 @@ data:
   # the cluster already pulls from. The previous value pointed at a public
   # registry the cluster cannot authenticate to and where this image had never
   # been published, so every session would have failed to start its sandbox.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:d115eca"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:8dbd315"
   # Path to the mounted OpenSandbox API key. Read from a file rather than an
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.

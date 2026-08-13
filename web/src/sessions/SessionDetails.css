@@ -1,0 +1,108 @@
+/*
+ * Session details, per docs/Web_Style.md.
+ *
+ * A panel beside the terminal, collapsing to a handle rather than disappearing
+ * — the way back has to be where the panel was.
+ */
+
+.details {
+  width: 17rem;
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--rule);
+  background: var(--ground);
+  font-family: var(--font-ui);
+}
+
+.details__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.details__title {
+  margin: 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.details__collapse,
+.details__handle {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  color: var(--ink-3);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: 1;
+  padding: 2px var(--space-1);
+}
+
+.details__collapse:hover,
+.details__handle:hover {
+  color: var(--ink);
+  border-color: var(--rule-2);
+}
+
+.details__collapse:focus-visible,
+.details__handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Collapsed, the panel is a full-height strip so the target is easy to hit. */
+.details__handle {
+  flex: 0 0 auto;
+  border-left: 1px solid var(--rule);
+  border-radius: 0;
+  background: var(--ground);
+  padding: 0 var(--space-1);
+}
+
+.details__list {
+  margin: 0;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.details__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.details__row dt {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+
+.details__row dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.details__id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.details__ending {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--ink);
+  background: var(--surface-2);
+  border-left: 2px solid var(--emphasis);
+}

@@ -1,5 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { IntroTerminal } from './landing/IntroTerminal';
+import { TopBar } from './shell/TopBar';
 import { useAuth } from './auth/context';
 import './styles/tokens.css';
 import './styles/base.css';
@@ -50,7 +51,14 @@ export function App() {
       );
 
     case 'anonymous':
-      return <IntroTerminal />;
+      return (
+        // The same bar as the signed-in state: a visitor and an owner are
+        // looking at one product, not two.
+        <div className="app-shell">
+          <TopBar />
+          <IntroTerminal />
+        </div>
+      );
 
     default: {
       const exhaustive: never = state;

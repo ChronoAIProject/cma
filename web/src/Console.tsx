@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { SessionTabs } from './sessions/SessionTabs';
+import { SessionRail } from './sessions/SessionRail';
+import { SessionDetails } from './sessions/SessionDetails';
+import { TopBar } from './shell/TopBar';
+import type { SortOrder } from './sessions/sessionTime';
 import type { Kernel, Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
@@ -78,6 +81,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // The last startup step each session reported. Kept per session so switching
   // tabs shows that session's progress rather than another's.
   const [stages, setStages] = useState<Record<string, Stage>>({});
+  const [order, setOrder] = useState<SortOrder>('newest');
+  // Open by default: someone arriving wants to know what they are looking at,
+  // and the panel is the only place that says.
+  const [detailsOpen, setDetailsOpen] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
@@ -235,15 +242,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
   return (
     <div className="console">
-      <header className="console__bar">
-        <SessionTabs
-          sessions={sessions}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onCreate={() => {
-            setChoosing(true);
-          }}
-        />
+      <TopBar>
         {active !== null ? (
           <SessionActions
             session={active}
@@ -267,39 +266,62 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             setPaletteEpoch((n) => n + 1);
           }}
         />
-      </header>
+      </TopBar>
 
-      <main className="console__body">
-        {notice !== null ? (
-          <p className="console__empty" role="alert">
-            {notice}
-          </p>
-        ) : loading ? (
-          <p className="console__empty">Loading your sessions…</p>
-        ) : active === null ? (
-          <p className="console__empty">No session open. Press + to start one.</p>
-        ) : active.lifecycle === 'provisioning' ? (
-          <StartupProgress
-            message="Starting a sandbox for this session. This can take a minute the first time."
-            stage={stages[active.id] ?? null}
+      <div className="console__body">
+        <SessionRail
+          sessions={sessions}
+          activeId={activeId}
+          order={order}
+          onSelect={setActiveId}
+          onCreate={() => {
+            setChoosing(true);
+          }}
+          onReorder={setOrder}
+        />
+
+        <main className="console__surface">
+          {notice !== null ? (
+            <p className="console__empty" role="alert">
+              {notice}
+            </p>
+          ) : loading ? (
+            <p className="console__empty">Loading your sessions…</p>
+          ) : active === null ? (
+            <p className="console__empty">No session open. Start one from the left.</p>
+          ) : active.lifecycle === 'provisioning' ? (
+            <StartupProgress
+              message="Starting a sandbox for this session. This can take a minute the first time."
+              stage={stages[active.id] ?? null}
+            />
+          ) : active.lifecycle === 'terminated' ? (
+            <p className="console__empty">
+              {endings[active.id] !== undefined
+                ? `This session could not continue: ${endings[active.id]}`
+                : 'This session has ended.'}
+            </p>
+          ) : driver === null ? (
+            <p className="console__empty">Attaching…</p>
+          ) : (
+            <TerminalSurface
+              key={`${active.id}:${String(paletteEpoch)}`}
+              driver={driver}
+              label={`Session ${active.id} on ${active.kernel}`}
+            />
+          )}
+        </main>
+
+        {active !== null ? (
+          <SessionDetails
+            session={active}
+            open={detailsOpen}
+            ending={endings[active.id]}
+            onToggle={() => {
+              setDetailsOpen((v) => !v);
+            }}
           />
-        ) : active.lifecycle === 'terminated' ? (
-          <p className="console__empty">
-            {endings[active.id] !== undefined
-              ? `This session could not continue: ${endings[active.id]}`
-              : 'This session has ended.'}{' '}
-            Press + to start another.
-          </p>
-        ) : driver === null ? (
-          <p className="console__empty">Attaching…</p>
-        ) : (
-          <TerminalSurface
-            key={`${active.id}:${paletteEpoch}`}
-            driver={driver}
-            label={`Session ${active.id} on ${active.kernel}`}
-          />
-        )}
-      </main>
+        ) : null}
+      </div>
 
       <NewSessionDialog
         open={choosing}
