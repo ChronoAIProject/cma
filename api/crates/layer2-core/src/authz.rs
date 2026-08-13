@@ -149,6 +149,17 @@ impl Caller {
         &self.subject == owner || self.authorization.allows(Capability::ReadAllSessions)
     }
 
+    /// Whether this caller may read the durable event log of `owner`'s session.
+    ///
+    /// A separate grant from seeing the session, because the log says more than
+    /// the list does: it is every state change, every configuration a session
+    /// was given and every reason one ended, in order. Reading who is running
+    /// what should not carry reading everything they have done, or the two
+    /// capabilities the provider issues separately collapse into one.
+    pub fn may_read_event_log_owned_by(&self, owner: &SubjectId) -> bool {
+        &self.subject == owner || self.authorization.allows(Capability::ReadEventLog)
+    }
+
     /// Fail unless this caller may end or pause *some* session.
     ///
     /// The cheap half of the check, made before anything is read. A caller
@@ -279,6 +290,41 @@ mod tests {
             Authorization::from_capabilities([Capability::ReadAllSessions]),
         );
         assert!(c.may_read_owned_by(&subject("someone-else")));
+    }
+
+    #[test]
+    fn reading_every_session_does_not_imply_reading_every_event_log() {
+        // The two are issued as separate permissions, so one standing in for
+        // the other would mean the narrower grant silently carried the wider
+        // one and the distinction the provider draws bought nothing.
+        let c = Caller::new(
+            subject("admin"),
+            Authorization::from_capabilities([Capability::ReadAllSessions]),
+        );
+        assert!(c.may_read_owned_by(&subject("someone-else")));
+        assert!(
+            !c.may_read_event_log_owned_by(&subject("someone-else")),
+            "listing sessions must not open their histories"
+        );
+    }
+
+    #[test]
+    fn an_owner_reads_their_own_event_log_without_a_privileged_grant() {
+        let c = Caller::new(
+            subject("a"),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        assert!(c.may_read_event_log_owned_by(&subject("a")));
+        assert!(!c.may_read_event_log_owned_by(&subject("b")));
+    }
+
+    #[test]
+    fn the_event_log_grant_is_what_opens_another_subjects_history() {
+        let c = Caller::new(
+            subject("admin"),
+            Authorization::from_capabilities([Capability::ReadEventLog]),
+        );
+        assert!(c.may_read_event_log_owned_by(&subject("someone-else")));
     }
 
     #[test]

@@ -12,8 +12,8 @@ use crate::ids::SessionId;
 use crate::store::{ContextStore, StoreError};
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
-    await_settled, credential_on, service, service_with_context, service_with_credentials, spec,
-    user, write_screen, FakeAdapter, FakeStore,
+    admin, await_settled, credential_on, service, service_with_context, service_with_credentials,
+    spec, user, write_screen, FakeAdapter, FakeStore,
 };
 
 /// Context held in memory, keyed the way a real object store keys it.
@@ -69,6 +69,60 @@ async fn a_stopped_session_can_still_be_read() {
     assert_eq!(
         transcript, b"hello from the agent",
         "stopping a session must not throw away what it showed"
+    );
+}
+
+#[tokio::test]
+async fn a_privileged_reader_cannot_read_a_screen_they_cannot_read_as_a_transcript() {
+    // The same bytes by two routes, so they must answer to the same rule. A
+    // session's screen shows whatever the agent printed, and the values of the
+    // environment bundle it was started with are in its process environment —
+    // so an operator who could snapshot a screen could read other people's
+    // secrets through a capability documented as listing sessions.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let operator = admin();
+    assert!(
+        svc.screen_snapshot(&operator, &created.id).await.is_err(),
+        "reading every session must not reach into what one is showing"
+    );
+    assert!(
+        svc.session_transcript(&operator, &created.id).await.is_err(),
+        "the transcript rule this mirrors must still hold"
+    );
+    assert!(
+        svc.screen_snapshot(&alice, &created.id).await.is_ok(),
+        "the owner still reads their own screen"
+    );
+}
+
+#[tokio::test]
+async fn listing_every_session_does_not_open_their_event_logs() {
+    // Two permissions the provider issues separately. If reading sessions
+    // carried reading their histories, the narrower role would silently be
+    // the wider one and the grant that exists to gate the log would grant
+    // nothing at all.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    assert!(
+        svc.events_since(&admin(), &created.id, None).await.is_err(),
+        "a session lister must not read another subject's history"
+    );
+    assert!(
+        svc.events_since(&alice, &created.id, None).await.is_ok(),
+        "the owner still reads their own history"
     );
 }
 

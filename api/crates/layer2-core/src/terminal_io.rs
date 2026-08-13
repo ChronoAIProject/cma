@@ -75,6 +75,12 @@ impl SessionService {
         Ok(())
     }
     /// Read the current screen without holding a stream.
+    ///
+    /// Owner-only, on the same terms as reading the transcript: this is the
+    /// same content by another route. A session's screen carries whatever the
+    /// agent has printed, which includes the values of the environment bundle
+    /// it was started with — so a capability that opens it is a capability
+    /// that reads other people's secrets, and no operator holds one.
     pub async fn screen_snapshot(
         &self,
         caller: &Caller,
@@ -83,7 +89,7 @@ impl SessionService {
         let screen = {
             let entries = self.entries.read().await;
             let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-            if !caller.may_read_owned_by(&entry.session.owner) {
+            if !entry.session.is_owned_by(&caller.subject) {
                 return Err(CoreError::Forbidden);
             }
             Arc::clone(&entry.screen)
