@@ -72,7 +72,7 @@ impl Config {
         // How the agent is told to continue a conversation rather than start
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
-        let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume --last");
+        let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume");
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
@@ -208,7 +208,7 @@ mod tests {
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
-            runtime_resume_args: "resume --last".into(),
+            runtime_resume_args: "resume".into(),
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),
             upstream_wire_api: "responses".into(),
