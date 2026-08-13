@@ -98,6 +98,19 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * Why the session cannot be typed into. Quieter than an error, because most of
+ * the states it explains — starting, stopped, being moved — are not failures.
+ */
+.details__state {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-left: 2px solid var(--rule-2);
+}
+
 .details__ending {
   margin: 0;
   padding: var(--space-2) var(--space-3);
