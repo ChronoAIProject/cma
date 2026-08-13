@@ -92,6 +92,11 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
         Arc::new(FakeStore::default()),
         None,
         None,
+        crate::environment_service::EnvironmentProfileService::new(
+            Arc::new(crate::test_support::FakeProfileStore::default()),
+            crate::environment::Baseline::default(),
+            None,
+        ),
         crate::test_support::owned(),
     )
 }
@@ -115,6 +120,7 @@ async fn the_owner_credential_reaches_the_runtime_at_creation() {
     svc.create_session(
         &owner,
         SessionSpec {
+            environment_profile: None,
             kernel: KernelId::new("recording"),
             geometry: None,
             options: Default::default(),
@@ -142,6 +148,7 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
         .create_session(
             &owner,
             SessionSpec {
+                environment_profile: None,
                 kernel: KernelId::new("recording"),
                 geometry: None,
                 options: Default::default(),
@@ -181,6 +188,7 @@ async fn a_renewal_does_not_leak_across_subjects() {
     svc.create_session(
         &owner,
         SessionSpec {
+            environment_profile: None,
             kernel: KernelId::new("recording"),
             geometry: None,
             options: Default::default(),
@@ -210,6 +218,7 @@ async fn a_terminated_session_is_not_renewed() {
         .create_session(
             &owner,
             SessionSpec {
+                environment_profile: None,
                 kernel: KernelId::new("recording"),
                 geometry: None,
                 options: Default::default(),
@@ -236,6 +245,7 @@ async fn a_session_created_without_a_credential_is_still_usable() {
     svc.create_session(
         &owner,
         SessionSpec {
+            environment_profile: None,
             kernel: KernelId::new("recording"),
             geometry: None,
             subject_credential: None,
