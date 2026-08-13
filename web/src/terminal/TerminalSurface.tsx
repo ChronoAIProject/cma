@@ -3,7 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { SCROLLBACK_LINES, hardenTerminal } from './hardening';
-import { activeThemeName, terminalTheme } from './theme';
+import { activeThemeName } from './theme';
+import { resolveTheme, storedThemeId } from './themes';
 import type { TerminalDriver, TerminalSink } from './types';
 import './TerminalSurface.css';
 
@@ -37,7 +38,7 @@ export function TerminalSurface({ driver, label }: TerminalSurfaceProps) {
       letterSpacing: 0,
       scrollback: SCROLLBACK_LINES,
       cursorBlink: true,
-      theme: terminalTheme(activeThemeName()),
+      theme: resolveTheme(activeThemeName(), storedThemeId()).theme,
       /*
        * Explicit even though every field defaults off. XTWINOPS lets output
        * query and manipulate the window; stating it here means a later
