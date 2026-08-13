@@ -342,6 +342,11 @@ impl SessionService {
     }
 
     /// Durable events for a session, optionally from a cursor.
+    ///
+    /// Somebody else's log takes the grant that exists to open it, which is not
+    /// the one that lists their sessions. Both are privileged and an operator
+    /// may well hold each, but they are issued separately and a monitoring role
+    /// given only the narrower one must not arrive here.
     pub async fn events_since(
         &self,
         caller: &Caller,
@@ -349,7 +354,7 @@ impl SessionService {
         after: Option<u64>,
     ) -> Result<Vec<Event>, CoreError> {
         let record = self.record(id).await?;
-        if !caller.may_read_owned_by(&record.session.owner) {
+        if !caller.may_read_event_log_owned_by(&record.session.owner) {
             return Err(CoreError::Forbidden);
         }
         self.store
