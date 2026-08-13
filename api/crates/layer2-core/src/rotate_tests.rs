@@ -218,6 +218,88 @@ async fn a_session_that_cannot_be_carried_is_left_running() {
 }
 
 #[tokio::test]
+async fn a_runtime_that_cannot_be_carried_is_asked_only_once() {
+    // The sweep runs every few minutes for as long as the process does. A
+    // session on a runtime that has already refused would otherwise be shown
+    // an "updating" state it backs out of, over and over, forever.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        refuse_snapshot: true,
+        ..FakeAdapter::default()
+    });
+    let alice = user("alice");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    drop(old);
+
+    let new = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    new.reconcile().await;
+    let before = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .session
+        .last_seq;
+
+    new.reconcile().await;
+    new.reconcile().await;
+
+    let after = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .session
+        .last_seq;
+    assert_eq!(
+        before, after,
+        "a refusal must not append a state change on every sweep"
+    );
+}
+
+#[tokio::test]
+async fn a_session_that_cannot_be_carried_is_never_shown_as_moving() {
+    // Capturing changes nothing, so it is attempted before anything is
+    // announced. A session that cannot be moved should never have been told it
+    // was being moved.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        refuse_snapshot: true,
+        ..FakeAdapter::default()
+    });
+    let alice = user("alice");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    let settled_seq = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .session
+        .last_seq;
+    drop(old);
+
+    let new = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    new.reconcile().await;
+
+    let record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    assert_eq!(record.session.status, SessionStatus::Ready);
+    assert_eq!(
+        record.session.last_seq, settled_seq,
+        "nothing should have been announced at all"
+    );
+}
+
+#[tokio::test]
 async fn a_stopped_session_is_not_carried_anywhere() {
     // Nothing is running for it, so there is nothing to move — and moving it
     // would start a sandbox its owner asked to be rid of.
