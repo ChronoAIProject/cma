@@ -29,6 +29,16 @@ pub mod permission {
     pub const ADMIN_SANDBOXES: &str = "chrono-bot:admin:sandboxes";
     /// Read the durable event log of any session.
     pub const ADMIN_EVENTS: &str = "chrono-bot:admin:events";
+    /// Read the record of what the service was asked to do.
+    pub const ADMIN_ACTIVITY: &str = "chrono-bot:admin:activity";
+    /// Read the directory of subjects that have used the service.
+    pub const ADMIN_USERS: &str = "chrono-bot:admin:users";
+    /// End or pause a session whatever subject owns it.
+    ///
+    /// Its own permission rather than part of the monitoring set, because it
+    /// is the only one of these that changes anything. A role handed out so
+    /// somebody can watch the service should not also let them stop it.
+    pub const ADMIN_CONTROL: &str = "chrono-bot:admin:control";
 }
 
 /// Wildcard the provider issues to a full administrator.
@@ -73,6 +83,9 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::ADMIN_SESSIONS => granted.push(Capability::ReadAllSessions),
             permission::ADMIN_SANDBOXES => granted.push(Capability::ReadRuntimeInventory),
             permission::ADMIN_EVENTS => granted.push(Capability::ReadEventLog),
+            permission::ADMIN_ACTIVITY => granted.push(Capability::ReadActivityLog),
+            permission::ADMIN_USERS => granted.push(Capability::ReadUserDirectory),
+            permission::ADMIN_CONTROL => granted.push(Capability::ControlAnySession),
             _ => {}
         }
     }
@@ -86,6 +99,9 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             Capability::ReadAllSessions,
             Capability::ReadRuntimeInventory,
             Capability::ReadEventLog,
+            Capability::ReadActivityLog,
+            Capability::ReadUserDirectory,
+            Capability::ControlAnySession,
         ]);
     }
 
@@ -134,11 +150,43 @@ mod tests {
             permission::ADMIN_SESSIONS,
             permission::ADMIN_SANDBOXES,
             permission::ADMIN_EVENTS,
+            permission::ADMIN_ACTIVITY,
+            permission::ADMIN_USERS,
         ]);
         assert!(a.allows(Capability::ReadAllSessions));
         assert!(a.allows(Capability::ReadRuntimeInventory));
         assert!(a.allows(Capability::ReadEventLog));
+        assert!(a.allows(Capability::ReadActivityLog));
+        assert!(a.allows(Capability::ReadUserDirectory));
         assert!(a.is_privileged());
+    }
+
+    #[test]
+    fn watching_the_service_does_not_confer_stopping_anybody_elses_work() {
+        // The whole monitoring set, and still not one capability that changes
+        // anything. Ending somebody else's session is its own permission, so a
+        // role handed out to let somebody watch cannot quietly also stop work.
+        let a = capabilities_from_permissions([
+            permission::ADMIN_SESSIONS,
+            permission::ADMIN_SANDBOXES,
+            permission::ADMIN_EVENTS,
+            permission::ADMIN_ACTIVITY,
+            permission::ADMIN_USERS,
+        ]);
+        assert!(!a.allows(Capability::ControlAnySession));
+    }
+
+    #[test]
+    fn the_control_permission_grants_control_and_no_reads() {
+        let a = capabilities_from_permissions([permission::ADMIN_CONTROL]);
+        assert!(a.allows(Capability::ControlAnySession));
+        assert!(
+            a.is_privileged(),
+            "acting on other people's work is privileged"
+        );
+        assert!(!a.allows(Capability::ReadAllSessions));
+        assert!(!a.allows(Capability::ReadActivityLog));
+        assert!(!a.allows(Capability::ReadUserDirectory));
     }
 
     #[test]
@@ -178,6 +226,9 @@ mod tests {
             Capability::ReadAllSessions,
             Capability::ReadRuntimeInventory,
             Capability::ReadEventLog,
+            Capability::ReadActivityLog,
+            Capability::ReadUserDirectory,
+            Capability::ControlAnySession,
         ] {
             assert!(a.allows(c), "wildcard must grant {c:?}");
         }
