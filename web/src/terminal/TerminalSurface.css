@@ -1,0 +1,16 @@
+.terminal {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+/*
+ * xterm sizes its own viewport from the host box. Without an explicit height
+ * the host collapses and fit() has nothing to measure.
+ */
+.terminal .xterm {
+  height: 100%;
+}
