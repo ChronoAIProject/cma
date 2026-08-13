@@ -14,8 +14,17 @@ data:
   # fixed principal and is meant only for local development. A switch that can
   # disable authentication should be visible in the manifest, not implied.
   CHRONO_AUTH_MODE: "provider"
-  # Public origin of this API, used to build redirect URIs.
-  CHRONO_SERVER_PUBLIC_URL: "https://bot-api.chrono-ai.fun"
+  # Origin the browser sees, used to build the sign-in redirect URI.
+  #
+  # The app's origin, not this API's, because the whole browser flow has to
+  # stay on one host. The proxy in front of the app forwards /auth/ here, so
+  # the callback still reaches this service — but the session cookie is set for
+  # the origin the browser is actually on, and the post-sign-in redirect lands
+  # on the app rather than on an API that serves no page there.
+  #
+  # Pointing this at the API's own hostname sends the user to a 404 holding a
+  # cookie the app can never read, since the cookie is host-only by design.
+  CHRONO_SERVER_PUBLIC_URL: "https://bot.chrono-ai.fun"
   # Origin allowed to call the API from a browser.
   CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun"
   # NyxID identity provider base URL. Endpoints are discovered, never hard-coded.

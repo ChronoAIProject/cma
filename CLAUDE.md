@@ -57,12 +57,13 @@ infra/api/serviceaccount.yaml
 infra/api/secretproviderclass.yaml
 infra/api/httproute.yaml
 infra/api/healthcheckpolicy.yaml
+infra/api/gcpbackendpolicy.yaml
 infra/runtime/Dockerfile
 ```
 
 No additional manifests, no Helm charts, no kustomize overlays.
 
-The last four exist because the control plane depends on them by name. It
+The last five exist because the control plane depends on them by name. It
 runs as a named service account, receives the sandbox key through a named
 secret-provider class, and answers on named hostnames. Leaving those applied by
 hand meant the deployment had hard dependencies with no source of truth, which
