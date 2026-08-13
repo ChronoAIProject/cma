@@ -14,6 +14,7 @@ use layer3_adapter::{
 use tokio::sync::{mpsc, Mutex};
 
 use crate::authz::{Authorization, Caller, Capability};
+use crate::environment_service::EnvironmentProfileService;
 use crate::event::Event;
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{ScreenFactory, SessionService};
@@ -109,6 +110,11 @@ impl SessionStore for FakeStore {
     }
 }
 
+pub(crate) use crate::environment_support::{
+    baseline, catalog_service, environments, profile_spec, FakeProfileStore, FakeSkillCatalog,
+};
+pub(crate) use crate::screen_support::{FixedCredential, RecordingScreen};
+
 /// An adapter that provisions nothing and records what it was asked to tear
 /// down, so teardown can be asserted without a sandbox.
 #[derive(Default)]
@@ -133,6 +139,12 @@ pub(crate) struct FakeAdapter {
     /// When set, enumeration fails. Models a provider that cannot be asked,
     /// which must never be read as a provider running nothing.
     pub(crate) refuse_list: bool,
+    /// The last thing this adapter was asked to provision.
+    ///
+    /// What the core asked for is the only place the environment a session was
+    /// resolved to can be observed: it is passed to the provider and never
+    /// stored, because the values in it are the caller's to keep.
+    pub(crate) last_spec: Mutex<Option<RuntimeSpec>>,
     /// Handles issued so far. Monotonic rather than a count of what is running,
     /// so a replacement sandbox is never named after the one it replaced.
     pub(crate) issued: std::sync::atomic::AtomicUsize,
@@ -194,6 +206,7 @@ impl KernelAdapter for FakeAdapter {
             .issued
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1;
+        *self.last_spec.lock().await = Some(spec.clone());
         if let Some(carried) = spec.restore_from.clone() {
             self.handovers.lock().await.push(carried);
         }
@@ -276,45 +289,6 @@ impl ScreenModel for NullScreen {
     }
 }
 
-/// A screen that keeps everything it is given.
-///
-/// The null screen is right for tests about lifecycle, where the content is
-/// irrelevant. It is exactly wrong for tests about whether content survives,
-/// which would pass against a model that never held anything.
-#[derive(Default)]
-pub(crate) struct RecordingScreen {
-    geometry: TerminalGeometry,
-    bytes: Vec<u8>,
-}
-
-impl ScreenModel for RecordingScreen {
-    fn apply(&mut self, bytes: &[u8]) {
-        self.bytes.extend_from_slice(bytes);
-    }
-    fn resize(&mut self, geometry: TerminalGeometry) {
-        self.geometry = geometry;
-    }
-    fn snapshot(&self) -> ScreenSnapshot {
-        ScreenSnapshot {
-            geometry: self.geometry,
-            rows: Vec::new(),
-        }
-    }
-    fn repaint_bytes(&self) -> Vec<u8> {
-        self.bytes.clone()
-    }
-}
-
-/// A credential holder that always has the same one.
-pub(crate) struct FixedCredential(pub(crate) String);
-
-#[async_trait::async_trait]
-impl crate::store::CredentialSource for FixedCredential {
-    async fn credential_for(&self, _subject: &SubjectId) -> Option<String> {
-        Some(self.0.clone())
-    }
-}
-
 /// A service that stores transcripts, over a screen model that keeps them.
 pub(crate) fn service_with_context(
     store: Arc<FakeStore>,
@@ -324,7 +298,15 @@ pub(crate) fn service_with_context(
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    let service = SessionService::new(adapters, factory, store, Some(context), None, None);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        Some(context),
+        None,
+        None,
+        no_environments(),
+    );
     service
         .retry_backoff_ms
         .store(1, std::sync::atomic::Ordering::Relaxed);
@@ -350,6 +332,7 @@ pub(crate) fn service_on_version(
         None,
         None,
         Some(version.to_string()),
+        no_environments(),
     );
     service
         .retry_backoff_ms
@@ -373,6 +356,7 @@ pub(crate) fn service_with_credentials(
         None,
         Some(Arc::new(FixedCredential(credential.to_string()))),
         None,
+        no_environments(),
     );
     service
         .retry_backoff_ms
@@ -408,13 +392,41 @@ pub(crate) fn service(store: Arc<FakeStore>, adapter: Arc<FakeAdapter>) -> Arc<S
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    let service = SessionService::new(adapters, factory, store, None, None, None);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        None,
+        None,
+        None,
+        no_environments(),
+    );
     // Retries are exercised here, not waited out: the production delay exists
     // for a provider under load, which no test is.
     service
         .retry_backoff_ms
         .store(1, std::sync::atomic::Ordering::Relaxed);
     service
+}
+
+/// A service instance over a particular set of environment profiles.
+pub(crate) fn service_with_environments(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    profiles: Arc<EnvironmentProfileService>,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    SessionService::new(adapters, factory, store, None, None, None, profiles)
+}
+
+/// A profile service with nothing in it, for tests that do not care.
+///
+/// Every session resolves an environment, so one always has to be present;
+/// this is the one that adds nothing to what the deployment mandates.
+pub(crate) fn no_environments() -> Arc<EnvironmentProfileService> {
+    EnvironmentProfileService::new(Arc::new(FakeProfileStore::default()), baseline(), None)
 }
 
 pub(crate) fn user(subject: &str) -> Caller {
@@ -424,6 +436,7 @@ pub(crate) fn user(subject: &str) -> Caller {
             Capability::CreateSession,
             Capability::UseOwnSessions,
             Capability::TerminateOwnSession,
+            Capability::ManageOwnEnvironmentProfiles,
         ]),
     )
 }
@@ -461,6 +474,7 @@ pub(crate) fn spec() -> SessionSpec {
     SessionSpec {
         kernel: kernel(),
         geometry: None,
+        environment_profile: None,
         subject_credential: None,
         options: Default::default(),
     }
