@@ -19,6 +19,12 @@ export function createTranscriptDriver(id: string, note: string): TerminalDriver
   return {
     attach(next: TerminalSink) {
       sink = next;
+      // Cleared as well as set, because the contract allows a driver to be
+      // attached, detached and attached again — which the canvas does every
+      // time a node is evicted from the attachment budget and later focused
+      // back into it. Leaving it set would make the second attach fetch the
+      // transcript and then discard it, so the node would come back blank.
+      cancelled = false;
       void (async () => {
         try {
           const bytes = await fetchTranscript(id);

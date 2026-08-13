@@ -52,7 +52,39 @@ if (!globalThis.ResizeObserver) {
   } as unknown as typeof ResizeObserver;
 }
 
+/*
+ * Node's own `localStorage` global shadows jsdom's, and without a backing file
+ * it is an empty object with none of the Storage methods on it. Everything the
+ * app stores — the appearance, the terminal palette, the view mode — guards
+ * against storage being unavailable and so silently took that branch in every
+ * test, which meant no stored preference was ever really exercised.
+ *
+ * Backed by a Map rather than by the real thing: a test that remembers a
+ * choice from the test before it is a test that passes for the wrong reason.
+ */
+const stored = new Map<string, string>();
+Object.defineProperty(window, 'localStorage', {
+  configurable: true,
+  value: {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      stored.set(key, String(value));
+    },
+    removeItem: (key: string) => {
+      stored.delete(key);
+    },
+    clear: () => {
+      stored.clear();
+    },
+    key: (index: number) => [...stored.keys()][index] ?? null,
+    get length() {
+      return stored.size;
+    },
+  } satisfies Storage,
+});
+
 afterEach(() => {
   cleanup();
   setReducedMotion(false);
+  stored.clear();
 });
