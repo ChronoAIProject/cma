@@ -60,7 +60,7 @@ async fn login(State(auth): State<Arc<AuthState>>) -> Response {
                     .await
                     .insert(state.clone(), verifier.clone());
                 let url = format!(
-                    "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid%20profile%20roles%20proxy%20offline_access\
+                    "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid%20profile%20email%20roles%20proxy%20offline_access\
 &state={}&code_challenge={}&code_challenge_method=S256",
                     meta.authorization_endpoint,
                     urlencode(client_id),
@@ -205,17 +205,18 @@ async fn callback(
         }
     };
 
-    let (subject, permissions) = match resolve_subject(&auth, &meta, &token.access_token).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(error = %e, "cannot resolve subject");
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "title": "Cannot resolve subject", "detail": e })),
-            )
-                .into_response();
-        }
-    };
+    let (subject, permissions, profile) =
+        match resolve_subject(&auth, &meta, &token.access_token).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot resolve subject");
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({ "title": "Cannot resolve subject", "detail": e })),
+                )
+                    .into_response();
+            }
+        };
 
     // Held so the runtime can act as this subject, and so the access token can
     // be renewed before it expires under a running session.
@@ -243,6 +244,9 @@ async fn callback(
     // then refused every operation, which is the correct outcome for someone
     // who has a platform account but no access here.
     let authorization = crate::permissions::capabilities_from_permissions(&permissions);
+    if !profile.is_empty() {
+        auth.profiles.write().await.insert(subject.clone(), profile);
+    }
     if authorization.capabilities().count() == 0 {
         tracing::warn!(%subject, "signed in with no capabilities for this service");
     }
@@ -264,7 +268,7 @@ async fn resolve_subject(
     auth: &AuthState,
     meta: &ProviderMetadata,
     access_token: &str,
-) -> Result<(SubjectId, Vec<String>), String> {
+) -> Result<(SubjectId, Vec<String>, crate::auth::profile::Profile), String> {
     let Some(endpoint) = meta.userinfo_endpoint.as_ref() else {
         return Err("provider advertises no userinfo endpoint".into());
     };
@@ -299,16 +303,30 @@ async fn resolve_subject(
                 .collect()
         })
         .unwrap_or_default();
-    Ok((subject, permissions))
+    // Captured at sign-in because this is the only moment the provider's own
+    // account details are in hand; nothing later has a token to ask with.
+    let profile = crate::auth::profile::Profile::from_userinfo(&body);
+    Ok((subject, permissions, profile))
 }
 
 async fn session(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
     match auth.resolve(&headers).await {
-        Some(subject) => Json(serde_json::json!({
-            "authenticated": true,
-            "subject": subject.as_str(),
-        }))
-        .into_response(),
+        Some(subject) => {
+            // The identifier stays, because clients key on it; the display
+            // details ride alongside so nothing has to render a UUID at a
+            // person.
+            let profile = auth.profiles.read().await.get(&subject).cloned();
+            let mut body = serde_json::json!({
+                "authenticated": true,
+                "subject": subject.as_str(),
+            });
+            if let (Some(profile), Some(map)) = (profile, body.as_object_mut()) {
+                if let Ok(serde_json::Value::Object(fields)) = serde_json::to_value(&profile) {
+                    map.extend(fields);
+                }
+            }
+            Json(body).into_response()
+        }
         None => (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "authenticated": false })),

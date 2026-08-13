@@ -33,18 +33,36 @@ const LOGOUT_ENDPOINT = '/auth/logout';
 interface SessionResponse {
   authenticated?: unknown;
   subject?: unknown;
+  display_name?: unknown;
+  email?: unknown;
+  avatar_url?: unknown;
 }
 
 /**
- * Render a subject identifier as something worth showing a person.
+ * Decide what to call this person.
  *
- * The control plane returns an opaque subject, which is correct — it is the
- * frontend's job to present it. An address is shown as its local part; anything
- * else is shown as-is rather than truncated into something unrecognisable.
+ * The account name is what they chose to be called, so it wins. An email is
+ * the next best thing and is shown as its local part, which is how people
+ * refer to each other anyway. The subject identifier is the last resort and
+ * means the provider released nothing usable — it is shown rather than hidden
+ * so the gap is visible instead of silently rendering an empty label.
  */
-export function handleFor(subject: string): string {
-  const at = subject.indexOf('@');
-  return at > 0 ? subject.slice(0, at) : subject;
+export function handleFor(subject: string, displayName?: string, email?: string): string {
+  const name = displayName?.trim();
+  if (name !== undefined && name !== '') {
+    return name;
+  }
+  const address = email?.trim();
+  if (address !== undefined && address !== '') {
+    const at = address.indexOf('@');
+    return at > 0 ? address.slice(0, at) : address;
+  }
+  return subject;
+}
+
+/** Read a claim the provider may have omitted. */
+function optionalText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
 
 export function createNyxidAuthProvider(): AuthProvider {
@@ -89,9 +107,17 @@ export function createNyxidAuthProvider(): AuthProvider {
         return { status: 'anonymous' };
       }
 
+      const displayName = optionalText(body.display_name);
+      const email = optionalText(body.email);
       return {
         status: 'authenticated',
-        user: { id: body.subject, handle: handleFor(body.subject) },
+        user: {
+          id: body.subject,
+          handle: handleFor(body.subject, displayName, email),
+          displayName,
+          email,
+          avatarUrl: optionalText(body.avatar_url),
+        },
       };
     },
 
