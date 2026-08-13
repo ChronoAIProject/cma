@@ -45,6 +45,7 @@ mod tests {
 
         let spec = RuntimeSpec {
             restore_from: None,
+            environment: Default::default(),
             session_id: "sesn_1".into(),
             size: TermSize { cols: 80, rows: 24 },
             subject_credential: None,

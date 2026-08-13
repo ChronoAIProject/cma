@@ -45,6 +45,32 @@ impl std::fmt::Display for SubjectId {
     }
 }
 
+/// Identifier of a reusable environment bundle.
+///
+/// Minted here rather than by the store so a caller never has to write a
+/// record before it can be referred to, and so two stores cannot disagree on
+/// what an identifier looks like.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EnvironmentProfileId(pub String);
+
+impl EnvironmentProfileId {
+    /// Mint a fresh identifier.
+    pub fn generate() -> Self {
+        Self(format!("envp_{}", uuid::Uuid::new_v4().simple()))
+    }
+
+    /// Borrow the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for EnvironmentProfileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Selects which runtime implementation backs a session.
 ///
 /// Deliberately opaque: the core stores and forwards this value but never
@@ -88,5 +114,15 @@ mod tests {
         let id = KernelId::new("example-runtime");
         assert_eq!(id.as_str(), "example-runtime");
         assert_eq!(id.to_string(), "example-runtime");
+    }
+
+    #[test]
+    fn generated_profile_ids_are_unique_and_prefixed() {
+        // The prefix is what makes a mis-routed identifier obvious in a log
+        // rather than a silent lookup against the wrong collection.
+        let a = EnvironmentProfileId::generate();
+        let b = EnvironmentProfileId::generate();
+        assert_ne!(a, b, "two generated ids must differ");
+        assert!(a.as_str().starts_with("envp_"), "got {a}");
     }
 }

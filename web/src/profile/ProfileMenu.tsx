@@ -29,6 +29,14 @@ interface ProfileMenuProps {
    * preference is still stored either way.
    */
   readonly onTerminalThemeChange?: (id: string) => void;
+  /**
+   * Open the environment profile manager.
+   *
+   * An account action rather than navigation: it opens a dialog over the same
+   * page and returns focus here when that dialog closes. The product is one
+   * page and this must not grow a navigation menu.
+   */
+  readonly onManageEnvironments?: () => void;
 }
 
 /**
@@ -66,7 +74,12 @@ export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>
   return fallback.slice(0, 2).toUpperCase();
 }
 
-export function ProfileMenu({ user, onSignOut, onTerminalThemeChange }: ProfileMenuProps) {
+export function ProfileMenu({
+  user,
+  onSignOut,
+  onTerminalThemeChange,
+  onManageEnvironments,
+}: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   // An avatar that fails to load must fall back to initials rather than leave
@@ -202,6 +215,19 @@ export function ProfileMenu({ user, onSignOut, onTerminalThemeChange }: ProfileM
           >
             Terminal theme: {resolveTheme(effectiveAppearance(appearance), terminalThemeId).label}
           </button>
+          {onManageEnvironments !== undefined ? (
+            <button
+              type="button"
+              className="profile__item"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onManageEnvironments();
+              }}
+            >
+              Environment profiles
+            </button>
+          ) : null}
           <button
             type="button"
             ref={firstItemRef}

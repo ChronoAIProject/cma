@@ -1143,6 +1143,7 @@ dependencies = [
 name = "layer1-public"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "futures-util",
  "layer2-core",
