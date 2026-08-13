@@ -46,6 +46,7 @@ mod tests {
         let spec = RuntimeSpec {
             session_id: "sesn_1".into(),
             size: TermSize { cols: 80, rows: 24 },
+            subject_credential: None,
         };
         assert!(a.provision(&spec).await.is_err());
 

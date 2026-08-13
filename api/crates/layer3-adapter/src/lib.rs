@@ -26,6 +26,11 @@ pub struct RuntimeSpec {
     pub session_id: String,
     /// Geometry to allocate the terminal at.
     pub size: TermSize,
+    /// Credential the runtime should present when calling out on the owner's
+    /// behalf, if the caller has one to delegate.
+    ///
+    /// Opaque here: this layer forwards it and never inspects or logs it.
+    pub subject_credential: Option<String>,
 }
 
 /// An opaque reference to a provisioned runtime.
@@ -44,6 +49,13 @@ pub enum TerminalInput {
     Resize(TermSize),
     /// An out-of-band signal, named in the conventional short form.
     Signal(String),
+    /// Replace the credential the runtime presents when calling out.
+    ///
+    /// Sent when the owner's credential is refreshed. Delivering it over the
+    /// same channel as terminal traffic is what lets the agent keep running:
+    /// restarting it to pick up a new credential would discard the session's
+    /// context, which is the thing a terminal exists to preserve.
+    Credential(String),
 }
 
 /// A bidirectional attachment to a runtime's terminal.
