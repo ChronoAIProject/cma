@@ -28,7 +28,13 @@ data:
   # error page rather than to login.
   CHRONO_NYXID_CLIENT_ID: "c0cd33d2-27ba-4b8d-b38e-562364fadb72"
   # MongoDB database name. The connection URI is a secret.
-  CHRONO_MONGODB_DATABASE: "chrono_bot"
+  #
+  # Must match the database the connection string's credentials are scoped to.
+  # A hosted deployment grants a user rights on one named database, so a name
+  # that differs by so much as a separator authenticates successfully and is
+  # then refused on first write — which reads as a permissions problem rather
+  # than the typo it is.
+  CHRONO_MONGODB_DATABASE: "chrono-bot"
   # Bucket holding each session's stored agent context, so a reopened session
   # can be restarted with its transcript loaded into a fresh sandbox. Reached
   # through the platform storage service, which brokers the credential.
