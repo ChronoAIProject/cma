@@ -1,180 +1,60 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ApiError,
-  createSession,
-  fetchSession,
-  listKernels,
-  listSessions,
-  resolveConfig,
-  terminateSession,
-  type SessionView,
-} from './api';
-import { TerminalView } from './terminal/TerminalView';
-import './app.css';
+import { Suspense, lazy } from 'react';
+import { IntroTerminal } from './landing/IntroTerminal';
+import { useAuth } from './auth/context';
+import './styles/tokens.css';
+import './styles/base.css';
 
-/** Recovery states that are routine rather than failures. */
-const ROUTINE_RECOVERY = new Set(['normal', 'idle', 'recovering', 'unknown']);
+/*
+ * The console pulls in xterm.js, roughly 400KB before compression. A visitor
+ * who never signs in should never download it, so it is split out and fetched
+ * only once there is an identity. The landing page is the first impression and
+ * is frequently the whole visit.
+ */
+const Console = lazy(async () => {
+  const module = await import('./Console');
+  return { default: module.Console };
+});
 
-export default function App() {
-  const config = useMemo(() => resolveConfig(), []);
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [subject, setSubject] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<SessionView[]>([]);
-  const [kernels, setKernels] = useState<string[]>([]);
-  const [active, setActive] = useState<string | null>(null);
-  const [status, setStatus] = useState('idle');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+/**
+ * One page, two states.
+ *
+ * Unauthenticated it is a terminal that introduces itself and takes a prompt;
+ * authenticated it is the same surface driven by live sessions. There is no
+ * navigation and no second route — see CLAUDE.md and docs/Web_Style.md.
+ */
+export function App() {
+  const { state, signOut } = useAuth();
 
-  const refresh = useCallback(async () => {
-    try {
-      const list = await listSessions(config.apiBaseUrl);
-      setSessions(list);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [config.apiBaseUrl]);
+  switch (state.status) {
+    case 'checking':
+      // Deliberately empty rather than a spinner: the check resolves against a
+      // cookie in a few milliseconds, and a flash of loading chrome is worse
+      // than a frame of nothing.
+      return <div className="app-checking" aria-busy="true" />;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const s = await fetchSession(config.apiBaseUrl);
-        if (cancelled) return;
-        setAuthenticated(s.authenticated);
-        setSubject(s.subject ?? null);
-        if (s.authenticated) {
-          await refresh();
-          const k = await listKernels(config.apiBaseUrl);
-          if (!cancelled) setKernels(k.kernels);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setAuthenticated(false);
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [config.apiBaseUrl, refresh]);
-
-  const onCreate = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const kernel = kernels[0] ?? 'codex';
-      const created = await createSession(config.apiBaseUrl, kernel, 120, 32);
-      await refresh();
-      setActive(created.id);
-    } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e),
+    case 'authenticated':
+      return (
+        // Web_Style.md forbids a full-page spinner; the console arrives from
+        // cache or a same-origin chunk, so an empty frame is the honest wait.
+        <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
+          <Console user={state.user} onSignOut={() => void signOut()} />
+        </Suspense>
       );
-    } finally {
-      setBusy(false);
+
+    case 'error':
+      return (
+        <main className="app-error" role="alert">
+          <p>{state.message}</p>
+          <p>Reload the page to try again.</p>
+        </main>
+      );
+
+    case 'anonymous':
+      return <IntroTerminal />;
+
+    default: {
+      const exhaustive: never = state;
+      return exhaustive;
     }
-  };
-
-  const onTerminate = async (id: string) => {
-    try {
-      await terminateSession(config.apiBaseUrl, id);
-      if (active === id) setActive(null);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  if (authenticated === null) {
-    return (
-      <main className="shell">
-        <div className="skeleton" aria-busy="true" aria-label="Loading" />
-      </main>
-    );
   }
-
-  if (!authenticated) {
-    return (
-      <main className="shell centered">
-        <div className="card">
-          <h1>chrono-bot</h1>
-          <p className="muted">Sign in to create and attach to agent sessions.</p>
-          <a className="button primary" href={`${config.apiBaseUrl}/auth/login`}>
-            Sign in
-          </a>
-          {error && <p className="error">{error}</p>}
-        </div>
-      </main>
-    );
-  }
-
-  return (
-    <main className="shell">
-      <header className="bar">
-        <div className="bar-left">
-          <strong>chrono-bot</strong>
-          <span className="muted">terminal</span>
-        </div>
-        <div className="bar-right">
-          {subject && <span className="muted">{subject}</span>}
-          <a className="button" href={`${config.apiBaseUrl}/auth/logout`}>
-            Sign out
-          </a>
-        </div>
-      </header>
-
-      <div className="layout">
-        <aside className="sidebar">
-          <button className="button primary full" onClick={onCreate} disabled={busy}>
-            {busy ? 'Creating…' : 'New session'}
-          </button>
-          <ul className="sessions">
-            {sessions.map((s) => {
-              const routine = ROUTINE_RECOVERY.has(s.recovery_state);
-              return (
-                <li key={s.id} className={s.id === active ? 'session active' : 'session'}>
-                  <button className="session-open" onClick={() => setActive(s.id)}>
-                    <span className="mono">{s.id.slice(0, 16)}</span>
-                    <span className={routine ? 'chip' : 'chip danger'}>{s.status}</span>
-                  </button>
-                  <button
-                    className="session-kill"
-                    onClick={() => onTerminate(s.id)}
-                    aria-label={`Terminate ${s.id}`}
-                  >
-                    ×
-                  </button>
-                </li>
-              );
-            })}
-            {sessions.length === 0 && <li className="muted empty">No sessions yet.</li>}
-          </ul>
-        </aside>
-
-        <section className="content">
-          {active ? (
-            <>
-              <div className="content-bar">
-                <span className="mono">{active}</span>
-                <span className="muted">{status}</span>
-              </div>
-              <TerminalView
-                apiBaseUrl={config.apiBaseUrl}
-                sessionId={active}
-                onStatus={setStatus}
-              />
-            </>
-          ) : (
-            <div className="placeholder muted">
-              Select a session, or create one to open a terminal.
-            </div>
-          )}
-        </section>
-      </div>
-
-      {error && <div className="toast error">{error}</div>}
-    </main>
-  );
 }
