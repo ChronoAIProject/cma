@@ -130,6 +130,9 @@ mod tests {
             options: AgentOptions::default(),
             geometry: TerminalGeometry::default(),
             last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }
     }

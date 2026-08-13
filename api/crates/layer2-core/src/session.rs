@@ -58,6 +58,14 @@ pub enum SessionStatus {
     Ready,
     /// A turn is in progress.
     Running,
+    /// Being carried onto a different runtime.
+    ///
+    /// Neither usable nor stopped. The session is intact and will come back on
+    /// its own, but the runtime under it is being replaced, so anything typed
+    /// now would go to a sandbox that is about to stop existing. Distinct from
+    /// `Provisioning` because nothing was asked for and nothing is starting
+    /// from nothing — there is a conversation being carried across.
+    Rotating,
     /// Runtime reclaimed; session intact and revivable.
     Idle,
     /// Terminal state.
@@ -70,13 +78,30 @@ impl SessionStatus {
         matches!(self, Self::Terminated)
     }
 
+    /// Whether this session is mid-handover between runtimes.
+    pub fn is_rotating(self) -> bool {
+        matches!(self, Self::Rotating)
+    }
+
     /// Whether this session should have a runtime running for it right now.
     ///
     /// The desired state, against which reality is reconciled. A stopped
     /// session deliberately wants none — that is what stopping meant — and a
     /// terminated one is over.
     pub fn wants_runtime(self) -> bool {
-        matches!(self, Self::Provisioning | Self::Ready | Self::Running)
+        matches!(
+            self,
+            Self::Provisioning | Self::Ready | Self::Running | Self::Rotating
+        )
+    }
+
+    /// Whether a client should accept input for this session.
+    ///
+    /// Rotation is the case worth naming: the session is healthy, it is not
+    /// stopped, and input must still be refused, because the runtime it would
+    /// reach is being torn down.
+    pub fn is_interactive(self) -> bool {
+        matches!(self, Self::Ready | Self::Running)
     }
 
     /// Whether the owner can pick this session up again.
@@ -201,6 +226,29 @@ pub struct Session {
     pub geometry: TerminalGeometry,
     /// Highest sequence number appended for this session.
     pub last_seq: u64,
+    /// Which runtime version is serving this session.
+    ///
+    /// The control plane knows which version it expects; this says which one
+    /// the session actually has, and a session whose version is behind is
+    /// carried onto the current one rather than left on an image nobody
+    /// maintains any more.
+    ///
+    /// Absent on sessions created before versions were tracked, which is read
+    /// as "not the current one" — the safe direction, since the alternative is
+    /// leaving a session on an unknown image forever.
+    #[serde(default)]
+    pub runtime_version: Option<String>,
+    /// How many times this session has been carried onto a newer runtime.
+    #[serde(default)]
+    pub rotations: u32,
+    /// When the snapshot the current runtime resumed from was taken.
+    ///
+    /// Part of the session rather than bookkeeping about its runtime, because
+    /// it is something its owner is told: it says the point their work was
+    /// carried across from, so anything after it can be recognised as missing
+    /// rather than puzzled over.
+    #[serde(default)]
+    pub rotated_at: Option<String>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
@@ -267,6 +315,9 @@ mod tests {
             options: AgentOptions::default(),
             geometry: TerminalGeometry::default(),
             last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
         assert!(session.is_owned_by(&owner));

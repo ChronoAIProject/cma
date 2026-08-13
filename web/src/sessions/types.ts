@@ -14,12 +14,7 @@
  * the owner acts on.
  */
 export type SessionLifecycle =
-  | 'provisioning'
-  | 'ready'
-  | 'running'
-  | 'rotating'
-  | 'idle'
-  | 'terminated';
+  'provisioning' | 'ready' | 'running' | 'rotating' | 'idle' | 'terminated';
 
 /**
  * Why a session stopped, where the control plane says.

@@ -95,6 +95,7 @@ async fn main() {
                 upstream_model: config.upstream_model.clone(),
                 upstream_wire_api: config.upstream_wire_api.clone(),
                 platform_base_url: config.platform_base_url.clone(),
+                resume_args: config.runtime_resume_args.clone(),
                 ..CodexSandboxSpec::default()
             },
         )),
@@ -172,6 +173,15 @@ async fn main() {
         store,
         context,
         Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+        // The runtime image reference is the runtime version. Deriving it
+        // rather than configuring it separately means the two cannot drift:
+        // any deployment that changes the image is one whose sessions are
+        // carried onto it, and one that does not is not.
+        Some(config.sandbox_image.clone()),
+    );
+    tracing::info!(
+        runtime_version = %config.sandbox_image,
+        "sessions on any other runtime will be moved onto this one"
     );
 
     // Keeps delegated credentials valid underneath running sessions, and pushes
