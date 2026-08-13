@@ -40,6 +40,22 @@
   background: var(--surface);
 }
 
+/*
+ * A failed action, at the head of the column and above whatever it is showing.
+ *
+ * Never in place of the surface: the failure belongs to one request about one
+ * session, and the surface beneath it can hold a dozen live terminals. Nothing
+ * that reports a failure may tear down work that did not fail.
+ */
+.console__notice {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--danger);
+  border-bottom: 1px solid var(--rule);
+}
+
 .console__empty {
   margin: auto;
   padding: var(--space-6);

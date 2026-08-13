@@ -422,6 +422,23 @@ looks identical whichever session is open.
 **Below 60rem the three columns stack**, because a terminal squeezed between
 two panels on a narrow window is not a terminal anyone can work in.
 
+**A failed action is reported above the middle column, never in place of it.**
+One line in `sm` `--danger` on `--surface` with a 1px `--rule` underline,
+carrying `role="alert"`, at the head of the column and outside whatever the
+column is showing. Measured against `--surface`: 6.16:1 in light, 5.47:1 in
+dark.
+
+Placement is the substantive part of this rule. A failure belongs to one
+request about one session, and the surface beneath it holds live terminals —
+on the canvas, up to twelve of them, each with a connection. Replacing that
+surface with a sentence tears every one of them down, so a stop that came back
+409 would cost eleven sessions their connection to say something about the
+twelfth. Nothing that reports a failure may destroy work that did not fail.
+
+The line reports the most recent attempt. Every action clears it before it
+starts, so it is never an older failure sitting above a surface that has since
+recovered.
+
 ---
 
 ## 13. The platform typeface
@@ -664,3 +681,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-14 | Corrected §12: the console obeys the page inset like every other surface, so the session column aligns with the product mark and the details panel with the account control. The earlier entry exempted terminal output from the inset on the grounds that cropping it wasted width; alignment between the bar and the page beneath it matters more, and a full-bleed console under an inset bar reads as a detached bar. Also moved the session lifecycle controls out of the top bar and into the details panel, beside the session they act on. |
 | 2026-08-14 | Added §14 Session states and what they allow: a single table binding each of the six session states to what the terminal does and which controls are available, with one rule shared by the terminal, the buttons and the list so they cannot disagree. Established that controls are disabled rather than removed and that every disabled control and every non-interactive terminal states its reason in the owner's terms; that a session with no sandbox still shows its history read-only, with keystrokes dropped rather than buffered; that ended sessions leave the list unless they ended by failing; and that revive is the primary action wherever it is offered. Adds the `rotating` state, during which the session is neither usable nor stopped and no control acts on it. |
 | 2026-08-14 | Added §15 Canvas — every session at once: a second arrangement of the same sessions, in which each listed session is a 420×280 framed node on a pannable surface hosting its own terminal, chosen by a two-button toggle at the trailing edge of the top bar whose stored value is validated on read. The canvas replaces the console's middle column only, so the rail, the details panel and the bar keep their places and one selection serves both arrangements. Established that exactly one node is focused and only it receives keystrokes, with hover distinguished from focus by border weight rather than hue; that focus is never a second opinion on §14, so a provisioning, rotating, idle or ended session stays read-only on the canvas, says so on the node, and shows its stored transcript rather than an empty frame; that the canvas is one tab stop with clamped arrow navigation and a polite live region announcing moves; that unfocused terminals are never dimmed, tinted or covered; that the only motion is the 150ms focus transition, wrapped in `prefers-reduced-motion: no-preference`; and that at most 12 nodes hold a terminal at once, evicted by least recent focus, with the count of unattached sessions stated below the viewport because silent truncation reads as breakage. Adds the `--canvas-node-w` and `--canvas-node-h` tokens, and labels nodes by start time as §12 labels the rail rather than by identifier, so one session is not called two things in two views. |
+| 2026-08-14 | Specified in §12 where a failed action is reported: one `sm` `--danger` line with a `--rule` underline at the head of the middle column, above whatever the column is showing and never in place of it, recording 6.16:1 light and 5.47:1 dark against `--surface`. The console previously rendered the failure instead of the surface, which was survivable when the surface was one terminal and is not now that §15 puts up to twelve attached terminals there — a stop returning 409 detached eleven sessions that had not failed. Also established that the line reports the most recent attempt, cleared by every action as it starts, so a stale failure never sits above a console that has recovered. |
