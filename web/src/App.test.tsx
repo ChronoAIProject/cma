@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
+import { MAX_LIVE_NODES } from './canvas/layout';
 import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
 import { capturePendingTurn } from './auth/pendingTurn';
@@ -82,10 +83,44 @@ function sentText(): string {
 
 let created = 0;
 
+/**
+ * Sessions the control plane already has, as the list endpoint reports them.
+ *
+ * Seeded per test rather than fixed, because the behaviours that only appear
+ * with a fleet — the canvas attachment budget, one session's action reaching
+ * another — cannot be reached from an owner with nothing running.
+ */
+let listing: Record<string, unknown>[] = [];
+
+/** `count` running sessions, distinguishable by start time as the rail shows them. */
+function seedSessions(count: number): void {
+  listing = Array.from({ length: count }, (_, i) => ({
+    id: `sesn_${i}`,
+    kernel: 'codex',
+    status: 'running',
+    created_at: new Date(Date.UTC(2026, 7, 14, 3, i)).toISOString(),
+  }));
+}
+
+/** A canvas node by session id, the way the canvas's own tests find one. */
+function canvasNode(id: string): HTMLElement {
+  const node = document.querySelector(`[data-node-id="${id}"]`);
+  if (node === null) {
+    throw new Error(`no node for session ${id}`);
+  }
+  return node as HTMLElement;
+}
+
+/** An attached node holds a terminal; an unattached one holds a sentence saying so. */
+function isAttached(id: string): boolean {
+  return within(canvasNode(id)).queryByRole('group') !== null;
+}
+
 beforeEach(() => {
   sockets.length = 0;
   created = 0;
   streams.length = 0;
+  listing = [];
   FakeEventSource.outcome = 'ready';
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('EventSource', FakeEventSource);
@@ -97,8 +132,11 @@ beforeEach(() => {
         ({ ok: status < 400, status, json: async () => body }) as Response;
 
       if (url.endsWith('/api/v1/sessions') && (init?.method ?? 'GET') === 'GET') {
-        // A fresh owner with nothing running, so the console opens one.
-        return json(200, { sessions: [] });
+        // Empty unless a test seeded a fleet, which is the fresh-owner case.
+        return json(200, { sessions: listing });
+      }
+      if (init?.method === 'DELETE') {
+        return json(204, {});
       }
       if (url.endsWith('/api/v1/sessions') && init?.method === 'POST') {
         created += 1;
@@ -117,6 +155,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // The arrangement and the terminal palette persist per browser, so a test
+  // that chooses one would otherwise choose it for every test after it.
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -317,5 +358,38 @@ describe('App', () => {
     await waitForConsole();
 
     expect(screen.getByRole('button', { name: 'Tabs' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps the node that inherits focus attached when a session is deleted', async () => {
+    /*
+     * The canvas spends its attachment budget from the focus history, so a
+     * session promoted to focused without entering that history is evicted the
+     * moment the history is full — the one node §15 says is never detached.
+     */
+    seedSessions(MAX_LIVE_NODES + 2);
+    window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-node-id]')).toHaveLength(MAX_LIVE_NODES + 2);
+    });
+
+    // Every session except the first is put ahead of it in the history, so
+    // recency alone exhausts the budget once the focused one is gone.
+    for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
+      await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
+    }
+    await user.click(screen.getByRole('button', { name: /delete session/i }));
+    await user.click(screen.getByRole('button', { name: /delete permanently/i }));
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-node-id]')).toHaveLength(MAX_LIVE_NODES + 1);
+    });
+    expect(within(canvasNode('sesn_0')).getByRole('button')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(isAttached('sesn_0')).toBe(true);
   });
 });
