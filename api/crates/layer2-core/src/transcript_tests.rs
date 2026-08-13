@@ -93,7 +93,9 @@ async fn a_privileged_reader_cannot_read_a_screen_they_cannot_read_as_a_transcri
         "reading every session must not reach into what one is showing"
     );
     assert!(
-        svc.session_transcript(&operator, &created.id).await.is_err(),
+        svc.session_transcript(&operator, &created.id)
+            .await
+            .is_err(),
         "the transcript rule this mirrors must still hold"
     );
     assert!(

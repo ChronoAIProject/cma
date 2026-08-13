@@ -10,7 +10,7 @@ use layer3_adapter::RuntimeHandle;
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
-use crate::ids::SessionId;
+use crate::ids::{SessionId, SubjectId};
 use crate::service::{append, store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::SessionRecord;
@@ -60,8 +60,35 @@ impl SessionService {
         id: &SessionId,
     ) -> Result<(), CoreError> {
         caller.require_any_control()?;
+        self.end_session(caller, id).await.map(|_| ())
+    }
+
+    /// End a session as an operator, whoever owns it.
+    ///
+    /// Separate from [`Self::terminate_session`] only in the gate it opens
+    /// with: the everyday grant does not reach this one, so a caller arriving
+    /// here is exercising the operator capability whatever the session turns
+    /// out to be. That is what makes it worth having its own entry point —
+    /// the surface projecting it can be restricted as an operator surface, and
+    /// a record of a call to it means what it appears to mean.
+    ///
+    /// Returns the subject whose work was ended, which the caller needs in
+    /// order to write down whose it was.
+    pub async fn terminate_any_session(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SubjectId, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ControlAnySession)?;
+        self.end_session(caller, id).await
+    }
+
+    async fn end_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "terminate")?;
+        let owner = record.session.owner.clone();
         let adapter = self.adapters.get(&record.session.kernel).cloned();
 
         // A live entry is the fast path; a record alone is the post-restart
@@ -109,7 +136,7 @@ impl SessionService {
             }
         }
         tracing::info!(session_id = %id, "session terminated");
-        Ok(())
+        Ok(owner)
     }
 
     /// Write a session straight to its terminal state in the store.
@@ -149,11 +176,32 @@ impl SessionService {
     /// putting work down and throwing it away.
     pub async fn stop_session(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
         caller.require_any_control()?;
+        self.rest_session(caller, id).await.map(|_| ())
+    }
+
+    /// Stop a session's runtime as an operator, whoever owns it.
+    ///
+    /// The reversible control, on the same terms as
+    /// [`Self::terminate_any_session`]: the everyday grant does not open it,
+    /// and it reports whose work was stopped.
+    pub async fn stop_any_session(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SubjectId, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ControlAnySession)?;
+        self.rest_session(caller, id).await
+    }
+
+    async fn rest_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "stop")?;
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        let owner = record.session.owner.clone();
 
         let adapter = self.adapters.get(&record.session.kernel).cloned();
         let runtime = {
@@ -204,7 +252,7 @@ impl SessionService {
             }
         }
         tracing::info!(session_id = %id, "session stopped");
-        Ok(())
+        Ok(owner)
     }
 
     /// Write a session to its stopped state in the store.
