@@ -1,15 +1,18 @@
 //! Where sessions and their history are kept.
 //!
-//! The core defines what durable storage must do and never how. Two ports,
-//! because the two kinds of state have genuinely different shapes: session
-//! records are small, queryable documents, while an agent's accumulated
-//! context is an opaque blob that grows without bound and is only ever read
-//! whole.
+//! The core defines what durable storage must do and never how. A port per
+//! kind of state rather than one store with many methods, because the kinds
+//! have genuinely different shapes and lifetimes: session records are small
+//! queryable documents, an agent's accumulated context is an opaque blob read
+//! and written whole, a reusable bundle outlives every session that used it,
+//! and the record of what was asked for is append-only and expires on its own.
+//! Split this way, any one of them can be replaced without the others.
 //!
 //! Nothing here is live state. A screen model, a socket, and an attachment
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
+use crate::directory::RegisteredUser;
 use crate::environment::EnvironmentProfile;
 use crate::event::Event;
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
@@ -111,6 +114,25 @@ pub trait EnvironmentProfileStore: Send + Sync {
     /// Sessions already started with it are unaffected: they were handed a
     /// resolved bundle at creation and never read the profile again.
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError>;
+}
+
+/// The subjects that have used this service.
+///
+/// The core models no user directory of its own — identity belongs to whoever
+/// issues it — so this is a record of who has turned up, not an authority on
+/// who exists. Nothing is authorised against it and no decision is made on the
+/// strength of a name in it.
+#[async_trait::async_trait]
+pub trait UserDirectoryStore: Send + Sync {
+    /// Record that a subject was seen, creating the entry if it is new.
+    ///
+    /// The implementation keeps the earliest `first_seen` it has ever held for
+    /// a subject. Overwriting it on each sign-in would make everybody look new
+    /// and lose the one fact this record exists to hold.
+    async fn record_sign_in(&self, user: &RegisteredUser) -> Result<(), StoreError>;
+
+    /// Every subject known, most recently seen first.
+    async fn list(&self) -> Result<Vec<RegisteredUser>, StoreError>;
 }
 
 /// Where a session's credential comes from when nobody is asking for it.
