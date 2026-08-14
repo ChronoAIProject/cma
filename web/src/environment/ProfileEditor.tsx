@@ -1,8 +1,15 @@
 import { useId, useState } from 'react';
+import { ServicePicker } from './ServicePicker';
 import { SkillPicker } from './SkillPicker';
 import { Chip } from '../ui/Chip';
 import { CREDENTIALS, EFFORTS, KERNELS, PERMISSIONS } from '../sessions/options';
-import type { CatalogSkill, MandatoryEntries, ProfileDraft, ProfileVariable } from './types';
+import type {
+  CatalogSkill,
+  MandatoryEntries,
+  PlatformService,
+  ProfileDraft,
+  ProfileVariable,
+} from './types';
 import { isValidKey } from './types';
 
 /**
@@ -28,6 +35,9 @@ interface ProfileEditorProps {
   readonly onChange: (draft: ProfileDraft) => void;
   readonly skills: readonly CatalogSkill[];
   readonly skillsError?: string | undefined;
+  readonly services: readonly PlatformService[];
+  readonly mandatoryServices: readonly string[];
+  readonly servicesError?: string | undefined;
   readonly mandatory: MandatoryEntries;
   /** What went wrong with the last attempt to save, if anything. */
   readonly error?: string | undefined;
@@ -38,6 +48,9 @@ export function ProfileEditor({
   onChange,
   skills,
   skillsError,
+  services,
+  mandatoryServices,
+  servicesError,
   mandatory,
   error,
 }: ProfileEditorProps) {
@@ -227,6 +240,25 @@ export function ProfileEditor({
             onChange({ ...draft, agent: { ...draft.agent, skills: [...selected] } });
           }}
           error={skillsError}
+        />
+      </div>
+
+      <h3 className="editor__section">NyxID</h3>
+
+      <div className="field">
+        <span className="field__label">Services this session may reach</span>
+        <p className="field__hint">
+          A session is given its own credential rather than yours, and it reaches only what is
+          ticked here. Everything else on your account stays out of its reach.
+        </p>
+        <ServicePicker
+          services={services}
+          selected={draft.nyxid.services}
+          mandatory={mandatoryServices}
+          onChange={(selected) => {
+            onChange({ ...draft, nyxid: { services: [...selected] } });
+          }}
+          error={servicesError}
         />
       </div>
 

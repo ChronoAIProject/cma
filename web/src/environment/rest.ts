@@ -4,6 +4,9 @@ import type { CredentialMode, PermissionMode, ReasoningEffort } from '../session
 import { DEFAULT_AGENT } from './types';
 import type {
   AgentConfiguration,
+  NyxIdAccess,
+  PlatformService,
+  ServiceCatalogue,
   CatalogSkill,
   EnvironmentProfile,
   EnvironmentProfileStore,
@@ -33,6 +36,7 @@ interface ProfilePayload {
   readonly packages?: unknown;
   readonly skills?: unknown;
   readonly agent?: unknown;
+  readonly nyxid?: unknown;
   readonly mandatory?: unknown;
   readonly created_at?: unknown;
   readonly updated_at?: unknown;
@@ -110,6 +114,7 @@ export function toProfile(raw: unknown): EnvironmentProfile {
       };
     }),
     agent: readAgent(p.agent),
+    nyxid: readNyxId(p.nyxid),
     mandatory: readMandatory(p.mandatory),
     createdAt: typeof p.created_at === 'string' ? p.created_at : '',
     updatedAt: typeof p.updated_at === 'string' ? p.updated_at : '',
@@ -137,6 +142,12 @@ function readAgent(raw: unknown): AgentConfiguration {
   };
 }
 
+/** The platform-access half of a profile as the wire carries it. */
+function readNyxId(raw: unknown): NyxIdAccess {
+  const n = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  return { services: Array.isArray(n.services) ? n.services.map(String) : [] };
+}
+
 function isEffort(v: unknown): v is ReasoningEffort {
   return EFFORTS.some((e) => e.id === v);
 }
@@ -162,6 +173,7 @@ function body(draft: ProfileDraft): string {
       credential: draft.agent.credential,
       skills: [...draft.agent.skills],
     },
+    nyxid: { services: [...draft.nyxid.services] },
   });
 }
 
@@ -188,6 +200,30 @@ export function createRestProfileStore(): EnvironmentProfileStore {
 
     async remove(id: string): Promise<void> {
       await call(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    async services(): Promise<ServiceCatalogue> {
+      const payload = (await call(`${BASE}/services`)) as {
+        services?: unknown;
+        mandatory?: unknown;
+      };
+      const services: PlatformService[] = Array.isArray(payload?.services)
+        ? payload.services.map((s) => {
+            const entry = s as { id?: unknown; name?: unknown; description?: unknown };
+            const id = String(entry.id ?? '');
+            return {
+              id,
+              // Falls back to the identifier rather than rendering blank: a row
+              // with no label is one nobody can decide about.
+              name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : id,
+              description: typeof entry.description === 'string' ? entry.description : undefined,
+            };
+          })
+        : [];
+      return {
+        services,
+        mandatory: Array.isArray(payload?.mandatory) ? payload.mandatory.map(String) : [],
+      };
     },
 
     async catalogue(): Promise<SkillCatalogue> {

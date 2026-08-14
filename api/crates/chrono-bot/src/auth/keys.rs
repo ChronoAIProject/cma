@@ -60,6 +60,10 @@ struct ServiceRow {
     id: String,
     #[serde(default)]
     slug: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 /// The name a key carries, which is how it is found again.
@@ -220,6 +224,50 @@ impl KeyIssuer {
         }
     }
 
+    /// Every service this owner has, for a caller choosing among them.
+    ///
+    /// Answered with the owner's own token, because which services exist is a
+    /// fact about their account and this service's identity would answer with
+    /// its own. Selections are stored by slug rather than identifier: a slug
+    /// is what a person recognises, and it survives a service being rebuilt.
+    pub async fn services_of(
+        &self,
+        owner_token: &str,
+    ) -> Result<Vec<layer2_core::CatalogService>, layer2_core::CatalogError> {
+        let url = format!("{}{SERVICES_PATH}", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(owner_token)
+            .send()
+            .await
+            .map_err(|e| layer2_core::CatalogError::Unavailable(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(layer2_core::CatalogError::Unavailable(format!(
+                "the platform answered {} listing services",
+                resp.status()
+            )));
+        }
+        let listing: ServiceListing = resp
+            .json()
+            .await
+            .map_err(|e| layer2_core::CatalogError::Unavailable(e.to_string()))?;
+        Ok(listing
+            .into_rows()
+            .into_iter()
+            .map(|r| {
+                // Named by slug where there is one, so a stored selection reads
+                // as something a person chose rather than as an identifier.
+                let id = r.slug.clone().unwrap_or_else(|| r.id.clone());
+                layer2_core::CatalogService {
+                    name: r.name.unwrap_or_else(|| id.clone()),
+                    id: ServiceId::new(id),
+                    description: r.description,
+                }
+            })
+            .collect())
+    }
+
     /// Take a key back.
     ///
     /// Failure is logged and not retried here: the key expires on its own, so
@@ -322,6 +370,41 @@ impl ServiceListing {
             Self::Bare(v) => v,
             Self::Wrapped { keys } => keys,
         }
+    }
+}
+
+/// The service picker, answered as the caller.
+///
+/// Wraps the issuer because both ask the same platform the same question: the
+/// picker to show what may be chosen, the mint to turn a choice into reach.
+/// One place that knows how services are listed is one place to correct.
+pub struct ServicePicker {
+    issuer: std::sync::Arc<KeyIssuer>,
+}
+
+impl ServicePicker {
+    /// Build a picker over an issuer.
+    pub fn new(issuer: std::sync::Arc<KeyIssuer>) -> Self {
+        Self { issuer }
+    }
+}
+
+#[async_trait::async_trait]
+impl layer2_core::ServiceCatalog for ServicePicker {
+    async fn available(
+        &self,
+        _subject: &SubjectId,
+        credential: Option<&str>,
+    ) -> Result<Vec<layer2_core::CatalogService>, layer2_core::CatalogError> {
+        // Only the caller's own credential will do. This service's identity
+        // would answer with the services *it* has, which is a different
+        // account and a misleading list rather than an empty one.
+        let Some(token) = credential else {
+            return Err(layer2_core::CatalogError::Unavailable(
+                "no delegated credential to list this owner's services with".into(),
+            ));
+        };
+        self.issuer.services_of(token).await
     }
 }
 

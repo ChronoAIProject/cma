@@ -96,6 +96,7 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
             Arc::new(crate::test_support::FakeProfileStore::default()),
             crate::environment::Baseline::default(),
             None,
+            None,
             crate::environment::AgentConfiguration {
                 kernel: KernelId::new("recording"),
                 ..Default::default()

@@ -523,8 +523,20 @@ impl From<ResolvedEnvironment> for layer3_adapter::RuntimeEnvironment {
     }
 }
 
-/// A skill a caller may choose, as the catalogue describes it.
+/// A platform service a caller may allow a session to reach.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogService {
+    /// Identifier to store in a profile.
+    pub id: ServiceId,
+    /// Name the owner recognises it by.
+    pub name: String,
+    /// One-line summary, when the catalogue offers one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A skill a caller may select.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogSkill {
     /// Identifier to store in a profile.
     pub id: SkillId,
@@ -569,6 +581,22 @@ pub trait SkillCatalog: Send + Sync {
         subject: &SubjectId,
         credential: Option<&str>,
     ) -> Result<Vec<CatalogSkill>, CatalogError>;
+}
+
+/// Where the services a caller may allow are listed.
+///
+/// Answered as the caller, always: which services exist is a fact about their
+/// account, and this service's own identity would answer with its own. A
+/// deployment without one has no picker — profiles still store selections and
+/// sessions still honour them, there is simply nothing to choose from.
+#[async_trait::async_trait]
+pub trait ServiceCatalog: Send + Sync {
+    /// Services this subject may allow a session to reach.
+    async fn available(
+        &self,
+        subject: &SubjectId,
+        credential: Option<&str>,
+    ) -> Result<Vec<CatalogService>, CatalogError>;
 }
 
 #[cfg(test)]

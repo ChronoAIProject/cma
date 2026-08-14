@@ -308,6 +308,7 @@ async fn a_profile_stored_before_the_baseline_existed_still_resolves_with_it() {
         Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
         Baseline::default(),
         None,
+        None,
         Default::default(),
     );
     let owner = caller("subject-a");
