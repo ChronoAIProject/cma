@@ -18,6 +18,7 @@ function profile(id: string, name: string): EnvironmentProfile {
     id,
     name,
     agent: DEFAULT_AGENT,
+    nyxid: { services: [] },
     variables: [],
     packages: [],
     mandatory: { packages: [], skills: [] },

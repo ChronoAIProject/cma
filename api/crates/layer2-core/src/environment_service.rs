@@ -31,6 +31,8 @@ pub struct EnvironmentProfileService {
     store: Arc<dyn EnvironmentProfileStore>,
     /// What every session carries whether or not anyone asked for it.
     baseline: Baseline,
+    /// Where the services a caller may allow are listed, when there is one.
+    services: Option<Arc<dyn crate::environment::ServiceCatalog>>,
     /// How the agent behaves in a session that names no profile.
     ///
     /// The deployment's answer rather than a hardcoded one: which model is
@@ -52,14 +54,38 @@ impl EnvironmentProfileService {
         store: Arc<dyn EnvironmentProfileStore>,
         baseline: Baseline,
         catalog: Option<Arc<dyn SkillCatalog>>,
+        services: Option<Arc<dyn crate::environment::ServiceCatalog>>,
         default_agent: AgentConfiguration,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
             baseline,
             catalog,
+            services,
             default_agent,
         })
+    }
+
+    /// Services this caller may allow a session to reach.
+    ///
+    /// An empty list where no catalogue is configured, rather than a failure:
+    /// a deployment without a picker still stores and honours selections, it
+    /// simply has nothing to offer.
+    pub async fn available_services(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+    ) -> Result<Vec<crate::environment::CatalogService>, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let Some(catalog) = self.services.as_ref() else {
+            return Ok(Vec::new());
+        };
+        catalog
+            .available(&caller.subject, credential)
+            .await
+            .map_err(|e| CoreError::RuntimeUnavailable(format!("service catalogue: {e}")))
     }
 
     /// What this deployment mandates in every session.

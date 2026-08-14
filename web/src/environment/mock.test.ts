@@ -34,12 +34,14 @@ describe('the in-memory profile store', () => {
     const created = await store.create({
       ...draft('mine'),
       agent: { ...DEFAULT_AGENT, skills: ['chosen'] },
+      nyxid: { services: [] },
       packages: [{ name: 'ripgrep' }],
     });
 
     const stripped = await store.update(created.id, {
       ...draft('mine'),
       agent: { ...DEFAULT_AGENT, skills: [] },
+      nyxid: { services: [] },
       packages: [],
     });
     expect(stripped.agent.skills).toContain('nyxid');
