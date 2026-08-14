@@ -271,7 +271,7 @@ function summarise(profile: EnvironmentProfile): string {
   const parts = [
     `${profile.variables.length} variable${profile.variables.length === 1 ? '' : 's'}`,
     `${profile.packages.length} package${profile.packages.length === 1 ? '' : 's'}`,
-    `${profile.skills.length} skill${profile.skills.length === 1 ? '' : 's'}`,
+    `${profile.agent.skills.length} skill${profile.agent.skills.length === 1 ? '' : 's'}`,
   ];
   return parts.join(' · ');
 }

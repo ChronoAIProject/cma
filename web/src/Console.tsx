@@ -3,7 +3,7 @@ import { SessionRail } from './sessions/SessionRail';
 import { SessionDetails } from './sessions/SessionDetails';
 import { TopBar } from './shell/TopBar';
 import type { SortOrder } from './sessions/sessionTime';
-import type { Kernel, Session, SessionLifecycle } from './sessions/types';
+import type { Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
 import type { Stage } from './sessions/progress';
@@ -407,9 +407,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         onCancel={() => {
           setChoosing(false);
         }}
-        onStart={(kernel, options, environmentProfile) => {
+        onStart={(environmentProfile) => {
           setChoosing(false);
-          void start(kernel as Kernel, options, environmentProfile);
+          void start(environmentProfile);
         }}
       />
 

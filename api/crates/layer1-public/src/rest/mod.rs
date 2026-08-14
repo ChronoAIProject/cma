@@ -59,21 +59,19 @@ impl InterfaceProfile for RestInterface {
 /// Request body for creating a session.
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
-    /// How the agent should behave. Omitted means the safe defaults.
-    #[serde(default)]
-    options: Option<layer2_core::AgentOptions>,
-    /// Which runtime should back the session.
-    pub kernel: String,
     /// Initial terminal width.
     #[serde(default)]
     pub cols: Option<u16>,
     /// Initial terminal height.
     #[serde(default)]
     pub rows: Option<u16>,
-    /// Reusable environment bundle to start the session with.
+    /// The environment profile to start the session from.
     ///
-    /// Omitting it does not mean a bare session: what the platform mandates is
-    /// applied either way.
+    /// The whole description of the session: which agent, which model, how
+    /// hard it thinks, how often it asks, whose access it spends, and what it
+    /// carries. Naming nothing is a choice too — it starts the session the way
+    /// this deployment says an unqualified session should start, which is not
+    /// the same as a bare one.
     #[serde(default)]
     pub environment_profile: Option<String>,
 }
@@ -297,12 +295,13 @@ async fn create(
                 environment_profile: body
                     .environment_profile
                     .map(layer2_core::EnvironmentProfileId),
-                kernel: KernelId::new(body.kernel),
+                // Both replaced by the core from the profile this session
+                // names. Sent as defaults rather than left out because the
+                // spec is also what a rotation rebuilds a session from, where
+                // they are the values the session was started with.
+                kernel: KernelId::new("codex"),
                 geometry,
-                // Absent options mean the deployment's defaults, which are the
-                // cautious ones. A client that omits them never lands on a
-                // session that can act without asking.
-                options: body.options.unwrap_or_default(),
+                options: Default::default(),
                 subject_credential: credential.map(|axum::Extension(c)| c.0),
             },
         )
