@@ -21,7 +21,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
-use crate::ids::{EnvironmentProfileId, SubjectId};
+use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
+use crate::options::{CredentialMode, PermissionMode, ReasoningEffort};
 
 /// Longest accepted profile name.
 const MAX_NAME: usize = 120;
@@ -137,20 +138,67 @@ impl std::fmt::Display for SkillId {
     }
 }
 
+/// How the agent behaves in a session started from this profile.
+///
+/// These were once chosen per session, which meant the same decisions were
+/// made again on every start and a session could not be described by anything
+/// reusable. They belong to the bundle: "which agent, thinking how hard,
+/// asking permission how often, spending whose model access, carrying which
+/// skills" is one coherent answer, and naming it is what makes it repeatable.
+///
+/// Skills sit here rather than beside software because a skill is something
+/// the agent knows how to do, not something installed in the box around it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentConfiguration {
+    /// Which runtime implementation backs the session.
+    pub kernel: KernelId,
+    /// Model the agent selects, when the profile pins one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// How hard the agent thinks before answering.
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
+    /// How often it stops to ask.
+    #[serde(default)]
+    pub permission: PermissionMode,
+    /// Whose model access it spends.
+    #[serde(default)]
+    pub credential: CredentialMode,
+    /// Skills loaded into the session.
+    #[serde(default)]
+    pub skills: Vec<SkillId>,
+}
+
+impl Default for AgentConfiguration {
+    fn default() -> Self {
+        Self {
+            // The only kernel this deployment can actually start. A profile
+            // that named nothing would otherwise be unstartable, which is a
+            // worse answer than the one kernel there is.
+            kernel: KernelId::new("codex"),
+            model: None,
+            reasoning_effort: ReasoningEffort::default(),
+            permission: PermissionMode::default(),
+            credential: CredentialMode::default(),
+            skills: Vec::new(),
+        }
+    }
+}
+
 /// What a caller supplies when creating or replacing a profile.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EnvironmentProfileSpec {
     /// Name the owner recognises it by.
     pub name: String,
+    /// How the agent behaves.
+    #[serde(default)]
+    pub agent: AgentConfiguration,
     /// Variables to set in the session.
     #[serde(default)]
     pub variables: Vec<EnvironmentVariable>,
     /// Software the session should carry.
     #[serde(default)]
     pub packages: Vec<SoftwarePackage>,
-    /// Skills to load into the session.
-    #[serde(default)]
-    pub skills: Vec<SkillId>,
 }
 
 impl EnvironmentProfileSpec {
@@ -170,7 +218,7 @@ impl EnvironmentProfileSpec {
         }
         check_length("variables", self.variables.len())?;
         check_length("packages", self.packages.len())?;
-        check_length("skills", self.skills.len())?;
+        check_length("skills", self.agent.skills.len())?;
 
         let mut seen: Vec<&str> = Vec::with_capacity(self.variables.len());
         for variable in &self.variables {
@@ -203,7 +251,7 @@ impl EnvironmentProfileSpec {
                 ));
             }
         }
-        for skill in &self.skills {
+        for skill in &self.agent.skills {
             if skill.0.trim().is_empty() {
                 return Err(CoreError::InvalidRequest(
                     "a skill identifier must not be empty".into(),
@@ -232,12 +280,13 @@ pub struct EnvironmentProfile {
     pub owner: SubjectId,
     /// Name the owner recognises it by.
     pub name: String,
+    /// How the agent behaves in sessions started with this profile.
+    #[serde(default)]
+    pub agent: AgentConfiguration,
     /// Variables set in every session started with this profile.
     pub variables: Vec<EnvironmentVariable>,
     /// Software the session carries.
     pub packages: Vec<SoftwarePackage>,
-    /// Skills loaded into the session.
-    pub skills: Vec<SkillId>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
     /// Last modification timestamp, RFC 3339 in UTC.
@@ -262,9 +311,9 @@ impl EnvironmentProfile {
     pub fn to_spec(&self) -> EnvironmentProfileSpec {
         EnvironmentProfileSpec {
             name: self.name.clone(),
+            agent: self.agent.clone(),
             variables: self.variables.clone(),
             packages: self.packages.clone(),
-            skills: self.skills.clone(),
         }
     }
 }
@@ -328,13 +377,13 @@ impl Baseline {
         }
         spec.packages.extend(chosen_packages);
 
-        let chosen_skills = std::mem::take(&mut spec.skills);
+        let chosen_skills = std::mem::take(&mut spec.agent.skills);
         for mandatory in &self.skills {
             if !chosen_skills.contains(mandatory) {
-                spec.skills.push(mandatory.clone());
+                spec.agent.skills.push(mandatory.clone());
             }
         }
-        spec.skills.extend(chosen_skills);
+        spec.agent.skills.extend(chosen_skills);
     }
 }
 
@@ -365,7 +414,7 @@ impl ResolvedEnvironment {
                 .map(|v| (v.key.clone(), v.value.clone()))
                 .collect(),
             packages: spec.packages.iter().map(|p| p.requirement()).collect(),
-            skills: spec.skills.iter().map(|s| s.0.clone()).collect(),
+            skills: spec.agent.skills.iter().map(|s| s.0.clone()).collect(),
         }
     }
 

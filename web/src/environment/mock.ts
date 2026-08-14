@@ -80,7 +80,7 @@ function applyBaseline(draft: ProfileDraft): {
     ),
     ...chosenPackages,
   ];
-  const chosenSkills = draft.skills.filter((s) => s.trim().length > 0);
+  const chosenSkills = draft.agent.skills.filter((s) => s.trim().length > 0);
   const skills = [...MANDATORY_SKILLS.filter((id) => !chosenSkills.includes(id)), ...chosenSkills];
   return { packages, skills };
 }
@@ -92,7 +92,7 @@ function materialise(id: string, draft: ProfileDraft, createdAt: string): Enviro
     name: draft.name.trim(),
     variables: [...draft.variables],
     packages,
-    skills,
+    agent: { ...draft.agent, skills },
     mandatory: MANDATORY,
     createdAt,
     updatedAt: new Date().toISOString(),

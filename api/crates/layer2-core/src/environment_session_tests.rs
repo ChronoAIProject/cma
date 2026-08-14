@@ -32,7 +32,7 @@ async fn a_selected_profile_reaches_the_runtime_that_backs_the_session() {
     spec.variables
         .push(EnvironmentVariable::new("BUILD_MODE", "release"));
     spec.packages.push(SoftwarePackage::new("ripgrep"));
-    spec.skills.push(SkillId::new("chosen-skill"));
+    spec.agent.skills.push(SkillId::new("chosen-skill"));
     let profile = environment_service
         .create(&owner, spec)
         .await

@@ -11,7 +11,8 @@
 use futures_util::TryStreamExt;
 use layer2_core::{
     store::{EnvironmentProfileStore, StoreError},
-    EnvironmentProfile, EnvironmentProfileId, EnvironmentVariable, SkillId, SoftwarePackage,
+    AgentConfiguration, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
+    EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, SkillId, SoftwarePackage,
     SubjectId,
 };
 use mongodb::bson::doc;
@@ -51,10 +52,33 @@ struct ProfileDoc {
     variables: Vec<VariableDoc>,
     #[serde(default)]
     packages: Vec<PackageDoc>,
+    /// Skills, as profiles written before the agent section stored them.
+    ///
+    /// Read and never written. A profile stored by an older build keeps its
+    /// skills here, and dropping the field would silently empty it; migrating
+    /// on read means the next save moves them without anybody being asked.
     #[serde(default)]
     skills: Vec<String>,
+    #[serde(default)]
+    agent: Option<AgentDoc>,
     created_at: String,
     updated_at: String,
+}
+
+/// The agent half of a stored profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AgentDoc {
+    kernel: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    reasoning_effort: ReasoningEffort,
+    #[serde(default)]
+    permission: PermissionMode,
+    #[serde(default)]
+    credential: CredentialMode,
+    #[serde(default)]
+    skills: Vec<String>,
 }
 
 fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
@@ -78,7 +102,18 @@ fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
                 version: s.version.clone(),
             })
             .collect(),
-        skills: p.skills.iter().map(|s| s.0.clone()).collect(),
+        // Written only in the agent section from here on. The legacy field is
+        // emptied so a document is migrated by being saved, rather than
+        // carrying two copies that can disagree.
+        skills: Vec::new(),
+        agent: Some(AgentDoc {
+            kernel: p.agent.kernel.0.clone(),
+            model: p.agent.model.clone(),
+            reasoning_effort: p.agent.reasoning_effort,
+            permission: p.agent.permission,
+            credential: p.agent.credential,
+            skills: p.agent.skills.iter().map(|s| s.0.clone()).collect(),
+        }),
         created_at: p.created_at.clone(),
         updated_at: p.updated_at.clone(),
     }
@@ -102,7 +137,23 @@ fn from_doc(d: ProfileDoc) -> EnvironmentProfile {
                 version: p.version,
             })
             .collect(),
-        skills: d.skills.into_iter().map(SkillId::new).collect(),
+        // A document written before the agent section has no agent and its
+        // skills at the top level. It reads as the deployment's ordinary
+        // behaviour, carrying the skills it was saved with.
+        agent: match d.agent {
+            Some(a) => AgentConfiguration {
+                kernel: KernelId::new(a.kernel),
+                model: a.model,
+                reasoning_effort: a.reasoning_effort,
+                permission: a.permission,
+                credential: a.credential,
+                skills: a.skills.into_iter().map(SkillId::new).collect(),
+            },
+            None => AgentConfiguration {
+                skills: d.skills.into_iter().map(SkillId::new).collect(),
+                ..AgentConfiguration::default()
+            },
+        },
         created_at: d.created_at,
         updated_at: d.updated_at,
     }
@@ -210,7 +261,10 @@ mod tests {
                     version: Some("14".into()),
                 },
             ],
-            skills: vec![SkillId::new("skill-one")],
+            agent: AgentConfiguration {
+                skills: vec![SkillId::new("skill-one")],
+                ..AgentConfiguration::default()
+            },
             created_at: "2026-08-12T00:00:00Z".into(),
             updated_at: "2026-08-13T00:00:00Z".into(),
         }
@@ -226,7 +280,7 @@ mod tests {
         assert_eq!(back.name, original.name);
         assert_eq!(back.variables, original.variables);
         assert_eq!(back.packages, original.packages);
-        assert_eq!(back.skills, original.skills);
+        assert_eq!(back.agent.skills, original.agent.skills);
         assert_eq!(back.created_at, original.created_at);
         assert_eq!(back.updated_at, original.updated_at);
     }
@@ -253,7 +307,7 @@ mod tests {
         let profile = from_doc(doc);
         assert!(profile.variables.is_empty());
         assert!(profile.packages.is_empty());
-        assert!(profile.skills.is_empty());
+        assert!(profile.agent.skills.is_empty());
     }
 
     #[test]
