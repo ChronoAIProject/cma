@@ -73,6 +73,16 @@ pub(crate) struct ProviderMetadata {
     token_endpoint: String,
     #[serde(default)]
     userinfo_endpoint: Option<String>,
+    /// Where a token's own grants can be asked about.
+    ///
+    /// Separate from userinfo because the two answer different questions. A
+    /// provider releases roles and permissions through userinfo only when the
+    /// token was granted a scope asking for them, and a token minted for
+    /// another client — which is every token on the bearer path — was not.
+    /// Introspection is asked by this service as itself, so it answers for any
+    /// token the provider issued regardless of what that token was granted.
+    #[serde(default)]
+    introspection_endpoint: Option<String>,
 }
 
 /// How the service establishes who is calling.
@@ -323,6 +333,10 @@ impl AuthState {
         // resolve, so only those two are rewritten.
         meta.token_endpoint = rebase(&meta.token_endpoint, &base);
         meta.userinfo_endpoint = meta.userinfo_endpoint.as_deref().map(|e| rebase(e, &base));
+        meta.introspection_endpoint = meta
+            .introspection_endpoint
+            .as_deref()
+            .map(|e| rebase(e, &base));
 
         *self.metadata.write().await = Some(meta.clone());
         tracing::info!(
