@@ -133,7 +133,7 @@ data:
   # a session on an image nobody maintains, and forbids interrupting it to fix
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:8dbd315"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:646b61c"
   # The subcommand that makes the agent continue a named conversation, used
   # when a session is carried onto a newer runtime. The conversation's own
   # identifier is appended, so this must be a form that takes one.
