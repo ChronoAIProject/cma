@@ -16,6 +16,7 @@ fn baseline() -> Baseline {
     Baseline::new(
         [SoftwarePackage::new("platform-cli")],
         [SkillId::new("mandatory-one"), SkillId::new("mandatory-two")],
+        [],
     )
 }
 
@@ -248,6 +249,7 @@ fn selecting_no_profile_still_yields_the_baseline() {
 #[test]
 fn a_resolved_profile_carries_its_variables_by_name() {
     let profile = EnvironmentProfile {
+        services: Vec::new(),
         id: EnvironmentProfileId::generate(),
         owner: SubjectId("subject-a".into()),
         name: "mine".into(),
@@ -279,6 +281,7 @@ fn a_resolved_profile_carries_its_variables_by_name() {
 #[test]
 fn ownership_is_exact_match_only() {
     let profile = EnvironmentProfile {
+        services: Vec::new(),
         id: EnvironmentProfileId::generate(),
         owner: SubjectId("subject-a".into()),
         name: "mine".into(),

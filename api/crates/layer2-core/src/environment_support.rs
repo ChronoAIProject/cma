@@ -136,6 +136,7 @@ pub(crate) fn baseline() -> Baseline {
     Baseline::new(
         [SoftwarePackage::new("platform-cli")],
         [SkillId::new("mandatory-one"), SkillId::new("mandatory-two")],
+        [],
     )
 }
 
