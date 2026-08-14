@@ -131,3 +131,32 @@
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--rule);
 }
+
+/*
+ * The creator, drawn as a face beside a name.
+ *
+ * Laid out on the row's own value rather than as a block of its own, so it
+ * reads as one more fact about the session and not as a card bolted into a
+ * list of plain rows.
+ */
+.details__creator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.details__face {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  /* The initial, when there is no picture. Uppercase already, so this only
+     keeps a descender from shifting the row. */
+  line-height: 1;
+}

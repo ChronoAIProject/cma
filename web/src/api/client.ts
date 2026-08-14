@@ -12,7 +12,7 @@
  * undefined through the UI.
  */
 
-import type { Kernel, Session, SessionLifecycle } from '../sessions/types';
+import type { Kernel, Session, SessionCreator, SessionLifecycle } from '../sessions/types';
 import type { AgentOptions } from '../sessions/options';
 import { isStage, type Stage } from '../sessions/progress';
 
@@ -53,6 +53,7 @@ interface SessionPayload {
   runtime_version?: unknown;
   rotations?: unknown;
   rotated_at?: unknown;
+  creator?: unknown;
 }
 
 /**
@@ -90,7 +91,23 @@ export function toSession(raw: unknown): Session {
     // Absent until a session has actually been moved, so an unparseable value
     // becomes absent rather than a date nobody can interpret.
     rotatedAt: rotatedAt(p.rotated_at),
+    creator: creator(p.creator),
   };
+}
+
+/** The person who started a session, when the control plane named them. */
+function creator(raw: unknown): SessionCreator | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const c = raw as Record<string, unknown>;
+  const displayName = typeof c.display_name === 'string' ? c.display_name : undefined;
+  const avatarUrl = typeof c.avatar_url === 'string' ? c.avatar_url : undefined;
+  // Both absent is the same as no creator at all: an object with nothing in it
+  // would have the panel draw a heading over blank space.
+  return displayName === undefined && avatarUrl === undefined
+    ? undefined
+    : { displayName, avatarUrl };
 }
 
 /** The snapshot time a session was carried across from, if it was. */
