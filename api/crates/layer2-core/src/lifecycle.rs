@@ -135,6 +135,11 @@ impl SessionService {
                 tracing::warn!(session_id = %id, error = %e, "runtime teardown failed");
             }
         }
+        // The credential goes with the session. Nothing will present it
+        // again, and one nobody is watching is the kind worth taking back.
+        if let Some(source) = self.credentials.as_ref() {
+            source.release(id).await;
+        }
         tracing::info!(session_id = %id, "session terminated");
         Ok(owner)
     }

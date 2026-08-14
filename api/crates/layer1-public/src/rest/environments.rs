@@ -21,7 +21,7 @@ use axum::{
 use layer2_core::{
     AgentConfiguration, CatalogSkill, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
     EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentVariable, KernelId,
-    PermissionMode, ReasoningEffort, SkillId, SoftwarePackage,
+    PermissionMode, ReasoningEffort, ServiceId, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +61,17 @@ pub struct ProfileRequest {
     /// How the agent behaves in sessions started from this profile.
     #[serde(default)]
     pub agent: AgentBody,
+    /// Which of the owner's platform services the session may reach.
+    #[serde(default)]
+    pub nyxid: NyxIdBody,
+}
+
+/// The platform-access half of a profile, as a caller supplies it.
+#[derive(Debug, Default, Deserialize)]
+pub struct NyxIdBody {
+    /// Identifiers of the services to allow.
+    #[serde(default)]
+    pub services: Vec<String>,
 }
 
 /// The agent half of a profile, as a caller supplies it.
@@ -122,6 +133,12 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 credential: body.agent.credential.unwrap_or_default(),
                 skills: body.agent.skills.into_iter().map(SkillId::new).collect(),
             },
+            services: body
+                .nyxid
+                .services
+                .into_iter()
+                .map(ServiceId::new)
+                .collect(),
         }
     }
 }
@@ -142,6 +159,12 @@ pub struct AgentView {
     skills: Vec<String>,
 }
 
+/// The platform-access half of a profile, as this interface renders it.
+#[derive(Debug, Serialize)]
+pub struct NyxIdView {
+    services: Vec<String>,
+}
+
 /// A profile as this interface renders it.
 #[derive(Debug, Serialize)]
 pub struct ProfileView {
@@ -150,6 +173,7 @@ pub struct ProfileView {
     variables: Vec<VariableBody>,
     packages: Vec<PackageBody>,
     agent: AgentView,
+    nyxid: NyxIdView,
     /// Which entries the platform mandates, so a client can render them as
     /// fixed rather than guessing — and so the rule is visible rather than
     /// only enforced when the client gets it wrong.
@@ -202,6 +226,9 @@ impl ProfileView {
                 permission: profile.agent.permission,
                 credential: profile.agent.credential,
                 skills: profile.agent.skills.into_iter().map(|s| s.0).collect(),
+            },
+            nyxid: NyxIdView {
+                services: profile.services.into_iter().map(|s| s.0).collect(),
             },
             mandatory: MandatoryView::of(service.baseline()),
             created_at: profile.created_at,
@@ -368,6 +395,7 @@ mod tests {
             Baseline::new(
                 [SoftwarePackage::new("platform-cli")],
                 [SkillId::new("mandatory-one")],
+                [],
             ),
             None,
             Default::default(),
@@ -384,6 +412,7 @@ mod tests {
                 name: "ripgrep".into(),
                 version: Some("14".into()),
             }],
+            services: Vec::new(),
             agent: layer2_core::AgentConfiguration {
                 skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
                 ..Default::default()

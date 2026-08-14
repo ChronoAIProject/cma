@@ -13,9 +13,66 @@ use layer3_adapter::TerminalInput;
 
 impl SessionService {
     /// The credential to present on an owner's behalf, if one can be had.
-    pub(crate) async fn credential_for(&self, owner: &SubjectId) -> Option<String> {
+    pub(crate) async fn credential_for(
+        &self,
+        session: &SessionId,
+        owner: &SubjectId,
+        services: &[crate::environment::ServiceId],
+    ) -> Option<String> {
         let source = self.credentials.as_ref()?;
-        source.credential_for(owner).await
+        source.credential_for(session, owner, services).await
+    }
+
+    /// What this session's profile says its credential may reach.
+    ///
+    /// Read from the session rather than from the request that created it, so
+    /// a credential minted long afterwards — for a replaced runtime, or after
+    /// a restart — is scoped the same way the first one was.
+    /// Whether this session still exists and could present a credential.
+    ///
+    /// A terminated session is not live even while its record remains: the
+    /// record is history, and history presents nothing.
+    pub async fn session_is_live(&self, id: &SessionId) -> bool {
+        match self.store.get(id).await {
+            Ok(Some(record)) => record.session.status.wants_runtime(),
+            _ => false,
+        }
+    }
+
+    pub async fn session_services(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
+        self.services_for(id).await
+    }
+
+    /// Hand one session a credential that was minted for it.
+    ///
+    /// Separate from the subject-wide push because a per-session credential is
+    /// not shared: replacing every session's value when one was reissued would
+    /// give each of them somebody else's.
+    pub async fn push_session_credential(&self, id: &SessionId, credential: String) -> bool {
+        let sender = {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(id) else {
+                return false;
+            };
+            entry.subject_credential = Some(credential.clone());
+            entry.input.clone()
+        };
+        match sender {
+            Some(tx) => tx.send(TerminalInput::Credential(credential)).await.is_ok(),
+            None => false,
+        }
+    }
+
+    pub(crate) async fn services_for(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
+        let Ok(Some(record)) = self.store.get(id).await else {
+            return Vec::new();
+        };
+        self.environments
+            .services_for(
+                &record.session.owner,
+                record.session.environment_profile.as_ref(),
+            )
+            .await
     }
 
     /// Hand a session the credential its owner currently has.
@@ -25,7 +82,8 @@ impl SessionService {
     /// the agent makes on its owner's behalf is refused, so the session looks
     /// broken while being perfectly alive.
     pub(crate) async fn supply_credential(&self, id: &SessionId, owner: &SubjectId) {
-        let Some(credential) = self.credential_for(owner).await else {
+        let services = self.services_for(id).await;
+        let Some(credential) = self.credential_for(id, owner, &services).await else {
             tracing::debug!(session_id = %id, "no credential held for this session's owner");
             return;
         };

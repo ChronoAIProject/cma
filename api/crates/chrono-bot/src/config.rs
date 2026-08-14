@@ -64,6 +64,13 @@ pub struct Config {
     /// is worth spending, and how freely an agent may act before asking, are
     /// decisions about this installation and not about the software.
     pub default_agent: layer2_core::AgentConfiguration,
+    /// Services every session's credential may reach, whoever started it.
+    ///
+    /// A floor rather than a default. One credential serves the agent's model
+    /// calls and the platform CLI alike, so a profile that excluded the model
+    /// endpoint would leave the session unable to think rather than merely
+    /// narrower.
+    pub baseline_services: Vec<String>,
     /// Skills every session loads, whoever started it.
     ///
     /// Identified the way the registry identifies a skill: either its
@@ -138,6 +145,9 @@ impl Config {
         // genuinely mandates nothing sets the keys to a single space.
         let baseline_packages = list_or("CHRONO_BASELINE_PACKAGES", "nyxid");
         let baseline_skills = list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli");
+        // Named the way a person reads them; the identifiers the provider
+        // wants are resolved when a credential is minted.
+        let baseline_services = list_or("CHRONO_BASELINE_SERVICES", "chrono-llm,ornn-api");
         // What a session is when nobody chose anything. Each key is read on
         // its own and a value the software does not recognise is refused
         // rather than silently replaced: a deployment that meant "ask first"
@@ -241,6 +251,7 @@ impl Config {
             adopts_untagged_runtimes,
             baseline_packages,
             baseline_skills,
+            baseline_services,
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
@@ -386,6 +397,7 @@ mod tests {
             default_agent: Default::default(),
             baseline_packages: vec![],
             baseline_skills: vec![],
+            baseline_services: vec![],
             runtime_resume_args: "resume".into(),
             deployment_id: "chrono-bot".into(),
             adopts_untagged_runtimes: true,

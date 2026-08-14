@@ -208,6 +208,10 @@ async fn main() {
     let baseline = Baseline::new(
         config.baseline_packages.iter().map(SoftwarePackage::new),
         config.baseline_skills.iter().map(SkillId::new),
+        config
+            .baseline_services
+            .iter()
+            .map(layer2_core::ServiceId::new),
     );
     tracing::info!(
         packages = ?config.baseline_packages,
@@ -260,6 +264,27 @@ async fn main() {
 
     // Keeps delegated credentials valid underneath running sessions, and pushes
     // each renewal into the runtimes already using the old value.
+    // Per-session credentials are minted on the platform, so this only exists
+    // where a platform root is configured. Without one every session falls
+    // back to its owner's own token, which is what happened before scoping.
+    if !config.platform_base_url.trim().is_empty() {
+        auth_state
+            .use_issuer(Arc::new(auth::keys::KeyIssuer::new(
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(15))
+                    .build()
+                    .expect("http client builds"),
+                config.platform_base_url.clone(),
+                config.deployment_id.clone(),
+            )))
+            .await;
+        tracing::info!(
+            deployment = %config.deployment_id,
+            services = ?config.baseline_services,
+            "each session gets its own credential, reaching these services and whatever its profile adds"
+        );
+    }
+
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
 
     // Sessions end only when their owner says so, which leaves this as the one

@@ -72,6 +72,32 @@ impl EnvironmentProfileService {
         &self.default_agent
     }
 
+    /// Which services a session started with this selection may reach.
+    ///
+    /// Always includes what the deployment mandates, whichever profile is
+    /// named and whether one is named at all. A profile that has since been
+    /// deleted leaves the floor rather than nothing: a session already running
+    /// must not lose its model endpoint because a bundle was tidied up.
+    pub async fn services_for(
+        &self,
+        owner: &SubjectId,
+        selection: Option<&EnvironmentProfileId>,
+    ) -> Vec<crate::environment::ServiceId> {
+        let mut chosen: Vec<crate::environment::ServiceId> = match selection {
+            Some(id) => match self.store.get(id).await {
+                Ok(Some(profile)) if profile.is_owned_by(owner) => profile.services.clone(),
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        for mandatory in self.baseline.services() {
+            if !chosen.contains(mandatory) {
+                chosen.push(mandatory.clone());
+            }
+        }
+        chosen
+    }
+
     /// How the agent should behave for a session started with this selection.
     ///
     /// The profile is the whole answer. A caller does not get to say which
@@ -114,6 +140,7 @@ impl EnvironmentProfileService {
             variables: spec.variables,
             packages: spec.packages,
             agent: spec.agent,
+            services: spec.services,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -175,6 +202,7 @@ impl EnvironmentProfileService {
             variables: spec.variables,
             packages: spec.packages,
             agent: spec.agent,
+            services: spec.services,
             created_at: existing.created_at,
             updated_at: now_rfc3339(),
         };

@@ -201,3 +201,18 @@ data:
   # "delegated" spends this platform's model access rather than the owner's own
   # credential, which is what makes a session work with nothing to set up.
   CHRONO_DEFAULT_AGENT_CREDENTIAL: "delegated"
+  # Services every session's credential may reach, whatever its profile says.
+  #
+  # A session no longer carries its owner's whole identity. It is given a
+  # credential minted for it alone, limited to the services its environment
+  # profile named — and to these, always.
+  #
+  # A floor rather than a default, because one credential serves every call a
+  # session makes. The agent's own model calls go through the same key as the
+  # platform CLI, so a profile that excluded the model endpoint would not
+  # produce a narrower session but one that cannot think. The skill registry is
+  # here for the same reason: the baseline skills above are fetched through it.
+  #
+  # Named the way a person reads them; the identifiers the provider wants are
+  # resolved when a credential is minted.
+  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api"
