@@ -1,0 +1,164 @@
+/*
+ * Environment profiles — the form field, key/value row, selection list and
+ * empty state patterns from docs/Web_Style.md section 6. Every value is a
+ * token from that document.
+ */
+
+.profiles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.profiles__row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+}
+
+.profiles__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.profiles__name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profiles__meta {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+/* Form field */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.field__label {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.field__input {
+  width: 100%;
+  min-height: 32px;
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  background: var(--surface-2);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-chip);
+}
+
+.field__input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.field__hint {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.field__error {
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* Key/value rows */
+
+.pairs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.pair {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Selection list */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+}
+
+.picker__row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.picker__row:hover {
+  background: var(--surface-2);
+}
+
+.picker__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.picker__name {
+  color: var(--ink);
+  font-size: var(--text-base);
+}
+
+.picker__access {
+  margin-left: var(--space-2);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.picker__description {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.empty {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .picker__row {
+    transition: background 150ms ease;
+  }
+}

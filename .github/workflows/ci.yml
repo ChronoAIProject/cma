@@ -1,0 +1,255 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  structure:
+    name: Repository structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Root contains only permitted entries
+        run: |
+          allowed=".git .github api web infra docs CLAUDE.md README.md .gitignore .dockerignore"
+          fail=0
+          for entry in $(ls -A); do
+            case " $allowed " in
+              *" $entry "*) ;;
+              *) echo "::error::disallowed root entry: $entry"; fail=1 ;;
+            esac
+          done
+          exit $fail
+      - name: infra/ contains only the fixed file list
+        run: |
+          # infra/runtime/ holds the bot-pod image only. It has no manifests of
+          # its own by design: the sandbox provider schedules that image, so
+          # this repository never declares a Deployment or Service for it.
+          expected=$(printf '%s\n' \
+            infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
+            infra/api/secret.yaml infra/api/service.yaml \
+            infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
+            infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
+            infra/api/gcpbackendpolicy.yaml \
+            infra/runtime/Dockerfile \
+            infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
+            infra/web/secret.yaml infra/web/service.yaml | sort)
+          actual=$(find infra -type f | sort)
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::infra/ contents differ from the fixed list"
+            diff <(echo "$expected") <(echo "$actual") || true
+            exit 1
+          fi
+      - name: docs/ contains only markdown
+        run: |
+          bad=$(find docs -type f ! -name '*.md' || true)
+          if [ -n "$bad" ]; then echo "::error::non-markdown in docs/: $bad"; exit 1; fi
+      - name: Layer dependency rule
+        run: |
+          fail=0
+          grep -q 'layer3-adapter' api/crates/layer1-public/Cargo.toml \
+            && { echo "::error::layer1-public must not depend on layer3-adapter"; fail=1; }
+          grep -q 'layer1-public' api/crates/layer2-core/Cargo.toml \
+            && { echo "::error::layer2-core must not depend on layer1-public"; fail=1; }
+          grep -qE 'layer1-public|layer2-core' api/crates/layer3-adapter/Cargo.toml \
+            && { echo "::error::layer3-adapter must not depend on layer1 or layer2"; fail=1; }
+          grep -q 'layer4-runtime' api/crates/chrono-bot/Cargo.toml \
+            && { echo "::error::control plane must not depend on layer4-runtime"; fail=1; }
+          exit $fail
+      - name: Layer 2 is protocol- and kernel-agnostic
+        run: |
+          hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
+          if [ -n "$hits" ]; then
+            echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
+          fi
+
+  secrets:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        # The gitleaks GitHub Action requires a paid licence for organisations.
+        # The scanner itself is open source, so run the binary directly.
+        run: |
+          # Download outside the working tree: the gitleaks binary itself
+          # contains the annotation strings the next step forbids.
+          curl -sSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" detect --source . --redact --verbose --exit-code 1
+      - name: Reject any gitleaks allowlist
+        run: |
+          if find . -name '.gitleaks.toml' -o -name 'gitleaks.toml' | grep -q .; then
+            echo "::error::gitleaks configuration is not permitted; fix the offending string instead"
+            exit 1
+          fi
+          needle="gitleaks:""allow"
+          if grep -rnF "$needle" --exclude-dir=.git . ; then
+            echo "::error::bypass annotations are not permitted; fix the offending string instead"
+            exit 1
+          fi
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: api
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Build
+        run: cargo build --workspace --locked
+      - uses: taiki-e/install-action@nextest
+      - name: Tests
+        run: cargo nextest run --workspace --locked
+      - name: Doctests
+        run: cargo test --doc --workspace --locked
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: api/Cargo.toml
+          command: check advisories licenses bans sources
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install (lockfile integrity)
+        run: npm ci
+      - name: Format
+        run: npx prettier --check .
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm run test
+      - name: Production build
+        run: npm run build
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+  manifests:
+    name: Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          # The routes and the secret-provider class are custom resources, and
+          # kubeconform ships schemas only for built-in kinds. They are given a
+          # schema catalogue rather than -ignore-missing-schemas: skipping
+          # validation for exactly the manifests most likely to be hand-edited
+          # would leave the gate reporting success on files it never read.
+          ./kubeconform -strict -summary -output text \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            infra/api/*.yaml infra/web/*.yaml
+      - name: kube-linter
+        uses: stackrox/kube-linter-action@v1
+        with:
+          directory: infra
+
+  images:
+    name: Images
+    runs-on: ubuntu-latest
+    # A build that hangs should fail rather than occupy a runner for six hours.
+    # Well above a cold cacheless build, so this catches a stall, not slowness.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Adding a value here adds a check named "Images (<value>)" and leaves
+        # the existing names untouched, so branch protection keeps reporting.
+        # The new check is not required until it is added to the ruleset.
+        component: [api, web, runtime]
+    steps:
+      - uses: actions/checkout@v5
+      # arm64 builds run under emulation on the amd64 runner.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      # Proves the Dockerfile builds for every architecture the cluster may
+      # schedule onto. Discarded via cacheonly rather than loaded: the docker
+      # exporter behind `load: true` cannot export a multi-platform manifest
+      # list, so a combined build-and-load would fail outright.
+      #
+      # Architecture is chosen per component because emulation is not equally
+      # priced. arm64 runs under QEMU on an amd64 runner, which a Node build
+      # absorbs in minutes and a Rust release build does not — emulated, the
+      # api and runtime compiles ran for hours and timed out, while web
+      # finished normally.
+      #
+      # Every node in the target cluster is amd64 and there is no arm64 pool,
+      # so an emulated arm64 Rust image is spending the bulk of CI on an
+      # artifact nothing can schedule. web keeps both because it costs little
+      # and still exercises multi-platform assembly.
+      #
+      # If an arm64 pool ever appears, the place to restore this is a publish
+      # job on merge, not the PR path: the guarantee is worth having on images
+      # that ship, not on every push.
+      - name: Build image for all target platforms
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/${{ matrix.component }}/Dockerfile
+          platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: false
+          outputs: type=cacheonly
+          # Scoped per component so api and web never overwrite each other's
+          # cache. A branch's first run is still cold, since it can only read
+          # what the base branch has already populated.
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+      # Reuses the layers just cached above, so this is near-free.
+      - name: Load native image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/${{ matrix.component }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: chrono-bot-${{ matrix.component }}:ci
+          cache-from: type=gha,scope=${{ matrix.component }}
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: chrono-bot-${{ matrix.component }}:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true

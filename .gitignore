@@ -1,0 +1,22 @@
+# Rust
+api/target/
+
+# Node
+web/node_modules/
+web/dist/
+web/coverage/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local env — never commit real values
+.env
+.env.*
+!.env.example
+.gstack/
+# Agent tool scratch, including git worktrees. A root-level entry here would
+# fail the repository-structure gate if it were ever committed.
+.claude/

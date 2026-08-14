@@ -1,0 +1,117 @@
+import type { Session } from './types';
+
+/**
+ * What can be done to a session in each of its states.
+ *
+ * Separated from the buttons that render it because it is a rule, not a
+ * layout. The same rule decides whether a control is offered, whether it is
+ * enabled, and whether the terminal accepts typing — and three copies of it
+ * would eventually disagree, which shows up as a button that does nothing.
+ *
+ * Every state answers every question. A state that answered only some would
+ * leave the interface guessing about the rest, and guessing here means either
+ * offering an action that fails or hiding one that would have worked.
+ */
+
+export interface SessionAbilities {
+  /** Whether the session can be typed into right now. */
+  readonly interactive: boolean;
+  /** Whether reattaching to a running sandbox makes sense. */
+  readonly canReconnect: boolean;
+  /** Whether the sandbox can be released, keeping the session. */
+  readonly canStop: boolean;
+  /** Whether a released session can be given a sandbox again. */
+  readonly canRevive: boolean;
+  /** Whether the session and its history can be removed. */
+  readonly canDelete: boolean;
+  /** Whether it belongs in the owner's session list. */
+  readonly listed: boolean;
+  /**
+   * Why the session cannot be typed into, in the owner's terms.
+   *
+   * Present exactly when `interactive` is false. A disabled terminal with no
+   * explanation is the state people report as "it stopped working".
+   */
+  readonly reason?: string;
+}
+
+export function abilitiesFor(session: Session): SessionAbilities {
+  switch (session.lifecycle) {
+    case 'provisioning':
+      // The sandbox is not there yet, so there is nothing to type into and
+      // nothing to reconnect to. Stopping is still allowed: waiting several
+      // minutes for something you no longer want is its own trap.
+      return {
+        interactive: false,
+        canReconnect: false,
+        canStop: true,
+        canRevive: false,
+        canDelete: true,
+        listed: true,
+        reason: 'This session is still starting.',
+      };
+    case 'ready':
+    case 'running':
+      return {
+        interactive: true,
+        canReconnect: true,
+        canStop: true,
+        canRevive: false,
+        canDelete: true,
+        listed: true,
+      };
+    case 'rotating':
+      // Input during a rotation would go to a sandbox being torn down: it
+      // would be accepted and then lost, which is worse than being briefly
+      // refused. Stopping waits too, so that a stop cannot race the handover.
+      return {
+        interactive: false,
+        canReconnect: false,
+        canStop: false,
+        canRevive: false,
+        canDelete: false,
+        listed: true,
+        reason: 'This session is moving to an updated runtime.',
+      };
+    case 'idle':
+      // Stopped. Readable, revivable, and not pretending to be either less or
+      // more than that.
+      return {
+        interactive: false,
+        canReconnect: false,
+        canStop: false,
+        canRevive: true,
+        canDelete: true,
+        listed: true,
+        reason: 'This session is stopped. Revive it to carry on.',
+      };
+    case 'terminated':
+      return {
+        interactive: false,
+        canReconnect: false,
+        canStop: false,
+        canRevive: false,
+        canDelete: true,
+        // Ended sessions leave the list, because a list of everything anyone
+        // has ever run is not a list of their sessions. The exception is one
+        // that ended by failing: hiding those would answer "where did my
+        // session go" by silently removing the evidence.
+        listed: session.stopReason === 'error',
+        reason:
+          session.stopReason === 'error'
+            ? 'This session ended because it failed.'
+            : 'This session has ended.',
+      };
+    default: {
+      // Exhaustiveness: a new state must be given abilities deliberately
+      // rather than inheriting whatever the last case happened to be.
+      const exhaustive: never = session.lifecycle;
+      return exhaustive;
+    }
+  }
+}
+
+/** Sessions to show in the rail, in the order given. */
+export function listable(sessions: readonly Session[]): readonly Session[] {
+  return sessions.filter((s) => abilitiesFor(s).listed);
+}
