@@ -7,14 +7,15 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 use layer2_core::{
-    CoreError, KernelId, Session, SessionId, SessionService, SessionSpec, TerminalGeometry,
+    Caller, CoreError, KernelId, PublicIdentity, Session, SessionId, SessionService, SessionSpec,
+    TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +103,14 @@ pub struct SessionView {
     rotations: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     rotated_at: Option<String>,
+    /// Who started this session, as they should be shown.
+    ///
+    /// Absent when the caller may not be told — naming somebody is its own
+    /// grant — and absent when the provider released nothing worth drawing.
+    /// A client renders what it is given and never falls back to the subject
+    /// identifier, which is not a name and reads as a fault when shown as one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    creator: Option<PublicIdentity>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -123,8 +132,32 @@ impl From<Session> for SessionView {
             rotations: s.rotations,
             rotated_at: s.rotated_at,
             created_at: s.created_at,
+            creator: None,
         }
     }
+}
+
+/// Attach the owner's identity to each view, as far as this caller may know it.
+///
+/// One lookup for the whole page rather than one per row: the directory is a
+/// database, and a list of twenty sessions is not a reason to ask it twenty
+/// times. A directory that cannot be reached costs the names and not the
+/// sessions — a list nobody can read is worse than one drawn without faces.
+async fn named(users: &UserDirectory, caller: &Caller, sessions: Vec<Session>) -> Vec<SessionView> {
+    let owners: Vec<_> = sessions.iter().map(|s| s.owner.clone()).collect();
+    let identities = users
+        .identities_known_to(caller, &owners)
+        .await
+        .unwrap_or_default();
+    sessions
+        .into_iter()
+        .map(|s| {
+            let creator = identities.get(&s.owner).cloned();
+            let mut view = SessionView::from(s);
+            view.creator = creator;
+            view
+        })
+        .collect()
 }
 
 /// A core failure rendered as an RFC 9457 problem document.
@@ -192,8 +225,34 @@ pub mod environments;
 /// route at a time.
 pub mod admin;
 
+/// What the session routes are served from.
+///
+/// Two services rather than one because a session names the person who started
+/// it, and a subject identifier is the wrong thing to put in front of anybody.
+/// Composed with `FromRef` so a handler that does not name anyone keeps asking
+/// for exactly what it uses.
+#[derive(Clone)]
+pub struct SessionsState {
+    /// Sessions and the runtimes serving them.
+    pub sessions: Arc<SessionService>,
+    /// Who has used the service, for naming the owner of one.
+    pub users: Arc<UserDirectory>,
+}
+
+impl FromRef<SessionsState> for Arc<SessionService> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.sessions)
+    }
+}
+
+impl FromRef<SessionsState> for Arc<UserDirectory> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.users)
+    }
+}
+
 /// Routes this interface contributes.
-pub fn router(service: Arc<SessionService>) -> Router {
+pub fn router(state: SessionsState) -> Router {
     Router::new()
         .route("/api/v1/sessions", post(create).get(list))
         .route("/api/v1/sessions/{id}", get(read))
@@ -216,7 +275,7 @@ pub fn router(service: Arc<SessionService>) -> Router {
         .route("/api/v1/sessions/{id}/events", get(events::stream))
         .route("/api/v1/conformance", get(conformance))
         .route("/api/v1/kernels", get(kernels))
-        .with_state(service)
+        .with_state(state)
 }
 
 async fn create(
@@ -253,19 +312,22 @@ async fn create(
 
 async fn list(
     State(service): State<Arc<SessionService>>,
+    State(users): State<Arc<UserDirectory>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Json<Vec<SessionView>> {
     let sessions = service.list_sessions(&caller).await;
-    Json(sessions.into_iter().map(SessionView::from).collect())
+    Json(named(&users, &caller, sessions).await)
 }
 
 async fn read(
     State(service): State<Arc<SessionService>>,
+    State(users): State<Arc<UserDirectory>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<Json<SessionView>, Problem> {
     let session = service.get_session(&caller, &SessionId(id)).await?;
-    Ok(Json(session.into()))
+    let mut views = named(&users, &caller, vec![session]).await;
+    Ok(Json(views.remove(0)))
 }
 
 async fn terminate(

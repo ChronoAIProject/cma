@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import type { Session } from './types';
+import { useState, type ReactNode } from 'react';
+import type { Session, SessionCreator } from './types';
 import { abilitiesFor } from './availability';
 import { labelFor } from './types';
 import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
@@ -64,6 +64,21 @@ export function SessionDetails({ session, open, onToggle, ending, actions }: Ses
       </div>
 
       <dl className="details__list">
+        {/*
+         * First, because it answers "whose is this" — the question somebody
+         * reading another person's session opens this panel to ask. Omitted
+         * entirely when the control plane did not name them, rather than drawn
+         * as a row with nothing in it.
+         */}
+        {session.creator === undefined ? null : (
+          <div className="details__row">
+            <dt>Creator</dt>
+            <dd className="details__creator">
+              <CreatorFace creator={session.creator} />
+              <span>{session.creator.displayName ?? 'Not named'}</span>
+            </dd>
+          </div>
+        )}
         <div className="details__row">
           <dt>Started</dt>
           <dd>{fullTimestamp(session.createdAt)}</dd>
@@ -121,5 +136,33 @@ export function SessionDetails({ session, open, onToggle, ending, actions }: Ses
 
       {actions !== undefined ? <div className="details__actions">{actions}</div> : null}
     </aside>
+  );
+}
+
+/**
+ * The creator's picture, or their initial when there is none.
+ *
+ * A picture that fails to load falls back the same way rather than leaving a
+ * broken image in a panel somebody is reading to identify a session.
+ */
+function CreatorFace({ creator }: { readonly creator: SessionCreator }) {
+  const [broken, setBroken] = useState(false);
+  const initial = creator.displayName?.trim().charAt(0).toUpperCase();
+  if (creator.avatarUrl === undefined || broken) {
+    return (
+      <span className="details__face" aria-hidden="true">
+        {initial === undefined || initial === '' ? '?' : initial}
+      </span>
+    );
+  }
+  return (
+    <img
+      className="details__face"
+      src={creator.avatarUrl}
+      alt=""
+      onError={() => {
+        setBroken(true);
+      }}
+    />
   );
 }
