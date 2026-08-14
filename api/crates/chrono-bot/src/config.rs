@@ -57,6 +57,13 @@ pub struct Config {
     /// caller opted into, which is why an environment profile cannot remove an
     /// entry listed here.
     pub baseline_packages: Vec<String>,
+    /// How the agent behaves in a session that names no profile.
+    ///
+    /// The deployment's answer to "start me a session" when nobody has said
+    /// anything more. Configuration rather than a constant because which model
+    /// is worth spending, and how freely an agent may act before asking, are
+    /// decisions about this installation and not about the software.
+    pub default_agent: layer2_core::AgentConfiguration,
     /// Skills every session loads, whoever started it.
     ///
     /// Identified the way the registry identifies a skill: either its
@@ -131,6 +138,24 @@ impl Config {
         // genuinely mandates nothing sets the keys to a single space.
         let baseline_packages = list_or("CHRONO_BASELINE_PACKAGES", "nyxid");
         let baseline_skills = list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli");
+        // What a session is when nobody chose anything. Each key is read on
+        // its own and a value the software does not recognise is refused
+        // rather than silently replaced: a deployment that meant "ask first"
+        // and typed it wrong must be told, not quietly made autonomous.
+        let default_agent = layer2_core::AgentConfiguration {
+            kernel: layer2_core::KernelId::new(var_or("CHRONO_DEFAULT_AGENT_KERNEL", "codex")),
+            model: Some(var_or("CHRONO_DEFAULT_AGENT_MODEL", "gpt-5.6-sol"))
+                .filter(|m| !m.trim().is_empty()),
+            reasoning_effort: parse_enum("CHRONO_DEFAULT_AGENT_EFFORT", "high")?,
+            permission: parse_enum("CHRONO_DEFAULT_AGENT_PERMISSION", "guarded")?,
+            credential: parse_enum("CHRONO_DEFAULT_AGENT_CREDENTIAL", "delegated")?,
+            // The baseline skills are what every session carries anyway, so a
+            // profile-less session carries exactly them and nothing else.
+            skills: list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli")
+                .into_iter()
+                .map(layer2_core::SkillId::new)
+                .collect(),
+        };
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
@@ -210,6 +235,7 @@ impl Config {
             sandbox_image,
             sandbox_cpu,
             sandbox_memory,
+            default_agent,
             runtime_resume_args,
             deployment_id,
             adopts_untagged_runtimes,
@@ -279,6 +305,17 @@ fn parse_days(key: &str, raw: &str) -> Result<std::time::Duration, String> {
 /// Blank entries are dropped rather than kept as empty strings: a trailing
 /// comma is the most common way to write one of these by hand, and an empty
 /// package name would reach the runtime as an install of nothing.
+/// Read a value the core models as a closed set of names.
+///
+/// Refused rather than defaulted when unrecognised. These decide how freely an
+/// agent acts and whose access it spends, and a typo silently becoming the
+/// default is exactly the failure that would not be noticed until it mattered.
+fn parse_enum<T: serde::de::DeserializeOwned>(key: &str, default: &str) -> Result<T, String> {
+    let raw = var_or(key, default);
+    let quoted = format!("\"{}\"", raw.trim());
+    serde_json::from_str(&quoted).map_err(|_| format!("{key} does not name a value: {raw:?}"))
+}
+
 fn list_or(key: &str, default: &str) -> Vec<String> {
     var_or(key, default)
         .split(',')
@@ -346,6 +383,7 @@ mod tests {
             sandbox_image: "img".into(),
             sandbox_cpu: "1".into(),
             sandbox_memory: "1Gi".into(),
+            default_agent: Default::default(),
             baseline_packages: vec![],
             baseline_skills: vec![],
             runtime_resume_args: "resume".into(),

@@ -1,21 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { EnvironmentProfile } from '../environment/types';
-import {
-  CREDENTIALS,
-  DEFAULT_OPTIONS,
-  EFFORTS,
-  KERNELS,
-  PERMISSIONS,
-  isDangerous,
-  type AgentOptions,
-  type CredentialMode,
-  type PermissionMode,
-  type ReasoningEffort,
-} from './options';
 import './NewSessionDialog.css';
 
 /**
- * The choices made when a session starts.
+ * The choice made when a session starts.
  *
  * Presented once, at creation, because these are fixed for the session's life —
  * the agent is configured before its first turn, and changing them afterwards
@@ -29,11 +17,13 @@ import './NewSessionDialog.css';
 interface NewSessionDialogProps {
   readonly open: boolean;
   readonly onCancel: () => void;
-  readonly onStart: (
-    kernel: string,
-    options: AgentOptions,
-    environmentProfile: string | null,
-  ) => void;
+  /**
+   * Start a session from this profile, or from the deployment's own defaults.
+   *
+   * One argument because a profile is now the whole description of a session:
+   * which agent, which model, how freely it acts, and what it carries.
+   */
+  readonly onStart: (environmentProfile: string | null) => void;
   /**
    * Environment bundles this person can start a session with.
    *
@@ -50,8 +40,6 @@ export function NewSessionDialog({
   onStart,
   profiles = [],
 }: NewSessionDialogProps) {
-  const [kernel, setKernel] = useState('codex');
-  const [options, setOptions] = useState<AgentOptions>(DEFAULT_OPTIONS);
   const [profile, setProfile] = useState<string>('');
   const headingId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -84,8 +72,6 @@ export function NewSessionDialog({
     return null;
   }
 
-  const dangerous = isDangerous(options.permission);
-
   return (
     <div className="dialog__scrim" role="presentation" onClick={onCancel}>
       <div
@@ -104,132 +90,34 @@ export function NewSessionDialog({
         </h2>
 
         <label className="dialog__field">
-          <span className="dialog__label">Agent</span>
+          <span className="dialog__label">Environment profile</span>
           <select
             ref={firstFieldRef}
             className="dialog__control"
-            value={kernel}
+            value={profile}
             onChange={(e) => {
-              setKernel(e.target.value);
+              setProfile(e.target.value);
             }}
           >
-            {KERNELS.map((k) => (
-              <option key={k.id} value={k.id} disabled={k.unavailable !== undefined}>
-                {k.unavailable === undefined ? k.label : `${k.label} — ${k.unavailable}`}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="dialog__field">
-          <span className="dialog__label">Model</span>
-          <input
-            className="dialog__control"
-            type="text"
-            placeholder="Default for this deployment"
-            value={options.model ?? ''}
-            onChange={(e) => {
-              const model = e.target.value.trim();
-              setOptions((o) => ({ ...o, model: model === '' ? undefined : model }));
-            }}
-          />
-          <span className="dialog__hint">Leave empty to use the configured default</span>
-        </label>
-
-        <label className="dialog__field">
-          <span className="dialog__label">Thinking effort</span>
-          <select
-            className="dialog__control"
-            value={options.reasoning_effort}
-            onChange={(e) => {
-              setOptions((o) => ({ ...o, reasoning_effort: e.target.value as ReasoningEffort }));
-            }}
-          >
-            {EFFORTS.map((eff) => (
-              <option key={eff.id} value={eff.id}>
-                {eff.hint === '' ? eff.label : `${eff.label} — ${eff.hint}`}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="dialog__field">
-          <span className="dialog__label">Permissions</span>
-          <select
-            className="dialog__control"
-            value={options.permission}
-            onChange={(e) => {
-              setOptions((o) => ({ ...o, permission: e.target.value as PermissionMode }));
-            }}
-          >
-            {PERMISSIONS.map((p) => (
+            {/*
+             * "None" is not "bare". A session that names no profile is started
+             * the way this deployment says an unqualified session should be —
+             * which agent, which model, how freely it acts — so this chooses
+             * between described sessions rather than between something and
+             * nothing.
+             */}
+            <option value="">This deployment's defaults</option>
+            {profiles.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.label}
+                {p.name}
               </option>
             ))}
           </select>
           <span className="dialog__hint">
-            {PERMISSIONS.find((p) => p.id === options.permission)?.hint}
+            The whole description of the session: the agent and how it behaves, the software it
+            carries, and the variables it is started with.
           </span>
         </label>
-
-        {dangerous ? (
-          // Stated plainly rather than hidden behind a confirmation step. The
-          // person chose this deliberately; what they need is to know what it
-          // means, not another click.
-          <p className="dialog__warning" role="alert">
-            This agent will run commands without asking and is not confined within its sandbox. Use
-            it for work you would be comfortable running yourself.
-          </p>
-        ) : null}
-
-        <label className="dialog__field">
-          <span className="dialog__label">Model access</span>
-          <select
-            className="dialog__control"
-            value={options.credential}
-            onChange={(e) => {
-              setOptions((o) => ({ ...o, credential: e.target.value as CredentialMode }));
-            }}
-          >
-            {CREDENTIALS.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-          <span className="dialog__hint">
-            {CREDENTIALS.find((c) => c.id === options.credential)?.hint}
-          </span>
-        </label>
-
-        {profiles.length > 0 ? (
-          <label className="dialog__field">
-            <span className="dialog__label">Environment</span>
-            <select
-              className="dialog__control"
-              value={profile}
-              onChange={(e) => {
-                setProfile(e.target.value);
-              }}
-            >
-              {/*
-               * "None" is not "bare". What the platform mandates is applied
-               * whichever option is chosen, so this selects what to add rather
-               * than whether to have anything at all.
-               */}
-              <option value="">None beyond the platform defaults</option>
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <span className="dialog__hint">
-              Tools, variables and skills the session starts with.
-            </span>
-          </label>
-        ) : null}
 
         <div className="dialog__actions">
           <button type="button" className="dialog__button" onClick={onCancel}>
@@ -239,7 +127,7 @@ export function NewSessionDialog({
             type="button"
             className="dialog__button dialog__button--primary"
             onClick={() => {
-              onStart(kernel, options, profile === '' ? null : profile);
+              onStart(profile === '' ? null : profile);
             }}
           >
             Start session

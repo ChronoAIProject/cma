@@ -19,8 +19,8 @@ use std::sync::Arc;
 use crate::authz::{Caller, Capability};
 use crate::clock::now_rfc3339;
 use crate::environment::{
-    Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec, ResolvedEnvironment,
-    SkillCatalog,
+    AgentConfiguration, Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
+    ResolvedEnvironment, SkillCatalog,
 };
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
@@ -31,6 +31,13 @@ pub struct EnvironmentProfileService {
     store: Arc<dyn EnvironmentProfileStore>,
     /// What every session carries whether or not anyone asked for it.
     baseline: Baseline,
+    /// How the agent behaves in a session that names no profile.
+    ///
+    /// The deployment's answer rather than a hardcoded one: which model is
+    /// worth spending and how freely an agent may act are decisions about this
+    /// installation, and a session started without a profile still has to be
+    /// started somehow.
+    default_agent: AgentConfiguration,
     /// Where selectable skills are listed, when a deployment has one.
     ///
     /// Optional: without it profiles still store and resolve skill identifiers,
@@ -45,17 +52,44 @@ impl EnvironmentProfileService {
         store: Arc<dyn EnvironmentProfileStore>,
         baseline: Baseline,
         catalog: Option<Arc<dyn SkillCatalog>>,
+        default_agent: AgentConfiguration,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
             baseline,
             catalog,
+            default_agent,
         })
     }
 
     /// What this deployment mandates in every session.
     pub fn baseline(&self) -> &Baseline {
         &self.baseline
+    }
+
+    /// How the agent behaves when a session names no profile.
+    pub fn default_agent(&self) -> &AgentConfiguration {
+        &self.default_agent
+    }
+
+    /// How the agent should behave for a session started with this selection.
+    ///
+    /// The profile is the whole answer. A caller does not get to say which
+    /// agent, which model, or how freely it may act — those are the profile's
+    /// to state, which is what makes a session reproducible from the name of
+    /// the bundle it was started with.
+    ///
+    /// Naming nothing is a choice too, and it resolves to what the deployment
+    /// considers ordinary rather than to an empty configuration.
+    pub async fn agent_for(
+        &self,
+        caller: &Caller,
+        selection: Option<&EnvironmentProfileId>,
+    ) -> Result<AgentConfiguration, CoreError> {
+        let Some(id) = selection else {
+            return Ok(self.default_agent.clone());
+        };
+        Ok(self.get(caller, id).await?.agent)
     }
 
     /// Store a new profile for the caller.
@@ -79,7 +113,7 @@ impl EnvironmentProfileService {
             name: spec.name.trim().to_string(),
             variables: spec.variables,
             packages: spec.packages,
-            skills: spec.skills,
+            agent: spec.agent,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -89,7 +123,7 @@ impl EnvironmentProfileService {
             owner = %profile.owner,
             variables = profile.variables.len(),
             packages = profile.packages.len(),
-            skills = profile.skills.len(),
+            skills = profile.agent.skills.len(),
             "environment profile created"
         );
         Ok(profile)
@@ -140,7 +174,7 @@ impl EnvironmentProfileService {
             name: spec.name.trim().to_string(),
             variables: spec.variables,
             packages: spec.packages,
-            skills: spec.skills,
+            agent: spec.agent,
             created_at: existing.created_at,
             updated_at: now_rfc3339(),
         };

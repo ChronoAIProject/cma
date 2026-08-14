@@ -265,7 +265,10 @@ async fn a_client_that_omits_the_baseline_still_gets_it() {
         .await
         .expect("creates");
     assert!(created.packages.iter().any(|p| p.name == "platform-cli"));
-    assert!(created.skills.contains(&SkillId::new("mandatory-one")));
+    assert!(created
+        .agent
+        .skills
+        .contains(&SkillId::new("mandatory-one")));
 
     let resolved = service
         .resolve(&owner, Some(&created.id))
@@ -293,7 +296,7 @@ async fn a_client_that_tries_to_remove_the_baseline_gets_it_back() {
         .await
         .expect("updates");
     assert!(updated.packages.iter().any(|p| p.name == "platform-cli"));
-    assert_eq!(updated.skills.len(), 2);
+    assert_eq!(updated.agent.skills.len(), 2);
 }
 
 #[tokio::test]
@@ -305,6 +308,7 @@ async fn a_profile_stored_before_the_baseline_existed_still_resolves_with_it() {
         Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
         Baseline::default(),
         None,
+        Default::default(),
     );
     let owner = caller("subject-a");
     let created = bare

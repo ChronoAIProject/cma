@@ -1,7 +1,6 @@
 import { useCallback } from 'react';
 import { createSession, deleteSession, reviveSession, stopSession } from '../api/client';
-import type { AgentOptions } from './options';
-import type { Kernel, Session, SessionLifecycle } from './types';
+import type { Session, SessionLifecycle } from './types';
 
 /**
  * The geometry a session is asked for before a terminal has measured itself.
@@ -43,11 +42,7 @@ interface SessionActionHandles {
 
 export interface SessionActions {
   /** Start a session and put it at the head of the list. */
-  readonly start: (
-    kernel: Kernel,
-    options: AgentOptions,
-    environmentProfile?: string | null,
-  ) => Promise<void>;
+  readonly start: (environmentProfile?: string | null) => Promise<void>;
   /** Release the sandbox, keeping the session readable and revivable. */
   readonly endSession: (id: string) => Promise<void>;
   /** Give a stopped session a sandbox again, under the same identifier. */
@@ -70,18 +65,12 @@ export function useSessionActions({
   setFocusHistory,
 }: SessionActionHandles): SessionActions {
   const start = useCallback(
-    async (kernel: Kernel, options: AgentOptions, environmentProfile: string | null = null) => {
+    async (environmentProfile: string | null = null) => {
       setNotice(null);
       try {
         // Returns as soon as the session exists, before its runtime does, so the
         // tab appears immediately and reports its own progress.
-        const session = await createSession(
-          kernel,
-          INITIAL_COLS,
-          INITIAL_ROWS,
-          options,
-          environmentProfile,
-        );
+        const session = await createSession(INITIAL_COLS, INITIAL_ROWS, environmentProfile);
         setSessions((prev) => [session, ...prev]);
         select(session.id);
         setOpeningForId((prev) => prev ?? session.id);

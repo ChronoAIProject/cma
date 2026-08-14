@@ -181,3 +181,23 @@ data:
   # orphaned. A second control plane must set this false.
   CHRONO_ADOPT_UNTAGGED_RUNTIMES: "true"
   RUST_LOG: "info"
+  # What a session is when it names no environment profile.
+  #
+  # A profile is the whole description of a session — which agent, which model,
+  # how hard it thinks, how often it stops to ask, whose model access it spends
+  # — so a session that names none still needs those answers, and this is where
+  # this deployment gives them.
+  #
+  # Every value is refused rather than defaulted if the software does not
+  # recognise it. A deployment that meant "ask first" and mistyped it must be
+  # told at startup, not discovered later by an agent that never asked.
+  CHRONO_DEFAULT_AGENT_KERNEL: "codex"
+  CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"
+  CHRONO_DEFAULT_AGENT_EFFORT: "high"
+  # "guarded" is ask-first. The cautious answer is the default answer, because
+  # the cost of asking too often is somebody's patience and the cost of asking
+  # too rarely is somebody's repository.
+  CHRONO_DEFAULT_AGENT_PERMISSION: "guarded"
+  # "delegated" spends this platform's model access rather than the owner's own
+  # credential, which is what makes a session work with nothing to set up.
+  CHRONO_DEFAULT_AGENT_CREDENTIAL: "delegated"

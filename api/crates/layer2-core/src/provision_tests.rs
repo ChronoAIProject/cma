@@ -153,15 +153,23 @@ async fn the_failure_is_appended_to_the_durable_log() {
 
 #[tokio::test]
 async fn an_unknown_kernel_is_refused_immediately_rather_than_asynchronously() {
-    // The caller's own mistake, and they are still on the line to be told.
-    // Accepting it would mean writing a record for a session that can never
-    // start.
+    // Named by what the session is started from rather than by the request,
+    // now that a caller does not choose a kernel. Still refused while somebody
+    // is on the line to be told: accepting it would mean writing a record for
+    // a session that can never start.
     let store = Arc::new(FakeStore::default());
-    let mut bad = spec();
-    bad.kernel = crate::ids::KernelId::new("no-such-kernel");
-    let result = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
-        .create_session(&user("alice"), bad)
-        .await;
+    let unstartable =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::ids::KernelId::new("no-such-kernel"),
+            ..Default::default()
+        });
+    let result = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::new(FakeAdapter::default()),
+        unstartable,
+    )
+    .create_session(&user("alice"), spec())
+    .await;
 
     assert!(result.is_err());
     assert!(
