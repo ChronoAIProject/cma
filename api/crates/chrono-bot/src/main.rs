@@ -102,6 +102,10 @@ async fn main() {
                 upstream_wire_api: config.upstream_wire_api.clone(),
                 platform_base_url: config.platform_base_url.clone(),
                 resume_args: config.runtime_resume_args.clone(),
+                resource_limits: std::collections::BTreeMap::from([
+                    ("cpu".to_string(), config.sandbox_cpu.clone()),
+                    ("memory".to_string(), config.sandbox_memory.clone()),
+                ]),
                 ..CodexSandboxSpec::default()
             },
         )),
