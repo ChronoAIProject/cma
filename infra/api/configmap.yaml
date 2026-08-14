@@ -93,6 +93,20 @@ data:
   #
   # No /v1 suffix: the proxy already resolves to the service's versioned root,
   # and adding one produces a duplicated path that answers 404.
+  # What every session carries whether or not its owner asked for it. An
+  # environment profile may add to these lists and may never remove from them —
+  # the control plane merges them back in on every write and again when a
+  # session is started, so a client that omits one still gets it.
+  #
+  # The CLI is already installed in the runtime image; naming it here is what
+  # makes it a promise to the session rather than an accident of the image.
+  CHRONO_BASELINE_PACKAGES: "nyxid"
+  # Skills every session loads, named the way the registry names them. Both a
+  # generated identifier and a unique name resolve, and the names are used here
+  # because they are stable and readable:
+  #   https://ornn.chrono-ai.fun/skills/nyxid
+  #   https://ornn.chrono-ai.fun/skills/ornn-agent-manual-cli
+  CHRONO_BASELINE_SKILLS: "nyxid,ornn-agent-manual-cli"
   CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm"
   # Verified against the live service rather than taken from its model list:
   # that listing is incomplete, and the model it does advertise for this kernel
