@@ -53,9 +53,29 @@ infra/api/deployment.yaml
 infra/api/configmap.yaml
 infra/api/secret.yaml
 infra/api/service.yaml
+infra/api/serviceaccount.yaml
+infra/api/secretproviderclass.yaml
+infra/api/httproute.yaml
+infra/api/healthcheckpolicy.yaml
+infra/api/gcpbackendpolicy.yaml
+infra/runtime/Dockerfile
 ```
 
-No subdirectories, no additional manifests, no Helm charts, no kustomize overlays.
+No additional manifests, no Helm charts, no kustomize overlays.
+
+The last five exist because the control plane depends on them by name. It
+runs as a named service account, receives the sandbox key through a named
+secret-provider class, and answers on named hostnames. Leaving those applied by
+hand meant the deployment had hard dependencies with no source of truth, which
+is the divergence §4 forbids — a manifest referencing a service account that no
+file declares cannot be validated, and an address the code is configured with
+could drift from the route actually serving it.
+
+Their cloud-side halves are still not here and cannot be: the IAM grant letting
+the service account read the secret, and the gateway the routes attach to, are
+infrastructure this repository consumes rather than owns.
+
+`infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the bot pod is scheduled by the sandbox provider, not by this repository. chrono-bot hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
 ### `docs/`
 
@@ -150,7 +170,37 @@ Secrets are **referenced** in `secret.yaml`, never valued. No real secret value 
 
 ---
 
-## 5. Branches
+## 5. A session in progress is never interrupted
+
+**No deployment, upgrade, restart or rollout may interrupt a session its owner has not stopped.** This is a hard rule and outranks every convenience below it. A session that stops working because chrono-bot was upgraded is a defect of the same severity as losing the data.
+
+What "not interrupted" means, precisely:
+
+- The session keeps its identifier, its history, its configuration and its place in the owner's list.
+- Everything it has shown remains visible. A session that returns blank has lost the work as far as its owner can tell.
+- Work resumes where it left off — the agent continues its conversation rather than starting a new one.
+
+### The database is the only authority
+
+Which sessions should be running is recorded, never remembered. A control plane process holds no state that matters: on boot, and continuously thereafter, it reads the record and makes reality match it — taking back over the runtimes that are still alive, replacing the ones that are gone, and reclaiming the ones nothing is entitled to.
+
+A control plane that has just started has therefore no privileged knowledge, and needs none. This is what makes replacing it safe.
+
+### Runtimes are versioned, and rotated to match
+
+The control plane knows which runtime version it expects. Any session running an older one is **rotated**: its agent transcript is snapshotted to chrono-storage, a new pod is brought up on the current image, and the agent resumes from that snapshot.
+
+Rotation is preferred over upgrading a pod in place, because the runtime image changes too and a rotation exercises the same path a lost sandbox does.
+
+Rotation is not silent:
+
+- The record tracks the runtime version each session is on, every rotation that has happened, and the snapshot each one resumed from.
+- The snapshot carries a timestamp, and that timestamp is shown to the owner: they are told the point their session is being carried forward from.
+- While a rotation is in progress the session is not interactive, and the interface says so. Accepting input that would be lost with the outgoing pod is worse than briefly refusing it.
+
+Never require the owner to do anything to keep a session alive. "Click revive after the deploy" is not an acceptable design.
+
+## 6. Branches
 
 | Branch | Purpose | Rules |
 |---|---|---|
@@ -177,7 +227,7 @@ Secrets are **referenced** in `secret.yaml`, never valued. No real secret value 
 
 **Cross-cutting**
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
-- Docker build for both images
+- Docker build for all three images — `api`, `web`, `runtime`
 - Image vulnerability scan
 - Manifest validation — `kubeconform`, so malformed YAML or a bad `apiVersion` fails in CI rather than at `kubectl apply`
 - Manifest policy — `kube-linter`: resource requests and limits set, liveness and readiness probes present, no `:latest` tag, non-root user, read-only root filesystem
@@ -187,11 +237,46 @@ Secrets are **referenced** in `secret.yaml`, never valued. No real secret value 
 
 Everything above, plus:
 
-- A git tag for the release, carrying release notes with exactly three sections: **What's new**, **What's fixed**, **What's changed**.
+- Exactly one of the labels `release:major`, `release:minor`, `release:patch`. The merge derives the version from it; a PR that declares nothing cannot be released.
+- A mandatory `## Release Notes` section in the PR body, in exactly this shape:
+
+```markdown
+## Release Notes
+
+### What's New
+- ...
+
+### What's Fixed
+- ...
+
+### What's Changed
+- ...
+```
+
+All three subsections, spelled and capitalised as above, in that order, each carrying at least one bullet, and nothing but bullets underneath. Anything else is rejected — these notes are the only description a release carries, and they are read by people who were not in the review, so what they contain is not left to whoever is writing them that day.
+
+**No version number appears in the PR.** The version is derived from the release label and the previous tag, and the publisher writes it into the notes as `## Release Notes vX.Y.Z`. A number typed by an author would be a guess at what the merge decides.
+
+That section, and only that section, becomes the annotated tag message and the release notes. It ends at the next `##` heading, so anything addressed to the reviewer belongs outside it and is never published.
+
+`.github/release-notes.sh` both validates and extracts it, and is run by the gate before the merge and by the publisher after it — one script, so the notes that ship are the notes that were reviewed.
+
+### What a merge into `main` produces
+
+The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
+
+- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/chrono-bot-{api,web,runtime}`, tagged with the version and with the short commit SHA. Both tags are immutable and neither is ever moved.
+- An annotated tag `vX.Y.Z` and a GitHub release are created. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
+
+The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
+
+Publishing is not deploying. `infra/` is untouched by a release, and a new image becomes live only when someone changes a manifest to name it. `CHRONO_SANDBOX_IMAGE` is the sharpest case: under §5 it is the runtime version every live session is measured against, so moving it rotates every session, and that has to be a decision rather than a consequence of merging.
+
+Full procedure in `docs/Release.md`.
 
 ---
 
-## 6. Frontend design authority
+## 7. Frontend design authority
 
 `docs/Web_Style.md` is the **single source of truth** for all frontend design and style. No colour, spacing value, type scale, component pattern, or interaction rule may be introduced in `web/` that is not in that document.
 
@@ -199,7 +284,7 @@ The document carries a changelog at the end recording every change. **The change
 
 ---
 
-## 7. Commits
+## 8. Commits
 
 - **Small and frequent, not bulky and infrequent.** One logical change per commit.
 - **No `Co-Authored-By` trailers.** Not for agents, not for pairs, not for anyone.
@@ -208,7 +293,7 @@ The document carries a changelog at the end recording every change. **The change
 
 ---
 
-## 8. Working rules for agents
+## 9. Working rules for agents
 
 - Read this file before making structural changes. It governs.
 - Never place a source file outside its layer's directory to make an import easier — fix the design instead.
