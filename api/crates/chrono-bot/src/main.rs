@@ -228,7 +228,12 @@ async fn main() {
         );
     }
 
-    let environments = EnvironmentProfileService::new(profile_store, baseline, catalog);
+    let environments = EnvironmentProfileService::new(
+        profile_store,
+        baseline,
+        catalog,
+        config.default_agent.clone(),
+    );
     let service = SessionService::new(
         adapters,
         screen_factory,

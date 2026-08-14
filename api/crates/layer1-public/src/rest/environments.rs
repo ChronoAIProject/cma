@@ -19,8 +19,9 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    CatalogSkill, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-    EnvironmentProfileSpec, EnvironmentVariable, SkillId, SoftwarePackage,
+    AgentConfiguration, CatalogSkill, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentVariable, KernelId,
+    PermissionMode, ReasoningEffort, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,32 @@ pub struct ProfileRequest {
     /// Software the session should carry.
     #[serde(default)]
     pub packages: Vec<PackageBody>,
+    /// How the agent behaves in sessions started from this profile.
+    #[serde(default)]
+    pub agent: AgentBody,
+}
+
+/// The agent half of a profile, as a caller supplies it.
+///
+/// Every field defaults, so a client that cares about none of them sends a
+/// name and gets a profile that behaves the way the deployment says it should.
+#[derive(Debug, Default, Deserialize)]
+pub struct AgentBody {
+    /// Which runtime implementation backs the session.
+    #[serde(default)]
+    pub kernel: Option<String>,
+    /// Model the agent selects.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// How hard it thinks.
+    #[serde(default)]
+    pub reasoning_effort: Option<ReasoningEffort>,
+    /// How often it stops to ask.
+    #[serde(default)]
+    pub permission: Option<PermissionMode>,
+    /// Whose model access it spends.
+    #[serde(default)]
+    pub credential: Option<CredentialMode>,
     /// Skill identifiers to load.
     #[serde(default)]
     pub skills: Vec<String>,
@@ -79,9 +106,40 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                     version: p.version,
                 })
                 .collect(),
-            skills: body.skills.into_iter().map(SkillId::new).collect(),
+            agent: AgentConfiguration {
+                // An absent field means "whatever this deployment considers
+                // ordinary", not "empty". A profile is a convenience, and one
+                // that behaved differently from the default because a client
+                // omitted a key would be a trap.
+                kernel: body
+                    .agent
+                    .kernel
+                    .map(KernelId::new)
+                    .unwrap_or_else(|| AgentConfiguration::default().kernel),
+                model: body.agent.model,
+                reasoning_effort: body.agent.reasoning_effort.unwrap_or_default(),
+                permission: body.agent.permission.unwrap_or_default(),
+                credential: body.agent.credential.unwrap_or_default(),
+                skills: body.agent.skills.into_iter().map(SkillId::new).collect(),
+            },
         }
     }
+}
+
+/// The agent half of a profile, as this interface renders it.
+///
+/// Every field is present rather than skipped when it matches a default: this
+/// is what a client draws its controls from, and a form cannot preselect a
+/// value it was not sent.
+#[derive(Debug, Serialize)]
+pub struct AgentView {
+    kernel: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    reasoning_effort: ReasoningEffort,
+    permission: PermissionMode,
+    credential: CredentialMode,
+    skills: Vec<String>,
 }
 
 /// A profile as this interface renders it.
@@ -91,7 +149,7 @@ pub struct ProfileView {
     name: String,
     variables: Vec<VariableBody>,
     packages: Vec<PackageBody>,
-    skills: Vec<String>,
+    agent: AgentView,
     /// Which entries the platform mandates, so a client can render them as
     /// fixed rather than guessing — and so the rule is visible rather than
     /// only enforced when the client gets it wrong.
@@ -137,7 +195,14 @@ impl ProfileView {
                     version: p.version,
                 })
                 .collect(),
-            skills: profile.skills.into_iter().map(|s| s.0).collect(),
+            agent: AgentView {
+                kernel: profile.agent.kernel.0,
+                model: profile.agent.model,
+                reasoning_effort: profile.agent.reasoning_effort,
+                permission: profile.agent.permission,
+                credential: profile.agent.credential,
+                skills: profile.agent.skills.into_iter().map(|s| s.0).collect(),
+            },
             mandatory: MandatoryView::of(service.baseline()),
             created_at: profile.created_at,
             updated_at: profile.updated_at,
@@ -305,6 +370,7 @@ mod tests {
                 [SkillId::new("mandatory-one")],
             ),
             None,
+            Default::default(),
         )
     }
 
@@ -318,7 +384,10 @@ mod tests {
                 name: "ripgrep".into(),
                 version: Some("14".into()),
             }],
-            skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
+            agent: layer2_core::AgentConfiguration {
+                skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
+                ..Default::default()
+            },
             created_at: "2026-08-12T00:00:00Z".into(),
             updated_at: "2026-08-13T00:00:00Z".into(),
         }
@@ -368,17 +437,40 @@ mod tests {
     #[test]
     fn a_request_body_becomes_a_core_spec() {
         let body: ProfileRequest = serde_json::from_str(
-            r#"{"name":"mine","variables":[{"key":"A","value":"1"}],"skills":["s1"]}"#,
+            r#"{"name":"mine","variables":[{"key":"A","value":"1"}],
+                "agent":{"skills":["s1"],"model":"m","reasoning_effort":"low",
+                         "permission":"autonomous","credential":"own"}}"#,
         )
         .expect("parses");
         let spec: EnvironmentProfileSpec = body.into();
         assert_eq!(spec.name, "mine");
         assert_eq!(spec.variables.len(), 1);
         assert_eq!(spec.variables[0].key, "A");
-        assert_eq!(spec.skills, vec![SkillId::new("s1")]);
+        assert_eq!(spec.agent.skills, vec![SkillId::new("s1")]);
+        assert_eq!(spec.agent.model.as_deref(), Some("m"));
+        assert_eq!(spec.agent.reasoning_effort, ReasoningEffort::Low);
+        assert_eq!(spec.agent.permission, PermissionMode::Autonomous);
+        assert_eq!(spec.agent.credential, CredentialMode::Own);
         // Omitted lists are empty, not an error: a profile that sets only
         // variables is a legitimate thing to ask for.
         assert!(spec.packages.is_empty());
+    }
+
+    #[test]
+    fn a_body_that_says_nothing_about_the_agent_gets_this_deployments_answer() {
+        // A client that only wants to name some variables must not thereby
+        // choose a kernel, a model, or how freely the agent may act. Absent
+        // means "whatever is ordinary here", never "empty".
+        let body: ProfileRequest = serde_json::from_str(r#"{"name":"mine"}"#).expect("parses");
+        let spec: EnvironmentProfileSpec = body.into();
+        assert_eq!(spec.agent.kernel, KernelId::new("codex"));
+        assert_eq!(spec.agent.reasoning_effort, ReasoningEffort::High);
+        assert_eq!(
+            spec.agent.permission,
+            PermissionMode::Guarded,
+            "a profile that said nothing must still stop to ask"
+        );
+        assert_eq!(spec.agent.credential, CredentialMode::Delegated);
     }
 
     #[test]

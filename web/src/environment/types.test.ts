@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { draftOf, emptyDraft, isValidKey, validate } from './types';
+import { DEFAULT_AGENT } from './types';
 import type { EnvironmentProfile } from './types';
 
 const PROFILE: EnvironmentProfile = {
@@ -7,7 +8,7 @@ const PROFILE: EnvironmentProfile = {
   name: 'build tools',
   variables: [{ key: 'BUILD_MODE', value: 'release' }],
   packages: [{ name: 'nyxid' }, { name: 'ripgrep', version: '14' }],
-  skills: ['nyxid', 'chosen'],
+  agent: { ...DEFAULT_AGENT, skills: ['nyxid', 'chosen'] },
   mandatory: { packages: ['nyxid'], skills: ['nyxid'] },
   createdAt: '2026-08-12T00:00:00Z',
   updatedAt: '2026-08-13T00:00:00Z',
@@ -77,12 +78,12 @@ describe('draftOf', () => {
     const draft = draftOf(PROFILE);
     expect(draft.name).toBe('build tools');
     expect(draft.variables).toEqual(PROFILE.variables);
-    expect(draft.skills).toEqual(PROFILE.skills);
+    expect(draft.agent.skills).toEqual(PROFILE.agent.skills);
   });
 
   it('copies rather than aliases, so editing a draft cannot mutate the profile', () => {
     const draft = draftOf(PROFILE);
     expect(draft.variables).not.toBe(PROFILE.variables);
-    expect(draft.skills).not.toBe(PROFILE.skills);
+    expect(draft.agent.skills).not.toBe(PROFILE.agent.skills);
   });
 });

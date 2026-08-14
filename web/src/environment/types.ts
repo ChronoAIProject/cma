@@ -7,6 +7,7 @@
  * not invited to attempt something that will be undone, but the server applies
  * it whatever this code does.
  */
+import type { CredentialMode, PermissionMode, ReasoningEffort } from '../sessions/options';
 
 /** One environment variable in a profile. */
 export interface ProfileVariable {
@@ -31,20 +32,53 @@ export interface MandatoryEntries {
 export interface EnvironmentProfile {
   readonly id: string;
   readonly name: string;
+  readonly agent: AgentConfiguration;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
-  readonly skills: readonly string[];
   readonly mandatory: MandatoryEntries;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
+/**
+ * How the agent behaves in a session started from this profile.
+ *
+ * These were once chosen per session, which meant answering the same five
+ * questions on every start and left a session describable only by repeating
+ * them. Skills sit here rather than beside software because a skill is
+ * something the agent knows how to do, not something installed in the box.
+ */
+export interface AgentConfiguration {
+  readonly kernel: string;
+  readonly model?: string;
+  readonly reasoningEffort: ReasoningEffort;
+  readonly permission: PermissionMode;
+  readonly credential: CredentialMode;
+  readonly skills: readonly string[];
+}
+
+/**
+ * What a profile is when nobody has said otherwise.
+ *
+ * Mirrors what the deployment answers for a session that names no profile, so
+ * a new profile starts where an unqualified session would and a form is never
+ * drawn with a control at no value.
+ */
+export const DEFAULT_AGENT: AgentConfiguration = {
+  kernel: 'codex',
+  model: undefined,
+  reasoningEffort: 'high',
+  permission: 'guarded',
+  credential: 'delegated',
+  skills: [],
+};
+
 /** What a caller supplies when creating or replacing a profile. */
 export interface ProfileDraft {
   readonly name: string;
+  readonly agent: AgentConfiguration;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
-  readonly skills: readonly string[];
 }
 
 /** A skill the registry offers, as the picker renders it. */
@@ -92,9 +126,15 @@ export interface EnvironmentProfileStore {
   catalogue(): Promise<SkillCatalogue>;
 }
 
-/** An empty draft, for the "new profile" form. */
+/**
+ * An empty draft, for the "new profile" form.
+ *
+ * Empty of the owner's own choices, not of behaviour: the agent section starts
+ * where an unqualified session would, so a profile someone names and saves
+ * without touching anything behaves the way this deployment already does.
+ */
 export function emptyDraft(): ProfileDraft {
-  return { name: '', variables: [], packages: [], skills: [] };
+  return { name: '', variables: [], packages: [], agent: { ...DEFAULT_AGENT } };
 }
 
 /** The draft that would replace an existing profile unchanged. */
@@ -103,7 +143,7 @@ export function draftOf(profile: EnvironmentProfile): ProfileDraft {
     name: profile.name,
     variables: [...profile.variables],
     packages: [...profile.packages],
-    skills: [...profile.skills],
+    agent: { ...profile.agent, skills: [...profile.agent.skills] },
   };
 }
 

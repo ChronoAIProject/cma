@@ -120,7 +120,7 @@ fn oversized_lists_are_rejected_per_list() {
     assert!(packages.validate().is_err());
 
     let mut skills = spec("many");
-    skills.skills = (0..=MAX_ENTRIES)
+    skills.agent.skills = (0..=MAX_ENTRIES)
         .map(|i| SkillId::new(format!("s{i}")))
         .collect();
     assert!(skills.validate().is_err());
@@ -133,7 +133,7 @@ fn blank_packages_and_skills_are_rejected() {
     assert!(packages.validate().is_err());
 
     let mut skills = spec("blank");
-    skills.skills.push(SkillId::new(""));
+    skills.agent.skills.push(SkillId::new(""));
     assert!(skills.validate().is_err());
 }
 
@@ -164,7 +164,11 @@ fn the_baseline_is_added_to_a_caller_who_omitted_it() {
         vec!["platform-cli"]
     );
     assert_eq!(
-        s.skills.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        s.agent
+            .skills
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>(),
         vec!["mandatory-one", "mandatory-two"]
     );
 }
@@ -175,15 +179,15 @@ fn the_baseline_cannot_be_dropped_by_listing_everything_else() {
     // the entries it does not want. They come straight back.
     let mut s = spec("mine");
     s.packages.push(SoftwarePackage::new("ripgrep"));
-    s.skills.push(SkillId::new("chosen"));
+    s.agent.skills.push(SkillId::new("chosen"));
     baseline().apply(&mut s);
 
     assert!(s.packages.iter().any(|p| p.name == "platform-cli"));
-    assert!(s.skills.contains(&SkillId::new("mandatory-one")));
-    assert!(s.skills.contains(&SkillId::new("mandatory-two")));
+    assert!(s.agent.skills.contains(&SkillId::new("mandatory-one")));
+    assert!(s.agent.skills.contains(&SkillId::new("mandatory-two")));
     // What the caller did choose survives alongside it.
     assert!(s.packages.iter().any(|p| p.name == "ripgrep"));
-    assert!(s.skills.contains(&SkillId::new("chosen")));
+    assert!(s.agent.skills.contains(&SkillId::new("chosen")));
 }
 
 #[test]
@@ -194,7 +198,7 @@ fn applying_the_baseline_twice_does_not_duplicate_it() {
     baseline().apply(&mut s);
     baseline().apply(&mut s);
     assert_eq!(s.packages.len(), 1);
-    assert_eq!(s.skills.len(), 2);
+    assert_eq!(s.agent.skills.len(), 2);
 }
 
 #[test]
@@ -226,7 +230,7 @@ fn an_empty_baseline_mandates_nothing() {
     let mut s = spec("mine");
     b.apply(&mut s);
     assert!(s.packages.is_empty());
-    assert!(s.skills.is_empty());
+    assert!(s.agent.skills.is_empty());
     assert!(!b.requires_package("anything"));
 }
 
@@ -249,7 +253,10 @@ fn a_resolved_profile_carries_its_variables_by_name() {
         name: "mine".into(),
         variables: vec![EnvironmentVariable::new("TOKEN", "value")],
         packages: vec![SoftwarePackage::new("ripgrep")],
-        skills: vec![SkillId::new("chosen")],
+        agent: crate::environment::AgentConfiguration {
+            skills: vec![SkillId::new("chosen")],
+            ..Default::default()
+        },
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
     };
@@ -277,7 +284,10 @@ fn ownership_is_exact_match_only() {
         name: "mine".into(),
         variables: Vec::new(),
         packages: Vec::new(),
-        skills: Vec::new(),
+        agent: crate::environment::AgentConfiguration {
+            skills: Vec::new(),
+            ..Default::default()
+        },
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
     };

@@ -78,8 +78,9 @@ pub use directory::{
     MAX_DIRECTORY_LIMIT,
 };
 pub use environment::{
-    Baseline, CatalogError, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
-    EnvironmentVariable, ResolvedEnvironment, SkillCatalog, SkillId, SoftwarePackage,
+    AgentConfiguration, Baseline, CatalogError, CatalogSkill, EnvironmentProfile,
+    EnvironmentProfileSpec, EnvironmentVariable, ResolvedEnvironment, SkillCatalog, SkillId,
+    SoftwarePackage,
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
