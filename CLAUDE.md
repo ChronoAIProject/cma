@@ -227,7 +227,7 @@ Never require the owner to do anything to keep a session alive. "Click revive af
 
 **Cross-cutting**
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
-- Docker build for both images
+- Docker build for all three images — `api`, `web`, `runtime`
 - Image vulnerability scan
 - Manifest validation — `kubeconform`, so malformed YAML or a bad `apiVersion` fails in CI rather than at `kubectl apply`
 - Manifest policy — `kube-linter`: resource requests and limits set, liveness and readiness probes present, no `:latest` tag, non-root user, read-only root filesystem
@@ -237,7 +237,42 @@ Never require the owner to do anything to keep a session alive. "Click revive af
 
 Everything above, plus:
 
-- A git tag for the release, carrying release notes with exactly three sections: **What's new**, **What's fixed**, **What's changed**.
+- Exactly one of the labels `release:major`, `release:minor`, `release:patch`. The merge derives the version from it; a PR that declares nothing cannot be released.
+- A mandatory `## Release Notes` section in the PR body, in exactly this shape:
+
+```markdown
+## Release Notes
+
+### What's New
+- ...
+
+### What's Fixed
+- ...
+
+### What's Changed
+- ...
+```
+
+All three subsections, spelled and capitalised as above, in that order, each carrying at least one bullet, and nothing but bullets underneath. Anything else is rejected — these notes are the only description a release carries, and they are read by people who were not in the review, so what they contain is not left to whoever is writing them that day.
+
+**No version number appears in the PR.** The version is derived from the release label and the previous tag, and the publisher writes it into the notes as `## Release Notes vX.Y.Z`. A number typed by an author would be a guess at what the merge decides.
+
+That section, and only that section, becomes the annotated tag message and the release notes. It ends at the next `##` heading, so anything addressed to the reviewer belongs outside it and is never published.
+
+`.github/release-notes.sh` both validates and extracts it, and is run by the gate before the merge and by the publisher after it — one script, so the notes that ship are the notes that were reviewed.
+
+### What a merge into `main` produces
+
+The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
+
+- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/chrono-bot-{api,web,runtime}`, tagged with the version and with the short commit SHA. Both tags are immutable and neither is ever moved.
+- An annotated tag `vX.Y.Z` and a GitHub release are created. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
+
+The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
+
+Publishing is not deploying. `infra/` is untouched by a release, and a new image becomes live only when someone changes a manifest to name it. `CHRONO_SANDBOX_IMAGE` is the sharpest case: under §5 it is the runtime version every live session is measured against, so moving it rotates every session, and that has to be a decision rather than a consequence of merging.
+
+Full procedure in `docs/Release.md`.
 
 ---
 
