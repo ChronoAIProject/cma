@@ -285,7 +285,12 @@ async fn main() {
     let app = Router::new()
         .route("/livez", get(|| async { "ok" }))
         .route("/ready", get(ready))
-        .merge(layer1_public::rest::router(Arc::clone(&service)))
+        .merge(layer1_public::rest::router(
+            layer1_public::rest::SessionsState {
+                sessions: Arc::clone(&service),
+                users: Arc::clone(&users),
+            },
+        ))
         .merge(layer1_public::rest::environments::router(Arc::clone(
             &environments,
         )))

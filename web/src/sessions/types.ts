@@ -48,6 +48,21 @@ export interface Session {
    * recognised as missing rather than silently absent.
    */
   readonly rotatedAt?: number;
+  /**
+   * Who started the session, as they should be shown.
+   *
+   * Absent when the control plane would not name them: naming somebody is its
+   * own grant, and a caller who does not hold it is told nothing rather than
+   * handed an identifier. Never fall back to the subject — it is not a name
+   * and reads as a rendering fault when drawn as one.
+   */
+  readonly creator?: SessionCreator;
+}
+
+/** How the person who started a session is drawn. */
+export interface SessionCreator {
+  readonly displayName?: string;
+  readonly avatarUrl?: string;
 }
 
 /** Which semantic token paints a lifecycle state. */

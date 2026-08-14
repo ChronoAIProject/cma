@@ -23,6 +23,31 @@ describe('toSession', () => {
     expect(s.createdAt).toBe(Date.parse('2026-08-13T10:00:00Z'));
   });
 
+  it('carries the creator when the control plane names them', () => {
+    const s = toSession({
+      ...valid,
+      creator: { display_name: 'Ada Lovelace', avatar_url: 'https://pictures.example/ada.png' },
+    });
+    expect(s.creator?.displayName).toBe('Ada Lovelace');
+    expect(s.creator?.avatarUrl).toBe('https://pictures.example/ada.png');
+  });
+
+  it('leaves the creator absent when the control plane named nobody', () => {
+    // A caller without the grant to name people is sent no creator at all, and
+    // the panel must omit the row rather than draw a heading over nothing.
+    expect(toSession(valid).creator).toBeUndefined();
+    expect(toSession({ ...valid, creator: {} }).creator).toBeUndefined();
+    expect(toSession({ ...valid, creator: null }).creator).toBeUndefined();
+  });
+
+  it('keeps a creator that has a name but no picture', () => {
+    // Every directory entry written before pictures were captured is this
+    // shape, so it must render rather than be discarded as malformed.
+    const s = toSession({ ...valid, creator: { display_name: 'Ada Lovelace' } });
+    expect(s.creator?.displayName).toBe('Ada Lovelace');
+    expect(s.creator?.avatarUrl).toBeUndefined();
+  });
+
   it('accepts every lifecycle the core models', () => {
     for (const status of ['provisioning', 'ready', 'running', 'idle', 'terminated']) {
       expect(toSession({ ...valid, status }).lifecycle).toBe(status);

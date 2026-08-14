@@ -49,7 +49,12 @@ impl AuthState {
         };
         records
             .users
-            .note_sign_in(subject, profile.display_name.clone(), profile.email.clone())
+            .note_sign_in(
+                subject,
+                profile.display_name.clone(),
+                profile.email.clone(),
+                profile.avatar_url.clone(),
+            )
             .await;
         records
             .activity

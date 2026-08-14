@@ -110,6 +110,7 @@ fn a_person_renders_by_name_with_the_identifier_alongside_it() {
         subject: SubjectId("76fe9d91".into()),
         display_name: Some("Ada Lovelace".into()),
         email: Some("ada@example.com".into()),
+        avatar_url: None,
         first_seen: "2026-08-01T00:00:00Z".into(),
         last_seen: "2026-08-14T00:00:00Z".into(),
     });
@@ -129,6 +130,7 @@ fn a_person_the_provider_named_nothing_for_carries_no_label_to_render() {
         subject: SubjectId("76fe9d91".into()),
         display_name: None,
         email: None,
+        avatar_url: None,
         first_seen: "2026-08-01T00:00:00Z".into(),
         last_seen: "2026-08-14T00:00:00Z".into(),
     });
