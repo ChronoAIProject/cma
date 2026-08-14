@@ -1,0 +1,131 @@
+/*
+ * Dialog — docs/Web_Style.md section 6. Every value here is a token from that
+ * document; the shared button classes live beside it because a dialog's footer
+ * is where they are always used.
+ */
+
+.dialog__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--scrim);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 560px;
+  /* The dialog's own body scrolls; the page never does. */
+  max-height: 80dvh;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+  box-shadow: var(--glow-rest);
+}
+
+.dialog__header {
+  display: flex;
+  flex: none;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.dialog__title {
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+}
+
+.dialog__close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--ink-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-chip);
+}
+
+.dialog__close:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.dialog__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.dialog__footer {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  padding: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+/* Buttons — Web_Style.md section 6. One accent button per view; the rest quiet. */
+
+.button {
+  min-height: 32px;
+  padding: var(--space-2) var(--space-4);
+  color: var(--ink-2);
+  font-size: var(--text-base);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+}
+
+.button:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.button:disabled {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+.button--accent {
+  color: var(--ground);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.button--accent:hover {
+  color: var(--ground);
+  background: var(--accent);
+  box-shadow: var(--glow-active);
+}
+
+.button--danger {
+  color: var(--danger);
+  border-color: var(--rule);
+}
+
+.button--quiet {
+  padding: var(--space-1) var(--space-2);
+  border-color: transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dialog__close,
+  .button {
+    transition:
+      color 150ms ease,
+      background 150ms ease,
+      box-shadow 150ms ease;
+  }
+}

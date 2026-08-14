@@ -1,0 +1,814 @@
+# Web Style
+
+**This document is the single source of truth for all chrono-bot frontend design and style.**
+
+No colour, spacing value, type scale step, component pattern, or interaction rule may be introduced in `web/` unless it appears here. If a design need is not covered, extend this document first, in its own pull request, then implement.
+
+The changelog at the end is **append-only**. Entries are never edited or deleted.
+
+---
+
+## 1. What the frontend is
+
+chrono-bot's frontend is **one page, and that page is a terminal**.
+
+The terminal is not a component sitting inside a dashboard. It is the entire interface. There is no navigation menu, no second route, no separate dashboard, no docs link. A user arrives, and what they see is a terminal.
+
+The surface has exactly two states:
+
+| State | What it is |
+|---|---|
+| **Unauthenticated** | A scripted introduction types itself out, then hands off to a real prompt that accepts genuine keystrokes. The visitor's first Enter captures what they wrote and routes them to sign-in; their text survives the round trip and becomes the first turn of their first session. |
+| **Authenticated** | The same surface, driven live. Session tabs above it, profile menu top-right. |
+
+The only persistent chrome anywhere is the **session tab strip** and the **profile menu**. Nothing else.
+
+Design consequences, binding:
+
+- **The terminal owns the viewport.** It is full-bleed. The page itself never scrolls; the terminal owns its own scrollback.
+- **One surface, many drivers.** The unauthenticated introduction and a live agent session are the same engine driven by different sources. A visual difference between them that is not a difference in *content* is a defect.
+- **Fidelity beats decoration inside the viewport.** Agent-emitted output is rendered faithfully. Styling applies to the frame, the chrome, and the authored introduction — never to output produced by a kernel.
+- **Never build an interactive feature here that belongs in the API.** If a client would want it, it belongs in `api/`. Carried forward unchanged.
+
+---
+
+## 2. Colour
+
+Defined as CSS custom properties on `:root`. Components reference tokens only — never a literal colour.
+
+Dark is the primary expression of this product. Light is a supported, fully specified counterpart, not an afterthought — but the two do **not** share accent values.
+
+### Light (default)
+
+| Token | Value | Use |
+|---|---|---|
+| `--ground` | `#F4F6F9` | page background |
+| `--surface` | `#FFFFFF` | panels, terminal frame |
+| `--surface-2` | `#E9EDF3` | tab strip, insets |
+| `--ink` | `#0A0E14` | primary text |
+| `--ink-2` | `#3D4757` | secondary text |
+| `--ink-3` | `#5B6779` | labels, metadata |
+| `--rule` | `#D5DBE4` | hairline borders |
+| `--rule-2` | `#B9C2CE` | emphasised borders |
+| `--accent` | `#006D8F` | interactive, focus, prompt |
+| `--emphasis` | `#B3006B` | attention, pending approval |
+
+### Dark
+
+Redefined under both `@media (prefers-color-scheme: dark)` guarded as `:root:not([data-theme='light'])` and `:root[data-theme='dark']`, so an explicit choice wins in either direction.
+
+| Token | Value |
+|---|---|
+| `--ground` | `#05070B` |
+| `--surface` | `#0B0F17` |
+| `--surface-2` | `#131A26` |
+| `--ink` | `#E8EEF5` |
+| `--ink-2` | `#93A4B8` |
+| `--ink-3` | `#7C8A9E` |
+| `--rule` | `#1C2534` |
+| `--rule-2` | `#2A3546` |
+| `--accent` | `#00E5FF` |
+| `--emphasis` | `#FF2E97` |
+
+`#00E5FF` is the **dark-theme accent only**. It measures 1.83:1 on `#FFFFFF` and must never appear in the light theme. Light uses `#006D8F`.
+
+### Semantic
+
+Session and system state. Separate from the accent; never used decoratively.
+
+| Token | Light | Dark | Meaning |
+|---|---|---|---|
+| `--ok` | `#00674A` | `#00FFA3` | ready, running, healthy |
+| `--warn` | `#7A5200` | `#FFB800` | idle, recovering, degraded |
+| `--danger` | `#C0182B` | `#FF3B4E` | terminated in error, invalid |
+| `--neutral` | `#5B6779` | `#7C8A9E` | unknown, retired |
+
+### Measured contrast
+
+Every text token against every background it may sit on, computed per WCAG 2.1. Body text requires 4.5:1. **No pair falls below it in either theme.** Worst case in each theme is recorded here so a future change that regresses it is visible.
+
+| Theme | Worst text pair | Ratio |
+|---|---|---|
+| Dark | `--ink-3` on `--surface-2` | 4.97:1 |
+| Dark | `--emphasis` on `--surface-2` | 5.06:1 |
+| Light | `--ink-3` on `--surface-2` | 4.88:1 |
+| Light | `--accent` on `--surface-2` | 4.99:1 |
+
+`--ink-3` is the binding constraint in both themes. It carries 11px uppercase metadata, which is **not** large text, so the full 4.5:1 applies. Do not darken it in dark, or lighten it in light.
+
+### Rules
+
+- Every colour is defined on bare `:root` first. A colour whose only definition lives inside a media query or `[data-theme]` block is a bug.
+- `body` always sets an explicit `background` from a token.
+- Semantic colour never carries meaning alone — always pair with a label or icon.
+- A new colour requires a changelog entry and a recomputed contrast row. There are no ad-hoc colours.
+
+---
+
+## 3. Glow and depth
+
+Cyberpunk depth, bounded. Glow is a **state signal**, not decoration.
+
+### Tokens
+
+| Token | Light | Dark |
+|---|---|---|
+| `--glow-rest` | `0 0 10px rgb(0 109 143 / 0.16)` | `0 0 12px rgb(0 229 255 / 0.20)` |
+| `--glow-active` | `0 0 16px rgb(0 109 143 / 0.28)` | `0 0 20px rgb(0 229 255 / 0.35)` |
+| `--glow-emphasis` | `0 0 16px rgb(179 0 107 / 0.28)` | `0 0 20px rgb(255 46 151 / 0.35)` |
+
+**These three are the only glow values permitted.** Arbitrary `box-shadow` or `text-shadow` values are forbidden.
+
+### Rules
+
+- Glow is expressed only through `box-shadow` and `text-shadow`, only in the accent or emphasis hue.
+- Glow means something is **live**: a running session, a focused input, a pending approval. A static heading never glows.
+- Glow is never the sole signal for state — it always accompanies a label, dot, or chip.
+- **No glow on text below 15px.** It destroys legibility at the sizes this UI mostly uses. In practice this means glow applies to containers and the intro headline, essentially never to body copy.
+- Glow is never applied to the terminal viewport or to any character rendered by a kernel.
+
+### Overlays
+
+One optional ambient overlay is permitted: a static grid or scanline texture.
+
+- Maximum opacity `0.04`.
+- Sits behind all content, `pointer-events: none`.
+- **Never over the terminal viewport** — it corrupts glyph rendering.
+- Suppressed entirely under `prefers-reduced-motion: reduce` if it animates at all. A static overlay may remain.
+
+---
+
+## 4. Typography
+
+This is a terminal product. The monospace stack is **primary**.
+
+| Role | Stack |
+|---|---|
+| Primary — terminal, prompt, data, chrome | `ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace` |
+| Secondary — profile menu, dialogs, prose | `-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` |
+
+No webfonts. Nothing is loaded from a CDN.
+
+### Scale
+
+| Step | Size | Line height | Use |
+|---|---|---|---|
+| `xs` | 11px | 1.4 | uppercase labels, chips, tab metadata |
+| `sm` | 13px | 1.45 | secondary text, metadata |
+| `base` | 14px | 1.5 | body, chrome, menu items |
+| `lg` | 18px | 1.35 | section headings |
+| `xl` | 24px | 1.25 | intro headline |
+
+### Terminal type
+
+| Property | Value |
+|---|---|
+| Family | primary monospace stack |
+| Size | 14px default, user-adjustable 12–18px |
+| Line height | 1.35 |
+| Letter spacing | 0 — never track a terminal |
+
+Uppercase labels take `letter-spacing: 0.12em`. Headings take `text-wrap: balance`. Any column of digits takes `font-variant-numeric: tabular-nums`.
+
+---
+
+## 5. Spacing and layout
+
+4px base unit. Permitted values only: `4, 8, 12, 16, 24, 32, 48, 64`.
+
+- Lay out sibling groups with flex or grid and `gap`. Never per-element margins that collapse or double.
+- **The page does not scroll.** The app fills exactly the viewport; the terminal owns its own scrollback. `body` never scrolls horizontally or vertically.
+- **The terminal is full-bleed.** It has no page gutter. Its frame inset is 12px, reduced to 8px below 640px.
+- Chrome — tab strip and profile menu — sits in a header bar 40px tall.
+- Wide content inside chrome sits in its own `overflow-x: auto` container.
+
+### Radius
+
+| Value | Use |
+|---|---|
+| `0` | default — the terminal frame, tabs, the header bar |
+| `2px` | chips, buttons, menu surfaces |
+
+Nothing more rounded. Sharp is the aesthetic; rounding is the exception, not the default.
+
+---
+
+## 6. Components
+
+### Terminal surface
+
+The full-bleed host. One engine; the content source is swappable.
+
+- Rendered by xterm.js.
+- Container takes `--surface` background and a 1px `--rule` border.
+- **Never place interactive UI over the terminal viewport.** Controls sit in the header bar above it.
+- Scrollback is capped. Unbounded output must not be able to exhaust the tab.
+- Selection background `--accent` at `0.25` alpha. Cursor `--accent`.
+
+#### ANSI palette
+
+The 16 terminal colours, derived from the tokens. This mapping is authoritative — do not invent terminal colours.
+
+| Slot | Light | Dark |
+|---|---|---|
+| `black` | `#E9EDF3` | `#0B0F17` |
+| `red` | `#C0182B` | `#FF3B4E` |
+| `green` | `#00674A` | `#00FFA3` |
+| `yellow` | `#7A5200` | `#FFB800` |
+| `blue` | `#00557A` | `#00A8FF` |
+| `magenta` | `#B3006B` | `#FF2E97` |
+| `cyan` | `#006D8F` | `#00E5FF` |
+| `white` | `#3D4757` | `#E8EEF5` |
+| `brightBlack` | `#5B6779` | `#7C8A9E` |
+| `brightRed` | `#8E0F1F` | `#FF6B78` |
+| `brightGreen` | `#004D37` | `#6BFFC4` |
+| `brightYellow` | `#5C3E00` | `#FFD166` |
+| `brightBlue` | `#003F5C` | `#5CC6FF` |
+| `brightMagenta` | `#8A0052` | `#FF6BB8` |
+| `brightCyan` | `#00536D` | `#6BF0FF` |
+| `brightWhite` | `#0A0E14` | `#FFFFFF` |
+
+Agent-emitted output is rendered through this palette and is **not** otherwise restyled. Escape sequences never control anything beyond glyph presentation — see §8.
+
+### Intro sequence
+
+The unauthenticated state. Authored content, typed out.
+
+| Property | Value |
+|---|---|
+| Machine/boot lines | 6ms per character |
+| Prose | 18ms per character |
+| Pause after `.` `?` `!` | 260ms |
+| Pause after `,` | 90ms |
+| Pause at line break | 140ms |
+| Cursor blink interval | 530ms |
+| **Time to interactive** | **target ≤ 3.2s, hard cap 4s** |
+
+- The animation is **skippable**. Any keypress or click completes it immediately. A dim `--ink-3` hint appears after 600ms telling the visitor so.
+- When typing completes, the prompt becomes live and accepts real keystrokes. The handoff must be visually seamless — the prompt the visitor types into is the same prompt the introduction was written to.
+- The sign-in affordance appears **only once the visitor has typed at least one character**. Do not nag an empty prompt.
+- `prefers-reduced-motion: reduce` — **all text is present instantly**, no typing, no blink, no skip hint. Fully usable, not a degraded fallback.
+
+### Session tab strip
+
+- One tab per session, in the header bar, left of the profile menu.
+- Each tab carries a status dot from the semantic tokens **and** a text label. The dot is never the only signal.
+- `+` affordance spawns a session.
+- Past 6 tabs the strip scrolls horizontally within its own container; it never wraps and never pushes the profile menu off-screen.
+- The active tab is marked by a 2px `--accent` bottom border and `--glow-rest`.
+- A running session's dot takes `--glow-active`. An `idle` session is styled with `--warn` and **never** as an error — `idle` means the runtime was reclaimed and the session is revivable.
+
+### Profile menu
+
+- Avatar trigger sits top-right, minimum 32×32px.
+- Opens a dropdown on `--surface` with a 1px `--rule` border and radius `2px`.
+- Contains sign-out and account actions. It is not a navigation menu and must not grow into one.
+- Fully keyboard operable: Enter/Space opens, arrows move, Escape closes and returns focus to the trigger, Tab is trapped while open.
+- Dismissed by Escape, outside click, or focus leaving.
+
+### Status chip
+
+Monospace, `xs`, uppercase, 3px/8px padding, 1px border, radius `2px`. Text and border from the semantic token; background is the token at `0.12` alpha. Always carries the state word — colour is reinforcement, never the sole signal.
+
+### Buttons
+
+Single accent button per view. Everything else is a quiet button: transparent background, `--rule` border, `--ink-2` text. Destructive actions use `--danger` and always confirm.
+
+---
+
+## 7. Interaction
+
+- Every interactive element has a visible focus state: `2px solid var(--accent)`, `outline-offset: 2px`. Never remove outlines.
+
+  **One documented variant: the terminal prompt row.** A full-width, borderless input inside a terminal is not a control with edges, and a 2px ring drawn around it boxes in the whole prompt line and breaks the illusion the surface depends on. For that input only, the indicator is a 2px `--accent` bar on the row's leading edge (`box-shadow: inset 2px 0 0 var(--accent)`), reinforced by the `--accent` caret.
+
+  This is a **relocation, not a removal** — same width, same token, still plainly visible, and still present under keyboard focus. It applies to the terminal prompt input and to nothing else; every other control takes the standard outline. Any future variant needs its own entry here.
+
+- All transitions ≤ 150ms, and every one is wrapped in `@media (prefers-reduced-motion: no-preference)`. **The intro typewriter is bound by this rule** — see §6.
+- Loading is a skeleton or an inline indicator; never a full-page spinner.
+- Errors state what went wrong and what to do about it. No apologies, no raw error codes without a human sentence.
+- Minimum target size 32×32px.
+
+---
+
+## 8. Terminal safety
+
+The byte stream written into the terminal originates from a coding agent executing the user's own untrusted code. Escape sequences are an attack surface, and the unauthenticated introduction shares the same engine as a live session — so the engine, not the content source, carries the hardening.
+
+- **OSC 52 (clipboard write) is disabled.** Terminal output must never write the host clipboard.
+- Escape sequences must not set the browser tab title, and must not trigger any host-level action.
+- Scrollback is capped.
+- OSC 8 hyperlinks are validated before being made clickable.
+- Hardening lives in the engine so that a future content source cannot forget to apply it.
+
+---
+
+## 9. Accessibility
+
+- Text contrast meets WCAG AA (4.5:1 body, 3:1 for text ≥ 18px) in **both** themes. Measured ratios are recorded in §2.
+- Semantic HTML before ARIA. Landmarks on every page.
+- Every view is fully keyboard operable, including the terminal, which must be escapable by keyboard alone.
+- Never convey state through colour alone.
+- **The animated introduction is never the only route to its information.** The terminal viewport is exposed to assistive technology as a static, complete, already-finished transcript — a screen reader user is never made to wait for an animation, and never receives a character-by-character stream of updates.
+- Focus on load rests on the prompt, so a keyboard user can type immediately without hunting.
+
+---
+
+## 10. Selectable terminal themes
+
+The 16-slot palette in §6 is the product's own and remains the default in both
+appearances. A terminal is somewhere people spend hours, and legibility at that
+duration is personal, so the palette inside the terminal viewport — and only
+inside it — may be changed by the person using it.
+
+The scope is deliberately narrow. A selected theme repaints the terminal
+canvas. It never changes the surrounding interface, which stays on the tokens
+in §2, because a page whose chrome shifts with a terminal preference stops
+being one product.
+
+These are transcribed from their published definitions and vendored as data.
+They are not a dependency: a theme is twenty hex values against a fixed
+interface, and taking a package for that would add a supply-chain risk with
+nothing to show for it.
+
+Every theme names the appearance it belongs to. A dark theme selected in light
+appearance would put a near-black rectangle in the middle of a light page, so
+the selector offers only themes matching the current appearance.
+
+| Theme | Appearance | Background | Foreground | Origin |
+|---|---|---|---|---|
+| ChronoBot | dark | `#0B0F17` | `#E8EEF5` | §6, the default |
+| ChronoBot | light | `#FFFFFF` | `#0A0E14` | §6, the default |
+| Dracula | dark | `#282A36` | `#F8F8F2` | Dracula, MIT |
+| Nord | dark | `#2E3440` | `#D8DEE9` | Nord, MIT |
+| Solarized Dark | dark | `#002B36` | `#839496` | Solarized, MIT |
+| Solarized Light | light | `#FDF6E3` | `#657B83` | Solarized, MIT |
+| GitHub Light | light | `#FFFFFF` | `#24292E` | GitHub, MIT |
+
+Contrast inside the terminal is the theme author's, not ours, and these are all
+long-established palettes designed for extended reading. The product's own
+default is the one measured in §2 and remains what an unconfigured session
+gets.
+
+---
+
+## 11. Waiting for a session
+
+Provisioning a sandbox takes seconds on a warm node and a minute on a cold one,
+and nothing can say in advance which it will be. A static line held for that
+long reads as a page that has stopped working.
+
+The wait is therefore animated: the characters of the message lift in sequence,
+left to right, on a 1.4s loop with each character starting 45ms after the one
+before it. The displacement is `0.28em` — a sense of life, not a bouncing ball,
+because this sits beside someone for a minute.
+
+It is a wave rather than a spinner because §5 forbids a full-page spinner, and
+because a wave makes no claim about progress. A progress bar would imply the
+system knows how far along it is, which it does not.
+
+**The motion never carries information.** The sentence is exposed once to
+assistive technology as ordinary text, and under `prefers-reduced-motion` the
+animation is removed entirely while the message stays. Nothing is lost by not
+seeing it move.
+
+**A session that ends badly says why.** Terminating normally and failing to
+start are different events and must not read the same: the control plane
+records a reason on the failure, and the surface shows it rather than the bare
+statement that the session has ended.
+
+---
+
+## 12. Page frame and layout
+
+**One bar, always.** The top bar carries the product mark and whatever the
+current state needs at its trailing edge. It is present before signing in and
+after, because a visitor and an owner are looking at one product rather than
+two. It is not navigation and must never become it.
+
+**Content is inset by 10% on each side.** Chrome, prose and controls stay
+within that frame so the page reads as a composed surface rather than as text
+against the window edge.
+
+**Everything obeys the inset, including the console.** The session column's
+leading edge lines up with the product mark, and the details panel's trailing
+edge lines up with the account control. Alignment between the bar and the page
+beneath it is what makes them read as one surface; a full-bleed console under an
+inset bar makes the bar look detached from the page it belongs to.
+
+**Sessions live in a column on the left.** Vertical rather than a horizontal
+strip because sessions accumulate: a row runs out of width after a handful and
+begins truncating, while a column scrolls with every label still readable. The
+column owns its own scrolling — the page itself still never scrolls.
+
+**A session is labelled by when it started, in Singapore time.** That is what
+distinguishes one session from another in a way a person can hold in their
+head, and a fixed zone means the same session reads the same to everyone who
+sees it. The zone is stated in the interface rather than assumed. The date
+appears only once a session is no longer from today. Order is newest first by
+default and can be reversed.
+
+**Session details sit to the right and collapse.** They are reference material:
+read when someone wants to know which agent is answering or why a session
+stopped, and the rest of the time they are width the terminal should have.
+Collapsed, the panel becomes a handle rather than disappearing, so the way back
+is where the panel was.
+
+**A session's lifecycle controls live in that panel**, at the foot of what they
+describe. Ending or deleting a session acts on the session being described, and
+such a control belongs beside the thing it acts on rather than in chrome that
+looks identical whichever session is open.
+
+**Below 60rem the three columns stack**, because a terminal squeezed between
+two panels on a narrow window is not a terminal anyone can work in.
+
+**A failed action is reported above the middle column, never in place of it.**
+One line in `sm` `--danger` on `--surface` with a 1px `--rule` underline,
+carrying `role="alert"`, at the head of the column and outside whatever the
+column is showing. Measured against `--surface`: 6.16:1 in light, 5.47:1 in
+dark.
+
+Placement is the substantive part of this rule. A failure belongs to one
+request about one session, and the surface beneath it holds live terminals —
+on the canvas, up to twelve of them, each with a connection. Replacing that
+surface with a sentence tears every one of them down, so a stop that came back
+409 would cost eleven sessions their connection to say something about the
+twelfth. Nothing that reports a failure may destroy work that did not fail.
+
+The line reports the most recent attempt. Every action clears it before it
+starts, so it is never an older failure sitting above a surface that has since
+recovered.
+
+---
+
+## 13. The platform typeface
+
+Platform text is set in **Geist Pixel**, vendored under the SIL Open Font
+License with its licence text beside it in `web/src/assets/fonts/`.
+
+It is **self-hosted, never fetched from a third party**: a font request to
+someone else's host is one that can be logged, blocked or slow, and the file is
+28KB. It is declared with `font-display: swap` and a system fallback, so text
+is readable from the first paint and stays readable if the file never arrives —
+the face is character, not information.
+
+**Terminal content keeps its monospace stack.** The pixel face is the
+product's voice, not the agent's output: terminal rendering depends on exact
+cell metrics, and substituting a display face there would break column
+alignment in everything the agent draws.
+
+---
+
+## 14. Session states and what they allow
+
+A session is shown in one of six states, and the state decides what the
+interface offers. **One rule governs all of it** — whether the terminal accepts
+typing, whether a control is enabled, and whether the session appears in the
+list. Three separate answers to the same question eventually disagree, and the
+disagreement is visible as a button that does nothing.
+
+| State | Shown as | Terminal | Available |
+|---|---|---|---|
+| provisioning | starting | progress, no input | end |
+| ready / running | ready / running | live | reconnect, end, delete |
+| rotating | updating | progress, no input | nothing |
+| idle | idle | history, read-only | **revive**, delete |
+| terminated | ended | history, read-only | delete |
+
+**Controls are disabled, never removed.** The panel keeps its shape as a
+session moves between states, so nobody hunts for a control that was there a
+moment ago. Every disabled control carries a line saying why it is
+unavailable — a greyed button on its own communicates only refusal.
+
+**A session that cannot be typed into always says why**, in the panel, in the
+owner's terms: still starting, stopped, being moved, ended. A terminal that
+silently ignores keystrokes is the state people report as broken.
+
+**A session with no sandbox still shows its history**, read-only. Stopping a
+session releases what it costs; it does not hide what it did. Keystrokes into
+a read-only terminal are dropped rather than buffered — holding them until a
+revive would deliver them into a different sandbox, minutes later, with no
+context.
+
+**Ended sessions leave the list, except when they failed.** A list of
+everything ever run is not a list of someone's sessions. But a session that
+died on its own is the one its owner is looking for, so it stays until they
+remove it.
+
+**Revive is the primary action when it is offered.** A stopped session is
+almost always open because someone wants it back.
+
+---
+
+## 15. Canvas — every session at once
+
+The console has **two arrangements of the same sessions**, and no third.
+
+| Mode | What it is |
+|---|---|
+| **Tabs** | Default. One terminal owns the middle column; the session rail chooses which. |
+| **Canvas** | Every listed session is a framed node on one pannable surface, each showing its own terminal. |
+
+**The canvas replaces the middle column and nothing else.** The top bar, the
+session rail and the details panel keep their places and their behaviour,
+because they are the same facts in either arrangement: the same list, the same
+session being described, the same lifecycle controls beside it. A mode that
+rearranged the whole page would be a second route, and §1 allows only one.
+
+**One selection, two views.** The session the rail marks active and the node the
+canvas focuses are the same fact. Changing arrangement never changes which
+session is selected, and selecting in one view selects in the other.
+
+**Which sessions appear is §14's answer, not a second one.** The canvas shows
+exactly what the rail lists. A session that has ended and left the list has left
+the canvas too.
+
+### Mode toggle
+
+- Two quiet buttons at the trailing edge of the top bar, before the account
+  control. Never a switch: a switch implies on and off, and neither mode is the
+  absence of the other.
+- Labels `Tabs` and `Canvas`, `xs` uppercase, `0.12em` tracking, 1px `--rule`
+  border, radius `2px`, `--ink-3` text.
+- The current mode takes `--accent` border and `--ink` text, and carries
+  `aria-pressed` — the state is never colour alone.
+- Pressing the mode already showing does nothing rather than toggling away from
+  it. Someone who cannot tell which mode they are in reaches for the label of
+  the one they want.
+- The choice persists per browser and is **validated when it is read**. Web
+  storage is untrusted input; a value this build does not recognise falls back
+  to `Tabs` rather than rendering a mode that does not exist.
+
+### Node framing
+
+| Property | Value |
+|---|---|
+| Size | `--canvas-node-w` 420px × `--canvas-node-h` 280px |
+| Gap between nodes, surface padding | `--space-4` |
+| Background | `--surface` |
+| Border | 1px `--rule` |
+| Radius | `--radius` (0) |
+
+Fixed size rather than fluid: a node is a terminal, and a terminal that changes
+its column count as siblings come and go reflows everything the agent has drawn.
+
+Each node carries a header above its terminal on a 1px `--rule` underline, with
+`--space-1`/`--space-2` padding: the time the session started in `sm` `--ink-2`
+— **the same label the rail uses**, because the two are views of one list and a
+session called one thing in one place and another thing elsewhere is two
+sessions as far as anyone reading can tell — then the kernel and the lifecycle
+word in `xs` uppercase `--ink-3`.
+
+Inside a node the terminal drops its own 1px border from §6 and keeps everything
+else. The node frame is that border; drawing both would put two hairlines a
+padding-width apart.
+
+Nodes are arranged in a square-ish grid, so the surface overflows in both
+directions and panning means something in both.
+
+**A node's size is the geometry its runtime is told to draw at.** A terminal
+reports its own measurements to the other end, so a 420×280 node — about 402×221
+once the frame, the header and the terminal's own padding are taken out — asks
+for roughly 47 columns and a dozen rows, where the single terminal of tabs mode
+asks for the full width of the column. **Choosing the canvas therefore resizes
+every attached session**, and each agent redraws at the new width.
+
+That is correct rather than a defect: a terminal shown in a small frame is a
+small terminal, and telling the runtime otherwise would wrap its output against
+a width the frame does not have. But it is a real cost of this arrangement and
+it does not undo. Output an agent has already wrapped at 47 columns stays
+wrapped at 47 columns, on the canvas and in the transcript afterwards.
+
+Two consequences follow, and both are intended. A session left on the canvas
+keeps producing narrow output for as long as it is shown there. And a session
+that was attached when the arrangement changed keeps the last geometry it was
+given until something attaches to it again — which re-declares its size before
+the first frame, so what is on screen is never wrong. Nothing restores a
+geometry behind the owner's back, because there is no arrangement to restore it
+to: the size a terminal should be is the size of the frame showing it, and while
+no frame is showing it the question has no answer.
+
+The mode toggle is still a display preference and adds nothing to the console's
+chrome. It is not, however, a control that stops at the browser, and it must
+never be described as one.
+
+### Focus, and how it differs from selection
+
+Exactly one node is focused. **The focused node is the only one that receives
+keyboard input** — this is a correctness property, not a styling one, and the
+visual treatment exists to make it impossible to be wrong about which terminal
+is listening.
+
+| State | Treatment |
+|---|---|
+| Resting | 1px `--rule` border, `--ink-2` header |
+| **Selection** — pointer is over the node | 1px `--rule-2` border. Border weight only. |
+| **Focus** — this node takes the keys | 1px `--accent` border **and** `--glow-rest`, `--ink` header, `aria-pressed` on its handle |
+
+Hover changes only the border's weight within the neutral ramp, while focus
+changes hue, adds the live glow, and lifts the header text. Glow is permitted
+here for the reason §3 gives — the node is live — and appears on nothing else on
+the canvas.
+
+**Focus is never a second opinion on §14.** A session that is provisioning,
+rotating, idle or terminated does not accept keystrokes on the canvas either,
+however plainly it is being looked at, and its node says `read-only` in words in
+its header. On a canvas the details panel describes one session out of many, so
+a node that quietly ignored typing would have nothing nearby saying why.
+
+**A session with no sandbox shows its stored transcript**, read-only, exactly as
+§14 requires of the single terminal. A frame with nothing in it would answer
+"what did this session do" by hiding the answer.
+
+**Unfocused terminals are never dimmed, tinted, greyed or covered.** They are
+attached and rendering live output, and §1 forbids styling anything a kernel
+emitted. An overlay would also be interactive UI over a terminal viewport, which
+§6 forbids. Everything that distinguishes a node is drawn on its frame and
+header, outside the viewport.
+
+### Keyboard
+
+- The canvas is one tab stop. The focused node's header handle is that stop;
+  every other handle is removed from the tab order, as is every terminal that is
+  not the focused, interactive one.
+- Arrow keys move focus between nodes from the handle: left and right by one, up
+  and down by a row. Home and End jump to the first and last node. Movement
+  clamps at the edges and never wraps — a wrap turns "I am at the right-hand
+  edge" into a silent jump to the other side of a surface that may be panned
+  away.
+- Arrow keys are **not** intercepted inside a terminal — there they are shell
+  history, and taking them would be a defect.
+- Tab from the handle enters the focused terminal.
+- A move is announced through a polite live region naming the session and its
+  position, because the focus treatment above is visual only.
+
+### Pointer
+
+- A gesture on a node's header or frame focuses the node and parks the caret on
+  its handle.
+- A gesture on a node's terminal focuses the node **and leaves the caret in that
+  terminal**, so one click is enough to start typing.
+- Focus placement is always explicit. It is never left to the browser's default,
+  which differs by engine and drops the caret to the page body when the gesture
+  lands on something unfocusable.
+
+### Panning
+
+- The canvas viewport scrolls within itself. **The page still does not scroll** —
+  this is the same exemption §5 grants a column, applied to a surface that is
+  genuinely larger than the space it has.
+- Dragging the bare surface pans it: `grab` at rest, `grabbing` while dragging. A
+  drag that begins inside a node belongs to that node's terminal, which uses it
+  to select text.
+- Wheel and trackpad scroll the viewport normally. Keyboard navigation scrolls
+  the focused node into view through the browser's own focus handling, never as
+  a scripted animation.
+
+### Motion
+
+The only motion the canvas has is the 150ms border and glow transition when
+focus moves, wrapped in `prefers-reduced-motion: no-preference` per §7.
+Everything else it does is direct manipulation or the browser's own scrolling,
+so under reduced motion there is nothing left to suppress and nothing lost.
+
+### Cost, and saying what it cost
+
+Every attached node holds a terminal and, for a running session, a connection.
+**At most 12 nodes are attached at once.** Sessions past that budget still
+appear — the canvas exists to show the whole fleet — but render as a framed,
+labelled node with no terminal and no connection, saying so in `sm` `--ink-3`
+text and inviting selection. Focusing one attaches it and detaches whichever
+attached node has gone longest without focus. The focused node is never the one
+detached.
+
+A session that holds nothing to attach to — still starting, or being moved —
+spends none of the budget, and shows §14's reason where its terminal would be.
+
+**Truncation is never silent.** Alongside the individual nodes, a line below the
+viewport states how many sessions are unattached and why, outside the scroll
+area so it cannot be panned out of sight. A frame with no terminal in it and no
+account of why reads as sessions having broken rather than as a limit being
+enforced.
+## 16. The operator panel
+
+Running the service raises four questions nobody else can answer: who is using
+it, what it has been asked to do, what is running right now, and — occasionally
+— stop that. The panel answers those four and nothing else.
+
+**It is a dialog, not a page.** Opened from the profile menu as an account
+action, exactly as environment profiles are, and closed back onto the same
+terminal. §1 still holds: one page, one terminal, no navigation and no second
+route. The profile menu gains an item; it does not become a nav menu.
+
+**The entry point is absent unless the control plane says otherwise.** The
+identity surface reports the caller's capabilities, and the menu item is
+rendered only for a caller holding one this panel can act on. This is
+presentation, never protection — the API refuses on its own and would refuse a
+hand-written request just the same. Both halves are required: a control nobody
+can use should not be drawn, and a drawn control is not what makes it safe.
+
+**Each view is offered on its own capability**, matching the API, where reading
+every session, reading the directory, reading the record and reading the
+inventory are four separate grants and none implies another. A caller holding
+two sees two views. A view is never drawn empty because of entitlement — an
+empty list must always mean "there is nothing", or the panel teaches people to
+misread it.
+
+### View switch
+
+The four views share one dialog and are switched by a row of buttons at the top
+of its body, marked up as a tablist.
+
+| Property | Value |
+|---|---|
+| Label | monospace, `xs`, uppercase, `letter-spacing: 0.12em` |
+| Size | minimum 32px tall, `8px/12px` padding |
+| Container | 1px `--rule` bottom border, `gap: 4px` |
+| Selected | `--accent` text, 2px `--accent` bottom border |
+| Unselected | `--ink-2` text, transparent border |
+
+The selected view is named by its border **and** by `aria-selected`; colour is
+never the only signal. Past four views the row would need to scroll, which is
+the sign the panel has grown past what it is for.
+
+### Record list
+
+The one place this product shows many rows at once. It is a list, not a table:
+rows are read one at a time and a table's column rules earn nothing here.
+
+- Each row is a `<li>`: a leading timestamp, a primary label, then secondary
+  metadata beneath it. Timestamps and any column of digits take
+  `font-variant-numeric: tabular-nums`.
+- Metadata is `xs` `--ink-3` monospace; the primary label is `base` `--ink`.
+- The list scrolls inside the dialog body — the page still never scrolls — and
+  anything too wide sits in its own `overflow-x: auto` container.
+- Rows carry a 1px `--rule` separator and no zebra striping, no hover
+  highlight, and no row-level click target. Nothing in this panel navigates.
+- An empty list says what would have been there, in a sentence.
+
+**Newest first, always.** The record is read from the top, and an order that
+depends on where you came from is an order nobody can trust. The activity view
+is filterable by person and by action; the filters are ordinary selects and
+narrow what is shown without ever changing the order.
+
+### Naming people
+
+**A person is their name, then their email — never their subject identifier.**
+The identifier is opaque, and putting it where a name goes makes every row look
+alike.
+
+Where the directory knows nothing about a subject, the identifier is shown in
+identifier style — monospace, `xs`, `--ink-3` — so a reader can tell at a glance
+that they are looking at an identifier rather than at somebody named that. An
+action with no established identity behind it reads "Not signed in", which is a
+fact, rather than an empty cell, which is an omission.
+
+### Unknown is not empty
+
+A provider that could not be asked what it is running renders as **unknown**,
+carrying the reason, and never as a provider running nothing. The count of what
+is running is withheld entirely while any provider is unobservable, because a
+partial total presented as a total is the same lie as an empty list. This
+mirrors the API contract exactly, and it is the one thing in this panel that
+must not be simplified for tidiness.
+
+### Acting on somebody else's session
+
+Two controls, and the destructive one asks twice — the pattern in §6 and §14,
+unchanged because acting on work that is not yours is not a reason to invent a
+new interaction.
+
+| Control | Confirms | Available when |
+|---|---|---|
+| Stop | no | the session has a runtime to release |
+| Terminate | yes, inline | the session has not already ended |
+
+Both are **disabled rather than removed** when they do not apply or when the
+caller may watch but not act, and each disabled control states its reason, per
+§14. Deleting somebody else's session is not offered here at all: the API does
+not expose it, and stopping is reversible where destroying a history is not.
+
+Times follow §12 — Singapore time, with the zone stated. No new colour, glow or
+spacing value is introduced: outcomes and session states use the semantic tokens
+from §2 as ordinary status chips.
+
+---
+
+## Changelog
+
+Append-only. Never edit or delete an entry.
+
+| Date | Change |
+|---|---|
+| 2026-08-12 | Initial version. Established colour tokens for light and dark, semantic state colours, type stacks and scale, 4px spacing system, component rules for status chip, data table, terminal and buttons, interaction and accessibility baselines. |
+| 2026-08-13 | Terminal-first cyberpunk redesign. Reframed the frontend as a single full-bleed terminal page with no navigation, in two states (scripted introduction and live session). Replaced the colour system with a cyan/magenta-on-near-black palette, recording measured WCAG ratios and raising `--ink-3` to `#7C8A9E` in dark to clear AA for 11px metadata. Added the `--emphasis` token, a bounded three-step glow system with an ambient overlay cap, and an authoritative 16-slot ANSI palette. Promoted the monospace stack to primary and retuned the type scale. Made the page non-scrolling and the terminal full-bleed, and set radii to 0/2px. Specified the intro sequence timing, skip behaviour and reduced-motion equivalence, the session tab strip, and the profile menu. Added §8 Terminal safety covering OSC 52, tab-title suppression, scrollback caps and OSC 8 validation. Removed the data table component and the "information density over whitespace" premise, both of which described a dashboard this frontend no longer is. |
+| 2026-08-13 | Documented one focus-state variant in §7: the terminal prompt row carries its 2px accent indicator on the row's leading edge rather than as a ring around the input, because a ring around a full-width borderless field boxes in the whole prompt line and breaks the terminal illusion. A relocation, not a removal, scoped to that one input. |
+| 2026-08-13 | Added §10 Selectable terminal themes: six vendored palettes (Dracula, Nord, Solarized Dark, Solarized Light, GitHub Light) alongside the product's own, selectable per person and scoped to the terminal canvas only. Vendored as data rather than taken as a dependency. Themes are filtered by the current appearance so a dark palette cannot be placed on a light page. Also specified the appearance control in the profile menu, cycling system → light → dark, where "system" is the absence of a choice rather than a third palette. |
+| 2026-08-14 | Added §11 Waiting for a session: the provisioning message animates as a left-to-right character wave (1.4s loop, 45ms stagger, 0.28em lift), chosen over a spinner because §5 forbids one and because a wave claims no knowledge of progress. Motion carries no information — the sentence is exposed once to assistive technology and the animation is removed under reduced-motion. Also specified that a session which fails to start must show the recorded reason rather than the same wording as one that ended normally. |
+| 2026-08-14 | Added §12 Page frame and layout and §13 The platform typeface. Established a persistent top bar in both signed-out and signed-in states, a 10% inset on page content with terminal output exempt, a vertical session column on the left labelled by creation time in Singapore time (newest first, reversible, date shown only once not from today), and a collapsible session details panel on the right that collapses to a handle. Columns stack below 60rem. Adopted Geist Pixel as the platform typeface, self-hosted under the SIL Open Font License with a system fallback and `font-display: swap`; terminal content keeps its monospace stack because cell metrics govern its rendering. Replaced the horizontal session tab strip specified in the 2026-08-13 redesign, which truncated labels once sessions accumulated. |
+| 2026-08-14 | Corrected §12: the console obeys the page inset like every other surface, so the session column aligns with the product mark and the details panel with the account control. The earlier entry exempted terminal output from the inset on the grounds that cropping it wasted width; alignment between the bar and the page beneath it matters more, and a full-bleed console under an inset bar reads as a detached bar. Also moved the session lifecycle controls out of the top bar and into the details panel, beside the session they act on. |
+| 2026-08-14 | Added §14 Session states and what they allow: a single table binding each of the six session states to what the terminal does and which controls are available, with one rule shared by the terminal, the buttons and the list so they cannot disagree. Established that controls are disabled rather than removed and that every disabled control and every non-interactive terminal states its reason in the owner's terms; that a session with no sandbox still shows its history read-only, with keystrokes dropped rather than buffered; that ended sessions leave the list unless they ended by failing; and that revive is the primary action wherever it is offered. Adds the `rotating` state, during which the session is neither usable nor stopped and no control acts on it. |
+| 2026-08-14 | Added §15 Canvas — every session at once: a second arrangement of the same sessions, in which each listed session is a 420×280 framed node on a pannable surface hosting its own terminal, chosen by a two-button toggle at the trailing edge of the top bar whose stored value is validated on read. The canvas replaces the console's middle column only, so the rail, the details panel and the bar keep their places and one selection serves both arrangements. Established that exactly one node is focused and only it receives keystrokes, with hover distinguished from focus by border weight rather than hue; that focus is never a second opinion on §14, so a provisioning, rotating, idle or ended session stays read-only on the canvas, says so on the node, and shows its stored transcript rather than an empty frame; that the canvas is one tab stop with clamped arrow navigation and a polite live region announcing moves; that unfocused terminals are never dimmed, tinted or covered; that the only motion is the 150ms focus transition, wrapped in `prefers-reduced-motion: no-preference`; and that at most 12 nodes hold a terminal at once, evicted by least recent focus, with the count of unattached sessions stated below the viewport because silent truncation reads as breakage. Adds the `--canvas-node-w` and `--canvas-node-h` tokens, and labels nodes by start time as §12 labels the rail rather than by identifier, so one session is not called two things in two views. |
+| 2026-08-14 | Specified in §12 where a failed action is reported: one `sm` `--danger` line with a `--rule` underline at the head of the middle column, above whatever the column is showing and never in place of it, recording 6.16:1 light and 5.47:1 dark against `--surface`. The console previously rendered the failure instead of the surface, which was survivable when the surface was one terminal and is not now that §15 puts up to twelve attached terminals there — a stop returning 409 detached eleven sessions that had not failed. Also established that the line reports the most recent attempt, cleared by every action as it starts, so a stale failure never sits above a console that has recovered. |
+| 2026-08-14 | Recorded in §15 that a node's size is the geometry its runtime is told to draw at, so choosing the canvas resizes every attached session to roughly 47 columns and a dozen rows and each agent redraws at that width. Kept the behaviour — a terminal in a small frame is a small terminal, and declaring anything else wraps output against a width the frame does not have — but stated its two consequences: output already wrapped narrow stays wrapped, and a session detached mid-arrangement keeps its last geometry until something attaches to it and re-declares one. The mode toggle was previously described in the code as reaching nothing beyond the arrangement; it reaches the runtime of every session on the canvas, and may not be described as a browser-only control. |
+| 2026-08-14 | Added §16 The operator panel: a dialog opened from the profile menu as an account action, keeping the product one page, whose entry point is drawn only when the control plane reports that the caller holds an operator capability — presentation, never protection, since the API refuses on its own. Established that each of its four views is offered on its own capability, so a view is never drawn empty because of entitlement; a view switch marked up as a tablist (monospace `xs` uppercase labels; selected by `--accent` text plus a 2px `--accent` bottom border and `aria-selected`, never colour alone); and a record list — rows rather than the data table removed on 2026-08-13 — with a leading tabular-nums timestamp, `base` primary label, `xs` `--ink-3` monospace metadata, hairline separators, no zebra striping and no row-level click target, ordered newest first always and filterable by person and by action. Established that a person is named by display name then email and never by their subject identifier, which is shown in identifier style when nothing else is known, and that an unattributed action reads "Not signed in"; that a provider which could not be asked renders as unknown carrying its reason and never as one running nothing, with the running total withheld while any provider is unobservable; and that stop and terminate on another owner's session keep the §6 destructive pattern — terminate confirms inline, both are disabled with a stated reason rather than removed, and deleting somebody else's session is not offered at all. |

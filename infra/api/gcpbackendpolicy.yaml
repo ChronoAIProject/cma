@@ -1,0 +1,34 @@
+# How long the load balancer will wait on this service.
+#
+# Two things here outlast the default 30 seconds, and both fail in ways that
+# look like bugs elsewhere.
+#
+# Creating a session provisions a sandbox and attaches to its terminal. When
+# the balancer gave up first it closed the connection, the request future was
+# cancelled mid-flight, and the work already done was abandoned — leaving a
+# running sandbox nothing referenced and no session record, while the browser
+# showed a 504. Every layer reported success except the one that mattered.
+#
+# The terminal itself is a WebSocket held open for as long as someone is
+# working. This timeout bounds the whole connection, not just time-to-headers,
+# so a low value disconnects a healthy session on a fixed schedule. The proxy
+# in front of the app already allows an hour; that allowance is meaningless
+# while the balancer cuts the connection first.
+#
+# The value matches the neighbouring control plane rather than being chosen
+# independently, so the platform behaves consistently.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: chrono-bot-api
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: chrono-bot-api
+    app.kubernetes.io/part-of: chrono-bot
+spec:
+  targetRef:
+    group: ""
+    kind: Service
+    name: chrono-bot-api
+  default:
+    timeoutSec: 660

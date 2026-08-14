@@ -1,0 +1,65 @@
+//! Durable storage, wired to concrete backends.
+//!
+//! The core defines the ports; these are the implementations. Keeping them in
+//! the binary is what lets the core stay free of any particular database or
+//! object store.
+
+pub mod activity;
+pub mod context;
+pub mod directory;
+pub mod environment;
+pub mod mongo;
+pub mod token;
+
+use std::time::Duration;
+
+use layer2_core::store::StoreError;
+use mongodb::Client;
+
+pub use activity::MongoActivityStore;
+pub use context::ChronoStorageContextStore;
+pub use directory::MongoUserDirectoryStore;
+pub use environment::MongoEnvironmentProfileStore;
+pub use mongo::MongoSessionStore;
+
+/// Everything this deployment keeps in MongoDB.
+///
+/// Returned together because they are opened together: a control plane that
+/// started with one and not the others would serve part of its surface, and
+/// the failure would be discovered by a user rather than at startup.
+pub struct MongoStores {
+    /// Sessions and their event history.
+    pub sessions: MongoSessionStore,
+    /// Reusable environment profiles.
+    pub profiles: MongoEnvironmentProfileStore,
+    /// What the service has been asked to do.
+    pub activity: MongoActivityStore,
+    /// Who has used the service.
+    pub users: MongoUserDirectoryStore,
+}
+
+/// Open every MongoDB-backed store over one connection.
+///
+/// One client rather than one per store: they address the same database, and a
+/// second connection pool to it costs a control plane real connections for no
+/// gain. Several ports over one connection is the point — the core still sees
+/// independent stores and could have any of them replaced without the others.
+///
+/// `activity_retention` is how long a recorded action lives. It reaches the
+/// database as an index, so changing it changes what is already stored rather
+/// than only what is stored next.
+pub async fn connect(
+    uri: &str,
+    database: &str,
+    activity_retention: Duration,
+) -> Result<MongoStores, StoreError> {
+    let client = Client::with_uri_str(uri)
+        .await
+        .map_err(|e| StoreError::Unavailable(format!("connect: {e}")))?;
+    Ok(MongoStores {
+        sessions: MongoSessionStore::open(&client, database).await?,
+        profiles: MongoEnvironmentProfileStore::open(&client, database).await?,
+        activity: MongoActivityStore::open(&client, database, activity_retention).await?,
+        users: MongoUserDirectoryStore::open(&client, database).await?,
+    })
+}
