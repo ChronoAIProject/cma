@@ -23,6 +23,19 @@ pub struct Config {
     pub sandbox_api_key: String,
     /// Image each sandbox runs.
     pub sandbox_image: String,
+    /// CPU each sandbox reserves, in Kubernetes quantity form.
+    ///
+    /// Configuration rather than a constant because it decides how many
+    /// sessions a deployment can run at once: the namespace has a quota, and
+    /// this figure divides into it. Sizing that from a rebuild means a session
+    /// nobody can start until an image ships.
+    pub sandbox_cpu: String,
+    /// Memory each sandbox reserves, in Kubernetes quantity form.
+    ///
+    /// The tighter of the two in practice. The agent is what runs here, and
+    /// an allowance it cannot work within is not a smaller session but a
+    /// session that dies partway through somebody's work.
+    pub sandbox_memory: String,
     /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
     /// Arguments that make the agent resume rather than start fresh.
     pub runtime_resume_args: String,
@@ -99,6 +112,12 @@ impl Config {
             "http://opensandbox-server.opensandbox-system.svc.cluster.local",
         );
         let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
+        // What one session costs the namespace quota. Read as opaque strings
+        // and handed to the provider unchanged: these are Kubernetes
+        // quantities, and parsing them here would only add a way to be wrong
+        // about a syntax this service does not own.
+        let sandbox_cpu = var_or("CHRONO_SANDBOX_CPU", "1");
+        let sandbox_memory = var_or("CHRONO_SANDBOX_MEMORY", "1Gi");
         // How the agent is told to continue a conversation rather than start
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
@@ -189,6 +208,8 @@ impl Config {
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
+            sandbox_cpu,
+            sandbox_memory,
             runtime_resume_args,
             deployment_id,
             adopts_untagged_runtimes,
@@ -323,6 +344,8 @@ mod tests {
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
+            sandbox_cpu: "1".into(),
+            sandbox_memory: "1Gi".into(),
             baseline_packages: vec![],
             baseline_skills: vec![],
             runtime_resume_args: "resume".into(),

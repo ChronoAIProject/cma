@@ -118,8 +118,8 @@ impl Default for CodexSandboxSpec {
             image: "chrono-bot-runtime:dev".into(),
             entrypoint: vec!["/usr/local/bin/layer4-runtime".into()],
             resource_limits: BTreeMap::from([
-                ("cpu".to_string(), "2".to_string()),
-                ("memory".to_string(), "4Gi".to_string()),
+                ("cpu".to_string(), "1".to_string()),
+                ("memory".to_string(), "1Gi".to_string()),
             ]),
             timeout_seconds: None,
             upstream_base_url: String::new(),

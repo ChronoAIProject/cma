@@ -134,6 +134,19 @@ data:
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:646b61c"
+  # What one session reserves, and therefore how many run at once.
+  #
+  # The namespace carries a ResourceQuota, and these divide into it: at 2 CPU
+  # and 4Gi a quota of 20 CPU and 40Gi held nine sessions, and the tenth was
+  # refused by the admission controller while its owner watched it sit in
+  # "provisioning". At these figures the same quota holds twenty.
+  #
+  # Requests and limits are the same value at the provider, so this is a
+  # reservation rather than a ceiling to burst against. Raising it costs
+  # concurrency; lowering it below what the agent needs costs the session,
+  # which fails partway through somebody's work rather than refusing to start.
+  CHRONO_SANDBOX_CPU: "1"
+  CHRONO_SANDBOX_MEMORY: "1Gi"
   # The subcommand that makes the agent continue a named conversation, used
   # when a session is carried onto a newer runtime. The conversation's own
   # identifier is appended, so this must be a form that takes one.
