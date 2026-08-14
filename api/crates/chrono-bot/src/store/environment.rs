@@ -12,8 +12,8 @@ use futures_util::TryStreamExt;
 use layer2_core::{
     store::{EnvironmentProfileStore, StoreError},
     AgentConfiguration, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, SkillId, SoftwarePackage,
-    SubjectId,
+    EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, ServiceId, SkillId,
+    SoftwarePackage, SubjectId,
 };
 use mongodb::bson::doc;
 use mongodb::options::{IndexOptions, ReplaceOptions};
@@ -61,6 +61,13 @@ struct ProfileDoc {
     skills: Vec<String>,
     #[serde(default)]
     agent: Option<AgentDoc>,
+    /// Platform services a session from this profile may reach.
+    ///
+    /// Absent on every profile stored before selections existed, which reads
+    /// as "nothing chosen" — the deployment's floor still applies, so such a
+    /// profile behaves exactly as it did.
+    #[serde(default)]
+    services: Vec<String>,
     created_at: String,
     updated_at: String,
 }
@@ -106,6 +113,7 @@ fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
         // emptied so a document is migrated by being saved, rather than
         // carrying two copies that can disagree.
         skills: Vec::new(),
+        services: p.services.iter().map(|s| s.0.clone()).collect(),
         agent: Some(AgentDoc {
             kernel: p.agent.kernel.0.clone(),
             model: p.agent.model.clone(),
@@ -137,6 +145,7 @@ fn from_doc(d: ProfileDoc) -> EnvironmentProfile {
                 version: p.version,
             })
             .collect(),
+        services: d.services.into_iter().map(ServiceId::new).collect(),
         // A document written before the agent section has no agent and its
         // skills at the top level. It reads as the deployment's ordinary
         // behaviour, carrying the skills it was saved with.
@@ -250,6 +259,7 @@ mod tests {
 
     fn profile() -> EnvironmentProfile {
         EnvironmentProfile {
+            services: Vec::new(),
             id: EnvironmentProfileId("envp_1".into()),
             owner: SubjectId("subject-a".into()),
             name: "build tools".into(),

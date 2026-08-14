@@ -120,6 +120,32 @@ impl SoftwarePackage {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SkillId(pub String);
 
+/// A service on the identity platform, as that platform names it.
+///
+/// Opaque here, exactly like the credential itself: the core carries the
+/// selection from a profile to whatever mints a credential, and never asks
+/// what any of them mean. Only the provider knows.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ServiceId(pub String);
+
+impl ServiceId {
+    /// Wrap an identifier.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// The identifier as written.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ServiceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl SkillId {
     /// Wrap an identifier.
     pub fn new(value: impl Into<String>) -> Self {
@@ -199,6 +225,18 @@ pub struct EnvironmentProfileSpec {
     /// Software the session should carry.
     #[serde(default)]
     pub packages: Vec<SoftwarePackage>,
+    /// Which of the owner's platform services this session may reach.
+    ///
+    /// A session acts on its owner's behalf, and until now it did so with the
+    /// owner's whole identity — everything they can reach, whether or not the
+    /// work called for it. Naming services here is what narrows that to the
+    /// ones the work actually needs.
+    ///
+    /// What the deployment mandates is added whatever this says, because a
+    /// session that could not reach its own model or skill registry would not
+    /// be a narrower session but a broken one.
+    #[serde(default)]
+    pub services: Vec<ServiceId>,
 }
 
 impl EnvironmentProfileSpec {
@@ -219,6 +257,7 @@ impl EnvironmentProfileSpec {
         check_length("variables", self.variables.len())?;
         check_length("packages", self.packages.len())?;
         check_length("skills", self.agent.skills.len())?;
+        check_length("services", self.services.len())?;
 
         let mut seen: Vec<&str> = Vec::with_capacity(self.variables.len());
         for variable in &self.variables {
@@ -248,6 +287,13 @@ impl EnvironmentProfileSpec {
             if package.name.trim().is_empty() {
                 return Err(CoreError::InvalidRequest(
                     "a package name must not be empty".into(),
+                ));
+            }
+        }
+        for service in &self.services {
+            if service.0.trim().is_empty() {
+                return Err(CoreError::InvalidRequest(
+                    "a service identifier must not be empty".into(),
                 ));
             }
         }
@@ -287,6 +333,9 @@ pub struct EnvironmentProfile {
     pub variables: Vec<EnvironmentVariable>,
     /// Software the session carries.
     pub packages: Vec<SoftwarePackage>,
+    /// Platform services a session started with this profile may reach.
+    #[serde(default)]
+    pub services: Vec<ServiceId>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
     /// Last modification timestamp, RFC 3339 in UTC.
@@ -314,6 +363,7 @@ impl EnvironmentProfile {
             agent: self.agent.clone(),
             variables: self.variables.clone(),
             packages: self.packages.clone(),
+            services: self.services.clone(),
         }
     }
 }
@@ -328,6 +378,7 @@ impl EnvironmentProfile {
 pub struct Baseline {
     packages: Vec<SoftwarePackage>,
     skills: Vec<SkillId>,
+    services: Vec<ServiceId>,
 }
 
 impl Baseline {
@@ -335,11 +386,23 @@ impl Baseline {
     pub fn new(
         packages: impl IntoIterator<Item = SoftwarePackage>,
         skills: impl IntoIterator<Item = SkillId>,
+        services: impl IntoIterator<Item = ServiceId>,
     ) -> Self {
         Self {
             packages: packages.into_iter().collect(),
             skills: skills.into_iter().collect(),
+            services: services.into_iter().collect(),
         }
+    }
+
+    /// Services every session may reach, whatever its profile says.
+    ///
+    /// The floor rather than a default: one credential serves the agent's own
+    /// model calls and the platform CLI alike, so a profile that excluded the
+    /// model endpoint would leave the session unable to think rather than
+    /// merely narrower.
+    pub fn services(&self) -> &[ServiceId] {
+        &self.services
     }
 
     /// Software every session carries.
@@ -384,6 +447,17 @@ impl Baseline {
             }
         }
         spec.agent.skills.extend(chosen_skills);
+
+        // Same rule for services, and for a sharper reason: one credential
+        // serves every call a session makes, so a mandatory service left out
+        // is not a narrower session but one that cannot reach its own model.
+        let chosen_services = std::mem::take(&mut spec.services);
+        for mandatory in &self.services {
+            if !chosen_services.contains(mandatory) {
+                spec.services.push(mandatory.clone());
+            }
+        }
+        spec.services.extend(chosen_services);
     }
 }
 

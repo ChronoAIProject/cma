@@ -19,7 +19,7 @@ use axum::{
 pub mod profile;
 
 use layer1_public::AuthenticatedSubject;
-use layer2_core::{Authorization, SubjectId};
+use layer2_core::{Authorization, SessionId, SubjectId};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
@@ -128,6 +128,29 @@ pub struct AuthState {
     /// Display details captured at sign-in, so the interface can show a person
     /// rather than an identifier.
     pub profiles: RwLock<HashMap<SubjectId, profile::Profile>>,
+    /// Mints and reclaims the credential each session presents.
+    ///
+    /// Optional: without it a session falls back to its owner's own token, and
+    /// reaches everything they reach. That is how this service behaved before
+    /// credentials were scoped, and it is what a deployment that has not
+    /// configured a platform root still gets.
+    issuer: RwLock<Option<Arc<keys::KeyIssuer>>>,
+    /// The credential minted for each live session.
+    ///
+    /// Held so a session keeps presenting one value rather than minting a
+    /// fresh one on every ask, and so the old one can be reclaimed once its
+    /// replacement is in place. The owner is kept alongside because reclaiming
+    /// a key needs their token, and by then the session may be gone.
+    issued: RwLock<HashMap<SessionId, Issued>>,
+    /// Credentials replaced but not yet taken back.
+    ///
+    /// A replacement is not safe to revoke the moment it is minted: the
+    /// session is still presenting the old one until the new value has
+    /// reached it. Holding them here for a sweep is what removes the window
+    /// entirely — by the next pass the push has long since happened, and a
+    /// credential that outlives its session by a minute is not a risk while
+    /// one that dies mid-turn is a failed request somebody is waiting on.
+    superseded: RwLock<Vec<(String, SubjectId)>>,
     /// What the provider has said about bearer tokens, briefly.
     ///
     /// Separate from `sessions` because the two are different credentials with
@@ -146,6 +169,19 @@ pub struct AuthState {
     /// so there is genuinely nothing to record rather than somewhere missing
     /// to record it.
     records: Option<records::SignInRecords>,
+}
+
+/// A credential this service minted for one session.
+#[derive(Clone)]
+pub struct Issued {
+    /// The platform's identifier, used to take it back.
+    pub id: String,
+    /// The value the session presents. Never logged.
+    pub value: String,
+    /// Whose account it was minted on.
+    pub owner: SubjectId,
+    /// When it was minted, which is what says when to replace it.
+    pub minted_at: std::time::Instant,
 }
 
 /// Derive the PKCE challenge for a verifier, per S256.
@@ -167,6 +203,9 @@ impl AuthState {
                 .build()
                 .expect("http client builds"),
             metadata: RwLock::new(None),
+            issuer: RwLock::new(None),
+            issued: RwLock::new(HashMap::new()),
+            superseded: RwLock::new(Vec::new()),
             sessions: RwLock::new(HashMap::new()),
             tokens: RwLock::new(HashMap::new()),
             authorizations: RwLock::new(HashMap::new()),
@@ -348,6 +387,118 @@ impl AuthState {
         Ok(meta)
     }
 
+    /// Give this service the means to mint per-session credentials.
+    ///
+    /// Set after construction because the platform root is configuration and
+    /// this state is built before it is read. Absent leaves every session on
+    /// its owner's own token, which is the behaviour that predates scoping.
+    pub async fn use_issuer(&self, issuer: Arc<keys::KeyIssuer>) {
+        *self.issuer.write().await = Some(issuer);
+    }
+
+    /// Sessions whose credential has been held longer than `lifetime`.
+    ///
+    /// Age rather than a stated expiry, because the platform does not return
+    /// one when it mints. Replacing well inside the day these last means a
+    /// shortened lifetime upstream would have to halve before a session ever
+    /// presented a dead credential.
+    pub async fn sessions_due_for_reissue(
+        &self,
+        lifetime: std::time::Duration,
+    ) -> Vec<(SessionId, SubjectId)> {
+        let now = std::time::Instant::now();
+        self.issued
+            .read()
+            .await
+            .iter()
+            .filter(|(_, h)| now.duration_since(h.minted_at) >= lifetime)
+            .map(|(s, h)| (s.clone(), h.owner.clone()))
+            .collect()
+    }
+
+    /// Mint a session a fresh credential, holding the old one for a sweep.
+    ///
+    /// Returns the new value for the caller to push. The one being replaced
+    /// stays valid until [`Self::take_back_superseded`] runs, so the session
+    /// never holds a credential the provider has stopped accepting.
+    pub async fn reissue(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[layer2_core::ServiceId],
+    ) -> Option<String> {
+        let issuer = { self.issuer.read().await.clone() }?;
+        let owner_token = self.access_token(subject).await?;
+        let minted = issuer
+            .mint(session, subject, &owner_token, services)
+            .await?;
+
+        let previous = self.issued.write().await.insert(
+            session.clone(),
+            Issued {
+                id: minted.id,
+                value: minted.full_key.clone(),
+                owner: subject.clone(),
+                minted_at: std::time::Instant::now(),
+            },
+        );
+        if let Some(old) = previous {
+            self.superseded.write().await.push((old.id, old.owner));
+        }
+        Some(minted.full_key)
+    }
+
+    /// Take back credentials replaced on an earlier pass.
+    pub async fn take_back_superseded(&self) -> usize {
+        let pending: Vec<(String, SubjectId)> = std::mem::take(&mut *self.superseded.write().await);
+        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
+            return 0;
+        };
+        let mut taken = 0;
+        for (id, owner) in pending {
+            if let Some(token) = self.access_token(&owner).await {
+                issuer.revoke(&id, &token).await;
+                taken += 1;
+            }
+        }
+        taken
+    }
+
+    /// Take back credentials this deployment minted for sessions that are gone.
+    ///
+    /// Read from the platform rather than from memory, because the ones worth
+    /// finding are exactly those this process has forgotten. Only keys whose
+    /// name says this deployment minted them are touched — the account is
+    /// shared with other products and other control planes.
+    pub async fn reclaim_orphaned_credentials(
+        &self,
+        service: &Arc<layer2_core::SessionService>,
+    ) -> usize {
+        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
+            return 0;
+        };
+        let owners: Vec<SubjectId> = { self.tokens.read().await.keys().cloned().collect() };
+        let mut reclaimed = 0;
+        for owner in owners {
+            let Some(token) = self.access_token(&owner).await else {
+                continue;
+            };
+            for (id, session) in issuer.minted_here(&token).await {
+                if service.session_is_live(&session).await {
+                    continue;
+                }
+                // Held for a session this process is still tracking? Then it is
+                // being replaced, not orphaned, and the sweep owns it.
+                if self.issued.read().await.contains_key(&session) {
+                    continue;
+                }
+                issuer.revoke(&id, &token).await;
+                reclaimed += 1;
+            }
+        }
+        reclaimed
+    }
+
     /// Store the tokens issued for a subject.
     pub async fn store_tokens(&self, subject: &SubjectId, tokens: SubjectTokens) {
         self.tokens.write().await.insert(subject.clone(), tokens);
@@ -396,8 +547,57 @@ impl AuthState {
 /// request that happened to create the session.
 #[async_trait::async_trait]
 impl layer2_core::CredentialSource for AuthState {
-    async fn credential_for(&self, subject: &SubjectId) -> Option<String> {
-        self.access_token(subject).await
+    async fn credential_for(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[layer2_core::ServiceId],
+    ) -> Option<String> {
+        let issuer = { self.issuer.read().await.clone() };
+        let Some(issuer) = issuer else {
+            // No platform configured. The session gets its owner's own token,
+            // which is what it got before any of this existed.
+            return self.access_token(subject).await;
+        };
+
+        // One value per session. Asking again — for a replaced runtime, or
+        // because a restart lost the entry — must not leave two credentials
+        // alive for one session.
+        if let Some(held) = self.issued.read().await.get(session) {
+            return Some(held.value.clone());
+        }
+
+        let owner_token = self.access_token(subject).await?;
+        let minted = issuer
+            .mint(session, subject, &owner_token, services)
+            .await?;
+        self.issued.write().await.insert(
+            session.clone(),
+            Issued {
+                id: minted.id,
+                value: minted.full_key.clone(),
+                owner: subject.clone(),
+                minted_at: std::time::Instant::now(),
+            },
+        );
+        Some(minted.full_key)
+    }
+
+    async fn release(&self, session: &SessionId) {
+        let Some(held) = self.issued.write().await.remove(session) else {
+            return;
+        };
+        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
+            return;
+        };
+        let Some(owner_token) = self.access_token(&held.owner).await else {
+            // Reclaiming needs the owner's own token, which this process may
+            // not hold. The key expires on its own, so this costs a row in a
+            // list rather than a credential left open.
+            tracing::debug!(session_id = %session, "no owner token to reclaim this session's credential with");
+            return;
+        };
+        issuer.revoke(&held.id, &owner_token).await;
     }
 }
 
@@ -454,6 +654,7 @@ pub mod bearer;
 pub mod capabilities;
 pub mod entitlements;
 pub mod flow;
+pub mod keys;
 pub mod records;
 pub mod refresh;
 mod token;
