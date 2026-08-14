@@ -33,6 +33,7 @@ export interface EnvironmentProfile {
   readonly id: string;
   readonly name: string;
   readonly agent: AgentConfiguration;
+  readonly nyxid: NyxIdAccess;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
   readonly mandatory: MandatoryEntries;
@@ -58,6 +59,31 @@ export interface AgentConfiguration {
 }
 
 /**
+ * Which of the owner's platform services a session may reach.
+ *
+ * A session is given a credential minted for it alone, limited to what is
+ * named here. Selecting nothing is not a bare session: what the deployment
+ * mandates is added whatever this says, because one credential serves the
+ * agent's own model calls as well as everything else.
+ */
+export interface NyxIdAccess {
+  readonly services: readonly string[];
+}
+
+/** A service the owner may allow, as the picker lists it. */
+export interface PlatformService {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+}
+
+/** The picker's answer: what may be chosen, and what cannot be unchosen. */
+export interface ServiceCatalogue {
+  readonly services: readonly PlatformService[];
+  readonly mandatory: readonly string[];
+}
+
+/**
  * What a profile is when nobody has said otherwise.
  *
  * Mirrors what the deployment answers for a session that names no profile, so
@@ -77,6 +103,7 @@ export const DEFAULT_AGENT: AgentConfiguration = {
 export interface ProfileDraft {
   readonly name: string;
   readonly agent: AgentConfiguration;
+  readonly nyxid: NyxIdAccess;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
 }
@@ -124,6 +151,8 @@ export interface EnvironmentProfileStore {
   remove(id: string): Promise<void>;
   /** Skills this user may select, and what the platform mandates. */
   catalogue(): Promise<SkillCatalogue>;
+  /** Services this user may allow a session to reach, and which are fixed. */
+  services(): Promise<ServiceCatalogue>;
 }
 
 /**
@@ -134,7 +163,13 @@ export interface EnvironmentProfileStore {
  * without touching anything behaves the way this deployment already does.
  */
 export function emptyDraft(): ProfileDraft {
-  return { name: '', variables: [], packages: [], agent: { ...DEFAULT_AGENT } };
+  return {
+    name: '',
+    variables: [],
+    packages: [],
+    agent: { ...DEFAULT_AGENT },
+    nyxid: { services: [] },
+  };
 }
 
 /** The draft that would replace an existing profile unchanged. */
@@ -144,6 +179,7 @@ export function draftOf(profile: EnvironmentProfile): ProfileDraft {
     variables: [...profile.variables],
     packages: [...profile.packages],
     agent: { ...profile.agent, skills: [...profile.agent.skills] },
+    nyxid: { services: [...profile.nyxid.services] },
   };
 }
 

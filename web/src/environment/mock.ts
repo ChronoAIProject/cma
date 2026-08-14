@@ -28,6 +28,17 @@ import type {
 const MANDATORY_PACKAGES = ['nyxid'] as const;
 const MANDATORY_SKILLS = ['nyxid', 'ornn-agent-manual-cli'] as const;
 
+/// Services every session reaches whatever a profile says.
+const MANDATORY_SERVICES = ['chrono-llm', 'ornn-api'] as const;
+
+/// What the picker offers, standing in for the owner's own account.
+const SERVICES = [
+  { id: 'chrono-llm', name: 'chrono-llm', description: 'The model endpoint' },
+  { id: 'ornn-api', name: 'ornn-api', description: 'The skill registry' },
+  { id: 'chrono-storage-service', name: 'chrono-storage-service', description: 'Object storage' },
+  { id: 'api-github', name: 'api-github', description: 'GitHub' },
+] as const;
+
 const MANDATORY: MandatoryEntries = {
   packages: [...MANDATORY_PACKAGES],
   skills: [...MANDATORY_SKILLS],
@@ -93,6 +104,7 @@ function materialise(id: string, draft: ProfileDraft, createdAt: string): Enviro
     variables: [...draft.variables],
     packages,
     agent: { ...draft.agent, skills },
+    nyxid: { services: [...draft.nyxid.services] },
     mandatory: MANDATORY,
     createdAt,
     updatedAt: new Date().toISOString(),
@@ -153,6 +165,11 @@ export function createMockProfileStore(options: MockProfileOptions = {}): Enviro
         throw new Error('That profile no longer exists.');
       }
       stored.splice(index, 1);
+    },
+
+    async services() {
+      guard();
+      return { services: SERVICES, mandatory: MANDATORY_SERVICES };
     },
 
     async catalogue() {

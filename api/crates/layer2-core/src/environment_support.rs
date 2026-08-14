@@ -142,7 +142,7 @@ pub(crate) fn baseline() -> Baseline {
 
 /// A profile service over the given store, with the standard baseline.
 pub(crate) fn environments(store: Arc<FakeProfileStore>) -> Arc<EnvironmentProfileService> {
-    EnvironmentProfileService::new(store, baseline(), None, fake_agent())
+    EnvironmentProfileService::new(store, baseline(), None, None, fake_agent())
 }
 
 /// A profile service wired to a catalogue.
@@ -151,6 +151,7 @@ pub(crate) fn catalog_service(catalog: Arc<FakeSkillCatalog>) -> Arc<Environment
         Arc::new(FakeProfileStore::default()),
         baseline(),
         Some(catalog),
+        None,
         crate::environment::AgentConfiguration {
             // The kernel the fake adapter is registered under. The default is
             // the one this deployment ships, and a fixture that left it there

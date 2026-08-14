@@ -32,6 +32,7 @@ describe('reading a profile off the wire', () => {
       variables: [{ key: 'BUILD_MODE', value: 'release' }],
       packages: [{ name: 'ripgrep', version: '14' }],
       agent: { ...DEFAULT_AGENT, skills: ['nyxid'] },
+      nyxid: { services: [] },
       mandatory: { packages: ['nyxid'], skills: ['ornn-agent-manual-cli'] },
       created_at: '2026-08-14T00:00:00Z',
       updated_at: '2026-08-14T01:00:00Z',
@@ -99,6 +100,7 @@ describe('talking to the control plane', () => {
         variables: [],
         packages: [],
         agent: DEFAULT_AGENT,
+        nyxid: { services: [] },
       }),
     ).rejects.toThrow(/not a usable name/);
   });
@@ -117,6 +119,7 @@ describe('talking to the control plane', () => {
       variables: [],
       packages: [],
       agent: { ...DEFAULT_AGENT, skills: [] },
+      nyxid: { services: [] },
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
