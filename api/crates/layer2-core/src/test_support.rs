@@ -354,6 +354,7 @@ pub(crate) fn no_environments() -> Arc<EnvironmentProfileService> {
         Arc::new(FakeProfileStore::default()),
         baseline(),
         None,
+        None,
         crate::environment::AgentConfiguration {
             // The kernel the fake adapter is registered under. The default is
             // the one this deployment ships, and a fixture that left it there
@@ -374,6 +375,7 @@ pub(crate) fn environments_defaulting_to(
     EnvironmentProfileService::new(
         Arc::new(FakeProfileStore::default()),
         baseline(),
+        None,
         None,
         agent,
     )

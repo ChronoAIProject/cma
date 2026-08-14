@@ -279,6 +279,7 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
     Router::new()
         .route("/api/v1/environment-profiles", get(list).post(create))
         .route("/api/v1/environment-profiles/skills", get(skills))
+        .route("/api/v1/environment-profiles/services", get(services))
         .route(
             "/api/v1/environment-profiles/{id}",
             get(read).put(replace).delete(remove),
@@ -341,6 +342,56 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The services a caller may allow a session to reach.
+///
+/// Answered as the caller: which services exist is a fact about their account,
+/// and this service's own identity would answer with a different one. The
+/// mandatory entries travel alongside so a client can draw them as fixed
+/// rather than inferring which of them cannot be unticked.
+async fn services(
+    State(service): State<Arc<EnvironmentProfileService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
+) -> Result<Json<ServiceCatalogView>, Problem> {
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    let services = service
+        .available_services(&caller, credential.as_deref())
+        .await?;
+    Ok(Json(ServiceCatalogView {
+        services: services
+            .into_iter()
+            .map(|s| ServiceView {
+                id: s.id.0,
+                name: s.name,
+                description: s.description,
+            })
+            .collect(),
+        mandatory: service
+            .baseline()
+            .services()
+            .iter()
+            .map(|s| s.0.clone())
+            .collect(),
+    }))
+}
+
+/// A service as the picker renders it.
+#[derive(Debug, Serialize)]
+pub struct ServiceView {
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+/// The picker's answer.
+#[derive(Debug, Serialize)]
+pub struct ServiceCatalogView {
+    services: Vec<ServiceView>,
+    /// Which of them every session reaches whatever the profile says.
+    mandatory: Vec<String>,
+}
+
 async fn skills(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -397,6 +448,7 @@ mod tests {
                 [SkillId::new("mandatory-one")],
                 [],
             ),
+            None,
             None,
             Default::default(),
         )

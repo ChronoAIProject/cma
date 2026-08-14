@@ -222,6 +222,23 @@ async fn main() {
     // The registry a caller picks skills from. It shares this service's machine
     // identity, and prefers the caller's own credential per request so the
     // answer is what they can see rather than only what is public.
+    // Built here rather than after the service, because both the picker that
+    // shows what may be chosen and the mint that turns a choice into reach ask
+    // the same platform the same question.
+    let issuer = (!config.platform_base_url.trim().is_empty()).then(|| {
+        Arc::new(auth::keys::KeyIssuer::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("http client builds"),
+            config.platform_base_url.clone(),
+            config.deployment_id.clone(),
+        ))
+    });
+    let service_picker = issuer.clone().map(|i| {
+        Arc::new(auth::keys::ServicePicker::new(i)) as Arc<dyn layer2_core::ServiceCatalog>
+    });
+
     let catalog = crate::skills::from_config(&config.platform_base_url, identity_for_catalog);
     if catalog.is_none() {
         tracing::warn!(
@@ -236,6 +253,7 @@ async fn main() {
         profile_store,
         baseline,
         catalog,
+        service_picker,
         config.default_agent.clone(),
     );
     let service = SessionService::new(
@@ -267,17 +285,8 @@ async fn main() {
     // Per-session credentials are minted on the platform, so this only exists
     // where a platform root is configured. Without one every session falls
     // back to its owner's own token, which is what happened before scoping.
-    if !config.platform_base_url.trim().is_empty() {
-        auth_state
-            .use_issuer(Arc::new(auth::keys::KeyIssuer::new(
-                reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(15))
-                    .build()
-                    .expect("http client builds"),
-                config.platform_base_url.clone(),
-                config.deployment_id.clone(),
-            )))
-            .await;
+    if let Some(issuer) = issuer {
+        auth_state.use_issuer(issuer).await;
         tracing::info!(
             deployment = %config.deployment_id,
             services = ?config.baseline_services,

@@ -114,6 +114,54 @@ describe('EnvironmentProfiles', () => {
     expect(screen.getByLabelText(/model access/i)).toHaveValue('delegated');
   });
 
+  it('lets a profile widen what a session may reach', async () => {
+    const user = userEvent.setup();
+    const { store } = open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'with storage');
+    await user.click(await screen.findByRole('checkbox', { name: /chrono-storage-service/i }));
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(async () => {
+      expect(await store.list()).toHaveLength(1);
+    });
+    const [saved] = await store.list();
+    expect(saved?.nyxid.services).toContain('chrono-storage-service');
+  });
+
+  it('will not let the session lose the services it cannot work without', async () => {
+    // One credential serves the agent's own model calls as well as everything
+    // else, so unticking the model endpoint would not narrow the session — it
+    // would stop it thinking. Shown, and fixed.
+    const user = userEvent.setup();
+    open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+
+    const required = await screen.findByRole('checkbox', { name: /chrono-llm/i });
+    expect(required).toBeChecked();
+    expect(required).toBeDisabled();
+    expect(await screen.findByRole('checkbox', { name: /ornn-api/i })).toBeDisabled();
+  });
+
+  it('saves a profile even when the services cannot be listed', async () => {
+    // The list is a convenience. Losing it must cost the choice, not the form:
+    // a session still reaches what the deployment mandates.
+    const user = userEvent.setup();
+    const store = createMockProfileStore();
+    store.services = () => Promise.reject(new Error('platform is down'));
+    open(store);
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'still saves');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(async () => {
+      expect(await store.list()).toHaveLength(1);
+    });
+  });
+
   it('masks a variable value until the user reveals it', async () => {
     const user = userEvent.setup();
     open();

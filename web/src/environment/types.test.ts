@@ -9,6 +9,7 @@ const PROFILE: EnvironmentProfile = {
   variables: [{ key: 'BUILD_MODE', value: 'release' }],
   packages: [{ name: 'nyxid' }, { name: 'ripgrep', version: '14' }],
   agent: { ...DEFAULT_AGENT, skills: ['nyxid', 'chosen'] },
+  nyxid: { services: [] },
   mandatory: { packages: ['nyxid'], skills: ['nyxid'] },
   createdAt: '2026-08-12T00:00:00Z',
   updatedAt: '2026-08-13T00:00:00Z',
