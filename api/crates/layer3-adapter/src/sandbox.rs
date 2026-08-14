@@ -128,16 +128,16 @@ pub struct SandboxClient {
     http: reqwest::Client,
 }
 
-/// Give a provider endpoint a scheme and no trailing slash.
+/// Strip any scheme and trailing slash from a provider endpoint.
 ///
 /// The provider returns a host and path on its own, which is not a URL until
-/// something puts a scheme on it.
-fn normalise(endpoint: &str) -> String {
-    let bare = endpoint
+/// something puts a scheme on it. Which scheme that is belongs to the caller,
+/// because only the caller knows how the provider was reached.
+fn bare_endpoint(endpoint: &str) -> &str {
+    endpoint
         .trim_start_matches("https://")
         .trim_start_matches("http://")
-        .trim_end_matches('/');
-    format!("https://{bare}")
+        .trim_end_matches('/')
 }
 
 impl SandboxClient {
@@ -161,6 +161,23 @@ impl SandboxClient {
         &self.base_url
     }
 
+    /// Turn a provider endpoint and a path into a URL on a sandbox's listener.
+    ///
+    /// The scheme is taken from the base URL the provider was reached on, the
+    /// same way the terminal URL takes it. Hardcoding one instead makes the
+    /// deployment's own configuration a lie: a provider addressed in-cluster
+    /// over plain HTTP is not reachable over TLS, and every call to a sandbox
+    /// — capturing a conversation to rotate it, most of all — fails with the
+    /// provider reported unreachable when it was reachable all along.
+    fn sandbox_url(&self, endpoint: &str, path: &str) -> String {
+        let scheme = if self.base_url.starts_with("https://") {
+            "https"
+        } else {
+            "http"
+        };
+        format!("{scheme}://{}{path}", bare_endpoint(endpoint))
+    }
+
     /// Read from a path on a sandbox's own listener.
     ///
     /// The supervisor inside a sandbox is reached through the provider's
@@ -175,7 +192,7 @@ impl SandboxClient {
         endpoint: &str,
         path: &str,
     ) -> Result<Option<Vec<u8>>, SandboxError> {
-        let url = format!("{}{path}", normalise(endpoint));
+        let url = self.sandbox_url(endpoint, path);
         let resp = self
             .http
             .get(&url)
@@ -206,7 +223,7 @@ impl SandboxClient {
         path: &str,
         body: Vec<u8>,
     ) -> Result<(), SandboxError> {
-        let url = format!("{}{path}", normalise(endpoint));
+        let url = self.sandbox_url(endpoint, path);
         let resp = self
             .http
             .post(&url)
@@ -360,6 +377,37 @@ mod tests {
     fn base_url_loses_its_trailing_slash() {
         let c = SandboxClient::new("http://provider/", "k");
         assert_eq!(c.base_url(), "http://provider");
+    }
+
+    #[test]
+    fn a_sandbox_is_called_on_the_scheme_the_provider_was_reached_on() {
+        // The provider runs in-cluster on plain HTTP. Forcing TLS here made
+        // every sandbox call fail as "provider unreachable", which stopped
+        // rotation from ever capturing a conversation.
+        let c = SandboxClient::new("http://provider.svc.cluster.local", "k");
+        assert_eq!(
+            c.sandbox_url(
+                "provider.svc.cluster.local/proxy/9090",
+                "/runtime/conversation"
+            ),
+            "http://provider.svc.cluster.local/proxy/9090/runtime/conversation"
+        );
+
+        let c = SandboxClient::new("https://provider.example.com", "k");
+        assert_eq!(
+            c.sandbox_url("provider.example.com/proxy/9090", "/runtime/conversation"),
+            "https://provider.example.com/proxy/9090/runtime/conversation"
+        );
+    }
+
+    #[test]
+    fn an_endpoint_keeps_its_own_scheme_out_of_the_url() {
+        // The provider may hand back the endpoint with a scheme already on it,
+        // and it is not authoritative about how we reach it.
+        let c = SandboxClient::new("http://provider", "k");
+        for endpoint in ["https://host/proxy", "http://host/proxy", "host/proxy/"] {
+            assert_eq!(c.sandbox_url(endpoint, "/p"), "http://host/proxy/p");
+        }
     }
 
     #[test]
