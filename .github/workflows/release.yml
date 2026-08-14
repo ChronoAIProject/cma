@@ -2,9 +2,20 @@ name: Release gate
 
 # Additional gates that apply only to a pull request from develop into main.
 # Everything in ci.yml also runs; this workflow adds the release requirements.
+#
+# The version is not decided here. This gate requires only that the pull
+# request declare how far it moves the version and what to say about it;
+# publish.yml computes the number and writes the tag once the merge has
+# happened. Tagging beforehand put a version on a commit nobody had accepted
+# yet, and left the tag and the images carrying its number made by two
+# different hands, with nothing tying them together.
 
 on:
   pull_request:
+    # A pull request that gains or loses a release label, or has its body
+    # rewritten, gets a different answer from this gate, so those events have
+    # to re-run it. The default set would not.
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled]
     branches: [main]
 
 permissions:
@@ -16,37 +27,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: main accepts pull requests only from develop
+        # Bound to the environment rather than interpolated. A branch name is
+        # chosen by whoever opens the pull request, and ${{ }} would splice it
+        # into the shell source before bash ever sees it.
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          if [ "${{ github.head_ref }}" != "develop" ]; then
-            echo "::error::main only accepts pull requests from develop (got '${{ github.head_ref }}')"
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "::error::main only accepts pull requests from develop (got '$HEAD_REF')"
             exit 1
           fi
 
-  release-notes:
-    name: Release tag and notes
+  release-declaration:
+    name: Release declaration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: A release tag exists on the head commit
+      - name: Exactly one release label declares the bump
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
-          sha=$(git rev-parse HEAD^2 2>/dev/null || git rev-parse HEAD)
-          tag=$(git tag --points-at "$sha" | head -1)
-          if [ -z "$tag" ]; then
-            echo "::error::no release tag points at the head commit of this pull request"
+          set -euo pipefail
+          declared=$(printf '%s' "$LABELS" | jq -r '.[] | select(startswith("release:"))')
+          count=$(printf '%s' "$declared" | grep -c . || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::label this pull request with exactly one of release:major, release:minor, release:patch — the merge derives the version from it (found ${count}: ${declared:-none})"
             exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_ENV"
-      - name: Tag message carries the three required sections
-        run: |
-          body=$(git tag -l --format='%(contents)' "$tag")
-          fail=0
-          for section in "What's new" "What's fixed" "What's changed"; do
-            printf '%s' "$body" | grep -qiF "$section" || {
-              echo "::error::release notes missing section: $section"; fail=1; }
-          done
-          exit $fail
+          case "$declared" in
+            release:major|release:minor|release:patch) ;;
+            *) echo "::error::unknown bump level '$declared'"; exit 1 ;;
+          esac
+      - name: Body carries the release notes
+        # Bound to the environment rather than interpolated into the script.
+        # A pull request body is text anyone with write access can compose, and
+        # ${{ }} splices it into the shell source before bash ever sees it.
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        # Discarded here — this gate only has to establish that the section
+        # exists and is complete. publish.yml runs the same script on the same
+        # body after the merge and keeps what it returns.
+        run: printf '%s' "$BODY" | .github/release-notes.sh > /dev/null
 
   no-coauthors:
     name: Commit hygiene
