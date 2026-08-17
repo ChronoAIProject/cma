@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::authz::{Authorization, Caller};
 use crate::error::CoreError;
+use crate::event::{Event, EventKind, StoredEvent, StoredEventKind};
 use crate::ids::SubjectId;
 use crate::session::SessionStatus;
 use crate::store::SessionStore;
@@ -78,6 +79,48 @@ async fn history_written_before_a_restart_is_readable_after_it() {
     sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(seqs, sorted, "sequences must be monotonic and unique");
+}
+
+#[tokio::test]
+async fn a_future_event_kind_does_not_end_history_readback() {
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc
+        .create_session(&caller, spec())
+        .await
+        .expect("session is created");
+
+    *store.events.lock().await = vec![
+        StoredEvent::from(Event {
+            session_id: created.id.clone(),
+            seq: 1,
+            kind: EventKind::SessionCreated,
+        }),
+        StoredEvent {
+            session_id: created.id.clone(),
+            seq: 2,
+            kind: StoredEventKind::Unknown {
+                tag: "future_event".into(),
+                payload: serde_json::json!({ "meaning": 42 }),
+            },
+        },
+        StoredEvent::from(Event {
+            session_id: created.id.clone(),
+            seq: 3,
+            kind: EventKind::TurnStarted,
+        }),
+    ];
+
+    let projected = svc
+        .events_since(&caller, &created.id, None)
+        .await
+        .expect("an unknown kind is survivable");
+    assert_eq!(
+        projected.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        vec![1, 3],
+        "the unknown event leaves its durable sequence gap visible"
+    );
 }
 
 #[tokio::test]
