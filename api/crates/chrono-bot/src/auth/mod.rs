@@ -435,8 +435,10 @@ pub mod capabilities;
 pub mod entitlements;
 pub mod flow;
 pub mod keys;
+mod permissions;
 pub mod records;
 pub mod refresh;
+mod session_routes;
 mod token;
 
 pub use records::SignInRecords;
