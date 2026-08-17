@@ -56,10 +56,15 @@ button {
   cursor: pointer;
 }
 
-/* Web_Style.md section 7: never remove outlines. */
+/*
+ * Web_Style.md §8: every interactive element has a visible focus state, and it
+ * is --focus-ring — a page-coloured halo and an accent ring, stacked over
+ * whatever impression the state carries. Components that hold their own
+ * impression restate it beside the ring; this is the floor for everything else.
+ */
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /*
@@ -116,11 +121,11 @@ button {
 }
 
 /*
- * The page frame, per docs/Web_Style.md §12.
+ * The page frame, per docs/Web_Style.md §5 and §6.
  *
- * Applied to states that are prose and controls. The console manages its own
- * columns and insets its bar directly, because terminal output must reach the
- * edge of its column.
+ * The 10% page inset is gone: it cost the terminal roughly 290px on a 1440px
+ * window and made the bar look detached from a page it was already aligned to.
+ * Page content runs to a 20px gutter, and alignment comes from the band grid.
  */
 .app-shell {
   display: flex;
@@ -130,7 +135,7 @@ button {
 }
 
 .app-shell > :not(.topbar) {
-  padding-inline: var(--page-inset);
+  padding-inline: var(--page-gutter);
   flex: 1 1 auto;
   min-height: 0;
 }

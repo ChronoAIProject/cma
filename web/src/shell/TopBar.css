@@ -10,7 +10,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-2) var(--page-inset);
+  padding: var(--space-2) var(--page-gutter);
   border-bottom: 1px solid var(--rule);
   background: var(--ground);
   /* The bar is chrome; it never scrolls away or competes for height. */
@@ -33,7 +33,7 @@
 
 .topbar__name {
   font-size: var(--text-base);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-label);
 }
 
 .topbar__actions {
