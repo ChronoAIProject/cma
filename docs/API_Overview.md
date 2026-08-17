@@ -29,6 +29,7 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 | `resize_terminal` | Inform the runtime its terminal geometry changed |
 | `screen_snapshot` | Fetch the current rendered terminal screen |
 | `get_usage` | Read token, time, and cost accounting for a session |
+| `change_plane` | Move a session onto the other plane, as a rotation |
 
 **The core is the union of what every interface and every kernel needs, never the intersection.** `resize_terminal` exists in exactly one interface and still belongs in the core.
 
@@ -45,12 +46,17 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 | `resize_terminal` | — | ● | ● | — | — |
 | `screen_snapshot` | — | ● | ● | — | — |
 | `get_usage` | ● | ● | — | — | ● |
+| `change_plane` | ○ observed | ● | ○ observed | — | — |
+
+● served · ○ observed but not initiated · — absent
+
+**`change_plane` is administration, not conversation.** AG-UI and PTY are told when it happens — a state delta carrying both planes and the snapshot moment, and a typed close frame naming where the session went — and neither offers a way to ask for it. That is a declared subset under rule 3, not an omission: a protocol whose vocabulary is runs and messages has no honest shape for "stop being a terminal", and a terminal that could talk itself out of existence would be a control with nothing left to draw its answer on. REST serves it, as the superset facade serves everything.
 
 **REST is the superset facade.** It has no structural constraint and serves every operation, so it is the reference realisation of the core. Every other interface is a projection of the same model, not of REST.
 
 A dot above means the interface projects the operation. Whether a *particular session* can be asked for it is a second question, answered by that session's capabilities: `steer`, `interrupt` and `get_usage` depend on what the kernel behind it actually offers, and `resize_terminal` and `screen_snapshot` on whether it has a terminal at all. An operation the session cannot honour is refused by name — never with a 404, and never accepted and dropped.
 
-Capabilities are one half of what a session is; **reach** is the other. Capabilities say what a session can *do*; its reach says what it can *touch* — the services its credential may call on its owner's behalf. Both are decided when the session is created and recorded on it, so neither follows a later edit to the profile it was started from, and REST projects both on the session object (`docs/API_REST.md`, `docs/Services.md`).
+Capabilities are one half of what a session is; **reach** is the other. Capabilities say what a session can *do*; its reach says what it can *touch* — the services its credential may call on its owner's behalf. Both are decided when the session is created and recorded on it, so neither follows a later edit to the profile it was started from — and the granted set moves only when the owner moves the session between planes, which is a rotation and is written to the session's log, and REST projects both on the session object (`docs/API_REST.md`, `docs/Services.md`).
 
 `send_input` is one operation with two projections, decided by the session rather than by the caller: keystrokes to a terminal, a prompt turn to a conversation. On the terminal plane it is also how that kernel's own on-screen approvals are answered and how a turn is steered, which is why `resolve_approval` reads "at the TUI" for PTY and why `steer` is not a separate call there.
 
@@ -181,7 +187,7 @@ The classes:
 | `…/conf/usage` | its kernel reports what it has spent |
 | `…/conf/approvals` · `…/conf/events-replay` | the service does, for every session |
 
-**Two claims, and they are not the same.** What an *interface* declares is what it could project for some session — the vocabulary a client must be ready for. What a *session* carries is its granted set, decided when it was created from what its kernel can actually do, and reported on the session itself. A service that renders terminals still cannot render one for a session that has none.
+**Two claims, and they are not the same.** What an *interface* declares is what it could project for some session — the vocabulary a client must be ready for. What a *session* carries is its granted set, decided when it was created from what its kernel can actually do, and reported on the session itself. It changes only where its owner asks for `change_plane`, and that change is recorded rather than quiet. A service that renders terminals still cannot render one for a session that has none.
 
 The two planes are exclusive: a session holds `conversation` or `terminal`, never both. Every interface dispatches on that to decide what an operation means, and a session claiming both would make "send input" ambiguous — keystrokes or a prompt, with no way to tell which was meant.
 

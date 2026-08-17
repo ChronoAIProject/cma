@@ -29,7 +29,7 @@ use crate::terminal::{ScreenModel, TerminalGeometry};
 /// so lagging is survivable; unbounded buffering is not.
 pub(crate) const LIVE_BUFFER: usize = 512;
 
-pub use crate::lease::AttachmentHandle;
+pub use crate::lease::{AttachmentHandle, Detached};
 
 /// Builds a screen model at a given geometry.
 ///
@@ -40,8 +40,8 @@ pub type ScreenFactory = Arc<dyn Fn(TerminalGeometry) -> Box<dyn ScreenModel> + 
 pub(crate) struct Attachment {
     /// Which attachment this is, among those this session has issued.
     pub(crate) generation: u64,
-    /// Signals the holder that somebody has taken the attachment from them.
-    pub(crate) supersede: broadcast::Sender<()>,
+    /// Signals the holder that the attachment has been taken from them, and why.
+    pub(crate) supersede: broadcast::Sender<crate::lease::Detached>,
 }
 
 /// Everything about a session that exists only while its runtime does.

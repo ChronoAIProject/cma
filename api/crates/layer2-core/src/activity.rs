@@ -89,6 +89,12 @@ pub enum ActivityAction {
     SessionSteer,
     /// A session's terminal was told its geometry changed.
     SessionResize,
+    /// A session was moved onto the other plane.
+    ///
+    /// Worth its own action rather than folding into a rotation: this is the
+    /// one handover somebody asked for, and what they asked for is the
+    /// question a record of who did what exists to answer.
+    SessionPlaneChange,
     /// Something the runtime was blocked on was answered.
     ///
     /// That it was answered is recorded; which way is not. The decision is in

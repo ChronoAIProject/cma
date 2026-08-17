@@ -12,7 +12,9 @@ See [API_Overview.md](./API_Overview.md) for the core operation set and session 
 
 AG-UI carries **semantic events**. It cannot carry a terminal byte stream — there is no honest mapping from `\x1b[2J\x1b[H` to a message event. A client that needs the literal terminal uses the [PTY interface](./API_PTY.md).
 
-Consequently AG-UI projects **seven** of the nine core operations. `resize_terminal` and `screen_snapshot` are absent, and their absence is declared rather than discovered.
+Consequently AG-UI projects **seven** of the ten core operations. `resize_terminal` and `screen_snapshot` are absent, and their absence is declared rather than discovered.
+
+`change_plane` is the third absence, and a different kind. AG-UI is **told** when a session's plane changes — see §3 — and offers no way to ask for one: this protocol's vocabulary is runs and messages, and there is no honest shape in it for "stop being a terminal". Ask over [REST](./API_REST.md); read the consequence here.
 
 It projects **conversation sessions**. A session created in terminal mode carries no conversation capability, and a run against it is refused with the typed capability error naming `conversation` — before a stream opens, because a stream that opened and then said nothing would look like an agent thinking.
 
@@ -67,7 +69,7 @@ chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative l
 | Run lifecycle | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | turn boundaries and outcome |
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
-| State | `STATE_DELTA` | usage, and boundaries where conversation was lost |
+| State | `STATE_DELTA` | usage, boundaries where conversation was lost, and plane changes |
 
 Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `THINKING_START`, `THINKING_END`, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
 
@@ -82,6 +84,18 @@ The consequence for a chat UI is worth stating plainly: this stream gives you th
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
 **`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A stretch of conversation the runtime had to drop arrives the same way, appended to `/gaps` — shown as a boundary rather than a stream that silently skips.
+
+**A plane change lands there too**, appended to `/planeChanges`:
+
+```json
+{ "delta": [ { "op": "add", "path": "/planeChanges/-", "value": {
+  "from": "terminal", "to": "conversation", "snapshotAt": "2026-08-18T09:14:22Z"
+} } ] }
+```
+
+`snapshotAt` is the moment the conversation was captured, and it is where history stops being continuous: anything the agent did after it did not travel. Draw the boundary — a client that skips it silently leaves its reader to conclude the agent forgot something.
+
+**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted carrying the reason and the fact that the session returns. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
 
 ### Tool kinds are the runtime's own word
 
@@ -172,7 +186,8 @@ GET /api/v1/agui/capabilities
     "humanInTheLoop": { "supported": true, "approvals": true, "interrupts": true,
                         "approveWithEdits": false, "interventions": false },
     "execution":      { "codeExecution": true, "sandboxed": true },
-    "custom":         { "chrono:terminal": false, "chrono:usage": true }
+    "custom":         { "chrono:terminal": false, "chrono:usage": true,
+                        "chrono:changePlane": false, "chrono:planeChangeObserved": true }
   },
   "conformsTo": [
     "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/agui-core",

@@ -40,6 +40,14 @@ pub enum Operation {
     ScreenSnapshot,
     /// Read usage for a session.
     GetUsage,
+    /// Move a session onto the other plane.
+    ///
+    /// Administration rather than conversation, which is why not every
+    /// interface projects it: a protocol whose vocabulary is runs and messages
+    /// has no honest way to say "stop being a terminal", and declaring the
+    /// absence is the rule (`API_Overview.md` rule 3) rather than inventing a
+    /// shape for it.
+    ChangePlane,
     /// Author and reuse environment bundles a session can be started with.
     ManageEnvironmentProfiles,
 }
