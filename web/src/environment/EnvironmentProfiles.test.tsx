@@ -5,12 +5,19 @@ import { EnvironmentProfiles } from './EnvironmentProfiles';
 import { createMockProfileStore } from './mock';
 import { emptyDraft } from './types';
 import { chooseOption, chosenOption } from '../test/select';
+import type { KernelOffer } from '../sessions/types';
 
-function open(store = createMockProfileStore(), onClose = vi.fn()) {
+/** What this deployment runs, in the tests that care which runtime does what. */
+const KERNELS: readonly KernelOffer[] = [
+  { id: 'codex', modes: ['terminal', 'conversation'] },
+  { id: 'claude-code', modes: ['conversation'] },
+];
+
+function open(store = createMockProfileStore(), onClose = vi.fn(), kernels = KERNELS) {
   return {
     onClose,
     store,
-    ...render(<EnvironmentProfiles store={store} onClose={onClose} />),
+    ...render(<EnvironmentProfiles store={store} onClose={onClose} kernels={kernels} />),
   };
 }
 
@@ -73,6 +80,7 @@ describe('EnvironmentProfiles', () => {
     expect(screen.getByRole('heading', { name: /environment configuration/i })).toBeInTheDocument();
     for (const label of [
       /^agent$/i,
+      /^plane$/i,
       /^model$/i,
       /thinking effort/i,
       /permissions/i,
@@ -329,5 +337,47 @@ describe('EnvironmentProfiles', () => {
 
     await user.click(await screen.findByRole('button', { name: /close/i }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe('the plane a profile starts sessions on', () => {
+  it('saves the plane the profile was given', async () => {
+    // On the profile because that is where the core keeps it: two sessions
+    // started from one profile must agree about which plane they are.
+    const user = userEvent.setup();
+    const { store } = open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'reviewer');
+    await chooseOption(user, /^plane$/i, 'Conversation');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(async () => {
+      expect(await store.list()).toHaveLength(1);
+    });
+    const [saved] = await store.list();
+    expect(saved?.agent.mode).toBe('conversation');
+  });
+
+  it('says why a runtime cannot serve the chosen plane', async () => {
+    const user = userEvent.setup();
+    open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await chooseOption(user, /^agent$/i, 'Claude Code');
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “terminal”/i);
+  });
+
+  it('refuses nothing when this deployment’s runtimes could not be read', async () => {
+    // An empty list is "nothing is known", not "everything is refused".
+    // Emptying a form over a failed request would be the second.
+    const user = userEvent.setup();
+    open(createMockProfileStore(), vi.fn(), []);
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(chosenOption(/^agent$/i)).toContain('Codex');
   });
 });
