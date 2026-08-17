@@ -17,7 +17,11 @@ A cloud-hosted service that runs coding-agent kernels (Codex, Claude Code, DeepS
 
 The control plane never executes agent code. Bot pods never serve public traffic.
 
-**Consumers.** chrono-bot is a backend service. Its clients are other products' frontends and backends (NyxID Chat, FKST Chat). chrono-bot's own `web/` frontend is a read-only operational dashboard plus the terminal surface — it is not the primary interaction path, and features must not be built there that belong in the API.
+**Consumers.** chrono-bot is a backend service. Its clients are other products' frontends and backends (NyxID Chat, FKST Chat). chrono-bot's own `web/` frontend is an operational dashboard, the terminal surface, and the **reference client for the priority-1 public interface**. It is not the primary interaction path.
+
+**The chat surface may call no route a third-party client could not call.** It exists because everything it does is already in AG-UI. The moment it needs something AG-UI lacks, the answer is to add it to AG-UI, never to add it here.
+
+That is a stricter rule than the one it replaces, not a relaxation. "Features must not be built there that belong in the API" asked whether a feature *belonged* in the API, which is a judgement somebody makes; this asks whether the API *already projects it*, which is checkable. And the reason for having a first-party client at all is that `acp-kernel`'s stated exit criterion is that a product frontend can build a chat interface on the public interfaces — a claim nobody had tested. A client held to the same constraints as a third party is the only thing that keeps it honest; a client permitted one private route would prove nothing about the one somebody else has to build.
 
 ---
 
