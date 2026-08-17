@@ -3,7 +3,7 @@
 //! Not implemented in this version. The module exists so that adding the kernel
 //! is a matter of filling this in, never of editing the trait it implements.
 
-use crate::{AdapterError, KernelAdapter, RuntimeHandle, RuntimeSpec, TermSize, TerminalChannel};
+use crate::{AdapterError, KernelAdapter, RuntimeHandle, RuntimeSpec, TerminalChannel};
 
 /// Placeholder adapter. Every operation reports the kernel as unavailable.
 pub struct ClaudeCodeAdapter;
@@ -25,10 +25,6 @@ impl KernelAdapter for ClaudeCodeAdapter {
         Err(AdapterError::Unavailable("kernel not implemented".into()))
     }
 
-    async fn resize(&self, _handle: &RuntimeHandle, _size: TermSize) -> Result<(), AdapterError> {
-        Err(AdapterError::Unavailable("kernel not implemented".into()))
-    }
-
     async fn terminate(&self, _handle: &RuntimeHandle) -> Result<(), AdapterError> {
         Err(AdapterError::Unavailable("kernel not implemented".into()))
     }
@@ -37,6 +33,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TermSize;
 
     #[tokio::test]
     async fn every_operation_reports_unavailable() {
@@ -56,10 +53,6 @@ mod tests {
 
         let handle = RuntimeHandle("sesn_1".into());
         assert!(a.attach_terminal(&handle).await.is_err());
-        assert!(a
-            .resize(&handle, TermSize { cols: 80, rows: 24 })
-            .await
-            .is_err());
         assert!(a.terminate(&handle).await.is_err());
     }
 }

@@ -17,8 +17,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TermSize,
-    TerminalChannel, TerminalInput,
+    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TerminalChannel,
+    TerminalInput,
 };
 
 /// Port the supervisor listens on inside the sandbox.
@@ -448,14 +448,6 @@ impl KernelAdapter for CodexAdapter {
             output: out_rx,
             input: in_tx,
         })
-    }
-
-    async fn resize(&self, handle: &RuntimeHandle, size: TermSize) -> Result<(), AdapterError> {
-        // Geometry rides the same channel as input, so a resize with no live
-        // attachment is a no-op rather than an error: the next attach applies
-        // the caller's real size before anything is painted.
-        tracing::debug!(sandbox = %handle.0, cols = size.cols, rows = size.rows, "resize requested");
-        Ok(())
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {

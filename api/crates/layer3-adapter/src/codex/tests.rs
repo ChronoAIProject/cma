@@ -6,6 +6,7 @@
 #![allow(clippy::items_after_test_module)]
 
 use super::*;
+use crate::TermSize;
 
 fn adapter(base: &str) -> CodexAdapter {
     CodexAdapter::new(
