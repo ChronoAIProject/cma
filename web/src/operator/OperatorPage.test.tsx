@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Capability } from '../auth/types';
-import { OperatorPanel } from './OperatorPanel';
+import { OperatorPage } from './OperatorPage';
 import { createMockOperatorStore, type MockOperatorOptions } from './mock';
 
 /**
@@ -24,11 +24,10 @@ const ALL: readonly Capability[] = [
 
 function open(capabilities: readonly Capability[] = ALL, options: MockOperatorOptions = {}) {
   const store = createMockOperatorStore(options);
-  const onClose = vi.fn();
+
   return {
     store,
-    onClose,
-    ...render(<OperatorPanel store={store} capabilities={capabilities} onClose={onClose} />),
+    ...render(<OperatorPage store={store} capabilities={capabilities} />),
   };
 }
 
@@ -131,11 +130,7 @@ describe('activity', () => {
       },
     };
     render(
-      <OperatorPanel
-        store={spied}
-        capabilities={['read_activity_log', 'read_user_directory']}
-        onClose={vi.fn()}
-      />,
+      <OperatorPage store={spied} capabilities={['read_activity_log', 'read_user_directory']} />,
     );
     await show(/activity/i);
     await rows().findByText(/session terminate/);
