@@ -274,7 +274,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vt100",
 ]
 
 [[package]]
@@ -1181,6 +1180,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.24.0",
  "tracing",
+ "vt100",
 ]
 
 [[package]]
