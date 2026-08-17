@@ -1,0 +1,193 @@
+/*
+ * The message stream — docs/Web_Style.md §18.1.
+ *
+ * Turns as bands separated by a rule, not bubbles. Two things distinguish a
+ * turn: who is speaking, and the ink its content takes.
+ */
+
+.stream {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * The stream owns its overflow. `body` never scrolls (§5), and neither does
+ * the page around this.
+ */
+.stream__surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-inline: var(--page-gutter);
+  overflow-y: auto;
+}
+
+/*
+ * How far behind somebody is, when they have scrolled away from the newest
+ * turn. Over the surface rather than in it, so arriving content never moves
+ * what they are reading.
+ */
+.stream__behind {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  box-shadow: var(--press-quiet-rest);
+}
+
+/* ── A turn ──────────────────────────────────────────────────────────── */
+
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-block: var(--space-4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.turn__who {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+/*
+ * The agent's words are the ones being read, so they take the primary ink and
+ * the owner's take the secondary. That is the whole visual distinction, and it
+ * is the reason there are no bubbles and no alternating alignment.
+ */
+.turn__body {
+  color: var(--ink);
+  font-size: var(--text-md);
+  line-height: var(--leading-base);
+  text-wrap: pretty;
+}
+
+.turn[data-role='user'] .turn__body {
+  color: var(--ink-2);
+}
+
+/*
+ * The one difference between a message arriving and one that has settled.
+ * Nothing else changes on commit: a message that restyled itself would tell a
+ * reader the earlier state was provisional when it was not.
+ *
+ * The same caret the introduction uses (§15), for the same reason.
+ */
+.turn__caret {
+  display: inline-block;
+  width: 1ch;
+  height: 1em;
+  vertical-align: text-bottom;
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .turn__caret {
+    animation: turn-blink 1060ms step-end infinite;
+  }
+}
+
+@keyframes turn-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/*
+ * An event kind this build does not know. Drawn quietly and drawn at all,
+ * because the alternative is a conversation with a piece silently missing.
+ */
+.turn--unknown .turn__body {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+/* ── A boundary where conversation was lost, §18.6 ───────────────────── */
+
+.gap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding-block: var(--space-3);
+  border-top: 1px solid var(--wait);
+  border-bottom: 1px solid var(--rule);
+}
+
+.gap__label {
+  color: var(--wait);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.gap__note {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+/* ── Agent-emitted content, §1 and §18.1 ─────────────────────────────────
+ *
+ * The frame is styled and the content is not. No colour is applied here — not
+ * syntax highlighting, not a tint per role, not a semantic token on a word the
+ * agent happened to write. §2 reserves those for session and system state.
+ */
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent__paragraph {
+  margin: 0;
+}
+
+.agent__heading {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 500;
+  text-wrap: balance;
+}
+
+.agent__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+/*
+ * A code block scrolls inside itself; the stream never does. Content length is
+ * not allowed to decide the width of the surface it sits in.
+ */
+.agent__block {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: var(--term-leading);
+  background: var(--inset);
+  border-radius: var(--radius);
+}
+
+.agent__code {
+  padding: 1px var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  background: var(--inset);
+  border-radius: var(--radius);
+}
