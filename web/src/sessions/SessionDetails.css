@@ -141,3 +141,55 @@
   background: var(--inset);
   border-radius: 50%;
 }
+
+/*
+ * What this session may reach — docs/Web_Style.md §11 and §12.
+ *
+ * Its own row across the sheet's grid rather than a cell in it: a list of
+ * services is the one fact here that is a list, and squeezing it into a
+ * 220px column would truncate exactly the names that make it readable.
+ */
+.details__row--wide {
+  grid-column: 1 / -1;
+}
+
+.details__reach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.details__service {
+  display: flex;
+  gap: var(--space-1);
+  align-items: baseline;
+}
+
+.details__servicename {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/*
+ * The identifier beside the name, quieter, because it is what support and the
+ * API refer to while the name is what the owner recognises.
+ */
+.details__serviceid {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/*
+ * "Nothing" and "we were not told" are both drawn here, and both quietly:
+ * neither is a failure, and neither is a list.
+ */
+.details__unknown {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
