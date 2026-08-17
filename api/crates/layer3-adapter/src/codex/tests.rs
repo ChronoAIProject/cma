@@ -25,7 +25,7 @@ fn a_proxied_endpoint_becomes_a_terminal_url() {
     let a = adapter("http://provider:80");
     assert_eq!(
         a.terminal_url("provider/v1/sandboxes/sbx-1/proxy/9090", "sbx-1"),
-        "ws://provider/v1/sandboxes/sbx-1/proxy/9090/runtime/sbx-1/terminal"
+        "ws://provider/v1/sandboxes/sbx-1/proxy/9090/runtime/sbx-1/terminal?wire=1"
     );
 }
 
@@ -42,7 +42,7 @@ fn an_endpoint_that_already_has_a_scheme_is_not_doubled() {
     let a = adapter("http://provider");
     assert_eq!(
         a.terminal_url("http://provider/proxy/9090/", "s"),
-        "ws://provider/proxy/9090/runtime/s/terminal"
+        "ws://provider/proxy/9090/runtime/s/terminal?wire=1"
     );
 }
 
@@ -400,4 +400,120 @@ fn the_runtime_is_told_where_this_kernel_keeps_its_conversation() {
         env.get("CHRONO_RUNTIME_SNAPSHOT_DIR").map(String::as_str),
         Some(".codex/sessions")
     );
+}
+
+#[test]
+fn a_terminal_link_asks_for_the_wire_it_speaks() {
+    // Asked for rather than assumed. A pod that predates lanes ignores this
+    // and keeps speaking what it always did, which is what makes a
+    // half-rolled-out fleet safe.
+    let a = adapter("http://provider:80");
+    let url = a.terminal_url("provider/v1/sandboxes/sbx-1/proxy/9090", "sbx-1");
+    assert!(
+        url.ends_with(&format!(
+            "/runtime/sbx-1/terminal?wire={}",
+            supervisor::WIRE_VERSION
+        )),
+        "got {url}"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_that_declares_its_wire_gets_the_framed_dialect() {
+    let mut said = futures_util::stream::iter(vec![Ok(Message::Text(
+        r#"{"t":"ready","wireVersion":1,"lanes":["ctl","term"]}"#.into(),
+    ))]);
+    let (framed, early) = CodexAdapter::negotiate(&mut said).await;
+    assert!(framed);
+    assert!(early.is_none());
+}
+
+#[tokio::test]
+async fn a_runtime_that_starts_relaying_is_speaking_the_older_wire() {
+    // And the bytes it sent while answering are the top of somebody's screen,
+    // so they are carried rather than dropped on the way to the answer.
+    let mut said = futures_util::stream::iter(vec![Ok(Message::Binary(
+        b"welcome to the terminal".to_vec(),
+    ))]);
+    let (framed, early) = CodexAdapter::negotiate(&mut said).await;
+    assert!(!framed, "an old pod never declares anything");
+    assert_eq!(
+        early.as_deref(),
+        Some(b"welcome to the terminal".as_slice())
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_that_says_nothing_at_all_is_the_older_wire_too() {
+    // The bounded wait, settled the only way that cannot corrupt a session.
+    let mut said = futures_util::stream::iter(Vec::<
+        Result<Message, tokio_tungstenite::tungstenite::Error>,
+    >::new());
+    let (framed, early) = CodexAdapter::negotiate(&mut said).await;
+    assert!(!framed);
+    assert!(early.is_none());
+}
+
+#[tokio::test]
+async fn an_unfamiliar_control_frame_is_not_read_as_a_declaration() {
+    let mut said = futures_util::stream::iter(vec![Ok(Message::Text(r#"{"t":"pong"}"#.into()))]);
+    let (framed, _) = CodexAdapter::negotiate(&mut said).await;
+    assert!(
+        !framed,
+        "switching the wire on anything but a declaration would corrupt a pod that never agreed"
+    );
+}
+
+#[test]
+fn a_credential_looks_the_same_on_both_wires() {
+    // What keeps §5 intact through the rollout. Control travels as text and is
+    // identical either way, so a pod that predates lanes and one that does not
+    // are told about a renewed credential in exactly the same words.
+    for framed in [false, true] {
+        let Message::Text(text) =
+            CodexAdapter::encode(TerminalInput::Credential("a-value".into()), framed)
+        else {
+            panic!("a credential is control, not data");
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(parsed["t"], "credential");
+        assert_eq!(parsed["value"], "a-value");
+    }
+}
+
+#[test]
+fn resize_and_signal_are_control_on_both_wires() {
+    for framed in [false, true] {
+        assert!(matches!(
+            CodexAdapter::encode(
+                TerminalInput::Resize(TermSize { cols: 80, rows: 24 }),
+                framed
+            ),
+            Message::Text(_)
+        ));
+        assert!(matches!(
+            CodexAdapter::encode(TerminalInput::Signal("INT".into()), framed),
+            Message::Text(_)
+        ));
+    }
+}
+
+#[test]
+fn keystrokes_are_framed_only_where_the_runtime_asked_for_it() {
+    // The one thing that must differ between the dialects, and the one thing
+    // that corrupts a session if it differs the wrong way round.
+    let Message::Binary(legacy) =
+        CodexAdapter::encode(TerminalInput::Bytes(b"ls\r".to_vec()), false)
+    else {
+        panic!("keystrokes are data");
+    };
+    assert_eq!(&legacy[..], b"ls\r", "an old pod types the byte it is sent");
+
+    let Message::Binary(lanes) = CodexAdapter::encode(TerminalInput::Bytes(b"ls\r".to_vec()), true)
+    else {
+        panic!("keystrokes are data");
+    };
+    let (lane, payload) = supervisor::unframe(&lanes).expect("carries a lane");
+    assert_eq!(lane, supervisor::LANE_TERMINAL);
+    assert_eq!(payload, b"ls\r");
 }
