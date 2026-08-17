@@ -7,15 +7,19 @@
 
 use std::collections::BTreeMap;
 
-use crate::RuntimePermission;
-
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
+mod environment;
+
+use environment::absent;
+pub use environment::CodexSandboxSpec;
+
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
+use crate::supervisor;
 use crate::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeListing, RuntimeSpec,
     TerminalChannel, TerminalInput,
@@ -33,14 +37,6 @@ const CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 
 /// Where the supervisor serves and accepts the agent's conversation.
 const CONVERSATION_PATH: &str = "/runtime/conversation";
-
-/// Where this kernel records its conversation, relative to the pod's home.
-///
-/// This kernel's own name for its own layout, which is why it is spelled in
-/// this kernel's directory. The supervisor is told it at provision; it used to
-/// be a constant there, in the one component that is supposed to host any
-/// kernel at all.
-const SESSIONS_DIR: &str = ".codex/sessions";
 
 /// Metadata key correlating a sandbox back to its session.
 ///
@@ -63,16 +59,14 @@ const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// How often to re-check a sandbox that is not yet running.
 const READY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// The first thing asked for that is not on offer, if any.
+/// How long to wait for a runtime to declare which wire it speaks.
 ///
-/// Names one rather than all of them: a caller fixes the first and asks again,
-/// and a list of everything wrong is longer to read without being more useful.
-fn absent(wanted: &[String], provided: &[String]) -> Option<String> {
-    wanted
-        .iter()
-        .find(|w| !provided.contains(w))
-        .map(|w| w.to_string())
-}
+/// Paid once per attach, and only by a runtime that predates the declaration
+/// and happens to be silent while it starts — one that knows the wire answers
+/// immediately, and an older one usually answers with terminal output just as
+/// fast. Bounded so a silent runtime settles on the older wire rather than
+/// holding an attach open indefinitely.
+const DIALECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl From<SandboxError> for AdapterError {
     fn from(e: SandboxError) -> Self {
@@ -88,89 +82,6 @@ impl From<SandboxError> for AdapterError {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }
             other => AdapterError::Unavailable(other.to_string()),
-        }
-    }
-}
-
-/// How sandboxes for this kernel are shaped.
-#[derive(Debug, Clone)]
-pub struct CodexSandboxSpec {
-    /// Image carrying the kernel and the supervisor.
-    pub image: String,
-    /// Entrypoint that starts the supervisor.
-    pub entrypoint: Vec<String>,
-    /// Hard resource caps for each sandbox.
-    pub resource_limits: BTreeMap<String, String>,
-    /// Seconds before the provider reclaims the sandbox, or `None` for never.
-    ///
-    /// `None` is the default and is deliberate. A session is a person's working
-    /// terminal: expiring it on a timer ends live work mid-turn, and no timer
-    /// can tell an idle session from one whose owner is reading. Teardown is an
-    /// explicit act by the owner, and the reconciliation sweep is what reclaims
-    /// sandboxes whose session is genuinely gone.
-    pub timeout_seconds: Option<u64>,
-    /// Where the supervisor forwards the agent's model calls.
-    ///
-    /// Empty means the agent runs with no model endpoint: still a usable
-    /// terminal, but unable to complete a turn.
-    pub upstream_base_url: String,
-    /// Model the agent should select.
-    pub upstream_model: String,
-    /// Request shape the upstream speaks.
-    pub upstream_wire_api: String,
-    /// Root of the identity platform the session's CLI acts against.
-    ///
-    /// Empty means the session gets a terminal and a model but cannot use the
-    /// owner's connected capabilities.
-    pub platform_base_url: String,
-    /// The subcommand that makes the agent continue a named conversation.
-    ///
-    /// The conversation's own identifier is appended to this, so it must be a
-    /// form that takes one. Asking for "the latest" instead does not work: the
-    /// agent selects among conversations recorded in the current working
-    /// directory, and one carried from another pod was recorded somewhere
-    /// else, so it finds nothing, starts a fresh conversation and reports
-    /// success — silent loss rather than a failure.
-    ///
-    /// Configured rather than fixed, because this belongs to the agent and
-    /// changes between its versions, and getting it wrong has to be
-    /// correctable without building a new image.
-    pub resume_args: String,
-    /// Software the image already carries, as a caller would name it.
-    ///
-    /// Not a permission list — a statement of fact about the image this
-    /// adapter starts. There is no channel for installing anything into a
-    /// running sandbox, so a session asking for something outside this is
-    /// asking for something it cannot be given, and is refused by name rather
-    /// than started without it.
-    pub provided_packages: Vec<String>,
-    /// Skills the agent in this image can already load, by identifier.
-    ///
-    /// Same rule and the same reason: no delivery channel exists, so anything
-    /// beyond this is a promise the session could not keep.
-    pub provided_skills: Vec<String>,
-}
-
-impl Default for CodexSandboxSpec {
-    fn default() -> Self {
-        Self {
-            image: "chrono-bot-runtime:dev".into(),
-            entrypoint: vec!["/usr/local/bin/layer4-runtime".into()],
-            resource_limits: BTreeMap::from([
-                ("cpu".to_string(), "1".to_string()),
-                ("memory".to_string(), "1Gi".to_string()),
-            ]),
-            timeout_seconds: None,
-            upstream_base_url: String::new(),
-            upstream_model: "gpt-5.6-sol".into(),
-            upstream_wire_api: "responses".into(),
-            platform_base_url: String::new(),
-            resume_args: "resume".into(),
-            // Empty by default, which refuses everything. A deployment states
-            // what its image carries; guessing here would accept a request the
-            // image cannot honour, which is the failure this exists to stop.
-            provided_packages: Vec::new(),
-            provided_skills: Vec::new(),
         }
     }
 }
@@ -220,7 +131,82 @@ impl CodexAdapter {
             .trim_start_matches("https://")
             .trim_start_matches("http://")
             .trim_end_matches('/');
-        format!("{scheme}://{host_and_path}/runtime/{session_id}/terminal")
+        // The wire is asked for rather than assumed. A pod that predates lanes
+        // ignores the parameter and keeps speaking what it always did; one
+        // that does not takes it as permission to frame. Neither has to guess,
+        // which is what makes a half-rolled-out fleet safe.
+        format!(
+            "{scheme}://{host_and_path}/runtime/{session_id}/terminal?wire={}",
+            supervisor::WIRE_VERSION
+        )
+    }
+
+    /// Learn which wire this pod speaks, from the first thing it says.
+    ///
+    /// A pod that knows lanes declares itself before anything else, so a
+    /// declaration arrives immediately or not at all. A pod that does not
+    /// simply starts relaying its terminal, which is itself the answer — and
+    /// the bytes it sent while answering are handed back rather than dropped,
+    /// because they are the first thing on somebody's screen.
+    ///
+    /// Waiting is bounded, and the bound is only ever paid by an older pod
+    /// whose agent happens to be silent at startup. A newer one answers at
+    /// once; an older one usually answers with output just as fast.
+    async fn negotiate<S>(source: &mut S) -> (bool, Option<Vec<u8>>)
+    where
+        S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+    {
+        match tokio::time::timeout(DIALECT_DEADLINE, source.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                match supervisor::Ready::from_control(&text) {
+                    Some(ready) => {
+                        tracing::info!(
+                            wire = ready.wire_version,
+                            lanes = ?ready.lanes,
+                            "the runtime declared its wire"
+                        );
+                        (true, None)
+                    }
+                    // Some other control frame. Nothing is inferred from it:
+                    // the older wire is the reading a pod cannot misunderstand.
+                    None => (false, None),
+                }
+            }
+            // Terminal output before any declaration means there was never
+            // going to be one.
+            Ok(Some(Ok(Message::Binary(bytes)))) => (false, Some(bytes.to_vec())),
+            Ok(Some(Ok(_))) => (false, None),
+            Ok(Some(Err(_))) | Ok(None) => (false, None),
+            Err(_) => {
+                tracing::info!("the runtime declared no wire; using the one that predates lanes");
+                (false, None)
+            }
+        }
+    }
+
+    /// Render one piece of terminal input for the wire this link speaks.
+    ///
+    /// Only the data lane is framed. Control travels as text and is identical
+    /// on both dialects, which is what lets a credential reach a pod that
+    /// predates lanes and one that does not without either being told which it
+    /// is talking to.
+    fn encode(input: TerminalInput, framed: bool) -> Message {
+        match input {
+            TerminalInput::Bytes(b) => Message::Binary(match framed {
+                true => supervisor::frame(supervisor::LANE_TERMINAL, &b),
+                false => b,
+            }),
+            TerminalInput::Resize(size) => Message::Text(format!(
+                r#"{{"t":"resize","cols":{},"rows":{}}}"#,
+                size.cols, size.rows
+            )),
+            TerminalInput::Signal(sig) => {
+                Message::Text(format!(r#"{{"t":"signal","sig":"{sig}"}}"#))
+            }
+            TerminalInput::Credential(value) => {
+                Message::Text(serde_json::json!({ "t": "credential", "value": value }).to_string())
+            }
+        }
     }
 
     /// Wait until a sandbox reports itself running.
@@ -239,110 +225,6 @@ impl CodexAdapter {
             }
             tokio::time::sleep(READY_POLL).await;
         }
-    }
-}
-
-impl CodexAdapter {
-    /// The environment a sandbox is started with.
-    ///
-    /// Separated from provisioning because this is where the core's intent is
-    /// rendered into this kernel's own vocabulary, and a wrong rendering here
-    /// grants more than the person asked for. Worth being able to inspect
-    /// without standing up a provider.
-    fn environment_for(&self, spec: &RuntimeSpec) -> BTreeMap<String, String> {
-        let mut controlled = BTreeMap::from([
-            ("CHRONO_RUNTIME_COMMAND".to_string(), "codex".to_string()),
-            (
-                "CHRONO_RUNTIME_RESUME_ARGS".to_string(),
-                self.spec.resume_args.clone(),
-            ),
-            // Where this kernel records its conversation, told to the pod
-            // rather than known by it. The supervisor hosts any kernel; the
-            // directory belongs to this one, so its name is spelled here.
-            (
-                "CHRONO_RUNTIME_SNAPSHOT_DIR".to_string(),
-                SESSIONS_DIR.to_string(),
-            ),
-            ("TERM".to_string(), "xterm-256color".to_string()),
-            // The supervisor forwards here and attaches the owner's credential.
-            // The credential itself never travels as environment: it arrives
-            // over the control channel and lives only in supervisor memory.
-            (
-                "CHRONO_UPSTREAM_BASE_URL".to_string(),
-                self.spec.upstream_base_url.clone(),
-            ),
-            (
-                "CHRONO_UPSTREAM_MODEL".to_string(),
-                // A model the session asked for wins over the deployment's
-                // default; the default is what an unconfigured session gets.
-                spec.options
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| self.spec.upstream_model.clone()),
-            ),
-            // This kernel's own names for the intent the core expressed. The
-            // translation lives here because these strings mean nothing to any
-            // other runtime.
-            (
-                "CHRONO_AGENT_EFFORT".to_string(),
-                spec.options
-                    .reasoning_effort
-                    .clone()
-                    .unwrap_or_else(|| "medium".to_string()),
-            ),
-            (
-                "CHRONO_AGENT_APPROVAL".to_string(),
-                match spec.options.permission {
-                    RuntimePermission::Guarded => "on-request",
-                    RuntimePermission::Autonomous => "on-failure",
-                    // No approvals at all. Survivable only because the sandbox
-                    // is still the boundary; this removes the ones inside it.
-                    RuntimePermission::Unrestricted => "never",
-                }
-                .to_string(),
-            ),
-            (
-                "CHRONO_AGENT_SANDBOX".to_string(),
-                match spec.options.permission {
-                    RuntimePermission::Guarded => "read-only",
-                    RuntimePermission::Autonomous => "workspace-write",
-                    RuntimePermission::Unrestricted => "danger-full-access",
-                }
-                .to_string(),
-            ),
-            (
-                "CHRONO_UPSTREAM_WIRE_API".to_string(),
-                self.spec.upstream_wire_api.clone(),
-            ),
-            (
-                "CHRONO_PLATFORM_BASE_URL".to_string(),
-                self.spec.platform_base_url.clone(),
-            ),
-            // The CLI reads its endpoint and token from the environment, and
-            // environment wins over any saved session. Pointing it at the local
-            // proxy with an inert token means the real credential never lands
-            // in the sandbox, and the CLI never tries to refresh one itself.
-            ("NYXID_URL".to_string(), "http://127.0.0.1:9092".to_string()),
-            (
-                "NYXID_ACCESS_TOKEN".to_string(),
-                "local-proxy-no-credential-needed".to_string(),
-            ),
-            (
-                "CHRONO_RUNTIME_COLS".to_string(),
-                spec.size.cols.to_string(),
-            ),
-            (
-                "CHRONO_RUNTIME_ROWS".to_string(),
-                spec.size.rows.to_string(),
-            ),
-        ]);
-        // The session's own variables, added last and refused where they
-        // collide. `apply_to` is what enforces that: the names above are how
-        // the runtime finds its upstream, its proxy and its credential, so a
-        // caller who could overwrite one could redirect the agent's traffic —
-        // or the credential attached to it — somewhere of their choosing.
-        spec.environment.apply_to(&mut controlled);
-        controlled
     }
 }
 
@@ -486,20 +368,46 @@ impl KernelAdapter for CodexAdapter {
             .map_err(|e| AdapterError::Unavailable(format!("connect {url}: {e}")))?;
         let (mut sink, mut source) = stream.split();
 
+        // Settled before anything is relayed, so both directions agree on how
+        // a binary frame is read for the whole life of the link.
+        let (framed, early) = Self::negotiate(&mut source).await;
+
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(OUTPUT_BUFFER);
         let (in_tx, mut in_rx) = mpsc::channel::<TerminalInput>(INPUT_BUFFER);
 
         let sandbox = handle.0.clone();
         tokio::spawn(async move {
+            // Output that arrived while the wire was being settled. Sent
+            // first, because it is the top of somebody's screen.
+            if let Some(bytes) = early {
+                if out_tx.send(bytes).await.is_err() {
+                    return;
+                }
+            }
             while let Some(frame) = source.next().await {
                 match frame {
                     Ok(Message::Binary(bytes)) => {
-                        if out_tx.send(bytes.to_vec()).await.is_err() {
+                        let payload = match framed {
+                            true => match supervisor::unframe(&bytes) {
+                                Some((supervisor::LANE_TERMINAL, payload)) => payload.to_vec(),
+                                // A lane this attachment does not carry. The
+                                // conversation plane opens its own link; a
+                                // frame from it here would paint protocol
+                                // across somebody's terminal.
+                                Some((lane, _)) => {
+                                    tracing::warn!(%sandbox, lane, "frame on a lane this attachment does not carry");
+                                    continue;
+                                }
+                                None => continue,
+                            },
+                            false => bytes.to_vec(),
+                        };
+                        if out_tx.send(payload).await.is_err() {
                             break; // consumer went away
                         }
                     }
                     Ok(Message::Close(_)) => break,
-                    Ok(_) => {} // supervisor control frames are not used yet
+                    Ok(_) => {} // control frames beyond the declaration are not used yet
                     Err(e) => {
                         tracing::warn!(%sandbox, error = %e, "sandbox terminal read failed");
                         break;
@@ -512,19 +420,7 @@ impl KernelAdapter for CodexAdapter {
         let sandbox = handle.0.clone();
         tokio::spawn(async move {
             while let Some(input) = in_rx.recv().await {
-                let message = match input {
-                    TerminalInput::Bytes(b) => Message::Binary(b),
-                    TerminalInput::Resize(size) => Message::Text(format!(
-                        r#"{{"t":"resize","cols":{},"rows":{}}}"#,
-                        size.cols, size.rows
-                    )),
-                    TerminalInput::Signal(sig) => {
-                        Message::Text(format!(r#"{{"t":"signal","sig":"{sig}"}}"#))
-                    }
-                    TerminalInput::Credential(value) => Message::Text(
-                        serde_json::json!({ "t": "credential", "value": value }).to_string(),
-                    ),
-                };
+                let message = Self::encode(input, framed);
                 if let Err(e) = sink.send(message).await {
                     tracing::warn!(%sandbox, error = %e, "sandbox terminal write failed");
                     break;
