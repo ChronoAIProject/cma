@@ -387,16 +387,22 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           />
 
           {/*
-           * Above the surface, never in place of it. A failure belongs to one
-           * request about one session, and the surface below may hold a dozen
-           * live terminals: rendering the sentence instead of it unmounted
-           * every one of them, so a stop that came back 409 cost eleven other
-           * sessions their connection and their scrollback.
+           * Above the surface, never in place of it (§12). A failure belongs
+           * to one request about one session, and the surface below may hold a
+           * dozen live terminals: rendering the sentence instead of it
+           * unmounted every one of them, so a stop that came back 409 cost
+           * eleven other sessions their connection and their scrollback.
+           *
+           * Beneath the session header rather than above it. §12 puts the band
+           * "at the head of the column"; put literally first it would push the
+           * header down and break the one line the three column headers share,
+           * which §5 exists to hold. The surface it must stay out of the way of
+           * is the terminal, and it does.
            */}
           {notice !== null ? (
-            <p className="console__notice" role="alert">
-              {notice}
-            </p>
+            <div className="band console__notice" role="alert">
+              <span className="band__value console__noticetext">{notice}</span>
+            </div>
           ) : null}
 
           {loading ? (
