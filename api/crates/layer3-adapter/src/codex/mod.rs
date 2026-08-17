@@ -34,6 +34,14 @@ const CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 /// Where the supervisor serves and accepts the agent's conversation.
 const CONVERSATION_PATH: &str = "/runtime/conversation";
 
+/// Where this kernel records its conversation, relative to the pod's home.
+///
+/// This kernel's own name for its own layout, which is why it is spelled in
+/// this kernel's directory. The supervisor is told it at provision; it used to
+/// be a constant there, in the one component that is supposed to host any
+/// kernel at all.
+const SESSIONS_DIR: &str = ".codex/sessions";
+
 /// Metadata key correlating a sandbox back to its session.
 ///
 /// Written at provisioning and read by reconciliation, so the two must agree;
@@ -69,6 +77,13 @@ fn absent(wanted: &[String], provided: &[String]) -> Option<String> {
 impl From<SandboxError> for AdapterError {
     fn from(e: SandboxError) -> Self {
         match e {
+            // A runtime answering "not implemented" is stating an absence, not
+            // reporting a failure. Read as a rejection it would look like
+            // something going wrong every time rotation asked a runtime that
+            // was never able to answer.
+            SandboxError::Rejected { status: 501, .. } => AdapterError::Unsupported(
+                "this runtime declares no support for what was asked".to_string(),
+            ),
             SandboxError::Rejected { status, detail } => {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }
@@ -240,6 +255,13 @@ impl CodexAdapter {
             (
                 "CHRONO_RUNTIME_RESUME_ARGS".to_string(),
                 self.spec.resume_args.clone(),
+            ),
+            // Where this kernel records its conversation, told to the pod
+            // rather than known by it. The supervisor hosts any kernel; the
+            // directory belongs to this one, so its name is spelled here.
+            (
+                "CHRONO_RUNTIME_SNAPSHOT_DIR".to_string(),
+                SESSIONS_DIR.to_string(),
             ),
             ("TERM".to_string(), "xterm-256color".to_string()),
             // The supervisor forwards here and attaches the owner's credential.
