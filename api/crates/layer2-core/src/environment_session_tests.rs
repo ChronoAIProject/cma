@@ -138,3 +138,221 @@ async fn a_session_is_refused_rather_than_started_with_someone_elses_profile() {
         "nothing may be provisioned for a refused request"
     );
 }
+
+/// The grant a session was provisioned with, recorded on the session itself.
+///
+/// A profile can be edited after a session started from it, and the session
+/// keeps the scope it was provisioned with. Reading the profile to learn a
+/// session's reach gives the wrong answer precisely when it matters — which is
+/// after somebody has changed the bundle a live session was started from.
+mod granted_services {
+    use super::*;
+    use crate::environment::{Baseline, ServiceId};
+    use crate::environment_support::{fake_agent, profile_spec};
+    use crate::environment_values::SkillId;
+    use crate::environment_values::SoftwarePackage;
+    use crate::session::SessionSpec;
+    use crate::store::SessionStore;
+    use crate::test_support::{service_with_environments, user, FakeAdapter, FakeStore};
+
+    /// A baseline with one mandated service, so the floor is visible.
+    fn environments_with_mandated(
+        profiles: Arc<FakeProfileStore>,
+    ) -> Arc<EnvironmentProfileService> {
+        EnvironmentProfileService::new(
+            profiles,
+            Baseline::new(
+                [SoftwarePackage::new("platform-cli")],
+                [SkillId::new("mandatory-one")],
+                [ServiceId::new("nyxid")],
+            ),
+            None,
+            None,
+            fake_agent(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_session_records_what_it_was_granted() {
+        let profiles = Arc::new(FakeProfileStore::default());
+        let environment_service = environments_with_mandated(Arc::clone(&profiles));
+        let owner = user("subject-a");
+        let mut spec = profile_spec("github work");
+        spec.services.push(ServiceId::new("github"));
+        let profile = environment_service
+            .create(&owner, spec)
+            .await
+            .expect("creates");
+
+        let store = Arc::new(FakeStore::default());
+        let service = service_with_environments(
+            Arc::clone(&store),
+            Arc::new(FakeAdapter::default()),
+            environment_service,
+        );
+        let session = service
+            .create_session(
+                &owner,
+                SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("creates");
+
+        let granted = session.granted_services.expect("the grant is recorded");
+        assert!(granted.contains(&ServiceId::new("github")));
+        // The deployment's floor travels with it: a session that lost its
+        // model endpoint because a bundle was tidied up is not a session.
+        assert!(granted.contains(&ServiceId::new("nyxid")));
+    }
+
+    #[tokio::test]
+    async fn editing_the_profile_afterwards_does_not_change_a_running_session() {
+        // The whole point. A profile is a reusable record and a session's reach
+        // is a fact about that session, decided once.
+        let profiles = Arc::new(FakeProfileStore::default());
+        let environment_service = environments_with_mandated(Arc::clone(&profiles));
+        let owner = user("subject-a");
+        let mut spec = profile_spec("github work");
+        spec.services.push(ServiceId::new("github"));
+        let profile = environment_service
+            .create(&owner, spec)
+            .await
+            .expect("creates");
+
+        let store = Arc::new(FakeStore::default());
+        let service = service_with_environments(
+            Arc::clone(&store),
+            Arc::new(FakeAdapter::default()),
+            Arc::clone(&environment_service),
+        );
+        let session = service
+            .create_session(
+                &owner,
+                SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("creates");
+
+        // Widen the profile after the session started from it.
+        let mut widened = profile_spec("github work");
+        widened.services.push(ServiceId::new("github"));
+        widened.services.push(ServiceId::new("lark"));
+        environment_service
+            .update(&owner, &profile.id, widened)
+            .await
+            .expect("updates");
+
+        let reread = service
+            .get_session(&owner, &session.id)
+            .await
+            .expect("reads");
+        let granted = reread.granted_services.expect("the grant is recorded");
+        assert!(
+            !granted.contains(&ServiceId::new("lark")),
+            "a running session must not acquire reach its owner gave a profile afterwards"
+        );
+
+        // And the credential minted for it is scoped the same way.
+        let scoped = service.session_services(&session.id).await;
+        assert!(!scoped.contains(&ServiceId::new("lark")));
+        assert!(scoped.contains(&ServiceId::new("github")));
+    }
+
+    #[tokio::test]
+    async fn a_session_recorded_before_the_grant_existed_falls_back_to_its_profile() {
+        // `None` is not an empty grant. One says the answer was never written
+        // down and has to be resolved; the other says this session may reach
+        // nothing, and must not be widened by a lookup.
+        let profiles = Arc::new(FakeProfileStore::default());
+        let environment_service = environments_with_mandated(Arc::clone(&profiles));
+        let owner = user("subject-a");
+        let mut spec = profile_spec("github work");
+        spec.services.push(ServiceId::new("github"));
+        let profile = environment_service
+            .create(&owner, spec)
+            .await
+            .expect("creates");
+
+        let store = Arc::new(FakeStore::default());
+        let service = service_with_environments(
+            Arc::clone(&store),
+            Arc::new(FakeAdapter::default()),
+            environment_service,
+        );
+        let session = service
+            .create_session(
+                &owner,
+                SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("creates");
+
+        // Rewrite the record the way an older control plane would have left it.
+        let mut record = store
+            .get(&session.id)
+            .await
+            .expect("reads")
+            .expect("exists");
+        record.session.granted_services = None;
+        store.upsert(&record).await.expect("writes");
+
+        let scoped = service.session_services(&session.id).await;
+        assert!(
+            scoped.contains(&ServiceId::new("github")),
+            "a session already running must not lose its reach because this field did not exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_grant_survives_a_rotation() {
+        let profiles = Arc::new(FakeProfileStore::default());
+        let environment_service = environments_with_mandated(Arc::clone(&profiles));
+        let owner = user("subject-a");
+        let mut spec = profile_spec("github work");
+        spec.services.push(ServiceId::new("github"));
+        let profile = environment_service
+            .create(&owner, spec)
+            .await
+            .expect("creates");
+
+        let store = Arc::new(FakeStore::default());
+        let service = service_with_environments(
+            Arc::clone(&store),
+            Arc::new(FakeAdapter::default()),
+            environment_service,
+        );
+        let session = service
+            .create_session(
+                &owner,
+                SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("creates");
+
+        // A rotation replaces the runtime and keeps the session. The grant is
+        // part of the session, so it is one of the things that has to survive.
+        let mut record = store
+            .get(&session.id)
+            .await
+            .expect("reads")
+            .expect("exists");
+        record.session.rotations += 1;
+        record.session.runtime_version = Some("next".into());
+        store.upsert(&record).await.expect("writes");
+
+        let scoped = service.session_services(&session.id).await;
+        assert!(scoped.contains(&ServiceId::new("github")));
+    }
+}

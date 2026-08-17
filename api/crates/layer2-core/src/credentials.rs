@@ -103,6 +103,17 @@ impl SessionService {
         let Ok(Some(record)) = self.store.get(id).await else {
             return Vec::new();
         };
+        // The session's own answer, not its profile's. A credential minted long
+        // afterwards — for a replaced runtime, or after a restart — is scoped
+        // the way the first one was, even if the bundle it was started from has
+        // been widened or narrowed since.
+        if let Some(granted) = record.session.granted_services.clone() {
+            return granted;
+        }
+        // Recorded before the grant was written down. Falling back to the
+        // profile is the only answer available, and it is better than none: a
+        // session already running must not lose its model endpoint because
+        // this field did not exist when it started.
         self.environments
             .services_for(
                 &record.session.owner,
