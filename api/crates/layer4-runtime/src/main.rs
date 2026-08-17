@@ -6,6 +6,7 @@
 
 mod agent_config;
 mod bridge;
+mod carry;
 mod conversation;
 mod lanes;
 mod link;
