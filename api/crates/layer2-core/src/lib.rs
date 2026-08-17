@@ -15,6 +15,7 @@ pub mod authz;
 pub mod capabilities;
 mod clock;
 pub mod conversation;
+mod conversation_log;
 mod credentials;
 pub mod directory;
 pub mod environment;
