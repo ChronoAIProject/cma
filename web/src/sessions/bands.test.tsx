@@ -80,9 +80,12 @@ describe('the band grid', () => {
     // the moment the rail collapsed.
     const band = sheet('shell/StatusBand.css');
     expect(rule(band, '.statusband__lead')).not.toContain('width:');
-    expect(sheet('Console.tsx')).toContain(
-      "leadingColumn={railCollapsed ? 'var(--rail-collapsed)' : 'var(--rail-width)'}",
-    );
+    // Follows the rail, and is absent on a view that has no rail: a vertical
+    // rule drawn under nothing is worse than none.
+    const console = sheet('Console.tsx');
+    expect(console).toContain("'var(--rail-collapsed)'");
+    expect(console).toContain("'var(--rail-width)'");
+    expect(console).toMatch(/view === 'operations'\s*\?\s*undefined/);
     expect(rule(sheet('sessions/SessionRail.css'), '.rail')).toContain('width: var(--rail-width)');
     expect(rule(sheet('sessions/SessionRail.css'), '.rail--collapsed')).toContain(
       'width: var(--rail-collapsed)',
