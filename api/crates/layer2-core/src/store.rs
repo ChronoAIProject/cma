@@ -15,7 +15,7 @@
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, ServiceId};
-use crate::event::Event;
+use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
 use crate::session::Session;
 
@@ -83,7 +83,11 @@ pub trait SessionStore: Send + Sync {
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError>;
 
     /// Events after a cursor, in sequence order.
-    async fn events_since(&self, id: &SessionId, after: u64) -> Result<Vec<Event>, StoreError>;
+    async fn events_since(
+        &self,
+        id: &SessionId,
+        after: u64,
+    ) -> Result<Vec<StoredEvent>, StoreError>;
 }
 
 /// Durable environment profiles.
