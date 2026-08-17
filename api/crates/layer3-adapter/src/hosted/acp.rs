@@ -166,7 +166,7 @@ impl Bridge {
         // They answer different questions — one is a control plane taking back
         // over a live runtime, the other a runtime taking over a session — and
         // when both are present the first is the more recent truth.
-        bridge.handshake(rejoin.or(resuming), cwd, mode).await?;
+        bridge.handshake(rejoin, resuming, cwd, mode).await?;
         let conversation_id = bridge.session.lock().await.clone();
 
         let writer = Arc::clone(&bridge);
@@ -185,9 +185,20 @@ impl Bridge {
         })
     }
 
-    /// Initialize, take or resume a session, and settle its mode.
+    /// Initialize, get hold of a session, and settle its mode.
+    ///
+    /// Three ways to have one, and they are genuinely different. A bridge that
+    /// is still running holds its session in memory and is simply told which
+    /// one this is. A bridge that has just started, on a pod handed a
+    /// conversation, loads it from disk. Anything else opens a new one.
+    ///
+    /// Getting the first two the wrong way round fails, and was checked rather
+    /// than reasoned about: a live bridge refuses to load a session it is
+    /// already holding, because loading reads a file that a conversation with
+    /// no committed turns has not written yet.
     async fn handshake(
         &self,
+        rejoining: Option<String>,
         resuming: Option<String>,
         cwd: String,
         mode: Option<String>,
@@ -201,11 +212,19 @@ impl Bridge {
         )
         .await?;
 
-        let session = match resuming {
+        let session = match (rejoining, resuming) {
+            // A conversation this bridge is still holding. Nothing is asked of
+            // it beyond the identifier: the session is in the process's memory,
+            // and asking it to load one would be asking it to read a file it
+            // may not have written.
+            (Some(conversation), _) => {
+                tracing::info!(%conversation, "rejoining the conversation this runtime is holding");
+                conversation
+            }
             // Carried from another pod. The rollout is already on this pod's
             // disk — the supervisor put it there — so loading by identifier is
             // what makes the session continue rather than start again.
-            Some(conversation) => {
+            (None, Some(conversation)) => {
                 let params = serde_json::json!({
                     "sessionId": conversation,
                     "cwd": cwd,
@@ -218,7 +237,7 @@ impl Bridge {
                 })?;
                 conversation
             }
-            None => {
+            (None, None) => {
                 let started = self
                     .call(
                         "session/new",

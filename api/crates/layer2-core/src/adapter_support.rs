@@ -115,6 +115,7 @@ impl Default for FakeAdapter {
                 terminal: true,
                 snapshot: true,
                 steer: false,
+                interrupt: false,
                 usage: false,
             },
         }

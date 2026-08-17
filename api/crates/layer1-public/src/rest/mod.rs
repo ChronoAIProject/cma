@@ -54,6 +54,7 @@ fn conformance_for(capabilities: &SessionCapabilities) -> Vec<String> {
         (capabilities.terminal, "terminal"),
         (capabilities.conversation, "conversation"),
         (capabilities.steer, "steering"),
+        (capabilities.interrupt, "interrupt"),
         (capabilities.usage, "usage"),
     ] {
         if held {
@@ -196,7 +197,7 @@ async fn named(users: &UserDirectory, caller: &Caller, sessions: Vec<Session>) -
 }
 
 /// A core failure rendered as an RFC 9457 problem document.
-pub(crate) struct Problem(pub(crate) CoreError);
+pub struct Problem(pub(crate) CoreError);
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
