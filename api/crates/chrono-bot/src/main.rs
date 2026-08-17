@@ -343,6 +343,16 @@ async fn main() {
         .merge(layer1_public::rest::environments::router(Arc::clone(
             &environments,
         )))
+        // The priority-1 interface, sharing the facade's state because it
+        // projects the same sessions: a thread here is a session there, and
+        // two states would be two answers to the same question.
+        .merge(layer1_public::agui::router(
+            layer1_public::rest::SessionsState {
+                sessions: Arc::clone(&service),
+                users: Arc::clone(&users),
+                tickets: Arc::clone(&tickets),
+            },
+        ))
         .merge(operator)
         .merge(layer1_public::pty::router(
             layer1_public::pty::TerminalState {
