@@ -1,0 +1,170 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { MessageStream } from './MessageStream';
+import { ApprovalCard } from './ApprovalCard';
+import { Composer } from './Composer';
+import { Usage } from './Usage';
+import { EMPTY, reduce, type Conversation } from './conversation';
+import { planeStateFor } from './planeState';
+import {
+  AguiConnection,
+  AguiOperations,
+  AguiRefusal,
+  fetchTransport,
+  wireTransport,
+  type AguiTransport,
+  type LinkStatus,
+  type OperationTransport,
+  type SessionCapabilities,
+} from '../agui';
+import type { Session } from '../sessions/types';
+import './ConversationSurface.css';
+
+/**
+ * A session drawn as a conversation — `Web_Style.md` §18.
+ *
+ * The counterpart of `TerminalSurface`: the middle column draws one or the
+ * other from what the session was granted, and neither knows the other exists.
+ *
+ * Everything it shows comes from AG-UI and from nothing else. A chat surface
+ * reaching for a terminal route to fill a gap in the conversation has found a
+ * hole in AG-UI, and the hole is the bug (`CLAUDE.md` §1).
+ */
+
+interface ConversationSurfaceProps {
+  readonly session: Session;
+  readonly capabilities: SessionCapabilities;
+  /**
+   * Where frames come from. The wire in production and the mock in
+   * development — §1's "one surface, many drivers", and the reason a component
+   * that could tell them apart would be a component that had learned something
+   * about its driver it had no business learning.
+   */
+  readonly transport?: AguiTransport;
+  /** Where operations go. Injected for the same reason. */
+  readonly operations?: OperationTransport;
+}
+
+export function ConversationSurface({
+  session,
+  capabilities,
+  transport = wireTransport,
+  operations = fetchTransport,
+}: ConversationSurfaceProps) {
+  const [conversation, setConversation] = useState<Conversation>(EMPTY);
+  const [link, setLink] = useState<LinkStatus>('reconnecting');
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string | undefined>(undefined);
+
+  const client = useMemo(
+    () => new AguiOperations(session.id, operations),
+    [session.id, operations],
+  );
+
+  useEffect(() => {
+    // One connection per session, opened on mount and closed on unmount. The
+    // conversation is not cleared here: the surface is keyed on the session at
+    // its call sites, so a different session is a different component rather
+    // than this one being emptied and refilled.
+    const connection = new AguiConnection(transport, session.id);
+    return connection.subscribe(
+      (event) => {
+        setConversation((state) => reduce(state, event));
+      },
+      (status) => {
+        setLink(status);
+      },
+    );
+  }, [session.id, transport]);
+
+  /**
+   * Run an operation and keep its refusal intact.
+   *
+   * `API_Overview.md` rule 4 — errors name what is missing — is worth nothing
+   * if the interface renders it as "something went wrong", so the capability
+   * name reaches the surface (§18.7).
+   */
+  const attempt = useCallback(async (work: () => Promise<void>) => {
+    setBusy(true);
+    setRefusal(undefined);
+    try {
+      await work();
+    } catch (cause) {
+      setRefusal(
+        cause instanceof AguiRefusal && cause.capability !== undefined
+          ? `This session cannot ${cause.capability}: ${cause.message}`
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const state = planeStateFor(session);
+  const pending = conversation.pending;
+  /*
+   * §11: `idle` is read-only on this plane *unless* it is waiting on an
+   * approval, which is the most alive a session gets. The composer stays
+   * refused either way — an approval is answered by its own card — but the
+   * card is drawn, which is the difference that matters.
+   */
+  const reason =
+    state.reason ??
+    (link === 'reconnecting' ? 'Reconnecting to this session.' : undefined) ??
+    refusal;
+
+  return (
+    <section className="conversation" aria-label="Conversation">
+      {refusal === undefined ? null : (
+        <div className="band conversation__refusal" role="alert">
+          <span className="band__value">{refusal}</span>
+        </div>
+      )}
+
+      <MessageStream
+        entries={conversation.entries}
+        turnInFlight={conversation.turnInFlight}
+        footer={
+          pending === undefined ? null : (
+            <ApprovalCard
+              interrupt={pending}
+              busy={busy}
+              onAnswer={(decision) => {
+                void attempt(() => client.resolveApproval(pending.id, decision, runId()));
+              }}
+            />
+          )
+        }
+      />
+
+      <Composer
+        capabilities={capabilities}
+        turnInFlight={conversation.turnInFlight}
+        refusedReason={state.interactive ? undefined : reason}
+        busy={busy}
+        onSend={(text) => {
+          void attempt(() => client.prompt(text, runId()));
+        }}
+        onInterrupt={() => {
+          void attempt(() => client.interrupt());
+        }}
+      />
+
+      <div className="band band--foot conversation__foot">
+        <Usage granted={capabilities.usage} usage={conversation.usage} />
+      </div>
+    </section>
+  );
+}
+
+/**
+ * A client-generated identifier for one turn.
+ *
+ * `docs/API_AGUI.md` §2: the client chooses it and every event on the run
+ * echoes it back. Random rather than counted, because two tabs driving one
+ * session must not produce the same one.
+ */
+function runId(): string {
+  return `run_${Math.random().toString(36).slice(2, 10)}`;
+}
