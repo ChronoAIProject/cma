@@ -10,6 +10,15 @@
 //! mapping from an escape sequence to a message event, and a client that needs
 //! the literal terminal has an interface for that.
 //!
+//! ## A thread is a session, and a new one is named by the service
+//!
+//! A `threadId` that names nothing creates a session, which is how this
+//! protocol projects creation. The session that comes back has an identifier
+//! the core minted rather than the one that was asked for — identifiers are
+//! the core's to issue, and honouring a caller's would let one be chosen to
+//! collide with somebody else's. Every event on the run carries the real one,
+//! so a client learns what its thread is called from the first thing it reads.
+//!
 //! `docs/API_AGUI.md` governs. Where this code and that document disagree, one
 //! of them is wrong and it is usually this one.
 

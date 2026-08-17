@@ -48,7 +48,7 @@ Content-Type: application/json
 
 | Field | Meaning in chrono-bot |
 |---|---|
-| `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected |
+| `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected. The new session gets an identifier chosen by the service, not the one you sent, and every event on the run carries it: read `threadId` off the first event and use that from then on |
 | `runId` | Client-generated id for this turn; echoed on every event |
 | `messages` | The conversation. The final user message is the turn's input |
 | `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter |
