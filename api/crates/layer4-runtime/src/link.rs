@@ -41,11 +41,11 @@ use axum::{
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use serde::Deserialize;
 
-use crate::agent_config::PLACEHOLDER_KEY;
 use crate::bridge::Outbound;
 use crate::lanes::{self, Ready, LANE_CONVERSATION, LANE_CONVERSATION_GAP, LANE_TERMINAL};
 use crate::pty::PtySession;
 use crate::upstream::CredentialHolder;
+use crate::upstream::PLACEHOLDER_KEY;
 use crate::AppState;
 
 /// What the control plane asks for when it opens a link.
