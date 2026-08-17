@@ -197,7 +197,7 @@ async fn named(users: &UserDirectory, caller: &Caller, sessions: Vec<Session>) -
 }
 
 /// A core failure rendered as an RFC 9457 problem document.
-pub(crate) struct Problem(pub(crate) CoreError);
+pub struct Problem(pub(crate) CoreError);
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
