@@ -88,6 +88,12 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         },
         ["api", "v1", "sessions", id, verb] => classify_session_verb(method, verb)
             .map(|action| Classified::new(action).on(session(id))),
+        // The request identifier is in the path rather than the body, so it is
+        // recorded without reading one — and the decision, which is in the
+        // body, deliberately is not.
+        ["api", "v1", "sessions", id, "approvals", _request] if method == Method::POST => {
+            Some(Classified::new(Action::SessionApprovalResolve).on(session(id)))
+        }
 
         ["api", "v1", "environment-profiles"] => match *method {
             Method::GET => Some(Classified::new(Action::EnvironmentProfileList)),
@@ -143,6 +149,17 @@ fn classify_session_verb(method: &Method, verb: &str) -> Option<Action> {
         // field here for one to land in — `detail_from_query` names three keys
         // and `ticket` is not among them.
         (&Method::POST, "terminal-ticket") => Some(Action::SessionTerminalAttach),
+        // The operating verbs. None of them reads a body, and that is the
+        // point rather than an omission: what a caller sends to a session is
+        // keystrokes or a prompt, and what they answer an approval with is a
+        // decision about their own work. Both are the owner's content. There
+        // is no field here for either to land in, which is a stronger
+        // guarantee than a rule saying not to record them.
+        (&Method::POST, "input") => Some(Action::SessionInput),
+        (&Method::POST, "interrupt") => Some(Action::SessionInterrupt),
+        (&Method::POST, "steer") => Some(Action::SessionSteer),
+        (&Method::POST, "resize") => Some(Action::SessionResize),
+        (&Method::GET, "usage") => Some(Action::SessionUsageRead),
         _ => None,
     }
 }
