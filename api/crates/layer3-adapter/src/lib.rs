@@ -1,12 +1,31 @@
-//! Layer 3 — ACP-shaped kernel adapters.
+//! Layer 3 — the Agent Client Protocol, as kernel adapters speak it.
+//!
+//! The kernel conversation contract *is* ACP. The core acts as an ACP client;
+//! each runtime presents as an ACP agent through its adapter. That is a
+//! statement about this file rather than an aspiration for it: the update
+//! stream, the permission request and the stop reasons below are the
+//! protocol's own types, taken from its published schema so they cannot drift
+//! from the specification.
+//!
+//! ACP does not describe everything a hosted runtime needs, so this layer adds
+//! what it leaves out — bringing a runtime up, tearing one down, enumerating
+//! them, capturing a conversation for resume, refreshing a credential, and the
+//! terminal, which is a plane ACP has no notion of. Those are extensions
+//! around the contract, not amendments to it.
 //!
 //! This file is the abstraction. It must contain no kernel-specific type,
 //! constant, or conditional. Adding a kernel means adding a module, never
 //! editing this trait to accommodate it.
+//!
+//! The layer above refers to all of this in the trait's own vocabulary —
+//! conversation, update, permission request — and never by the protocol's
+//! name. The core must outlive any particular protocol, which is why the name
+//! stops here.
 
 pub mod claude_code;
 pub mod codex;
 pub mod sandbox;
+pub mod terminal;
 
 use std::collections::BTreeMap;
 
@@ -174,6 +193,76 @@ pub enum TerminalInput {
     Credential(String),
 }
 
+/// The protocol's own types, re-exported rather than re-declared.
+///
+/// Re-declaring them would mean maintaining a copy of a published schema, and
+/// a copy is wrong from the first release that moves. `StopReason` is renamed
+/// on the way through: the core has a stop reason of its own about whole
+/// sessions, and these five are about a single turn.
+pub use agent_client_protocol_schema::v1::{
+    ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
+    RequestPermissionOutcome as PermissionOutcome, RequestPermissionRequest, SessionUpdate,
+    StopReason as TurnStopReason, ToolCall, ToolCallUpdate,
+};
+
+/// A decision the runtime is blocked on, and the handle to answer it with.
+#[derive(Debug, Clone)]
+pub struct PermissionRequest {
+    /// Correlates an answer with the request that is waiting for it.
+    ///
+    /// Minted by the adapter. The protocol carries this at the JSON-RPC layer
+    /// rather than in the payload, and the core needs something it can record
+    /// against an approval event, hand to whoever is being asked, and accept
+    /// back from them minutes later — possibly after a restart, and possibly
+    /// through a different interface than the one that showed it.
+    pub id: String,
+    /// What the runtime is asking to do, and the answers it will accept.
+    ///
+    /// The offered options come from the runtime rather than from here. A
+    /// fixed allow/deny pair invented at this layer would drop the choices a
+    /// kernel actually distinguishes — refusing one command and refusing the
+    /// whole turn are different answers, and only the kernel knows which of
+    /// them it is offering.
+    pub request: RequestPermissionRequest,
+}
+
+/// Something sent toward a runtime's conversation.
+#[derive(Debug, Clone)]
+pub enum ConversationInput {
+    /// Content that opens a prompt turn.
+    Prompt(Vec<ContentBlock>),
+    /// The answer to a permission request the runtime is blocked on.
+    PermissionAnswer {
+        /// The request being answered, as [`PermissionRequest::id`] named it.
+        id: String,
+        /// What the owner decided.
+        outcome: PermissionOutcome,
+    },
+    /// Abandon the turn in flight.
+    ///
+    /// The turn ends; the conversation does not. A runtime that treats this as
+    /// a reason to stop has lost the session, which is the distinction between
+    /// interrupting and terminating.
+    Cancel,
+}
+
+/// A bidirectional attachment to a runtime's conversation.
+///
+/// Three streams rather than one, because they are answered in different
+/// places and at different speeds. Updates are a firehose nothing has to
+/// reply to; a permission request blocks the runtime until somebody decides,
+/// which may be minutes; and input arrives whenever its owner types. Folding
+/// them together would make the slowest of the three set the pace for all.
+#[derive(Debug)]
+pub struct ConversationChannel {
+    /// Everything the runtime says about what it is doing.
+    pub updates: mpsc::Receiver<SessionUpdate>,
+    /// Decisions the runtime is waiting on before it can continue.
+    pub requests: mpsc::Receiver<PermissionRequest>,
+    /// Input destined for the runtime.
+    pub input: mpsc::Sender<ConversationInput>,
+}
+
 /// A bidirectional attachment to a runtime's terminal.
 #[derive(Debug)]
 pub struct TerminalChannel {
@@ -267,6 +356,43 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
+    /// Open a bidirectional attachment to the runtime's conversation.
+    ///
+    /// The other plane. Where the terminal carries bytes for a screen, this
+    /// carries what the agent is actually doing — messages, tool calls, the
+    /// decisions it is blocked on — in a form the core can record and every
+    /// interface can project without parsing pixels.
+    ///
+    /// Callers check the `conversation` capability first, and a session
+    /// without it never reaches here. The default refusal is the backstop for
+    /// the case that check cannot cover: an adapter whose capabilities say one
+    /// thing and whose implementation has not caught up.
+    async fn open_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<ConversationChannel, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this kernel does not hold a conversation".to_string(),
+        ))
+    }
+
+    /// Replace the credential the runtime presents when calling out.
+    ///
+    /// Required of every kernel, because every kernel calls out on somebody's
+    /// behalf and every credential eventually expires. A runtime that could
+    /// not be told about a renewal would have to be restarted to pick one up,
+    /// and restarting it discards the conversation — which is the one thing a
+    /// session exists to keep.
+    ///
+    /// Its consumer was always the supervisor's loopback proxy. It rode the
+    /// terminal channel only because the terminal was the sole channel there
+    /// was; a kernel with no terminal could not have been told at all.
+    async fn refresh_credential(
+        &self,
+        handle: &RuntimeHandle,
+        credential: &str,
+    ) -> Result<(), AdapterError>;
+
     /// Tear the runtime down.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;
 
@@ -317,6 +443,118 @@ mod tests {
     fn handles_compare_by_value() {
         assert_eq!(RuntimeHandle("a".into()), RuntimeHandle("a".into()));
         assert_ne!(RuntimeHandle("a".into()), RuntimeHandle("b".into()));
+    }
+
+    /// An adapter that implements only what the trait requires.
+    ///
+    /// Exists to exercise the defaults: everything a kernel need not do must
+    /// answer "cannot" rather than fail, and a caller has to be able to tell
+    /// those apart without reading an error string.
+    struct BareKernel;
+
+    #[async_trait::async_trait]
+    impl KernelAdapter for BareKernel {
+        fn kernel_name(&self) -> &'static str {
+            "bare"
+        }
+
+        fn capabilities(&self) -> KernelCapabilities {
+            KernelCapabilities::default()
+        }
+
+        async fn provision(&self, _spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
+            Ok(RuntimeHandle("bare-1".into()))
+        }
+
+        async fn refresh_credential(
+            &self,
+            _handle: &RuntimeHandle,
+            _credential: &str,
+        ) -> Result<(), AdapterError> {
+            Ok(())
+        }
+
+        async fn terminate(&self, _handle: &RuntimeHandle) -> Result<(), AdapterError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn every_optional_plane_defaults_to_saying_it_cannot() {
+        // Absence of an ability is not a failure. A kernel that renders no
+        // terminal, holds no conversation, cannot be captured, or cannot
+        // enumerate what it runs is still a kernel — and a caller reading any
+        // of those as a failure would retry forever, or tear down a live
+        // session whose only fault is being one of them.
+        let bare = BareKernel;
+        let handle = RuntimeHandle("bare-1".into());
+        for error in [
+            bare.attach_terminal(&handle)
+                .await
+                .expect_err("no terminal"),
+            bare.open_conversation(&handle)
+                .await
+                .expect_err("no conversation"),
+            bare.snapshot(&handle).await.expect_err("no snapshot"),
+            bare.list_runtimes().await.expect_err("cannot enumerate"),
+        ] {
+            assert!(
+                matches!(error, AdapterError::Unsupported(_)),
+                "expected an absent ability, got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_conversation_channel_carries_the_protocol_own_vocabulary() {
+        // The types on this plane are the protocol's, not a copy of them, so a
+        // frame that round-trips through storage or a wire keeps its shape.
+        let update = SessionUpdate::AgentMessageChunk(
+            agent_client_protocol_schema::v1::ContentChunk::new(ContentBlock::from("hello")),
+        );
+        let json = serde_json::to_value(&update).expect("serialises");
+        assert_eq!(
+            json["sessionUpdate"], "agent_message_chunk",
+            "the wire name is the protocol's: {json}"
+        );
+        let back: SessionUpdate = serde_json::from_value(json).expect("deserialises");
+        assert!(matches!(back, SessionUpdate::AgentMessageChunk(_)));
+    }
+
+    #[test]
+    fn a_turn_stop_reason_keeps_the_protocol_spelling() {
+        // Five of them, and they are the protocol's own. Renaming one here
+        // would change what a kernel is understood to have said.
+        for (reason, wire) in [
+            (TurnStopReason::EndTurn, "end_turn"),
+            (TurnStopReason::MaxTokens, "max_tokens"),
+            (TurnStopReason::MaxTurnRequests, "max_turn_requests"),
+            (TurnStopReason::Refusal, "refusal"),
+            (TurnStopReason::Cancelled, "cancelled"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(reason).expect("serialises"),
+                serde_json::Value::String(wire.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn a_permission_answer_names_the_request_it_answers() {
+        // The correlation id is minted here because the protocol carries it at
+        // the JSON-RPC layer, and the core needs something it can record now
+        // and accept back minutes later, possibly after a restart.
+        let input = ConversationInput::PermissionAnswer {
+            id: "req-1".into(),
+            outcome: PermissionOutcome::Cancelled,
+        };
+        match input {
+            ConversationInput::PermissionAnswer { id, outcome } => {
+                assert_eq!(id, "req-1");
+                assert!(matches!(outcome, PermissionOutcome::Cancelled));
+            }
+            other => panic!("expected a permission answer, got {other:?}"),
+        }
     }
 
     #[test]

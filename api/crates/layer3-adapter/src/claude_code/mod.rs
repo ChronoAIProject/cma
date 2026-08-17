@@ -35,6 +35,14 @@ impl KernelAdapter for ClaudeCodeAdapter {
         Err(AdapterError::Unavailable("kernel not implemented".into()))
     }
 
+    async fn refresh_credential(
+        &self,
+        _handle: &RuntimeHandle,
+        _credential: &str,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unavailable("kernel not implemented".into()))
+    }
+
     async fn terminate(&self, _handle: &RuntimeHandle) -> Result<(), AdapterError> {
         Err(AdapterError::Unavailable("kernel not implemented".into()))
     }
