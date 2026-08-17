@@ -134,7 +134,16 @@ Between step 2 and step 4 the session is `idle` with `stop_reason: requires_acti
 
 ## 5. Interrupt and steer
 
-- **Interrupt** — abort the HTTP request. chrono-bot cancels the in-flight turn and the session returns to `ready`. There is no separate interrupt endpoint on this interface.
+- **Interrupt** — `POST /api/v1/sessions/{threadId}/interrupt`.
+
+  **A dropped stream does not cancel anything.** This was specified the other way round — "abort the HTTP request and chrono-bot cancels the turn" — and that is wrong for two reasons that only became clear once the stream existed.
+
+  A connection that drops because a laptop slept is indistinguishable from one a person closed on purpose. Reading the first as a cancellation ends somebody's turn because their network blinked, which §5 of `CLAUDE.md` forbids in the strongest terms it has: a session is not interrupted by anything its owner did not ask for. And it contradicts §7 of this document, which tells a client to recover a dropped stream by reading the durable log — advice that only makes sense if the work is still running.
+
+  So a dropped stream is a client that stopped watching. The turn continues, its events land in the log, and reconnecting through the event stream finds them. Interrupting is an act, and it has a route.
+
+  Interrupting requires the `interrupt` capability. Not every kernel has one — a wire can offer a prompt with no way to withdraw it — and a session whose kernel cannot is refused by name rather than left waiting for something that will not happen.
+
 - **Steer** — POST a new run on the same `threadId` while one is in flight. What happens is governed by the session's `concurrent_input` policy (`reject` · `enqueue` · `interrupt` · `rollback`), fixed at session creation and reported in the capability document. On `reject`, the second run returns `409` before opening a stream.
 
 ---
@@ -182,6 +191,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 
 - **Tolerate unknown events.** The emitted set grows additively; a client that throws on an unrecognised type will break on a routine release.
 - **Do not treat `RUN_FINISHED` as "session over."** Check `outcome`. An interrupt outcome means the session is alive and waiting for you.
+- **A dropped stream is not a cancellation.** The turn keeps running. Recover by reading the log, not by re-posting the run — and if you meant to stop it, say so with the interrupt route (§5).
 - **Reconnect through REST, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/sessions/{id}/events?starting_after=<seq>`, not by POSTing the run again — which would start a second turn.
 - **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
 
