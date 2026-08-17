@@ -42,6 +42,8 @@ describe('the band grid', () => {
         onSelect={() => {}}
         onCreate={() => {}}
         onReorder={() => {}}
+        collapsed={false}
+        onToggleCollapsed={() => {}}
       />,
     );
     expect(rail.container.querySelector('.rail__head')).toHaveClass('band', 'band--head');
@@ -72,11 +74,19 @@ describe('the band grid', () => {
 
   it('aligns the band leading cell with the rail rather than with its own text', () => {
     // The cell is the rail's share of the one 40px band, so it takes the
-    // rail's width. A cell sized from its content would put a second vertical
-    // line a few pixels from the rail's, which reads as a misprint.
+    // rail's width from the page. A cell sized from its content would put a
+    // second vertical line a few pixels from the rail's, which reads as a
+    // misprint; a cell pinned to the open width would leave it 264px adrift
+    // the moment the rail collapsed.
     const band = sheet('shell/StatusBand.css');
-    expect(rule(band, '.statusband__lead')).toContain('width: var(--rail-width)');
+    expect(rule(band, '.statusband__lead')).not.toContain('width:');
+    expect(sheet('Console.tsx')).toContain(
+      "leadingColumn={railCollapsed ? 'var(--rail-collapsed)' : 'var(--rail-width)'}",
+    );
     expect(rule(sheet('sessions/SessionRail.css'), '.rail')).toContain('width: var(--rail-width)');
+    expect(rule(sheet('sessions/SessionRail.css'), '.rail--collapsed')).toContain(
+      'width: var(--rail-collapsed)',
+    );
 
     // Written at two-class specificity on purpose: the element carries .band
     // and .statusband, both set padding-inline, and equal specificity would
@@ -96,6 +106,8 @@ describe('the band grid', () => {
         onSelect={() => {}}
         onCreate={() => {}}
         onReorder={() => {}}
+        collapsed={false}
+        onToggleCollapsed={() => {}}
       />,
     );
     const chrome = container.querySelector('.rail__chrome');
