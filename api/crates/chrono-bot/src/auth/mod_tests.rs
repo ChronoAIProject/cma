@@ -7,7 +7,10 @@ use super::*;
 
 fn headers_with_cookie(value: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
-    h.insert(header::COOKIE, value.parse().expect("valid header"));
+    h.insert(
+        axum::http::header::COOKIE,
+        value.parse().expect("valid header"),
+    );
     h
 }
 
