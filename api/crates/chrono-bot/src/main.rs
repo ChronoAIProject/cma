@@ -319,6 +319,10 @@ async fn main() {
     // What somebody running the service can see and do. Its own router under
     // its own path segment so the whole surface can be restricted in front of
     // this process as well as inside it.
+    // Minted where a credential can be carried and redeemed where one cannot,
+    // so both surfaces are handed the same store.
+    let tickets = layer1_public::tickets::TerminalTickets::new();
+
     let operator =
         layer1_public::rest::admin::router(Arc::new(layer1_public::rest::admin::AdminState {
             sessions: Arc::clone(&service),
@@ -333,13 +337,19 @@ async fn main() {
             layer1_public::rest::SessionsState {
                 sessions: Arc::clone(&service),
                 users: Arc::clone(&users),
+                tickets: Arc::clone(&tickets),
             },
         ))
         .merge(layer1_public::rest::environments::router(Arc::clone(
             &environments,
         )))
         .merge(operator)
-        .merge(layer1_public::pty::router(Arc::clone(&service)))
+        .merge(layer1_public::pty::router(
+            layer1_public::pty::TerminalState {
+                sessions: Arc::clone(&service),
+                tickets: Arc::clone(&tickets),
+            },
+        ))
         .merge(auth::router(Arc::clone(&auth_state)))
         // Ordered deliberately. A layer added later wraps the ones before it,
         // so identity is established first and recording sees both who called
