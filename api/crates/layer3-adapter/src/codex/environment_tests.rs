@@ -17,6 +17,7 @@ use crate::{AdapterError, KernelAdapter, RuntimeSpec, TermSize};
 fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
@@ -62,6 +63,7 @@ async fn permission_intent_reaches_this_kernel_through_the_file_it_reads() {
         let a = adapter("http://127.0.0.1:1");
         let spec = RuntimeSpec {
             restore_from: None,
+            reaches: Vec::new(),
             created_by: None,
             environment: Default::default(),
             session_id: "sesn_x".into(),
@@ -105,6 +107,7 @@ async fn a_session_model_overrides_the_deployment_default() {
     let a = adapter("http://127.0.0.1:1");
     let spec = RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
@@ -135,6 +138,7 @@ async fn asking_for_the_owners_own_credential_is_refused_rather_than_ignored() {
     let err = a
         .provision(&RuntimeSpec {
             restore_from: None,
+            reaches: Vec::new(),
             created_by: None,
             environment: Default::default(),
             session_id: "sesn_x".into(),
@@ -165,6 +169,7 @@ async fn the_delegated_credential_provisions_exactly_as_before() {
     let err = a
         .provision(&RuntimeSpec {
             restore_from: None,
+            reaches: Vec::new(),
             created_by: None,
             environment: Default::default(),
             session_id: "sesn_x".into(),
@@ -186,6 +191,7 @@ fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
     let a = adapter("http://127.0.0.1:1");
     let env = a.environment_for(&RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
