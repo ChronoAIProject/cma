@@ -46,6 +46,13 @@ pub struct Ready {
     /// The lanes it serves, named.
     #[serde(default)]
     pub lanes: Vec<String>,
+    /// The conversation the pod is taking over, when it was handed one.
+    ///
+    /// Read from the pod rather than remembered here. A control plane that
+    /// restarted between the handover and taking the session back over
+    /// remembers nothing, and a carried session would silently begin again.
+    #[serde(default)]
+    pub resuming: Option<String>,
 }
 
 impl Ready {
