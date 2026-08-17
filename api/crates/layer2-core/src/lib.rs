@@ -88,7 +88,7 @@ pub use activity_detail::{ActivityDetail, DetailKey};
 pub use activity_service::ActivityService;
 pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
-pub use capabilities::{Capability as SessionCapability, SessionCapabilities};
+pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use clock::rfc3339_at;
 pub use conversation::{ApprovalDecision, Usage};
 pub use directory::{
