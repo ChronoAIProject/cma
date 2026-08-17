@@ -1,30 +1,38 @@
 /*
- * Session actions — docs/Web_Style.md §7 and §11.
+ * Session actions — docs/Web_Style.md §7 and §12.
  *
  * The controls themselves are the shared `.button` family; what lives here is
- * their arrangement. Stacked, because their order carries meaning — least
- * destructive first — and because each carries its reason as part of the
- * button, which is what §7's stacked key is. The 52px minimum comes with that
- * class, so a column of them stays even when one reason wraps.
+ * their arrangement. A row in the session header, at the head of the terminal
+ * they act on.
  */
 
 .actions {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.actions > .button {
-  width: 100%;
+  flex: none;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
 }
 
 /*
- * The destructive confirmation is inline, in place of the stack's own controls
- * (§7) — never a second dialog over a dialog. Replacing the stack rather than
+ * The one sentence explaining why the disabled controls are disabled. Drawn on
+ * the surface rather than in a tooltip, which §7 rejects as unreachable by
+ * touch and invisible to anyone scanning. It truncates before the controls do:
+ * a reason nobody can act on is worth less than the control it describes.
+ */
+.actions__reason {
+  overflow: hidden;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+}
+
+/*
+ * The destructive confirmation is inline, in place of the row's own controls
+ * (§7) — never a second dialog over a dialog. Replacing the row rather than
  * adding to it is also what stops the answer being read as one more action.
  */
 .actions__question {
-  margin: 0;
   color: var(--fail);
   font-size: var(--text-sm);
+  white-space: nowrap;
 }
