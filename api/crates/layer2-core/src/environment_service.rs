@@ -407,5 +407,9 @@ fn store_failed(e: StoreError) -> CoreError {
 }
 
 #[cfg(test)]
+#[path = "environment_resolution_tests.rs"]
+mod environment_resolution_tests;
+
+#[cfg(test)]
 #[path = "environment_service_tests.rs"]
 mod tests;
