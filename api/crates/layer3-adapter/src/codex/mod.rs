@@ -164,12 +164,24 @@ impl Default for CodexSandboxSpec {
 pub struct CodexAdapter {
     client: SandboxClient,
     spec: CodexSandboxSpec,
+    /// The open link to each runtime, by handle.
+    ///
+    /// Held because a credential has to reach a runtime that is already
+    /// running, and this image's supervisor accepts one only over an
+    /// attachment. Opening a second attachment to deliver it is not an option:
+    /// attaching declares a geometry, and a connection made without one would
+    /// resize the pty under whoever is looking at it.
+    links: tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>,
 }
 
 impl CodexAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
-        Self { client, spec }
+        Self {
+            client,
+            spec,
+            links: tokio::sync::Mutex::new(BTreeMap::new()),
+        }
     }
 
     /// Give a new sandbox the conversation it is taking over.
@@ -511,10 +523,53 @@ impl KernelAdapter for CodexAdapter {
             tracing::info!(%sandbox, "sandbox input relay ended");
         });
 
+        // Remembered so a credential renewed later can be delivered without
+        // opening a second attachment.
+        self.links
+            .lock()
+            .await
+            .insert(handle.0.clone(), in_tx.clone());
+
         Ok(TerminalChannel {
             output: out_rx,
             input: in_tx,
         })
+    }
+
+    async fn refresh_credential(
+        &self,
+        handle: &RuntimeHandle,
+        credential: &str,
+    ) -> Result<(), AdapterError> {
+        // This image's supervisor learns of a new credential from a control
+        // frame on the terminal link — which is where the frame has always
+        // gone, and why it keeps going there: a runtime already running was
+        // built against that dialect, and §5 does not permit breaking it to
+        // tidy up a name.
+        let link = self.links.lock().await.get(&handle.0).cloned();
+        let Some(link) = link else {
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {} has no open link to carry a credential",
+                handle.0
+            )));
+        };
+        // Never logged with its value, here or anywhere below this line.
+        if link
+            .send(TerminalInput::Credential(credential.to_string()))
+            .await
+            .is_err()
+        {
+            // The link died since it was recorded. Forgotten rather than
+            // retried: the next attachment records a live one, and keeping a
+            // dead sender would make every renewal fail the same way forever.
+            self.links.lock().await.remove(&handle.0);
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link closed before the credential reached it",
+                handle.0
+            )));
+        }
+        tracing::info!(sandbox = %handle.0, "credential delivered to the runtime");
+        Ok(())
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
@@ -534,6 +589,10 @@ impl KernelAdapter for CodexAdapter {
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
+        // Dropped first: the link belongs to a sandbox that is about to stop
+        // existing, and keeping it would leave this map growing with the
+        // remains of every session this process has ever served.
+        self.links.lock().await.remove(&handle.0);
         self.client.delete(&handle.0).await?;
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
         Ok(())
