@@ -180,3 +180,83 @@ async fn a_session_model_overrides_the_deployment_default() {
         Some("a-chosen-model")
     );
 }
+
+#[tokio::test]
+async fn asking_for_the_owners_own_credential_is_refused_rather_than_ignored() {
+    // The failure this exists to prevent is silent: nothing in the runtime
+    // reads such a setting, so a session accepted with it would spend the
+    // delegated credential while its owner believed they were spending their
+    // own. Refusing before the provider is even called is what makes the
+    // difference visible.
+    use crate::RuntimeOptions;
+
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .provision(&RuntimeSpec {
+            restore_from: None,
+            created_by: None,
+            environment: Default::default(),
+            session_id: "sesn_x".into(),
+            size: TermSize { cols: 80, rows: 24 },
+            subject_credential: None,
+            options: RuntimeOptions {
+                own_credential: true,
+                ..RuntimeOptions::default()
+            },
+        })
+        .await
+        .expect_err("an unsupported credential mode must not provision");
+    assert!(
+        matches!(err, AdapterError::Unsupported(_)),
+        "the refusal must be attributable to a missing ability, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("own credential"),
+        "the refusal must name what was refused, got {err}"
+    );
+}
+
+#[tokio::test]
+async fn the_delegated_credential_provisions_exactly_as_before() {
+    // The success path, stated so the refusal above cannot quietly widen: the
+    // default credential mode still reaches the provider, and only fails there.
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .provision(&RuntimeSpec {
+            restore_from: None,
+            created_by: None,
+            environment: Default::default(),
+            session_id: "sesn_x".into(),
+            size: TermSize { cols: 80, rows: 24 },
+            subject_credential: None,
+            options: Default::default(),
+        })
+        .await
+        .expect_err("the dead provider is what fails, not the request");
+    assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");
+}
+
+#[test]
+fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
+    // The variable existed and nothing in layer4-runtime ever read it, which
+    // is what made the setting look honoured.
+    use crate::RuntimeOptions;
+
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&RuntimeSpec {
+        restore_from: None,
+        created_by: None,
+        environment: Default::default(),
+        session_id: "sesn_x".into(),
+        size: TermSize { cols: 80, rows: 24 },
+        subject_credential: None,
+        options: RuntimeOptions {
+            own_credential: true,
+            ..RuntimeOptions::default()
+        },
+    });
+    assert!(
+        !env.keys().any(|key| key.contains("OWN_CREDENTIAL")),
+        "an unread variable reads as a setting that was honoured"
+    );
+}

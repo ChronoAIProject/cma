@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::{
-    KernelAdapter, RuntimeHandle, RuntimeOptions, RuntimePermission, RuntimeSpec, TermSize,
-    TerminalInput,
+    AdapterError, KernelAdapter, RuntimeHandle, RuntimeOptions, RuntimePermission, RuntimeSpec,
+    TermSize, TerminalInput,
 };
 use tokio::sync::{broadcast, Mutex};
 
@@ -52,6 +52,46 @@ const PROVISION_ATTEMPTS: u32 = 4;
 /// session which succeeds on the second attempt still feels like it started
 /// rather than like it stalled.
 pub(crate) const DEFAULT_RETRY_BACKOFF_MS: u64 = 3_000;
+
+/// Why a bring-up attempt failed, and whether another one could go differently.
+///
+/// Most provisioning failures are nobody's decision and usually pass, which is
+/// what the retries are for. Some are answers: a runtime asked for something
+/// its kernel does not do will be told the same thing on the fourth attempt as
+/// on the first, and making its owner wait out the backoff to hear it turns a
+/// clear refusal into what looks like a slow, flaky start.
+struct StartFailure {
+    /// What to record against the session, written for whoever has to act.
+    reason: String,
+    /// Whether trying again could produce a different outcome.
+    retryable: bool,
+}
+
+impl StartFailure {
+    /// A failure that another attempt might get past.
+    fn transient(reason: String) -> Self {
+        Self {
+            reason,
+            retryable: true,
+        }
+    }
+
+    /// Classify what the provider said about bringing a runtime up.
+    ///
+    /// An absent ability is the one answer retrying cannot change: the adapter
+    /// distinguishes it from a failure precisely so a caller need not read
+    /// error strings to tell "cannot" from "did not".
+    fn from_provisioning(error: AdapterError) -> Self {
+        let reason = format!("could not provision a runtime: {error}");
+        match error {
+            AdapterError::Unsupported(_) => Self {
+                reason,
+                retryable: false,
+            },
+            AdapterError::Unavailable(_) | AdapterError::Rejected(_) => Self::transient(reason),
+        }
+    }
+}
 
 impl SessionService {
     /// Provision a runtime for an existing session and attach its terminal.
@@ -137,16 +177,27 @@ impl SessionService {
                     }
                     return Ok(());
                 }
-                Err(reason) => {
+                Err(failure) if !failure.retryable => {
+                    // The answer will not change, so waiting out the backoff
+                    // only delays telling the owner something already known.
+                    tracing::warn!(
+                        session_id = %session.id,
+                        reason = %failure.reason,
+                        "this session cannot be started at all; not retrying"
+                    );
+                    self.discard_runtime(&session.id, adapter).await;
+                    return Err(failure.reason);
+                }
+                Err(failure) => {
                     tracing::warn!(
                         session_id = %session.id,
                         attempt,
                         of = PROVISION_ATTEMPTS,
-                        reason = %reason,
+                        reason = %failure.reason,
                         "could not start the runtime; trying again"
                     );
                     self.discard_runtime(&session.id, adapter).await;
-                    last = reason;
+                    last = failure.reason;
                 }
             }
             if attempt < PROVISION_ATTEMPTS {
@@ -189,7 +240,7 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
         restore: Option<&Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), StartFailure> {
         let id = session.id.clone();
         // Resolved from the session rather than the request, so a runtime
         // replaced long afterwards is built the same way. A profile that has
@@ -199,7 +250,11 @@ impl SessionService {
             .environments
             .resolve_for_owner(&session.owner, session.environment_profile.as_ref())
             .await
-            .map_err(|e| format!("this session's environment could not be prepared: {e}"))?;
+            .map_err(|e| {
+                StartFailure::transient(format!(
+                    "this session's environment could not be prepared: {e}"
+                ))
+            })?;
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
         let handle = adapter
@@ -216,7 +271,7 @@ impl SessionService {
                 created_by: self.identity.clone(),
             })
             .await
-            .map_err(|e| format!("could not provision a runtime: {e}"))?;
+            .map_err(StartFailure::from_provisioning)?;
 
         // Recorded before anything else is attempted. From here a runtime
         // exists, and a record that does not name it is one nothing can reclaim.
@@ -225,10 +280,9 @@ impl SessionService {
             .await;
         self.note_progress(&id, ProvisioningStage::Attaching).await;
 
-        let channel = adapter
-            .attach_terminal(&handle)
-            .await
-            .map_err(|e| format!("could not attach to the runtime: {e}"))?;
+        let channel = adapter.attach_terminal(&handle).await.map_err(|e| {
+            StartFailure::transient(format!("could not attach to the runtime: {e}"))
+        })?;
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
