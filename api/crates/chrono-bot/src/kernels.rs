@@ -2,7 +2,7 @@
 //!
 //! The composition root's one job that is worth its own file: this is the only
 //! place in the service where a concrete kernel is named. Everything upstream
-//! selects by opaque identifier, which is what lets a kernel arrive as a
+//! selects by opaque identifier, which is what lets a second kernel arrive as a
 //! directory in Layer 3 and a block here rather than as a change to anything
 //! that uses one.
 
@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use layer2_core::KernelId;
 use layer3_adapter::{
+    claude_code::{ClaudeCodeAdapter, ClaudeCodeSandboxSpec},
     codex::{CodexAdapter, CodexSandboxSpec},
     hosted::Deployment,
     sandbox::SandboxClient,
@@ -24,7 +25,7 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     // The only place a concrete runtime implementation is named. Everything
     // upstream of here selects by opaque identifier, which is what lets a
-    // kernel arrive as a directory in Layer 3 and a block here.
+    // second kernel arrive as a directory in Layer 3 and a block here.
     let mut codex = CodexSandboxSpec::default();
     deploy(config, &mut codex.deployment);
     codex.deployment.upstream_base_url = config.upstream_base_url.clone();
@@ -38,6 +39,23 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
                 config.sandbox_api_key.clone(),
             ),
             codex,
+        )),
+    );
+
+    // The request shape this one speaks is its own rather than a deployment's
+    // choice, so nothing here touches it.
+    let mut claude_code = ClaudeCodeSandboxSpec::default();
+    deploy(config, &mut claude_code.deployment);
+    claude_code.deployment.upstream_base_url = config.claude_upstream_base_url.clone();
+    claude_code.deployment.upstream_model = config.claude_upstream_model.clone();
+    adapters.insert(
+        KernelId::new("claude_code"),
+        Arc::new(ClaudeCodeAdapter::new(
+            SandboxClient::new(
+                config.sandbox_base_url.clone(),
+                config.sandbox_api_key.clone(),
+            ),
+            claude_code,
         )),
     );
 
@@ -101,7 +119,10 @@ mod tests {
         // returns every field, including the ones it knows nothing about, and
         // the program a pod runs comes back empty. The session then starts a
         // sandbox with no command in it.
-        let kernels = [CodexSandboxSpec::default().deployment];
+        let kernels = [
+            CodexSandboxSpec::default().deployment,
+            ClaudeCodeSandboxSpec::default().deployment,
+        ];
         for mut deployment in kernels {
             let bridge = deployment.bridge_command.clone();
             let wire = deployment.upstream_wire_api.clone();
@@ -115,6 +136,41 @@ mod tests {
             assert_eq!(deployment.bridge_command, bridge);
             assert_eq!(deployment.upstream_wire_api, wire);
         }
+    }
+
+    #[test]
+    fn every_kernel_is_deployed_into_the_same_sandbox() {
+        // Sizing and the baseline are facts about this deployment rather than
+        // about an agent, so a kernel that got different ones would be a
+        // session whose cost and promises depended on which agent it picked.
+        let config = deployment_config();
+        let mut codex = CodexSandboxSpec::default();
+        let mut claude_code = ClaudeCodeSandboxSpec::default();
+        deploy(&config, &mut codex.deployment);
+        deploy(&config, &mut claude_code.deployment);
+
+        assert_eq!(
+            codex.deployment.shape.image,
+            claude_code.deployment.shape.image
+        );
+        assert_eq!(
+            codex.deployment.shape.resource_limits,
+            claude_code.deployment.shape.resource_limits
+        );
+        assert_eq!(
+            codex.deployment.provided_packages,
+            claude_code.deployment.provided_packages
+        );
+    }
+
+    #[test]
+    fn the_two_kernels_do_not_share_a_bridge_or_a_conversation_directory() {
+        // If they did, one kernel's sandbox would run the other's program, or
+        // carry the wrong tree when a session was rotated. Both are silent.
+        assert_ne!(
+            CodexSandboxSpec::default().deployment.bridge_command,
+            ClaudeCodeSandboxSpec::default().deployment.bridge_command
+        );
     }
 
     #[test]

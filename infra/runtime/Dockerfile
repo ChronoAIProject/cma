@@ -30,6 +30,18 @@ ARG CODEX_VERSION=0.147.0
 # floating version could pull a bridge built against a kernel this image does
 # not carry.
 ARG CODEX_ACP_VERSION=1.4.0
+# The second kernel, and its Agent Client Protocol bridge. One package rather
+# than two: the bridge depends on @anthropic-ai/claude-agent-sdk, which ships
+# the kernel it drives, so installing the bridge installs a matched pair. The
+# Zed-maintained adapter was chosen over writing one against the SDK directly —
+# it is Apache-2.0, it already maps prompts, session updates and permission
+# requests onto the protocol this milestone adopted, and a bridge we wrote
+# ourselves would be a second implementation of that mapping to keep correct.
+#
+# Pinned exactly, like everything else here, and for the sharper reason: this
+# bridge decides how much a session's agent may do unattended, and a floating
+# version could rename a mode the adapter sends by name.
+ARG CLAUDE_CODE_ACP_VERSION=0.16.2
 # Provided by buildx; selects the right published binary for the target.
 ARG TARGETARCH
 
@@ -61,6 +73,7 @@ RUN apt-get update \
 
 RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
+        "@zed-industries/claude-code-acp@${CLAUDE_CODE_ACP_VERSION}" \
     && npm cache clean --force
 
 # Install the platform CLI from its published release. The checksum is verified

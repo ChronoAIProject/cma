@@ -78,6 +78,14 @@ pub struct Config {
     pub upstream_model: String,
     /// Request shape the upstream speaks.
     pub upstream_wire_api: String,
+    /// Where a sandbox forwards the second kernel's model calls.
+    ///
+    /// Falls back to the shared upstream when a deployment names none, which is
+    /// the ordinary case for a gateway that serves both request shapes at one
+    /// address.
+    pub claude_upstream_base_url: String,
+    /// Model the second kernel selects when a session names none.
+    pub claude_upstream_model: String,
     /// Root of the identity platform a session's CLI acts against.
     pub platform_base_url: String,
     /// Connection string for the durable session store.
@@ -166,6 +174,16 @@ impl Config {
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
+        // The second kernel's upstream. Its own keys because kernels do not
+        // share a model and need not share an endpoint: one speaks a
+        // completions-shaped API and the other a messages-shaped one, and a
+        // deployment whose gateway serves both at one address simply leaves the
+        // base URL unset and inherits the first.
+        let claude_upstream_base_url = match var_or("CHRONO_CLAUDE_UPSTREAM_BASE_URL", "") {
+            empty if empty.is_empty() => upstream_base_url.clone(),
+            named => named,
+        };
+        let claude_upstream_model = var_or("CHRONO_CLAUDE_UPSTREAM_MODEL", "claude-opus-5");
         // Defaults to the same provider this service authenticates against, so
         // a session acts on the platform as the person who signed in.
         let platform_base_url = var_or("CHRONO_PLATFORM_BASE_URL", "");
@@ -251,6 +269,8 @@ impl Config {
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
+            claude_upstream_base_url,
+            claude_upstream_model,
             platform_base_url,
             mongodb_uri,
             mongodb_database,
@@ -359,6 +379,8 @@ impl Config {
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),
             upstream_wire_api: "responses".into(),
+            claude_upstream_base_url: "http://u".into(),
+            claude_upstream_model: "m".into(),
             platform_base_url: "http://p".into(),
             mongodb_uri: "mongodb://h/db".into(),
             mongodb_database: "db".into(),
