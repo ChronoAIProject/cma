@@ -20,7 +20,7 @@ use crate::authz::{Caller, Capability};
 use crate::clock::now_rfc3339;
 use crate::environment::{
     AgentConfiguration, Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
-    ResolvedEnvironment, SkillCatalog,
+    ResolvedEnvironment, ServiceAvailability, SkillCatalog,
 };
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
@@ -76,16 +76,138 @@ impl EnvironmentProfileService {
         caller: &Caller,
         credential: Option<&str>,
     ) -> Result<Vec<crate::environment::CatalogService>, CoreError> {
+        Ok(self
+            .service_availability(caller, credential)
+            .await?
+            .listed())
+    }
+
+    /// What the catalogue says, keeping its three answers apart.
+    ///
+    /// "You have granted nothing", "we could not ask right now" and "this
+    /// deployment has no catalogue" are three different facts, and a caller who
+    /// cannot tell them apart does the wrong thing for two of them: they retry
+    /// the one that will never succeed, and give up on the one that would have
+    /// worked a moment later.
+    ///
+    /// Collapsing them is what the old signature did — an empty list meant
+    /// both "no catalogue" and "nothing granted", and any failure to reach it
+    /// arrived as `RuntimeUnavailable`, which sends a caller to look at the
+    /// sandbox provider.
+    pub async fn service_availability(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+    ) -> Result<ServiceAvailability, CoreError> {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
         let Some(catalog) = self.services.as_ref() else {
-            return Ok(Vec::new());
+            return Ok(ServiceAvailability::NoCatalogue);
         };
         catalog
             .available(&caller.subject, credential)
             .await
-            .map_err(|e| CoreError::RuntimeUnavailable(format!("service catalogue: {e}")))
+            .map(ServiceAvailability::Granted)
+            .map_err(|e| CoreError::ServiceCatalogUnavailable(e.to_string()))
+    }
+
+    /// Refuse a selection naming a service this owner has not granted.
+    ///
+    /// **At provision, not at write.** A grant can be revoked between the two,
+    /// so the write-time answer is friendlier and the provision-time answer is
+    /// the true one — a profile that was valid when it was saved may name
+    /// something its owner has since taken back, and the session that would
+    /// have been started against it must be refused rather than started and
+    /// left failing every call from inside the sandbox.
+    ///
+    /// **A catalogue that cannot be asked refuses nothing.** What a session may
+    /// reach is recorded on the profile; the catalogue exists to help choose,
+    /// not to authorise. Blocking a session because NyxID was briefly
+    /// unreachable would take the service down with it, and would do so for
+    /// profiles whose services were settled days ago.
+    ///
+    /// A deployment with no catalogue refuses nothing for the same reason: it
+    /// has withheld nothing, so there is nothing it can be said to have denied.
+    ///
+    /// The baseline is never checked. Those services are what a session *is*
+    /// on this platform rather than something its owner opted into, and a
+    /// deployment that mandates one has already decided.
+    pub async fn refuse_ungranted(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+        selected: &[crate::environment::ServiceId],
+    ) -> Result<(), CoreError> {
+        let wanted: Vec<_> = selected
+            .iter()
+            .filter(|id| !self.baseline.services().contains(id))
+            .collect();
+        if wanted.is_empty() {
+            return Ok(());
+        }
+
+        let availability = match self.service_availability(caller, credential).await {
+            Ok(availability) => availability,
+            Err(CoreError::ServiceCatalogUnavailable(reason)) => {
+                tracing::warn!(
+                    subject = %caller.subject,
+                    reason = %reason,
+                    "the service catalogue could not be asked; the profile's stored selection stands"
+                );
+                return Ok(());
+            }
+            Err(other) => return Err(other),
+        };
+        let Some(granted) = availability.grants() else {
+            return Ok(());
+        };
+
+        for id in wanted {
+            if !granted.iter().any(|service| &service.id == id) {
+                tracing::info!(
+                    subject = %caller.subject,
+                    service = %id.0,
+                    "refused a session naming a service its owner has not granted"
+                );
+                return Err(CoreError::ServiceNotGranted(id.0.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Note a selection the catalogue does not currently grant.
+    ///
+    /// A warning and never a refusal. Refusing here would turn a momentary
+    /// NyxID outage into a caller unable to save a profile, and would refuse a
+    /// selection that may well be granted by the time a session is started
+    /// from it. The provision-time check is the one that decides; this exists
+    /// so the decision is not first heard about minutes later.
+    async fn warn_ungranted(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+        selected: &[crate::environment::ServiceId],
+    ) {
+        let Ok(availability) = self.service_availability(caller, credential).await else {
+            return;
+        };
+        let Some(granted) = availability.grants() else {
+            return;
+        };
+        for id in selected {
+            if self.baseline.services().contains(id) {
+                continue;
+            }
+            if !granted.iter().any(|service| &service.id == id) {
+                tracing::warn!(
+                    subject = %caller.subject,
+                    service = %id.0,
+                    "a profile names a service this owner has not granted; \
+                     sessions started from it will be refused until they do"
+                );
+            }
+        }
     }
 
     /// What this deployment mandates in every session.
@@ -191,6 +313,10 @@ impl EnvironmentProfileService {
             updated_at: now,
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
+        // Noted after the write, never instead of it: a selection the
+        // catalogue does not currently grant is a warning here and a refusal
+        // at provision, because a grant can change between the two.
+        self.warn_ungranted(caller, None, &profile.services).await;
         tracing::info!(
             profile_id = %profile.id,
             owner = %profile.owner,
@@ -253,6 +379,7 @@ impl EnvironmentProfileService {
             updated_at: now_rfc3339(),
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
+        self.warn_ungranted(caller, None, &profile.services).await;
         tracing::info!(profile_id = %profile.id, owner = %profile.owner, "environment profile replaced");
         Ok(profile)
     }

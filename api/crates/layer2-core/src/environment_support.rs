@@ -131,6 +131,71 @@ impl SkillCatalog for FakeSkillCatalog {
     }
 }
 
+/// A service catalogue that answers, or refuses, exactly as NyxID would.
+///
+/// The three answers it can give are the three this milestone exists to keep
+/// apart: a list of grants, a refusal to answer, and — by not being wired up
+/// at all — a deployment with no catalogue.
+pub(crate) struct FakeServiceCatalog {
+    granted: Vec<crate::environment::CatalogService>,
+    failure: Option<CatalogError>,
+}
+
+impl FakeServiceCatalog {
+    pub(crate) fn granting(ids: impl IntoIterator<Item = &'static str>) -> Self {
+        Self {
+            granted: ids
+                .into_iter()
+                .map(|id| crate::environment::CatalogService {
+                    id: crate::environment::ServiceId::new(id),
+                    name: id.to_string(),
+                    description: None,
+                })
+                .collect(),
+            failure: None,
+        }
+    }
+
+    pub(crate) fn unreachable() -> Self {
+        Self {
+            granted: Vec::new(),
+            failure: Some(CatalogError::Unavailable("connection refused".into())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::environment::ServiceCatalog for FakeServiceCatalog {
+    async fn available(
+        &self,
+        _subject: &SubjectId,
+        _credential: Option<&str>,
+    ) -> Result<Vec<crate::environment::CatalogService>, CatalogError> {
+        match &self.failure {
+            Some(CatalogError::Unavailable(m)) => Err(CatalogError::Unavailable(m.clone())),
+            Some(CatalogError::Malformed(m)) => Err(CatalogError::Malformed(m.clone())),
+            None => Ok(self.granted.clone()),
+        }
+    }
+}
+
+/// A profile service wired to a service catalogue, with one mandated service.
+pub(crate) fn service_catalog_service(
+    catalog: Option<Arc<FakeServiceCatalog>>,
+) -> Arc<EnvironmentProfileService> {
+    EnvironmentProfileService::new(
+        Arc::new(FakeProfileStore::default()),
+        Baseline::new(
+            [SoftwarePackage::new("platform-cli")],
+            [],
+            [crate::environment::ServiceId::new("nyxid")],
+        ),
+        None,
+        catalog.map(|c| c as Arc<dyn crate::environment::ServiceCatalog>),
+        fake_agent(),
+    )
+}
+
 /// The baseline the tests treat as what this deployment mandates.
 pub(crate) fn baseline() -> Baseline {
     Baseline::new(
