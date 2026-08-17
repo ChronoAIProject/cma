@@ -332,6 +332,47 @@ fn list_or(key: &str, default: &str) -> Vec<String> {
         .collect()
 }
 
+/// A resolved configuration for tests, with every field set to something
+/// plausible.
+///
+/// Here rather than in a test module because more than one module needs it,
+/// and a second copy is a second thing to update when a key is added — which
+/// is exactly when a stale copy stops compiling and gets filled in blindly.
+#[cfg(test)]
+impl Config {
+    pub fn sample() -> Self {
+        Config {
+            bind: "0.0.0.0:8080".into(),
+            public_url: "http://x".into(),
+            cors_origins: vec![],
+            sandbox_base_url: "http://r".into(),
+            sandbox_api_key: "k".into(),
+            sandbox_image: "img".into(),
+            sandbox_cpu: "1".into(),
+            sandbox_memory: "1Gi".into(),
+            default_agent: Default::default(),
+            baseline_packages: vec![],
+            baseline_skills: vec![],
+            baseline_services: vec![],
+            deployment_id: "chrono-bot".into(),
+            adopts_untagged_runtimes: true,
+            upstream_base_url: "http://u".into(),
+            upstream_model: "m".into(),
+            upstream_wire_api: "responses".into(),
+            platform_base_url: "http://p".into(),
+            mongodb_uri: "mongodb://h/db".into(),
+            mongodb_database: "db".into(),
+            activity_retention: std::time::Duration::from_secs(90 * 86_400),
+            context_bucket: "bkt".into(),
+            storage_client_id: "sa-id".into(),
+            storage_client_secret: "sa-secret".into(),
+            auth_mode: AuthMode::Trusted {
+                subject: "s".into(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,35 +422,7 @@ mod tests {
 
     #[test]
     fn auth_mode_names_match_the_variants() {
-        let c = Config {
-            bind: "0.0.0.0:8080".into(),
-            public_url: "http://x".into(),
-            cors_origins: vec![],
-            sandbox_base_url: "http://r".into(),
-            sandbox_api_key: "k".into(),
-            sandbox_image: "img".into(),
-            sandbox_cpu: "1".into(),
-            sandbox_memory: "1Gi".into(),
-            default_agent: Default::default(),
-            baseline_packages: vec![],
-            baseline_skills: vec![],
-            baseline_services: vec![],
-            deployment_id: "chrono-bot".into(),
-            adopts_untagged_runtimes: true,
-            upstream_base_url: "http://u".into(),
-            upstream_model: "m".into(),
-            upstream_wire_api: "responses".into(),
-            platform_base_url: "http://p".into(),
-            mongodb_uri: "mongodb://h/db".into(),
-            mongodb_database: "db".into(),
-            activity_retention: std::time::Duration::from_secs(90 * 86_400),
-            context_bucket: "bkt".into(),
-            storage_client_id: "sa-id".into(),
-            storage_client_secret: "sa-secret".into(),
-            auth_mode: AuthMode::Trusted {
-                subject: "s".into(),
-            },
-        };
+        let c = Config::sample();
         assert_eq!(c.auth_mode_name(), "trusted");
 
         let c = Config {
