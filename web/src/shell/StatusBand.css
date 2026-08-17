@@ -1,0 +1,23 @@
+/*
+ * The status band — docs/Web_Style.md §6. Height comes from .band--foot in
+ * the component layer; only the band's own ordering lives here.
+ */
+
+.statusband {
+  gap: var(--space-2);
+  overflow: hidden;
+}
+
+/*
+ * What the page is showing is the band's subject and is the one part that can
+ * run long, so it is the one part allowed to truncate. The zone and the build
+ * are short and fixed, and losing either would cost the band its purpose.
+ */
+.statusband__showing {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusband__note {
+  color: var(--ink-3);
+}

@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { IntroTerminal } from './landing/IntroTerminal';
-import { TopBar } from './shell/TopBar';
+import { PageFrame } from './shell/PageFrame';
 import { useAuth } from './auth/context';
 import './styles/tokens.css';
 import './styles/base.css';
@@ -53,12 +53,13 @@ export function App() {
 
     case 'anonymous':
       return (
-        // The same bar as the signed-in state: a visitor and an owner are
-        // looking at one product, not two.
-        <div className="app-shell">
-          <TopBar />
+        // The same frame as the signed-in state: a visitor and an owner are
+        // looking at one product, not two. No view switch, because a visitor
+        // has no views to move between — the switch is not navigation and is
+        // not drawn where there is nothing to select.
+        <PageFrame showing="Signed out">
           <IntroTerminal />
-        </div>
+        </PageFrame>
       );
 
     default: {

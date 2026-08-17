@@ -218,6 +218,10 @@ jobs:
           provenance: false
           # Both immutable. The version is what a deployment names; the short
           # SHA is how an image already in hand is traced back to its commit.
+          # web bakes the version into its bundle so the status band names the
+          # release it is actually running. Ignored by the other two images.
+          build-args: |
+            CHRONO_BUILD=${{ needs.plan.outputs.version }}
           tags: |
             ${{ steps.image.outputs.repository }}:${{ needs.plan.outputs.version }}
             ${{ steps.image.outputs.repository }}:${{ steps.image.outputs.revision }}
