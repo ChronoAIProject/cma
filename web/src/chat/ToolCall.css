@@ -1,0 +1,149 @@
+/*
+ * A tool call — docs/Web_Style.md §18.2.
+ *
+ * Structure rather than prose: one control-height row that says what the call
+ * was without being opened, and a disclosure for the rest.
+ */
+
+.toolcall {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.toolcall__row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+  height: var(--control-h);
+  padding-inline: var(--space-2);
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+.toolcall__row:disabled {
+  cursor: default;
+}
+
+.toolcall__row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * The caret flips rather than rotating: at this size a rotation reads as a
+ * wobble, and a content swap has nothing to animate.
+ */
+.toolcall__caret {
+  flex: none;
+  color: var(--ink-3);
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+
+.toolcall__caret::before {
+  content: '▸';
+}
+
+.toolcall__row[aria-expanded='true'] .toolcall__caret::before {
+  content: '▾';
+}
+
+/*
+ * A running call takes the wave §11 uses for waiting rather than a caret,
+ * so it is distinguishable from a finished one without reading either.
+ */
+.toolcall__running {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--wait);
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toolcall__running {
+    animation: toolcall-wait 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes toolcall-wait {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The kernel's own word for what kind of tool this is. Rendered verbatim. */
+.toolcall__kind {
+  flex: none;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+}
+
+/*
+ * What it acted on. It is the part that can run long, so it is the part that
+ * truncates — losing the kind would leave a row that identifies nothing.
+ */
+.toolcall__target {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolcall__status {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.toolcall[data-tone='running'] .toolcall__status {
+  color: var(--wait);
+}
+
+.toolcall[data-tone='done'] .toolcall__status {
+  color: var(--live);
+}
+
+/* A failed call is distinguishable from a successful one, §18.2. */
+.toolcall[data-tone='failed'] {
+  border-color: var(--fail);
+}
+
+.toolcall[data-tone='failed'] .toolcall__status {
+  color: var(--fail);
+}
+
+/*
+ * The disclosure. Output is agent-emitted content, so it is never silently
+ * shortened — it is bounded by this control and scrolls inside itself, which
+ * is a frame decision and permitted.
+ */
+.toolcall__output {
+  max-height: 18rem;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: var(--term-leading);
+  background: var(--inset);
+  border-top: 1px solid var(--rule);
+}
