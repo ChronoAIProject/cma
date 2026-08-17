@@ -176,7 +176,7 @@ export function NamespaceView({ inventory }: { readonly inventory: RuntimeInvent
                     <>
                       {provider.kernel}
                       {runtime.unaccounted ? (
-                        <Chip tone="warn" inline>
+                        <Chip tone="wait" inline>
                           unaccounted
                         </Chip>
                       ) : null}
@@ -200,7 +200,7 @@ export function NamespaceView({ inventory }: { readonly inventory: RuntimeInvent
               primary={
                 <>
                   {provider.kernel}
-                  <Chip tone="warn" inline>
+                  <Chip tone="wait" inline>
                     unknown
                   </Chip>
                 </>

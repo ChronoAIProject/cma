@@ -10,14 +10,14 @@
   height: 32px;
   color: var(--accent);
   font-size: var(--text-xs);
-  letter-spacing: 0.06em;
-  background: var(--surface-2);
+  letter-spacing: var(--track-label);
+  background: var(--inset);
   border: 1px solid var(--rule-2);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .profile__trigger[aria-expanded='true'] {
-  box-shadow: var(--glow-rest);
+  box-shadow: var(--press-card-rest);
 }
 
 .profile__avatar {
@@ -35,15 +35,15 @@
   padding: var(--space-1);
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
-  box-shadow: var(--glow-rest);
+  border-radius: var(--radius);
+  box-shadow: var(--press-card-rest);
 }
 
 .profile__handle {
   padding: var(--space-2) var(--space-3);
   color: var(--ink-3);
   font-size: var(--text-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   border-bottom: 1px solid var(--rule);
 }
@@ -55,19 +55,19 @@
   color: var(--ink-2);
   font-size: var(--text-base);
   text-align: left;
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .profile__item:hover {
   color: var(--ink);
-  background: var(--surface-2);
+  background: var(--raised);
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .profile__item {
     transition:
-      color 150ms ease,
-      background 150ms ease;
+      color var(--motion-colour) ease,
+      background var(--motion-colour) ease;
   }
 }
 

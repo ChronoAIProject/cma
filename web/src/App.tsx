@@ -4,6 +4,7 @@ import { TopBar } from './shell/TopBar';
 import { useAuth } from './auth/context';
 import './styles/tokens.css';
 import './styles/base.css';
+import './styles/components.css';
 
 /*
  * The console pulls in xterm.js, roughly 400KB before compression. A visitor
