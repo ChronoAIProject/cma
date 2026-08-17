@@ -274,14 +274,14 @@ fn durable(update: SessionUpdate) -> Option<EventKind> {
         SessionUpdate::ToolCall(call) => Some(EventKind::ToolCallStarted {
             call_id: call.tool_call_id.0.to_string(),
             title: call.title,
-            kind: format!("{:?}", call.kind).to_lowercase(),
+            kind: wire_name(&call.kind),
         }),
         SessionUpdate::ToolCallUpdate(update) => Some(EventKind::ToolCallUpdated {
             call_id: update.tool_call_id.0.to_string(),
             status: update
                 .fields
                 .status
-                .map(|s| format!("{s:?}").to_lowercase())
+                .map(|status| wire_name(&status))
                 // A runtime that says a call moved without saying where it got
                 // to has still said something worth recording: the call is not
                 // where it was.
@@ -296,6 +296,24 @@ fn durable(update: SessionUpdate) -> Option<EventKind> {
         // does not record, or a runtime's own configuration surface, which is
         // not something a session's history is about.
         _ => None,
+    }
+}
+
+/// A runtime's own name for something, as it spells it on the wire.
+///
+/// Taken from serialization rather than from the Rust `Debug` output. These
+/// strings land in durable events and are read back for the life of a session,
+/// so they have to be the ones the protocol defines: a `Debug` spelling is an
+/// implementation detail of a struct in a dependency, and renaming one there
+/// would quietly change what this service recorded about work already done.
+///
+/// A value that will not serialize to a plain string is recorded as unknown
+/// rather than as a rendering of its structure. Nothing branches on these, so
+/// an unfamiliar one costs a label and not a session.
+fn wire_name<T: serde::Serialize>(value: &T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(name)) => name,
+        _ => "unknown".to_string(),
     }
 }
 
