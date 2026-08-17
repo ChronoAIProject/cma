@@ -25,6 +25,7 @@
 
 .details__title {
   margin: 0;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: var(--track-label);
@@ -80,6 +81,7 @@
 }
 
 .details__row dt {
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: var(--track-label);
@@ -88,6 +90,7 @@
 
 .details__row dd {
   margin: 0;
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--ink);
 }
