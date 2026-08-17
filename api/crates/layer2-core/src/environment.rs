@@ -27,7 +27,7 @@ use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
 // referred to these through this module still does, and a reader looking for
 // "what a profile is made of" is pointed at the file that holds it.
 pub use crate::environment_catalog::{
-    CatalogError, CatalogService, CatalogSkill, ServiceCatalog, SkillCatalog,
+    CatalogError, CatalogService, CatalogSkill, ServiceAvailability, ServiceCatalog, SkillCatalog,
 };
 pub use crate::environment_values::{EnvironmentVariable, ServiceId, SkillId, SoftwarePackage};
 
