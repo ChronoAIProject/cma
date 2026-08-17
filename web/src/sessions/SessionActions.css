@@ -36,3 +36,14 @@
   font-size: var(--text-sm);
   white-space: nowrap;
 }
+
+/*
+ * The same question shape without the alarm. Deleting a session is
+ * irreversible and takes `--fail`; moving one between planes costs a turn and
+ * a pause, and drawing that in the colour reserved for destruction would spend
+ * the one signal that is supposed to mean "this cannot be undone".
+ */
+.actions__question--cost {
+  color: var(--ink-2);
+  white-space: normal;
+}
