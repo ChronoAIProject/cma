@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { EnvironmentProfile } from '../environment/types';
+import '../ui/Dialog.css';
 import './NewSessionDialog.css';
 
 /**
@@ -120,12 +121,12 @@ export function NewSessionDialog({
         </label>
 
         <div className="dialog__actions">
-          <button type="button" className="dialog__button" onClick={onCancel}>
+          <button type="button" className="button press--quiet" onClick={onCancel}>
             Cancel
           </button>
           <button
             type="button"
-            className="dialog__button dialog__button--primary"
+            className="button button--accent press--accent"
             onClick={() => {
               onStart(profile === '' ? null : profile);
             }}

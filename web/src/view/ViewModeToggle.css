@@ -18,13 +18,13 @@
   padding: 0 var(--space-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--ink-3);
   background: none;
   border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .viewmode__option:hover {
@@ -40,7 +40,7 @@
 @media (prefers-reduced-motion: no-preference) {
   .viewmode__option {
     transition:
-      color 150ms ease,
-      border-color 150ms ease;
+      color var(--motion-colour) ease,
+      border-color var(--motion-colour) ease;
   }
 }
