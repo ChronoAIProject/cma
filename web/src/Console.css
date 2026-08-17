@@ -1,31 +1,18 @@
 /*
- * The authenticated surface, per docs/Web_Style.md.
+ * The authenticated surface, per docs/Web_Style.md §5 and §12.
  *
- * Three columns under one bar: the sessions someone has, the one they are
- * working in, and what is known about it. The page itself never scrolls —
- * each column owns its own overflow, so a long session list or a long
- * transcript never pushes anything else off the screen.
+ * Three columns inside the one page frame: the sessions someone has, the one
+ * they are working in, and what is known about it. The frame owns the app bar,
+ * the status band and the fact that the page never scrolls; each column owns
+ * its own overflow, so a long session list or a long transcript never pushes
+ * anything else off the screen.
  */
 
-.console {
-  display: flex;
-  flex-direction: column;
-  height: 100dvh;
-  overflow: hidden;
-  background: var(--ground);
-}
-
-/*
- * Inset to the same frame as the bar above it, so the session column's leading
- * edge lines up with the product mark and the details panel's trailing edge
- * lines up with the account control. Anything that broke that alignment would
- * make the bar look detached from the page it belongs to.
- */
 .console__body {
   display: flex;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
-  padding-inline: var(--page-gutter);
 }
 
 /*
