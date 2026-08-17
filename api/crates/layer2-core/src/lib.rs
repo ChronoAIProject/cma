@@ -108,7 +108,7 @@ pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use reconcile::Reclaimed;
-pub use service::{AttachmentHandle, Deployment, ScreenFactory, SessionService};
+pub use service::{AttachmentHandle, Deployment, Detached, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,

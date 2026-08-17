@@ -107,6 +107,53 @@ fn a_superseded_client_is_told_in_a_code_it_can_branch_on() {
 }
 
 #[test]
+fn each_kind_of_ending_has_its_own_code() {
+    // The three ask different things of whoever is looking, so they cannot
+    // share a code: one sends you to another tab, one tells you the terminal
+    // is gone for good and the session is now a conversation, and one asks you
+    // to come back in a moment.
+    let codes = [
+        ending(Some(layer2_core::Detached::Superseded)).0,
+        ending(Some(layer2_core::Detached::PlaneChanged)).0,
+        ending(Some(layer2_core::Detached::RuntimeReplaced)).0,
+    ];
+    assert_eq!(
+        codes
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        3,
+        "a client branching on the code must be able to tell them apart"
+    );
+    for code in codes {
+        assert!(
+            (4000..=4999).contains(&code),
+            "an ending must not borrow a registered code that means something else"
+        );
+    }
+}
+
+#[test]
+fn a_session_that_left_the_terminal_plane_says_so_rather_than_going_quiet() {
+    let (code, reason) = ending(Some(layer2_core::Detached::PlaneChanged));
+    assert_eq!(code, PLANE_CHANGED_CLOSE_CODE);
+    assert!(
+        reason.contains("conversation"),
+        "the reason must name where the session went: {reason}"
+    );
+}
+
+#[test]
+fn an_attachment_lost_with_nothing_said_still_closes_with_a_reason() {
+    // The channel can close without a word — an entry dropped for some other
+    // cause. A terminal that ends silently is one whose owner reloads and
+    // takes the attachment back, which is the fight this exists to prevent.
+    let (code, reason) = ending(None);
+    assert_eq!(code, SUPERSEDED_CLOSE_CODE);
+    assert!(!reason.is_empty());
+}
+
+#[test]
 fn a_missing_capability_has_its_own_code_here_too() {
     assert_eq!(
         error_code(&CoreError::CapabilityUnsupported("terminal".into())),
