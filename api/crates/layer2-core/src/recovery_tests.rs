@@ -491,3 +491,107 @@ async fn reviving_someone_elses_session_is_refused() {
         "and stopping is no more public than reviving"
     );
 }
+
+/// A store, a conversation-capable runtime, and the profile that puts a
+/// session on the conversation plane — shared across two services, because
+/// "restart" here means a second service over the same everything.
+fn conversing_deployment() -> (
+    Arc<FakeStore>,
+    Arc<FakeAdapter>,
+    Arc<crate::environment_service::EnvironmentProfileService>,
+) {
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    (
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter {
+            capabilities: crate::conversation_support::conversing(),
+            ..FakeAdapter::default()
+        }),
+        profiles,
+    )
+}
+
+#[tokio::test]
+async fn a_conversation_session_is_taken_back_over_as_one() {
+    // The §5 failure this closes, and the one that section did not anticipate:
+    // not a deployment interrupting a session, but a deployment leaving it
+    // listed, intact, and unusable. Readopt predates conversation mode and
+    // attached a terminal to everything — which two of three kernels do not
+    // have, and which leaves nothing to prompt even where it succeeds.
+    let (store, adapter, profiles) = conversing_deployment();
+    let alice = user("alice");
+
+    let id = {
+        let first = crate::test_support::service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            Arc::clone(&profiles),
+        );
+        let created = first.create_session(&alice, spec()).await.expect("created");
+        await_settled(&first, &alice, &created.id).await;
+        created.id
+    };
+
+    // The process is gone; the record and the runtime are not.
+    let replacement = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    // No revive: nothing was stopped. Prompting is what a person does next,
+    // and it is where the runtime has to be picked back up — exactly as
+    // attaching is for the terminal plane.
+    replacement
+        .send_prompt(&alice, &id, "still there?".to_string())
+        .await
+        .expect("a live runtime is taken back over, and the session prompted");
+}
+
+#[tokio::test]
+async fn taking_a_conversation_back_over_rejoins_it_rather_than_opening_another() {
+    // The half that is invisible without asking. The bridge in the pod
+    // outlives a control plane restart, so opening a conversation rather than
+    // rejoining one leaves a second running beside the first: the owner still
+    // sees their history, because the durable log has it, and the agent has
+    // lost everything it knew.
+    let (store, adapter, profiles) = conversing_deployment();
+    let alice = user("alice");
+
+    let id = {
+        let first = crate::test_support::service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            Arc::clone(&profiles),
+        );
+        let created = first.create_session(&alice, spec()).await.expect("created");
+        await_settled(&first, &alice, &created.id).await;
+        created.id
+    };
+    assert_eq!(
+        adapter.rejoined.lock().await.as_slice(),
+        &[None],
+        "a session being started has no conversation to rejoin"
+    );
+
+    let replacement = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    replacement
+        .send_prompt(&alice, &id, "still there?".to_string())
+        .await
+        .expect("taken back over");
+
+    let asked = adapter.rejoined.lock().await.clone();
+    assert_eq!(
+        asked.last().expect("a second open"),
+        &Some("conv-fixture".to_string()),
+        "the replacement must rejoin what the runtime is already running"
+    );
+}
