@@ -29,12 +29,21 @@ interface SessionHeaderProps {
   readonly session: Session | null;
   /** The lifecycle controls that act on it. */
   readonly actions?: ReactNode;
+  /**
+   * The control that opens the session list, when the list is a drawer.
+   *
+   * §16 takes the rail out of the layout below 60rem, which leaves nothing in
+   * the layout to open it with. It goes at the head of the column the drawer
+   * covers, which is where somebody looks for the list.
+   */
+  readonly listHandle?: ReactNode;
 }
 
-export function SessionHeader({ session, actions }: SessionHeaderProps) {
+export function SessionHeader({ session, actions, listHandle }: SessionHeaderProps) {
   if (session === null) {
     return (
       <div className="band band--head sessionheader">
+        {listHandle}
         <span className="band__label">Session</span>
         <span className="band__value">None open</span>
       </div>
@@ -43,6 +52,7 @@ export function SessionHeader({ session, actions }: SessionHeaderProps) {
 
   return (
     <div className="band band--head sessionheader">
+      {listHandle}
       <span className="band__subject">{tabLabel(session.createdAt)}</span>
       <span className="band__label">{session.kernel}</span>
       <span className="band__value">{labelFor(session.lifecycle)}</span>

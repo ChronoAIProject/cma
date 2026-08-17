@@ -31,6 +31,14 @@ import './ArrangementToggle.css';
 interface ArrangementToggleProps {
   readonly arrangement: Arrangement;
   readonly onChange: (arrangement: Arrangement) => void;
+  /**
+   * Whether the window has room for the canvas — §16.
+   *
+   * Offered at 60rem and above only: a grid of terminals in a narrow window is
+   * several terminals nobody can read. Below that the option is **disabled
+   * with its reason** rather than removed, per §7 and §11.
+   */
+  readonly canvasAvailable?: boolean;
 }
 
 const ARRANGEMENTS: readonly { readonly value: Arrangement; readonly label: string }[] = [
@@ -38,22 +46,43 @@ const ARRANGEMENTS: readonly { readonly value: Arrangement; readonly label: stri
   { value: 'canvas', label: 'Canvas' },
 ];
 
-export function ArrangementToggle({ arrangement, onChange }: ArrangementToggleProps) {
+const NO_ROOM = 'Needs a window at least 60rem wide';
+
+export function ArrangementToggle({
+  arrangement,
+  onChange,
+  canvasAvailable = true,
+}: ArrangementToggleProps) {
+  const reasonId = 'arrangement-canvas-reason';
   return (
     <div className="arrangement" role="group" aria-label="Arrangement">
-      {ARRANGEMENTS.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className="arrangement__option"
-          aria-pressed={arrangement === option.value}
-          onClick={() => {
-            onChange(option.value);
-          }}
-        >
-          {option.label}
-        </button>
-      ))}
+      {ARRANGEMENTS.map((option) => {
+        const unavailable = option.value === 'canvas' && !canvasAvailable;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className="arrangement__option"
+            aria-pressed={arrangement === option.value}
+            disabled={unavailable}
+            aria-describedby={unavailable ? reasonId : undefined}
+            onClick={() => {
+              onChange(option.value);
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+      {/*
+       * The reason, on the surface rather than in a tooltip (§7). The band it
+       * sits in is narrow, so it is drawn only when it is true.
+       */}
+      {canvasAvailable ? null : (
+        <span className="band__value arrangement__reason" id={reasonId}>
+          {NO_ROOM}
+        </span>
+      )}
     </div>
   );
 }
