@@ -86,3 +86,45 @@ pub trait ServiceCatalog: Send + Sync {
         credential: Option<&str>,
     ) -> Result<Vec<CatalogService>, CatalogError>;
 }
+
+/// What the service catalogue had to say.
+///
+/// Three answers, kept apart because only one of them is an error and the
+/// other two mean opposite things to whoever is deciding what to do next.
+#[derive(Debug, Clone)]
+pub enum ServiceAvailability {
+    /// This deployment has no catalogue at all.
+    ///
+    /// **Not an error.** Profiles still store selections and sessions still
+    /// honour them; there is simply nothing to choose from. Nothing may be
+    /// refused on the strength of it, because a deployment that cannot list
+    /// services has not thereby withheld any.
+    NoCatalogue,
+    /// What this owner has granted. An empty list means they have granted
+    /// nothing, which is a real answer and not a missing one.
+    Granted(Vec<CatalogService>),
+}
+
+impl ServiceAvailability {
+    /// The services to offer, which is none in either of the two non-error
+    /// cases — the difference between them matters to *authorising*, not to
+    /// drawing a picker.
+    pub fn listed(self) -> Vec<CatalogService> {
+        match self {
+            Self::NoCatalogue => Vec::new(),
+            Self::Granted(services) => services,
+        }
+    }
+
+    /// Whether this answer can be used to refuse a selection.
+    ///
+    /// Only a catalogue that actually answered may refuse anything. A
+    /// deployment with no catalogue has withheld nothing, so a session started
+    /// against one is provisioned with whatever its profile stored.
+    pub fn grants(&self) -> Option<&[CatalogService]> {
+        match self {
+            Self::NoCatalogue => None,
+            Self::Granted(services) => Some(services),
+        }
+    }
+}

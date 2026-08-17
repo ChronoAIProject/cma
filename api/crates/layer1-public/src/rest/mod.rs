@@ -320,6 +320,19 @@ impl IntoResponse for Problem {
             CoreError::CapabilityUnsupported(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "capability-unsupported")
             }
+            // 422 and never 503: retrying will not grant it. The request is
+            // well-formed and this owner has simply not given the service to
+            // anything — which is fixed in NyxID, not by trying again.
+            CoreError::ServiceNotGranted(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "service-not-granted")
+            }
+            // 503 and never 422: the owner's services are fine and we could
+            // not list them. Retrying is the correct thing to do, which is the
+            // whole reason this is a different answer from the one above.
+            CoreError::ServiceCatalogUnavailable(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service-catalogue-unavailable",
+            ),
         };
         (
             status,
