@@ -1,0 +1,53 @@
+/*
+ * The arrangement toggle — docs/Web_Style.md §7.
+ *
+ * Quiet keys: §7 spends the one accent button a view is allowed on an action,
+ * never on how a list is arranged.
+ */
+
+.arrangement {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.arrangement__option {
+  height: var(--segment-h);
+  padding-inline: var(--space-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.arrangement__option:hover {
+  color: var(--ink-2);
+  border-color: var(--rule-2);
+}
+
+.arrangement__option[aria-pressed='true'] {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: var(--press-quiet-rest);
+}
+
+.arrangement__option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .arrangement__option {
+    transition:
+      color var(--motion-colour) ease,
+      border-color var(--motion-colour) ease,
+      box-shadow var(--motion-press) ease;
+  }
+}
