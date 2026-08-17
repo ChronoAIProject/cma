@@ -382,6 +382,27 @@ describe('App', () => {
     });
   });
 
+  it('keeps the terminal attached when the details sheet opens and closes', async () => {
+    // §12 puts the sheet under the terminal rather than beside it, so opening
+    // it changes the terminal's height and nothing else. Rendered around the
+    // terminal instead of beside it, a toggle would remount xterm and take the
+    // scrollback with it — which is the whole cost of getting this wrong, and
+    // is invisible until somebody scrolls up and finds nothing.
+    seedSessions(1);
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: /hide session details/i }));
+    await user.click(screen.getByRole('button', { name: /show session details/i }));
+
+    // One socket still, not three. A remounted terminal redials.
+    expect(sockets).toHaveLength(1);
+  });
+
   it('reports a failed action without disconnecting the sessions that did not fail', async () => {
     seedSessions(3);
     window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
@@ -394,7 +415,7 @@ describe('App', () => {
 
     // Nothing stubs the stop endpoint, so the request comes back 404 — the
     // same shape as a 409, an expired token or a network blip.
-    await user.click(screen.getByRole('button', { name: /^end session/i }));
+    await user.click(screen.getByRole('button', { name: /^end$/i }));
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     /*
@@ -427,7 +448,7 @@ describe('App', () => {
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
       await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
-    await user.click(screen.getByRole('button', { name: /delete session/i }));
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
     await user.click(screen.getByRole('button', { name: /delete permanently/i }));
 
     await waitFor(() => {
