@@ -14,6 +14,15 @@ edition = "2021"
 publish = false
 
 [workspace.dependencies]
+# The Agent Client Protocol's published schema. Layer 3 *is* ACP, so its types
+# are taken from the protocol's own crate rather than mirrored by hand — a
+# hand-written copy drifts from the specification the first time it moves.
+#
+# The schema crate rather than the full `agent-client-protocol`: that one
+# carries a JSON-RPC runtime on a second async executor and a process-spawning
+# stdio transport, none of which fits a conversation that rides the
+# supervisor's WebSocket. Both clear `cargo deny`; this one costs less.
+agent-client-protocol-schema = "1.5"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
 futures-util = "0.3"
