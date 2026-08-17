@@ -14,8 +14,8 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, KernelId, PublicIdentity, Session, SessionCapabilities, SessionId,
-    SessionService, SessionSpec, TerminalGeometry, UserDirectory,
+    Caller, CoreError, PublicIdentity, Session, SessionCapabilities, SessionId, SessionService,
+    SessionSpec, TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
@@ -377,12 +377,11 @@ async fn create(
                 environment_profile: body
                     .environment_profile
                     .map(layer2_core::EnvironmentProfileId),
-                // Both replaced by the core from the profile this session
-                // names. Sent as defaults rather than left out because the
-                // spec is also what a rotation rebuilds a session from, where
-                // they are the values the session was started with.
-                kernel: KernelId::new("codex"),
                 geometry,
+                // Replaced by the core from the profile this session names.
+                // Sent as a default rather than left out because the spec is
+                // also what a rotation rebuilds a session from, where these
+                // are the values the session was started with.
                 options: Default::default(),
                 subject_credential: credential.map(|axum::Extension(c)| c.0),
             },
