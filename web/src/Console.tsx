@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SessionRail } from './sessions/SessionRail';
 import { SessionDetails } from './sessions/SessionDetails';
 import { PageFrame } from './shell/PageFrame';
@@ -17,6 +17,7 @@ import { selectLiveWindow, unattachedNote } from './canvas/layout';
 import { ArrangementToggle } from './sessions/ArrangementToggle';
 import { loadArrangement, saveArrangement } from './sessions/arrangement';
 import { loadCollapsed, saveCollapsed } from './shell/collapse';
+import { canvasFits, railIsColumn, useWidth } from './shell/widths';
 import type { Arrangement } from './sessions/arrangement';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
@@ -131,6 +132,13 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // Validated on read: web storage is untrusted input, and an unrecognised
   // value reaching the layout would be a rail nobody can draw (§7).
   const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
+  /*
+   * Which of §16's four widths the window is at. The number of columns changes
+   * with it and the bands never do.
+   */
+  const width = useWidth();
+  /* Below 60rem the rail is a drawer over the layout rather than a column. */
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [arrangement, setArrangement] = useState<Arrangement>(() => loadArrangement());
   /*
@@ -291,17 +299,76 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, []);
 
   /*
+   * §16: between 60rem and 75rem "the rail arrives collapsed to its 48px
+   * strip". Arrives, not is locked — crossing the boundary collapses it and
+   * the handle still opens it, because somebody working at 70rem who wants
+   * their list should not have to widen the window to see it.
+   *
+   * Not persisted: this is the window's answer, not the person's, and writing
+   * it would mean a visit on a laptop decided what a desk looks like.
+   */
+  // Seeded true so a window that OPENS below 75rem is treated as having
+  // arrived there. Seeding it from the mounted width would mean the rail
+  // arrived collapsed when somebody narrowed the window and expanded when they
+  // reloaded at the same size, which is the same layout answering differently.
+  const wasColumnWidth = useRef(true);
+  useEffect(() => {
+    const isWide = width === 'wide';
+    if (wasColumnWidth.current && !isWide) {
+      setRailCollapsed(true);
+    }
+    wasColumnWidth.current = isWide;
+  }, [width]);
+
+  /*
+   * The canvas is offered at 60rem and above only (§16): a grid of terminals
+   * in a narrow window is several terminals nobody can read. A session already
+   * on the canvas when the window narrows goes back to tabs rather than being
+   * drawn at a size it cannot be read at.
+   */
+  const arrangementShown: Arrangement = canvasFits(width) ? arrangement : 'tabs';
+  const compact = width === 'compact';
+
+  /*
+   * Built once and placed where §16 puts it: in the app bar, or in the drawer
+   * below 30rem. A view somebody can no longer reach is worse than one they
+   * have to open a drawer for, so it moves rather than disappearing.
+   */
+  const viewSwitch = (
+    <ViewSwitch
+      /*
+       * The operations segment is drawn only for a caller the control plane
+       * says holds a capability that page can act on. This is presentation and
+       * never protection: the API refuses on its own and would refuse a
+       * hand-written request just the same. Both halves are required — a
+       * control nobody can use should not be drawn, and a drawn control is not
+       * what makes it safe.
+       */
+      views={
+        canOperate(user.capabilities)
+          ? [
+              { name: 'sessions' as const, label: 'Sessions' },
+              { name: 'operations' as const, label: 'Operations' },
+            ]
+          : [{ name: 'sessions' as const, label: 'Sessions' }]
+      }
+      active={view}
+      onSelect={setView}
+    />
+  );
+
+  /*
    * What the canvas's attachment budget cost, for the status band (§13).
    * Truncation is never silent, and the band is the one part of the page that
    * cannot be panned out of sight.
    */
   const note = useMemo(() => {
-    if (view !== 'sessions' || arrangement !== 'canvas') {
+    if (view !== 'sessions' || arrangementShown !== 'canvas') {
       return undefined;
     }
     const connectable = canvasNodes.filter((node) => node.driver !== null).map((n) => n.session.id);
     return unattachedNote(connectable.length, selectLiveWindow(connectable, focusHistory).size);
-  }, [view, arrangement, canvasNodes, focusHistory]);
+  }, [view, arrangementShown, canvasNodes, focusHistory]);
 
   /*
    * What the status band says this page is showing (§6).
@@ -341,28 +408,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             ? 'var(--rail-collapsed)'
             : 'var(--rail-width)'
       }
-      views={
-        <ViewSwitch
-          /*
-           * The operations segment is drawn only for a caller the control
-           * plane says holds a capability that page can act on. This is
-           * presentation and never protection: the API refuses on its own and
-           * would refuse a hand-written request just the same. Both halves are
-           * required — a control nobody can use should not be drawn, and a
-           * drawn control is not what makes it safe.
-           */
-          views={
-            canOperate(user.capabilities)
-              ? [
-                  { name: 'sessions' as const, label: 'Sessions' },
-                  { name: 'operations' as const, label: 'Operations' },
-                ]
-              : [{ name: 'sessions' as const, label: 'Sessions' }]
-          }
-          active={view}
-          onSelect={setView}
-        />
-      }
+      views={compact ? undefined : viewSwitch}
       account={
         <ProfileMenu
           user={user}
@@ -380,34 +426,133 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         <OperatorPage store={operatorStore} capabilities={user.capabilities} />
       ) : (
         <div className="console__body">
-          <SessionRail
-            sessions={listed}
-            activeId={activeId}
-            order={order}
-            onSelect={select}
-            onCreate={() => {
-              setChoosing(true);
-            }}
-            onReorder={setOrder}
-            /*
-             * The arrangement of this list, drawn with the list it rearranges
-             * rather than in the app bar. It does not stop at the browser: a
-             * terminal declares its own measurements to the runtime drawing
-             * into it, so putting every attached session in a 420×280 node
-             * resizes every one of them to roughly 47 columns. §13 records why
-             * that is right and what it costs.
-             */
-            arrangement={
-              <ArrangementToggle arrangement={arrangement} onChange={changeArrangement} />
-            }
-            collapsed={railCollapsed}
-            onToggleCollapsed={toggleRail}
-            stages={stages}
-          />
+          {railIsColumn(width) ? (
+            <SessionRail
+              sessions={listed}
+              activeId={activeId}
+              order={order}
+              onSelect={select}
+              onCreate={() => {
+                setChoosing(true);
+              }}
+              onReorder={setOrder}
+              /*
+               * The arrangement of this list, drawn with the list it rearranges
+               * rather than in the app bar. It does not stop at the browser: a
+               * terminal declares its own measurements to the runtime drawing
+               * into it, so putting every attached session in a 420×280 node
+               * resizes every one of them to roughly 47 columns. §13 records why
+               * that is right and what it costs.
+               */
+              arrangement={
+                <ArrangementToggle
+                  arrangement={arrangementShown}
+                  onChange={changeArrangement}
+                  canvasAvailable={canvasFits(width)}
+                />
+              }
+              collapsed={railCollapsed}
+              onToggleCollapsed={toggleRail}
+              stages={stages}
+            />
+          ) : drawerOpen ? (
+            <>
+              {/*
+               * §16: below 60rem the rail leaves the layout and becomes a
+               * drawer over it, so the terminal keeps the full width. The
+               * scrim dismisses it, and is also what stops a gesture meant
+               * for the drawer landing in a live terminal beneath it.
+               */}
+              <div
+                className="console__drawerscrim"
+                role="presentation"
+                onClick={() => {
+                  setDrawerOpen(false);
+                }}
+              />
+              <div className="console__drawer">
+                {/*
+                 * §16: below 30rem the app bar gives the switch and the
+                 * command field to the drawer. They are placed here rather
+                 * than dropped, because a view somebody can no longer reach is
+                 * worse than one they have to open a drawer for.
+                 */}
+                {compact ? (
+                  <div className="band console__drawerchrome">
+                    {viewSwitch}
+                    <input
+                      className="field__control"
+                      type="text"
+                      disabled
+                      aria-label="Command"
+                      placeholder="Command — not yet available"
+                    />
+                  </div>
+                ) : null}
+                <SessionRail
+                  sessions={listed}
+                  activeId={activeId}
+                  order={order}
+                  onSelect={select}
+                  onCreate={() => {
+                    setChoosing(true);
+                  }}
+                  onReorder={setOrder}
+                  /*
+                   * The arrangement of this list, drawn with the list it rearranges
+                   * rather than in the app bar. It does not stop at the browser: a
+                   * terminal declares its own measurements to the runtime drawing
+                   * into it, so putting every attached session in a 420×280 node
+                   * resizes every one of them to roughly 47 columns. §13 records why
+                   * that is right and what it costs.
+                   */
+                  arrangement={
+                    <ArrangementToggle
+                      arrangement={arrangementShown}
+                      onChange={changeArrangement}
+                      canvasAvailable={canvasFits(width)}
+                    />
+                  }
+                  /*
+                   * Always expanded in the drawer. Collapsing is what a column
+                   * does to give the terminal its width back; a drawer has
+                   * already given all of it, so a 48px strip inside one is a
+                   * drawer holding nothing.
+                   */
+                  collapsed={false}
+                  onToggleCollapsed={() => {
+                    setDrawerOpen(false);
+                  }}
+                  stages={stages}
+                />
+              </div>
+            </>
+          ) : null}
 
           <main className="console__surface">
             <SessionHeader
               session={active}
+              /*
+               * §16 takes the rail out of the layout below 60rem, so the way
+               * to the list goes here, at the head of the column the drawer
+               * covers. Absent at widths where the rail is a column of its
+               * own, which already carries its own handle.
+               */
+              listHandle={
+                railIsColumn(width) ? undefined : (
+                  <button
+                    type="button"
+                    className="collapse-handle"
+                    aria-expanded={drawerOpen}
+                    aria-label="Show the session list"
+                    onClick={() => {
+                      setDrawerOpen(true);
+                    }}
+                  >
+                    <span aria-hidden="true">☰</span>
+                  </button>
+                )
+              }
               actions={
                 active === null ? undefined : (
                   <SessionActions
@@ -457,7 +602,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
             {loading ? (
               <p className="console__empty">Loading your sessions…</p>
-            ) : arrangement === 'canvas' && canvasNodes.length > 0 ? (
+            ) : arrangementShown === 'canvas' && canvasNodes.length > 0 ? (
               <SessionCanvas
                 /*
                  * Remounted when the palette changes, for the same reason the
