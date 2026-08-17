@@ -5,6 +5,13 @@
 //! full-screen application's output stream cannot be seeked, so the only
 //! correct way to answer "what is on screen right now" is to keep a live
 //! model of the screen and ask it.
+//!
+//! What is here is the contract and the state: a geometry that cannot be zero,
+//! the snapshot that backs the `screen_snapshot` operation, and the trait a
+//! screen satisfies. The folding of bytes into a screen is not here and must
+//! not be — that is terminal-domain machinery, and it lives with the layer
+//! that owns the terminal (`layer3_adapter::terminal`). The two are joined in
+//! the composition root, which is the only place allowed to know both.
 
 use std::num::NonZeroU16;
 
