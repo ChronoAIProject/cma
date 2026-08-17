@@ -1,7 +1,9 @@
 /*
  * The dialog shell — docs/Web_Style.md §3 and §7.
  *
- * A plate: it floats over the page, takes the card impression and never moves.
+ * A plate: it floats over the page, takes the card impression, and never
+ * moves. Nothing here presses in on hover, because a plate is not a key.
+ *
  * The button classes it used to carry moved to styles/components.css; a dialog
  * footer is where they are most often used but not where they belong, and two
  * stylesheets declaring `.button` is how one of them drifts.
@@ -21,7 +23,6 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 560px;
   /* The dialog's own body scrolls; the page never does. */
   max-height: 80dvh;
   background: var(--surface);
@@ -30,14 +31,29 @@
   box-shadow: var(--press-card-rest);
 }
 
+/*
+ * Three widths and no others (§7): a question, a form, and a form with a
+ * picker beside it. A width chosen per surface is how two dialogs that ask the
+ * same kind of question end up different sizes.
+ */
+.dialog--narrow {
+  max-width: 520px;
+}
+
+.dialog--medium {
+  max-width: 700px;
+}
+
+.dialog--wide {
+  max-width: 1000px;
+}
+
+/*
+ * Header and footer are the same bands the rest of the page uses, so a dialog
+ * is built from the page's own grid rather than from a second one.
+ */
 .dialog__header {
-  display: flex;
-  flex: none;
   gap: var(--space-3);
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--rule);
 }
 
 .dialog__title {
@@ -45,24 +61,9 @@
   line-height: var(--leading-lg);
 }
 
-.dialog__close {
-  display: grid;
-  place-items: center;
-  width: var(--hit);
-  height: var(--hit);
-  color: var(--ink-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-}
-
-.dialog__close:hover {
-  color: var(--ink);
-  background: var(--raised);
-}
-
 .dialog__body {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-4);
   min-height: 0;
@@ -71,18 +72,21 @@
 }
 
 .dialog__footer {
-  display: flex;
-  flex: none;
   gap: var(--space-2);
   justify-content: flex-end;
-  padding: var(--space-4);
-  border-top: 1px solid var(--rule);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .dialog__close {
-    transition:
-      color var(--motion-colour) ease,
-      background var(--motion-colour) ease;
-  }
+/*
+ * A destructive question, asked in place of the controls that raised it (§7).
+ * Never a second dialog over the first.
+ */
+.confirm {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.confirm__question {
+  color: var(--fail);
+  font-size: var(--text-sm);
 }
