@@ -1,25 +1,24 @@
 //! Driving this kernel's bridge over the Agent Client Protocol.
 //!
-//! The bridge in the pod is an ACP agent. This is the client half: it opens a
-//! session, prompts it, answers what it asks, and turns everything it says
-//! into the contract's own vocabulary. Because the contract *is* ACP, most of
-//! that translation is the identity function — what is left is the handshake,
-//! the correlation of requests with answers, and this kernel's own quirks.
+//! A bridge in a pod is an ACP agent, whichever kernel is behind it. This is
+//! the client half: it opens a session, prompts it, answers what it asks, and
+//! turns everything it says into the contract's own vocabulary. Because the
+//! contract *is* ACP, most of that translation is the identity function — what
+//! is left is the handshake, the correlation of requests with answers, and the
+//! deadlines that keep a silent bridge from stranding a session.
 //!
-//! ## Quirks that live here and nowhere else
+//! Nothing here names a kernel. What differs between them is the command the
+//! pod runs and the name of the mode a session is held to, and both arrive as
+//! arguments — from the kernel's own directory, which is the only place either
+//! is written down.
 //!
-//! The bridge exposes **modes** rather than an approval policy: `read-only`,
-//! `agent`, `agent-full-access`, and it defaults to `agent` whatever the
-//! kernel's configuration file says. A session whose mode cannot be set is
-//! therefore refused rather than started, because the default is the most
-//! permissive of the three and a session that quietly got it would be doing
-//! unattended what its owner asked to be asked about.
+//! ## What is deliberately not filtered
 //!
-//! The bridge also relays the kernel's own startup warnings as assistant
-//! message chunks — a model-metadata notice arrives looking exactly like
-//! something the agent said. Nothing here filters it: this layer must not
-//! decide which of a kernel's words are worth keeping, and a filter written
-//! against one release is a filter that silently eats real output in the next.
+//! Bridges relay their kernel's own startup warnings as assistant message
+//! chunks — a model-metadata notice arrives looking exactly like something the
+//! agent said. Nothing here strips it: this layer must not decide which of a
+//! kernel's words are worth keeping, and a filter written against one release
+//! is a filter that silently eats real output in the next.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -30,12 +29,12 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use super::permission::{mode_for, outcome_for};
 use crate::supervisor;
 use crate::{
-    AdapterError, ConversationChannel, ConversationInput, ConversationUpdate, PermissionRequest,
-    PromptResponse, RuntimePermission, SessionUpdate,
+    AdapterError, ConversationChannel, ConversationInput, ConversationUpdate, PromptResponse,
 };
+
+use super::inbound::outcome_for;
 
 /// The protocol version this client speaks.
 const PROTOCOL_VERSION: u32 = 1;
@@ -64,9 +63,9 @@ type Sink = SplitSink<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Me
 type Pending = Arc<Mutex<HashMap<i64, tokio::sync::oneshot::Sender<serde_json::Value>>>>;
 
 /// The client's side of a conversation with this kernel's bridge.
-pub(super) struct Bridge {
+pub struct Bridge {
     sink: Arc<Mutex<Sink>>,
-    pending: Pending,
+    pub(super) pending: Pending,
     next_id: AtomicI64,
     /// The bridge's own identifier for this conversation, once one exists.
     session: Mutex<Option<String>>,
@@ -75,15 +74,15 @@ pub(super) struct Bridge {
     /// Held because the answer comes back minutes later, from a person, and
     /// has to be matched to the JSON-RPC request that is still waiting — and
     /// to the options that request offered, which only it knows.
-    blocked: Mutex<HashMap<String, Blocked>>,
+    pub(super) blocked: Mutex<HashMap<String, Blocked>>,
 }
 
 /// A permission request the bridge is waiting on an answer to.
-struct Blocked {
+pub(super) struct Blocked {
     /// The JSON-RPC id to answer.
-    call: serde_json::Value,
+    pub(super) call: serde_json::Value,
     /// The options the bridge offered, which an intent is rendered into.
-    options: Vec<crate::PermissionOption>,
+    pub(super) options: Vec<crate::PermissionOption>,
 }
 
 impl Bridge {
@@ -92,10 +91,10 @@ impl Bridge {
     /// Everything the handshake needs happens before the channel is handed
     /// back, so a caller that receives one has a conversation that is ready to
     /// be prompted rather than one that may yet fail to start.
-    pub(super) async fn open(
+    pub async fn open(
         stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
         cwd: String,
-        permission: RuntimePermission,
+        mode: Option<String>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -162,7 +161,7 @@ impl Bridge {
             tracing::info!("conversation link ended");
         });
 
-        bridge.handshake(resuming, cwd, permission).await?;
+        bridge.handshake(resuming, cwd, mode).await?;
 
         let writer = Arc::clone(&bridge);
         let updates = updates_tx;
@@ -184,7 +183,7 @@ impl Bridge {
         &self,
         resuming: Option<String>,
         cwd: String,
-        permission: RuntimePermission,
+        mode: Option<String>,
     ) -> Result<(), AdapterError> {
         self.call(
             "initialize",
@@ -230,22 +229,26 @@ impl Bridge {
         };
         *self.session.lock().await = Some(session.clone());
 
-        // Refused rather than defaulted. This bridge starts every session in
-        // its most permissive mode whatever the kernel's configuration says,
-        // so a session whose mode did not take would be acting unattended
-        // while its owner had asked to be asked.
-        let mode = mode_for(permission);
-        self.call(
-            "session/set_mode",
-            serde_json::json!({ "sessionId": session, "modeId": mode }),
-        )
-        .await
-        .map_err(|e| {
-            AdapterError::Rejected(format!(
-                "this session could not be held to its permission mode ({mode}): {e}"
-            ))
-        })?;
-        tracing::info!(%session, %mode, "conversation opened");
+        // Refused rather than defaulted, for the bridges that have modes: they
+        // start every session in their most permissive one whatever the
+        // kernel's own configuration says, so a session whose mode did not
+        // take would be acting unattended while its owner had asked to be
+        // asked. A bridge with no modes names none and this is skipped.
+        if let Some(mode) = mode {
+            self.call(
+                "session/set_mode",
+                serde_json::json!({ "sessionId": session, "modeId": mode }),
+            )
+            .await
+            .map_err(|e| {
+                AdapterError::Rejected(format!(
+                    "this session could not be held to its permission mode ({mode}): {e}"
+                ))
+            })?;
+            tracing::info!(%session, %mode, "conversation opened");
+        } else {
+            tracing::info!(%session, "conversation opened");
+        }
         Ok(())
     }
 
@@ -313,94 +316,6 @@ impl Bridge {
         }
     }
 
-    /// Act on one frame the bridge sent.
-    async fn receive(&self, payload: &[u8], updates: &mpsc::Sender<ConversationUpdate>) {
-        let Ok(frame) = serde_json::from_slice::<serde_json::Value>(payload) else {
-            // Unreadable rather than unfamiliar. Logged without its content:
-            // a conversation frame carries what somebody said to their agent.
-            tracing::warn!(bytes = payload.len(), "a conversation frame was not json");
-            return;
-        };
-
-        // An answer to something we asked.
-        if let Some(id) = frame.get("id").and_then(serde_json::Value::as_i64) {
-            if frame.get("method").is_none() {
-                let waiting = self.pending.lock().await.remove(&id);
-                if let Some(waiting) = waiting {
-                    let _ = waiting.send(frame);
-                }
-                return;
-            }
-        }
-
-        match frame.get("method").and_then(serde_json::Value::as_str) {
-            Some("session/update") => {
-                let Some(update) = frame.pointer("/params/update") else {
-                    return;
-                };
-                match serde_json::from_value::<SessionUpdate>(update.clone()) {
-                    Ok(update) => {
-                        let _ = updates.send(ConversationUpdate::Said(update)).await;
-                    }
-                    // A shape of update this build has no type for. Skipped
-                    // rather than failing the conversation: a newer bridge
-                    // saying something new must not end a live session.
-                    Err(e) => tracing::debug!(error = %e, "an update this build cannot read"),
-                }
-            }
-            Some("session/request_permission") => self.blocked_on(frame, updates).await,
-            // Everything else the bridge may say to a client — filesystem
-            // requests, terminal requests — is not offered by this client's
-            // declared capabilities and is answered as unsupported rather than
-            // ignored, so the bridge is not left waiting.
-            Some(method) => {
-                if let Some(id) = frame.get("id") {
-                    tracing::info!(%method, "refusing a request this client does not serve");
-                    let refusal = serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32601, "message": "not offered by this client" },
-                    });
-                    let _ = self.send(&refusal).await;
-                }
-            }
-            None => {}
-        }
-    }
-
-    /// Record a permission request and pass it up for somebody to answer.
-    async fn blocked_on(
-        &self,
-        frame: serde_json::Value,
-        updates: &mpsc::Sender<ConversationUpdate>,
-    ) {
-        let Some(params) = frame.get("params") else {
-            return;
-        };
-        let Ok(request) = serde_json::from_value::<crate::RequestPermissionRequest>(params.clone())
-        else {
-            tracing::warn!("a permission request this build cannot read");
-            return;
-        };
-        let Some(call) = frame.get("id").cloned() else {
-            return;
-        };
-        // Ours rather than the protocol's, because the protocol keeps this at
-        // the JSON-RPC layer and the core needs something durable to record
-        // against an approval event and accept back minutes later.
-        let id = uuid::Uuid::new_v4().simple().to_string();
-        self.blocked.lock().await.insert(
-            id.clone(),
-            Blocked {
-                call,
-                options: request.options.clone(),
-            },
-        );
-        let _ = updates
-            .send(ConversationUpdate::Asked(PermissionRequest { id, request }))
-            .await;
-    }
-
     /// Ask the bridge something and wait for its answer.
     async fn call(
         &self,
@@ -458,7 +373,7 @@ impl Bridge {
     }
 
     /// Send one frame, expecting no answer.
-    async fn send(&self, frame: &serde_json::Value) -> Result<(), AdapterError> {
+    pub(super) async fn send(&self, frame: &serde_json::Value) -> Result<(), AdapterError> {
         let body = frame.to_string();
         let framed = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
         self.sink
@@ -469,3 +384,7 @@ impl Bridge {
             .map_err(|e| AdapterError::Unavailable(format!("conversation write failed: {e}")))
     }
 }
+
+#[cfg(test)]
+#[path = "acp_tests.rs"]
+mod acp_tests;
