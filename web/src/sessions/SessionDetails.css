@@ -1,70 +1,80 @@
 /*
- * Session details, per docs/Web_Style.md.
+ * The session details sheet — docs/Web_Style.md §12.
  *
- * A panel beside the terminal, collapsing to a handle rather than disappearing
- * — the way back has to be where the panel was.
+ * Under the terminal, not beside it. It is reference material, and the rest of
+ * the time it is width the terminal should have.
  */
 
 .details {
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  width: 17rem;
+  height: var(--sheet-height);
   min-height: 0;
   font-family: var(--font-ui);
   background: var(--surface);
-  border-left: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
 }
 
 /*
- * The head band. Height comes from .band--head, so its rule lands on the
- * session header's and the rail's, and the three run as one line across the
- * page (§5).
+ * Closed, the sheet is a 40px band carrying a one-line summary. It takes the
+ * foot band's height, so it lands on the page's grid rather than inventing a
+ * fourth measurement.
+ */
+.details--closed {
+  height: var(--band-foot);
+  border-top: 1px solid var(--rule);
+}
+
+.details__summaryreason {
+  overflow: hidden;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+}
+
+/*
+ * The sheet's own head band. Height comes from .band--foot; nothing here adds
+ * padding on the block axis.
  */
 .details__head {
   gap: var(--space-2);
 }
 
-.details__title {
-  margin: 0;
+/*
+ * Its columns scroll inside it (§12). The page does not scroll and neither
+ * does the terminal above, so a sheet that grew with its contents would take
+ * the height from the surface it is describing.
+ */
+.details__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-3);
+  overflow-y: auto;
 }
 
 /*
- * The handle itself is `.collapse-handle` in the component layer, which holds
- * §7's minimum target. Only where it sits is decided here.
+ * Wide rather than tall (§12). A 412px sheet running one column deep would
+ * scroll for something that fits across.
  */
-
-/* Collapsed, the panel is a full-height strip so the target is easy to hit. */
-.details__handle {
-  flex: 0 0 auto;
-  height: 100%;
-  background: var(--surface);
-  border-left: 1px solid var(--rule);
-  border-radius: 0;
-}
-
 .details__list {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--space-3);
-  min-height: 0;
   margin: 0;
-  padding: var(--space-3);
-  overflow-y: auto;
 }
 
 .details__row {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .details__row dt {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  text-transform: uppercase;
   letter-spacing: var(--track-label);
+  text-transform: uppercase;
   color: var(--ink-3);
 }
 
@@ -86,7 +96,7 @@
  * the states it explains — starting, stopped, being moved — are not failures.
  */
 .details__state {
-  margin: 0;
+  margin-top: var(--space-3);
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-xs);
   color: var(--ink-2);
@@ -95,24 +105,12 @@
 }
 
 .details__ending {
-  margin: 0;
+  margin-top: var(--space-3);
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-xs);
   color: var(--ink);
   background: var(--inset);
   border-left: 2px solid var(--wait);
-}
-
-/*
- * The lifecycle controls, at the foot of what they act on. Separated by a rule
- * because acting on a session is a different kind of thing from reading about
- * it.
- */
-.details__actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--rule);
 }
 
 /*
@@ -124,22 +122,22 @@
  */
 .details__creator {
   display: flex;
-  align-items: center;
   gap: var(--space-2);
+  align-items: center;
 }
 
 .details__face {
+  display: grid;
   flex: none;
+  place-items: center;
   width: 20px;
   height: 20px;
-  border-radius: 50%;
-  object-fit: cover;
-  display: grid;
-  place-items: center;
-  background: var(--inset);
   color: var(--ink-3);
   font-size: var(--text-xs);
   /* The initial, when there is no picture. Uppercase already, so this only
      keeps a descender from shifting the row. */
   line-height: 1;
+  object-fit: cover;
+  background: var(--inset);
+  border-radius: 50%;
 }
