@@ -42,8 +42,21 @@ pub type ScreenFactory = Arc<dyn Fn(TerminalGeometry) -> Box<dyn ScreenModel> + 
 pub struct AttachmentHandle {
     pub(crate) session_id: SessionId,
     pub(crate) service: Arc<SessionService>,
+    /// Which attachment this is, among those this session has issued.
+    ///
+    /// Carried so releasing is not a blunt instrument. A superseded holder
+    /// drops its handle after its replacement is already live, and a release
+    /// that did not check would detach the new client instead of the old one.
+    pub(crate) generation: u64,
     /// Live terminal output for as long as the attachment is held.
     pub output: broadcast::Receiver<Vec<u8>>,
+    /// Fires once when the owner has handed this attachment to somebody else.
+    ///
+    /// The superseded client is told rather than simply going quiet. A terminal
+    /// that stops updating with no explanation is indistinguishable from a
+    /// broken one, and the person looking at it will reload and take the
+    /// attachment back — which is a fight nobody wins.
+    pub superseded: broadcast::Receiver<()>,
     /// Bytes that repaint the current screen, delivered before live output.
     pub repaint: Vec<u8>,
     /// Geometry the repaint was rendered at.
@@ -54,12 +67,21 @@ impl Drop for AttachmentHandle {
     fn drop(&mut self) {
         let service = Arc::clone(&self.service);
         let id = self.session_id.clone();
+        let generation = self.generation;
         // Release synchronously where possible; the lock is never held across
         // an await inside the service, so a blocking release cannot deadlock.
         tokio::spawn(async move {
-            service.release_attachment(&id).await;
+            service.release_attachment(&id, generation).await;
         });
     }
+}
+
+/// Who currently holds a session's terminal.
+pub(crate) struct Attachment {
+    /// Which attachment this is, among those this session has issued.
+    pub(crate) generation: u64,
+    /// Signals the holder that somebody has taken the attachment from them.
+    pub(crate) supersede: broadcast::Sender<()>,
 }
 
 /// Everything about a session that exists only while its runtime does.
@@ -104,7 +126,15 @@ pub(crate) struct SessionEntry {
     /// than forwarded: a runtime handed one will either ignore it or act on
     /// the wrong thing, and neither is visible to whoever answered.
     pub(crate) pending_approvals: HashSet<String>,
-    pub(crate) attached: bool,
+    /// The live attachment, when one is held.
+    pub(crate) attached: Option<Attachment>,
+    /// How many attachments this session has issued.
+    ///
+    /// Monotonic rather than a count of live ones, so a replacement attachment
+    /// is never numbered the same as the one it replaced — which is the whole
+    /// basis on which a superseded holder's release is told apart from a real
+    /// one.
+    pub(crate) attachments_issued: u64,
 }
 
 /// What distinguishes one deployment of this service from another.
