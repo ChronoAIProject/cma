@@ -26,12 +26,14 @@ interface PageFrameProps {
   /** What this page is not showing, when that is a fact worth stating. */
   readonly note?: string;
   /**
-   * Whether the page opens with a column at its leading edge.
+   * The width of the column at the page's leading edge, when it has one.
    *
    * The band divides to match, so its first vertical rule lands on that
-   * column's and the page reads as one surface (§6).
+   * column's and the page reads as one surface (§6). It follows the column
+   * rather than being fixed, because a collapsed rail is still a column and a
+   * band that kept the open width would leave the rule 264px adrift.
    */
-  readonly leadingColumn?: boolean;
+  readonly leadingColumn?: string;
   readonly children: ReactNode;
 }
 

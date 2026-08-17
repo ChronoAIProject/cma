@@ -34,9 +34,14 @@
  * sized itself from its own content would put a second vertical line a few
  * pixels away from the first, which reads as a misprint.
  */
+/*
+ * Width comes from the page, which is the only thing that knows how wide its
+ * leading column currently is — a collapsed rail is still a column, and a cell
+ * pinned to the open width would leave the rule 264px adrift.
+ */
 .statusband__lead {
   flex: 0 0 auto;
-  width: var(--rail-width);
+  overflow: hidden;
   border-right: 1px solid var(--rule);
 }
 
