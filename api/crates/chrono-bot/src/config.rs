@@ -86,6 +86,12 @@ pub struct Config {
     pub claude_upstream_base_url: String,
     /// Model the second kernel selects when a session names none.
     pub claude_upstream_model: String,
+    /// Where a sandbox forwards the third kernel's model calls.
+    ///
+    /// Falls back to the shared upstream when a deployment names none.
+    pub dsh_upstream_base_url: String,
+    /// Model the third kernel selects when a session names none.
+    pub dsh_upstream_model: String,
     /// Root of the identity platform a session's CLI acts against.
     pub platform_base_url: String,
     /// Connection string for the durable session store.
@@ -184,6 +190,12 @@ impl Config {
             named => named,
         };
         let claude_upstream_model = var_or("CHRONO_CLAUDE_UPSTREAM_MODEL", "claude-opus-5");
+        // The third kernel's, on the same terms and for the same reason.
+        let dsh_upstream_base_url = match var_or("CHRONO_DSH_UPSTREAM_BASE_URL", "") {
+            empty if empty.is_empty() => upstream_base_url.clone(),
+            named => named,
+        };
+        let dsh_upstream_model = var_or("CHRONO_DSH_UPSTREAM_MODEL", "deepseek-v4-flash");
         // Defaults to the same provider this service authenticates against, so
         // a session acts on the platform as the person who signed in.
         let platform_base_url = var_or("CHRONO_PLATFORM_BASE_URL", "");
@@ -271,6 +283,8 @@ impl Config {
             upstream_wire_api,
             claude_upstream_base_url,
             claude_upstream_model,
+            dsh_upstream_base_url,
+            dsh_upstream_model,
             platform_base_url,
             mongodb_uri,
             mongodb_database,
@@ -381,6 +395,8 @@ impl Config {
             upstream_wire_api: "responses".into(),
             claude_upstream_base_url: "http://u".into(),
             claude_upstream_model: "m".into(),
+            dsh_upstream_base_url: "http://u".into(),
+            dsh_upstream_model: "m".into(),
             platform_base_url: "http://p".into(),
             mongodb_uri: "mongodb://h/db".into(),
             mongodb_database: "db".into(),
