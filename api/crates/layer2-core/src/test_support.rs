@@ -124,7 +124,6 @@ pub(crate) use crate::screen_support::{FixedCredential, RecordingScreen};
 
 /// An adapter that provisions nothing and records what it was asked to tear
 /// down, so teardown can be asserted without a sandbox.
-#[derive(Default)]
 pub(crate) struct FakeAdapter {
     pub(crate) terminated: Mutex<Vec<String>>,
     /// When set, provisioning fails. Models a provider that cannot give us a
@@ -172,6 +171,46 @@ pub(crate) struct FakeAdapter {
     pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
     /// When set, the runtime cannot hand its conversation over.
     pub(crate) refuse_snapshot: bool,
+    /// What this runtime says it can do.
+    ///
+    /// Defaults to the shape of the only kernel that exists today — a terminal
+    /// that can be carried onto a replacement — so tests about anything else
+    /// keep working without stating it.
+    pub(crate) capabilities: layer3_adapter::KernelCapabilities,
+}
+
+impl Default for FakeAdapter {
+    /// A runtime shaped like the only real one: a terminal that can be carried
+    /// onto a replacement.
+    ///
+    /// Spelled out rather than derived, because a derived default would
+    /// advertise nothing and every session in these tests would be refused
+    /// before it started — which would test the refusal and nothing else.
+    fn default() -> Self {
+        Self {
+            terminated: Mutex::default(),
+            refuse_provision: false,
+            fail_first: std::sync::atomic::AtomicUsize::new(0),
+            refuse_attach: false,
+            senders: Mutex::default(),
+            running: Mutex::default(),
+            refuse_list: false,
+            created_by: None,
+            last_spec: Mutex::default(),
+            issued: std::sync::atomic::AtomicUsize::new(0),
+            provision_calls: std::sync::atomic::AtomicUsize::new(0),
+            conversations: Mutex::default(),
+            handovers: Mutex::default(),
+            refuse_snapshot: false,
+            capabilities: layer3_adapter::KernelCapabilities {
+                conversation: false,
+                terminal: true,
+                snapshot: true,
+                steer: false,
+                usage: false,
+            },
+        }
+    }
 }
 
 impl FakeAdapter {
@@ -198,6 +237,10 @@ impl FakeAdapter {
 impl KernelAdapter for FakeAdapter {
     fn kernel_name(&self) -> &'static str {
         "fake"
+    }
+
+    fn capabilities(&self) -> layer3_adapter::KernelCapabilities {
+        self.capabilities
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {

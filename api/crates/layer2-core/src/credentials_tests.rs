@@ -24,6 +24,14 @@ impl KernelAdapter for RecordingAdapter {
         "recording"
     }
 
+    fn capabilities(&self) -> layer3_adapter::KernelCapabilities {
+        layer3_adapter::KernelCapabilities {
+            terminal: true,
+            snapshot: true,
+            ..Default::default()
+        }
+    }
+
     async fn provision(
         &self,
         spec: &layer3_adapter::RuntimeSpec,
