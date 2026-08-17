@@ -12,8 +12,8 @@ use futures_util::TryStreamExt;
 use layer2_core::{
     store::{EnvironmentProfileStore, StoreError},
     AgentConfiguration, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, ServiceId, SkillId,
-    SoftwarePackage, SubjectId,
+    EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, ServiceId, SessionMode,
+    SkillId, SoftwarePackage, SubjectId,
 };
 use mongodb::bson::doc;
 use mongodb::options::{IndexOptions, ReplaceOptions};
@@ -76,6 +76,12 @@ struct ProfileDoc {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AgentDoc {
     kernel: String,
+    /// Which plane sessions from this profile are driven on.
+    ///
+    /// Defaulted because profiles written before modes existed named none, and
+    /// every one of them was a terminal.
+    #[serde(default)]
+    mode: SessionMode,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -116,6 +122,7 @@ fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
         services: p.services.iter().map(|s| s.0.clone()).collect(),
         agent: Some(AgentDoc {
             kernel: p.agent.kernel.0.clone(),
+            mode: p.agent.mode,
             model: p.agent.model.clone(),
             reasoning_effort: p.agent.reasoning_effort,
             permission: p.agent.permission,
@@ -152,6 +159,7 @@ fn from_doc(d: ProfileDoc) -> EnvironmentProfile {
         agent: match d.agent {
             Some(a) => AgentConfiguration {
                 kernel: KernelId::new(a.kernel),
+                mode: a.mode,
                 model: a.model,
                 reasoning_effort: a.reasoning_effort,
                 permission: a.permission,

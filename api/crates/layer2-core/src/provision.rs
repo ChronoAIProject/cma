@@ -19,6 +19,7 @@ use layer3_adapter::{
 };
 use tokio::sync::{broadcast, Mutex};
 
+use crate::capabilities::SessionCapabilities;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
@@ -76,6 +77,14 @@ impl StartFailure {
         }
     }
 
+    /// A failure that every attempt would meet identically.
+    fn permanent(reason: String) -> Self {
+        Self {
+            reason,
+            retryable: false,
+        }
+    }
+
     /// Classify what the provider said about bringing a runtime up.
     ///
     /// An absent ability is the one answer retrying cannot change: the adapter
@@ -84,10 +93,7 @@ impl StartFailure {
     fn from_provisioning(error: AdapterError) -> Self {
         let reason = format!("could not provision a runtime: {error}");
         match error {
-            AdapterError::Unsupported(_) => Self {
-                reason,
-                retryable: false,
-            },
+            AdapterError::Unsupported(_) => Self::permanent(reason),
             AdapterError::Unavailable(_) | AdapterError::Rejected(_) => Self::transient(reason),
         }
     }
@@ -242,6 +248,19 @@ impl SessionService {
         restore: Option<&Vec<u8>>,
     ) -> Result<(), StartFailure> {
         let id = session.id.clone();
+        // Checked again, because this also runs for a session being revived or
+        // carried onto a replacement runtime — long after it was created, and
+        // possibly onto a build of its kernel that no longer does what the
+        // session was granted. Starting it anyway would leave a session whose
+        // recorded abilities and real ones disagree, which is the state every
+        // caller downstream trusts cannot happen.
+        SessionCapabilities::granted(session.options.mode, adapter.capabilities()).map_err(
+            |refusal| {
+                StartFailure::permanent(format!(
+                    "this session's runtime can no longer be what it is: {refusal}"
+                ))
+            },
+        )?;
         // Resolved from the session rather than the request, so a runtime
         // replaced long afterwards is built the same way. A profile that has
         // since been deleted or changed hands fails the attempt rather than
