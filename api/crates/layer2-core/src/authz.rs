@@ -186,6 +186,20 @@ impl Caller {
         self.authorization.require(Capability::ControlAnySession)
     }
 
+    /// Fail unless this caller *is* the owner and may control their own work.
+    ///
+    /// Stricter than [`Self::require_control_of`], and deliberately so. An
+    /// operator grant stands in for stopping somebody else's session, because
+    /// stopping is something an operator has to be able to do. Changing which
+    /// plane a session is driven on is not: it changes what the owner is
+    /// looking at, and nobody else has a reason to.
+    pub fn require_own_control_of(&self, owner: &SubjectId) -> Result<(), CoreError> {
+        if &self.subject != owner {
+            return Err(CoreError::Forbidden);
+        }
+        self.authorization.require(Capability::TerminateOwnSession)
+    }
+
     /// Whether this caller is acting on work that is not theirs.
     ///
     /// Worth naming because it is the thing a record of actions exists for:
