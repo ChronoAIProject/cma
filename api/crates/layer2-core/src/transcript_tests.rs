@@ -188,7 +188,12 @@ async fn opening_a_recovered_session_funds_it_there_and_then() {
     restarted.reconcile().await;
 
     restarted
-        .attach_terminal(&alice, &created.id, TerminalGeometry::default())
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            Default::default(),
+        )
         .await
         .expect("the owner can open their session");
 
