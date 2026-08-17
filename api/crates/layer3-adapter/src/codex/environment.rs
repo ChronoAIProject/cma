@@ -50,6 +50,15 @@ pub struct CodexSandboxSpec {
     /// Empty means the session gets a terminal and a model but cannot use the
     /// owner's connected capabilities.
     pub platform_base_url: String,
+    /// How this kernel's protocol bridge is invoked.
+    ///
+    /// A different program from the terminal application above: the same
+    /// kernel, driven through a bridge that speaks the contract rather than
+    /// painting a screen. Configured rather than fixed for the same reason the
+    /// resume verb is — it belongs to the kernel and changes with its
+    /// versions, and getting it wrong must be correctable without building a
+    /// new image.
+    pub bridge_command: String,
     /// The subcommand that makes the agent continue a named conversation.
     ///
     /// The conversation's own identifier is appended to this, so it must be a
@@ -76,6 +85,12 @@ pub struct CodexSandboxSpec {
     /// Same rule and the same reason: no delivery channel exists, so anything
     /// beyond this is a promise the session could not keep.
     pub provided_skills: Vec<String>,
+    /// Directory the agent works in, inside its sandbox.
+    ///
+    /// Told to the bridge when a conversation is opened, because it decides
+    /// what the agent can see. The pod's home by default, which is where its
+    /// image puts everything a session starts with.
+    pub workspace: String,
 }
 
 impl Default for CodexSandboxSpec {
@@ -96,8 +111,10 @@ impl Default for CodexSandboxSpec {
             // Empty by default, which refuses everything. A deployment states
             // what its image carries; guessing here would accept a request the
             // image cannot honour, which is the failure this exists to stop.
+            bridge_command: "codex-acp".into(),
             provided_packages: Vec::new(),
             provided_skills: Vec::new(),
+            workspace: "/home/chrono".into(),
         }
     }
 }
@@ -110,11 +127,37 @@ impl super::CodexAdapter {
     /// grants more than the person asked for. Worth being able to inspect
     /// without standing up a provider.
     pub(super) fn environment_for(&self, spec: &RuntimeSpec) -> BTreeMap<String, String> {
+        let conversing = matches!(spec.options.mode, crate::RuntimeMode::Conversation);
         let mut controlled = BTreeMap::from([
-            ("CHRONO_RUNTIME_COMMAND".to_string(), "codex".to_string()),
             (
+                "CHRONO_RUNTIME_COMMAND".to_string(),
+                match conversing {
+                    // The bridge, which speaks the contract. Started by the
+                    // supervisor with piped stdio rather than under a pty: it
+                    // has no screen to paint.
+                    true => self.spec.bridge_command.clone(),
+                    false => "codex".to_string(),
+                },
+            ),
+            (
+                // How the terminal application is told to continue a
+                // conversation. The bridge is told by name over the protocol
+                // instead, so it needs no verb — and giving it one would put a
+                // subcommand on a program that takes none.
                 "CHRONO_RUNTIME_RESUME_ARGS".to_string(),
-                self.spec.resume_args.clone(),
+                match conversing {
+                    true => String::new(),
+                    false => self.spec.resume_args.clone(),
+                },
+            ),
+            (
+                // Either way, this kernel has to be told *which* conversation
+                // to continue: asked for "the latest" it selects among
+                // conversations recorded in the current working directory, and
+                // one carried from another pod was recorded somewhere else, so
+                // it finds nothing, starts fresh, and reports success.
+                "CHRONO_RUNTIME_SNAPSHOT_NAMED".to_string(),
+                "true".to_string(),
             ),
             // Where this kernel records its conversation, told to the pod
             // rather than known by it. The supervisor hosts any kernel; the
@@ -216,3 +259,7 @@ pub(super) fn absent(wanted: &[String], provided: &[String]) -> Option<String> {
         .find(|w| !provided.contains(w))
         .map(|w| w.to_string())
 }
+
+#[cfg(test)]
+#[path = "environment_tests.rs"]
+mod environment_tests;

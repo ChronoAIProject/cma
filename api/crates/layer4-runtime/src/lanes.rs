@@ -59,6 +59,13 @@ pub struct Ready {
     pub wire_version: u32,
     /// The lanes this pod serves, named.
     pub lanes: Vec<String>,
+    /// The conversation this pod is taking over, when it was handed one.
+    ///
+    /// Said by the pod because the pod is what received it. A control plane
+    /// that restarted between the handover and this moment remembers nothing,
+    /// and a session carried onto a new runtime would silently begin again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resuming: Option<String>,
 }
 
 impl Ready {
@@ -68,7 +75,14 @@ impl Ready {
             t: "ready".to_string(),
             wire_version: WIRE_VERSION,
             lanes: lanes.iter().map(|l| l.to_string()).collect(),
+            resuming: None,
         }
+    }
+
+    /// Say which conversation this pod is taking over.
+    pub fn resuming(mut self, conversation: Option<String>) -> Self {
+        self.resuming = conversation;
+        self
     }
 }
 

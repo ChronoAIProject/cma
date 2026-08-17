@@ -147,20 +147,6 @@ data:
   # which fails partway through somebody's work rather than refusing to start.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
-  # The subcommand that makes the agent continue a named conversation, used
-  # when a session is carried onto a newer runtime. The conversation's own
-  # identifier is appended, so this must be a form that takes one.
-  #
-  # Not "resume --last". That asks for the most recent conversation recorded in
-  # the current working directory, and one carried from another pod was
-  # recorded somewhere else — so it finds nothing, starts a fresh conversation
-  # and reports success. Verified against codex 0.146: resuming by identifier
-  # continues the conversation, asking for the latest does not.
-  #
-  # Configuration rather than part of the image because it belongs to the agent
-  # and changes between its versions, and getting it wrong must be fixable
-  # without building and publishing a new runtime image.
-  CHRONO_RUNTIME_RESUME_ARGS: "resume"
   # Path to the mounted OpenSandbox API key. Read from a file rather than an
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.
