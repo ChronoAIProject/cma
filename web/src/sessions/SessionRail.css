@@ -60,10 +60,10 @@
 
 .rail__tab {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr auto;
   grid-template-areas:
-    'dot time'
-    '. meta';
+    'dot time meta'
+    '. activity activity';
   gap: 0 var(--space-2);
   width: 100%;
   padding: var(--space-2);
@@ -113,6 +113,69 @@
   grid-area: meta;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/*
+ * What the session last did. It never wraps (§12): a row that grows with its
+ * longest sentence makes the list a different height every time it reloads,
+ * and a list whose rows move is a list nobody can point at.
+ */
+.rail__activity {
+  grid-area: activity;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Collapsed, §7 ───────────────────────────────────────────────────────
+ *
+ * A handle, never nothing: 48px of strip keeping both bands, so the way back
+ * is exactly where the panel was and the page's rules still line up.
+ */
+
+.rail--collapsed {
+  width: var(--rail-collapsed);
+  align-items: center;
+}
+
+.rail--collapsed .rail__head,
+.rail__chrome--collapsed {
+  justify-content: center;
+  width: 100%;
+  padding-inline: 0;
+}
+
+/*
+ * The summary of what the strip hides: the dots in state order and a count.
+ * Collapsing gives up detail, not awareness.
+ */
+.rail__summary {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-3) 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.rail__summaryitem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.rail__summarycount {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-3);
 }
 
