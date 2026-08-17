@@ -83,6 +83,7 @@ impl InterfaceProfile for RestInterface {
             Operation::ResizeTerminal,
             Operation::ScreenSnapshot,
             Operation::GetUsage,
+            Operation::ChangePlane,
         ]
     }
 }
@@ -433,6 +434,7 @@ pub fn router(state: SessionsState) -> Router {
         // be picked up again; the pair only makes sense together, which is why
         // reviving lives beside it rather than behind a creation call.
         .route("/api/v1/sessions/{id}/stop", post(stop))
+        .route("/api/v1/sessions/{id}/plane", post(plane))
         .route("/api/v1/sessions/{id}/revive", post(revive))
         // Exchanges the credential this route can carry for one the WebSocket
         // upgrade can. See `crate::tickets` for why that exchange exists.
@@ -565,6 +567,35 @@ async fn stop(
 ) -> Result<StatusCode, Problem> {
     service.stop_session(&caller, &SessionId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Which plane the caller wants this session driven on.
+#[derive(Debug, Deserialize)]
+pub struct PlaneRequest {
+    /// The plane to move to. Naming the one it is already on changes nothing.
+    pub plane: layer2_core::SessionMode,
+}
+
+/// Move a session onto the other plane.
+///
+/// A rotation, and answered as one: the session comes back with its identifier,
+/// its history and its place in the caller's list, and the view returned is the
+/// session mid-handover — `rotating`, which is the window in which a client
+/// must refuse input rather than accept and lose it.
+///
+/// Every refusal is typed and names what is missing, per §3 of the overview: a
+/// kernel that does not serve the plane, or one that cannot carry its
+/// conversation across, is refused before anything is torn down.
+async fn plane(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    Json(body): Json<PlaneRequest>,
+) -> Result<Json<SessionView>, Problem> {
+    let session = service
+        .change_plane(&caller, &SessionId(id), body.plane)
+        .await?;
+    Ok(Json(session.into()))
 }
 
 async fn revive(

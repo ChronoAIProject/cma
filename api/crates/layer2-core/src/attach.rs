@@ -97,7 +97,7 @@ impl SessionService {
                     // A send with no receiver means the holder has already
                     // gone, which is not a failure — it is the case takeover
                     // exists to rescue.
-                    let _ = held.supersede.send(());
+                    let _ = held.supersede.send(crate::lease::Detached::Superseded);
                     tracing::info!(session_id = %id, "the terminal attachment was taken over");
                 }
                 (None, _) => {}
