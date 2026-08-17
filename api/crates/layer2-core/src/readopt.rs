@@ -167,6 +167,7 @@ impl SessionService {
         })?;
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
+        let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
         let mut model = (self.screen_factory)(record.session.geometry);
 
         // Replayed before anything new arrives, so the person reattaching sees
@@ -193,6 +194,10 @@ impl SessionService {
             runtime: Some(handle),
             input: Some(channel.input.clone()),
             live: live.clone(),
+            live_frames: live_frames.clone(),
+            conversation: None,
+            pending_approvals: Default::default(),
+            assembling: None,
             attached: false,
             context_ref: record.context_ref.clone(),
             captured_len,
