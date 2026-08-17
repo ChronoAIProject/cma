@@ -126,6 +126,23 @@ impl SessionCapabilities {
     }
 }
 
+/// Which planes a runtime with these abilities can be asked to serve.
+///
+/// Derived by asking `granted` rather than by restating the rule, so what a
+/// deployment advertises and what it will accept cannot drift apart. A client
+/// offering a plane the core would refuse has moved the refusal from before
+/// the create button to after it, which is the whole thing this exists to
+/// prevent.
+///
+/// Ordered as the modes are declared, so the answer is stable between calls
+/// and a client can render it without sorting.
+pub fn servable_modes(kernel: KernelCapabilities) -> Vec<SessionMode> {
+    [SessionMode::Terminal, SessionMode::Conversation]
+        .into_iter()
+        .filter(|mode| SessionCapabilities::granted(*mode, kernel).is_ok())
+        .collect()
+}
+
 /// One ability, named, so a refusal can say which one is missing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
