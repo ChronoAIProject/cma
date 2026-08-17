@@ -5,6 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+agent-client-protocol-schema = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
