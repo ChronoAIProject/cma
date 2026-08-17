@@ -10,6 +10,12 @@ import './StatusBand.css';
  * glancing at the bottom of the window finds the same fact in the same place
  * whatever they are looking at.
  *
+ * In a multi-column view its 40px is shared by the columns' own footers, and
+ * the rule still runs across. That is why this is one band divided rather than
+ * a footer per column: two footers that are the same row cannot drift apart,
+ * and §5's whole argument for setting a band's height is that accumulated
+ * padding is what lets aligned columns drift.
+ *
  * The zone is stated rather than assumed (§12): a fixed zone means the same
  * session reads the same to everyone who sees it, and a reader who does not
  * know which zone that is cannot check a time against their own.
@@ -30,20 +36,40 @@ interface StatusBandProps {
    * because silent truncation reads as breakage.
    */
   readonly note?: string;
+  /**
+   * Whether the page has a leading column for the band to align with.
+   *
+   * The zone sits in that cell, so the band's first vertical rule lands on the
+   * rail's, and the page reads as one surface rather than two.
+   */
+  readonly leadingColumn?: boolean;
 }
 
-export function StatusBand({ showing, note }: StatusBandProps) {
+export function StatusBand({ showing, note, leadingColumn = false }: StatusBandProps) {
   return (
     <footer className="band band--foot statusband">
-      <span className="band__label">Zone</span>
-      <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
+      {leadingColumn ? (
+        <div className="statusband__cell statusband__lead">
+          <span className="band__label">Zone</span>
+          <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
+        </div>
+      ) : null}
 
-      <span className="band__value statusband__showing">{showing}</span>
-      {note !== undefined ? <span className="band__value statusband__note">{note}</span> : null}
+      <div className="statusband__cell statusband__main">
+        {leadingColumn ? null : (
+          <>
+            <span className="band__label">Zone</span>
+            <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
+          </>
+        )}
 
-      <span className="band__spacer" />
-      <span className="band__label">Build</span>
-      <span className="band__value">{BUILD}</span>
+        <span className="band__value statusband__showing">{showing}</span>
+        {note !== undefined ? <span className="band__value statusband__note">{note}</span> : null}
+
+        <span className="band__spacer" />
+        <span className="band__label">Build</span>
+        <span className="band__value">{BUILD}</span>
+      </div>
     </footer>
   );
 }

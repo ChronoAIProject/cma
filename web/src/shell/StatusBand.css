@@ -1,11 +1,47 @@
 /*
- * The status band — docs/Web_Style.md §6. Height comes from .band--foot in
- * the component layer; only the band's own ordering lives here.
+ * The status band — docs/Web_Style.md §5 and §6.
+ *
+ * Height comes from .band--foot in the component layer. What lives here is the
+ * division: in a multi-column view the band's 40px is shared by the columns'
+ * own footers, so the band carries a cell per column and its vertical rules
+ * land on theirs. The top rule runs across all of them, unbroken.
  */
 
-.statusband {
-  gap: var(--space-2);
+/*
+ * Written against both classes deliberately. The element carries .band and
+ * .statusband, and the two set the same properties, so equal specificity would
+ * leave the winner decided by whichever stylesheet the bundler emitted last —
+ * a 12px misalignment that appears and disappears with import order.
+ */
+.band.statusband {
+  gap: 0;
+  padding-inline: 0;
   overflow: hidden;
+}
+
+.statusband__cell {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding-inline: var(--space-3);
+}
+
+/*
+ * The rail's share of the band. Fixed to the rail's width so the rule between
+ * the two cells continues the rule down the rail's trailing edge; a cell that
+ * sized itself from its own content would put a second vertical line a few
+ * pixels away from the first, which reads as a misprint.
+ */
+.statusband__lead {
+  flex: 0 0 auto;
+  width: var(--rail-width);
+  border-right: 1px solid var(--rule);
+}
+
+.statusband__main {
+  flex: 1 1 auto;
 }
 
 /*
