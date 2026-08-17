@@ -653,13 +653,19 @@ async fn conformance() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "conformsTo": CONFORMS_TO }))
 }
 
+/// The runtimes a session can be started on, and what each one can be.
+///
+/// The planes ride with the identifier so a client can refuse an impossible
+/// pairing where the person is still choosing, rather than submitting it and
+/// rendering the refusal that comes back. Both come from the same core answer,
+/// so an interface cannot offer a combination the core would decline.
 async fn kernels(State(service): State<Arc<SessionService>>) -> Json<serde_json::Value> {
-    let ids: Vec<String> = service
+    let offerings: Vec<serde_json::Value> = service
         .available_kernels()
         .into_iter()
-        .map(|k| k.0)
+        .map(|(kernel, modes)| serde_json::json!({ "id": kernel.0, "modes": modes }))
         .collect();
-    Json(serde_json::json!({ "kernels": ids }))
+    Json(serde_json::json!({ "kernels": offerings }))
 }
 
 #[cfg(test)]
