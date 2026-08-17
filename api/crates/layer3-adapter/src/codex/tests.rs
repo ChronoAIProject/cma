@@ -388,3 +388,16 @@ async fn what_the_image_already_carries_provisions_as_before() {
         "the baseline must reach the provider, got {err:?}"
     );
 }
+
+#[test]
+fn the_runtime_is_told_where_this_kernel_keeps_its_conversation() {
+    // The supervisor hosts any kernel and must not know this. Naming it here,
+    // in the directory that owns this kernel, is what lets the same pod image
+    // supervise a different one.
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&spec_with(Default::default()));
+    assert_eq!(
+        env.get("CHRONO_RUNTIME_SNAPSHOT_DIR").map(String::as_str),
+        Some(".codex/sessions")
+    );
+}
