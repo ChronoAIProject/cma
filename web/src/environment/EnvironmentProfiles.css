@@ -17,7 +17,7 @@
   align-items: center;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .profiles__text {
@@ -54,7 +54,7 @@
   color: var(--ink-3);
   font-size: var(--text-xs);
   line-height: var(--leading-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
 
@@ -65,13 +65,13 @@
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: var(--text-base);
-  background: var(--surface-2);
+  background: var(--inset);
   border: 1px solid var(--rule-2);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .field__input[aria-invalid='true'] {
-  border-color: var(--danger);
+  border-color: var(--fail);
 }
 
 .field__hint {
@@ -81,7 +81,7 @@
 }
 
 .field__error {
-  color: var(--danger);
+  color: var(--fail);
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
 }
@@ -110,7 +110,7 @@
   max-height: 240px;
   overflow-y: auto;
   border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .picker__row {
@@ -122,7 +122,7 @@
 }
 
 .picker__row:hover {
-  background: var(--surface-2);
+  background: var(--raised);
 }
 
 .picker__text {
@@ -141,7 +141,7 @@
   margin-left: var(--space-2);
   color: var(--ink-3);
   font-size: var(--text-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
 
@@ -159,7 +159,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .picker__row {
-    transition: background 150ms ease;
+    transition: background var(--motion-colour) ease;
   }
 }
 
@@ -172,7 +172,7 @@
   margin: var(--space-4) 0 0;
   font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track-label);
   color: var(--ink-3);
   border-top: 1px solid var(--rule);
   padding-top: var(--space-3);
