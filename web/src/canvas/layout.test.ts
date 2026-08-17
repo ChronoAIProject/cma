@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_LIVE_NODES,
@@ -120,5 +122,32 @@ describe('nextNodeIndex', () => {
 
   it('survives a nonsense column count', () => {
     expect(nextNodeIndex(0, 'ArrowDown', 4, 0)).toBe(1);
+  });
+});
+
+describe('the node geometry', () => {
+  it('is unchanged, because a node size is what its runtime draws at', () => {
+    // §13: a 420x280 node asks for roughly 47 columns, and a node that changed
+    // width as siblings came and went would re-wrap everything the agent has
+    // drawn. Output already wrapped at 47 columns stays wrapped at 47 columns,
+    // in the transcript afterwards as well — so this is not a styling value
+    // and moving it is not a styling change.
+    const tokens = readFileSync(resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8');
+    expect(tokens).toContain('--canvas-node-w: 420px');
+    expect(tokens).toContain('--canvas-node-h: 280px');
+
+    const css = readFileSync(resolve(process.cwd(), 'src/canvas/SessionCanvas.css'), 'utf8');
+    expect(css).toContain('var(--canvas-node-w)');
+    expect(css).toContain('var(--canvas-node-h)');
+  });
+
+  it('draws focus in accent and hover in weight, so the two cannot be confused', () => {
+    // §13's table: hover changes weight within the neutral ramp; focus changes
+    // hue and takes the impression in accent.
+    const css = readFileSync(resolve(process.cwd(), 'src/canvas/SessionCanvas.css'), 'utf8');
+    expect(css).toMatch(/\.node:hover\s*\{\s*border-color: var\(--rule-2\);\s*\}/);
+    expect(css).toMatch(
+      /\.node\[data-focused='true'\]\s*\{[^}]*border-color: var\(--accent\)[^}]*box-shadow: var\(--press-card-accent\)/,
+    );
   });
 });
