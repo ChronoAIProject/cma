@@ -12,8 +12,7 @@
  * undefined through the UI.
  */
 
-import type { Kernel, Session, SessionLifecycle } from '../sessions/types';
-import type { AgentOptions } from '../sessions/options';
+import type { Kernel, Session, SessionCreator, SessionLifecycle } from '../sessions/types';
 import { isStage, type Stage } from '../sessions/progress';
 
 /** A request that failed, carrying enough to tell the user why. */
@@ -53,6 +52,7 @@ interface SessionPayload {
   runtime_version?: unknown;
   rotations?: unknown;
   rotated_at?: unknown;
+  creator?: unknown;
 }
 
 /**
@@ -90,7 +90,23 @@ export function toSession(raw: unknown): Session {
     // Absent until a session has actually been moved, so an unparseable value
     // becomes absent rather than a date nobody can interpret.
     rotatedAt: rotatedAt(p.rotated_at),
+    creator: creator(p.creator),
   };
+}
+
+/** The person who started a session, when the control plane named them. */
+function creator(raw: unknown): SessionCreator | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const c = raw as Record<string, unknown>;
+  const displayName = typeof c.display_name === 'string' ? c.display_name : undefined;
+  const avatarUrl = typeof c.avatar_url === 'string' ? c.avatar_url : undefined;
+  // Both absent is the same as no creator at all: an object with nothing in it
+  // would have the panel draw a heading over blank space.
+  return displayName === undefined && avatarUrl === undefined
+    ? undefined
+    : { displayName, avatarUrl };
 }
 
 /** The snapshot time a session was carried across from, if it was. */
@@ -152,26 +168,24 @@ export async function listSessions(): Promise<readonly Session[]> {
 /**
  * Provision a session on the given kernel.
  *
- * Options are sent as given. Omitting them is meaningful — the control plane
- * applies its own safe defaults — so an absent choice is never filled in here.
+ * The profile is the whole description of the session — which agent, which
+ * model, how freely it acts, and what it carries — so nothing else about the
+ * agent is sent. Omitting it is meaningful: the control plane starts the
+ * session the way this deployment says an unqualified session should start.
  */
 export async function createSession(
-  kernel: Kernel,
   cols: number,
   rows: number,
-  options?: AgentOptions,
   environmentProfile?: string | null,
 ): Promise<Session> {
   const body = await request('/api/v1/sessions', {
     method: 'POST',
     body: JSON.stringify({
-      kernel,
       cols,
       rows,
-      options,
       // Omitted rather than sent as null when nothing was chosen: absent means
-      // "whatever the platform mandates", which is not the same as a caller
-      // naming a bundle that does not exist.
+      // "this deployment's answer", which is not the same as a caller naming a
+      // bundle that does not exist.
       environment_profile: environmentProfile ?? undefined,
     }),
   });

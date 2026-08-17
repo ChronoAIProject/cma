@@ -76,10 +76,18 @@ impl std::fmt::Display for EnvironmentProfileId {
 /// Deliberately opaque: the core stores and forwards this value but never
 /// interprets it. Interpretation belongs to the process that wires concrete
 /// runtime implementations together.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct KernelId(pub String);
 
 impl KernelId {
+    /// Whether this names nothing.
+    ///
+    /// The default is empty rather than a kernel, because which kernels exist
+    /// is not this layer's to know. Something that does know fills it in.
+    pub fn is_unset(&self) -> bool {
+        self.0.trim().is_empty()
+    }
+
     /// Wrap a selector string.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())

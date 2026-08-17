@@ -21,7 +21,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
-use crate::ids::{EnvironmentProfileId, SubjectId};
+use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
+use crate::options::{CredentialMode, PermissionMode, ReasoningEffort};
 
 /// Longest accepted profile name.
 const MAX_NAME: usize = 120;
@@ -119,6 +120,32 @@ impl SoftwarePackage {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SkillId(pub String);
 
+/// A service on the identity platform, as that platform names it.
+///
+/// Opaque here, exactly like the credential itself: the core carries the
+/// selection from a profile to whatever mints a credential, and never asks
+/// what any of them mean. Only the provider knows.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ServiceId(pub String);
+
+impl ServiceId {
+    /// Wrap an identifier.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// The identifier as written.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ServiceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl SkillId {
     /// Wrap an identifier.
     pub fn new(value: impl Into<String>) -> Self {
@@ -137,20 +164,69 @@ impl std::fmt::Display for SkillId {
     }
 }
 
+/// How the agent behaves in a session started from this profile.
+///
+/// These were once chosen per session, which meant the same decisions were
+/// made again on every start and a session could not be described by anything
+/// reusable. They belong to the bundle: "which agent, thinking how hard,
+/// asking permission how often, spending whose model access, carrying which
+/// skills" is one coherent answer, and naming it is what makes it repeatable.
+///
+/// Skills sit here rather than beside software because a skill is something
+/// the agent knows how to do, not something installed in the box around it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentConfiguration {
+    /// Which runtime implementation backs the session.
+    ///
+    /// Unset by default, and deliberately: which runtimes exist, and which one
+    /// an unqualified profile should use, is a decision about a deployment.
+    /// Naming one here would put a particular runtime's name in the layer that
+    /// exists precisely so nothing depends on which runtime is running. It is
+    /// settled from configuration on the way in.
+    pub kernel: KernelId,
+    /// Model the agent selects, when the profile pins one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// How hard the agent thinks before answering.
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
+    /// How often it stops to ask.
+    #[serde(default)]
+    pub permission: PermissionMode,
+    /// Whose model access it spends.
+    #[serde(default)]
+    pub credential: CredentialMode,
+    /// Skills loaded into the session.
+    #[serde(default)]
+    pub skills: Vec<SkillId>,
+}
+
 /// What a caller supplies when creating or replacing a profile.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EnvironmentProfileSpec {
     /// Name the owner recognises it by.
     pub name: String,
+    /// How the agent behaves.
+    #[serde(default)]
+    pub agent: AgentConfiguration,
     /// Variables to set in the session.
     #[serde(default)]
     pub variables: Vec<EnvironmentVariable>,
     /// Software the session should carry.
     #[serde(default)]
     pub packages: Vec<SoftwarePackage>,
-    /// Skills to load into the session.
+    /// Which of the owner's platform services this session may reach.
+    ///
+    /// A session acts on its owner's behalf, and until now it did so with the
+    /// owner's whole identity — everything they can reach, whether or not the
+    /// work called for it. Naming services here is what narrows that to the
+    /// ones the work actually needs.
+    ///
+    /// What the deployment mandates is added whatever this says, because a
+    /// session that could not reach its own model or skill registry would not
+    /// be a narrower session but a broken one.
     #[serde(default)]
-    pub skills: Vec<SkillId>,
+    pub services: Vec<ServiceId>,
 }
 
 impl EnvironmentProfileSpec {
@@ -170,7 +246,8 @@ impl EnvironmentProfileSpec {
         }
         check_length("variables", self.variables.len())?;
         check_length("packages", self.packages.len())?;
-        check_length("skills", self.skills.len())?;
+        check_length("skills", self.agent.skills.len())?;
+        check_length("services", self.services.len())?;
 
         let mut seen: Vec<&str> = Vec::with_capacity(self.variables.len());
         for variable in &self.variables {
@@ -203,7 +280,14 @@ impl EnvironmentProfileSpec {
                 ));
             }
         }
-        for skill in &self.skills {
+        for service in &self.services {
+            if service.0.trim().is_empty() {
+                return Err(CoreError::InvalidRequest(
+                    "a service identifier must not be empty".into(),
+                ));
+            }
+        }
+        for skill in &self.agent.skills {
             if skill.0.trim().is_empty() {
                 return Err(CoreError::InvalidRequest(
                     "a skill identifier must not be empty".into(),
@@ -232,12 +316,16 @@ pub struct EnvironmentProfile {
     pub owner: SubjectId,
     /// Name the owner recognises it by.
     pub name: String,
+    /// How the agent behaves in sessions started with this profile.
+    #[serde(default)]
+    pub agent: AgentConfiguration,
     /// Variables set in every session started with this profile.
     pub variables: Vec<EnvironmentVariable>,
     /// Software the session carries.
     pub packages: Vec<SoftwarePackage>,
-    /// Skills loaded into the session.
-    pub skills: Vec<SkillId>,
+    /// Platform services a session started with this profile may reach.
+    #[serde(default)]
+    pub services: Vec<ServiceId>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
     /// Last modification timestamp, RFC 3339 in UTC.
@@ -262,9 +350,10 @@ impl EnvironmentProfile {
     pub fn to_spec(&self) -> EnvironmentProfileSpec {
         EnvironmentProfileSpec {
             name: self.name.clone(),
+            agent: self.agent.clone(),
             variables: self.variables.clone(),
             packages: self.packages.clone(),
-            skills: self.skills.clone(),
+            services: self.services.clone(),
         }
     }
 }
@@ -279,6 +368,7 @@ impl EnvironmentProfile {
 pub struct Baseline {
     packages: Vec<SoftwarePackage>,
     skills: Vec<SkillId>,
+    services: Vec<ServiceId>,
 }
 
 impl Baseline {
@@ -286,11 +376,23 @@ impl Baseline {
     pub fn new(
         packages: impl IntoIterator<Item = SoftwarePackage>,
         skills: impl IntoIterator<Item = SkillId>,
+        services: impl IntoIterator<Item = ServiceId>,
     ) -> Self {
         Self {
             packages: packages.into_iter().collect(),
             skills: skills.into_iter().collect(),
+            services: services.into_iter().collect(),
         }
+    }
+
+    /// Services every session may reach, whatever its profile says.
+    ///
+    /// The floor rather than a default: one credential serves the agent's own
+    /// model calls and the platform CLI alike, so a profile that excluded the
+    /// model endpoint would leave the session unable to think rather than
+    /// merely narrower.
+    pub fn services(&self) -> &[ServiceId] {
+        &self.services
     }
 
     /// Software every session carries.
@@ -328,13 +430,24 @@ impl Baseline {
         }
         spec.packages.extend(chosen_packages);
 
-        let chosen_skills = std::mem::take(&mut spec.skills);
+        let chosen_skills = std::mem::take(&mut spec.agent.skills);
         for mandatory in &self.skills {
             if !chosen_skills.contains(mandatory) {
-                spec.skills.push(mandatory.clone());
+                spec.agent.skills.push(mandatory.clone());
             }
         }
-        spec.skills.extend(chosen_skills);
+        spec.agent.skills.extend(chosen_skills);
+
+        // Same rule for services, and for a sharper reason: one credential
+        // serves every call a session makes, so a mandatory service left out
+        // is not a narrower session but one that cannot reach its own model.
+        let chosen_services = std::mem::take(&mut spec.services);
+        for mandatory in &self.services {
+            if !chosen_services.contains(mandatory) {
+                spec.services.push(mandatory.clone());
+            }
+        }
+        spec.services.extend(chosen_services);
     }
 }
 
@@ -365,7 +478,7 @@ impl ResolvedEnvironment {
                 .map(|v| (v.key.clone(), v.value.clone()))
                 .collect(),
             packages: spec.packages.iter().map(|p| p.requirement()).collect(),
-            skills: spec.skills.iter().map(|s| s.0.clone()).collect(),
+            skills: spec.agent.skills.iter().map(|s| s.0.clone()).collect(),
         }
     }
 
@@ -400,8 +513,20 @@ impl From<ResolvedEnvironment> for layer3_adapter::RuntimeEnvironment {
     }
 }
 
-/// A skill a caller may choose, as the catalogue describes it.
+/// A platform service a caller may allow a session to reach.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogService {
+    /// Identifier to store in a profile.
+    pub id: ServiceId,
+    /// Name the owner recognises it by.
+    pub name: String,
+    /// One-line summary, when the catalogue offers one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A skill a caller may select.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogSkill {
     /// Identifier to store in a profile.
     pub id: SkillId,
@@ -446,6 +571,22 @@ pub trait SkillCatalog: Send + Sync {
         subject: &SubjectId,
         credential: Option<&str>,
     ) -> Result<Vec<CatalogSkill>, CatalogError>;
+}
+
+/// Where the services a caller may allow are listed.
+///
+/// Answered as the caller, always: which services exist is a fact about their
+/// account, and this service's own identity would answer with its own. A
+/// deployment without one has no picker — profiles still store selections and
+/// sessions still honour them, there is simply nothing to choose from.
+#[async_trait::async_trait]
+pub trait ServiceCatalog: Send + Sync {
+    /// Services this subject may allow a session to reach.
+    async fn available(
+        &self,
+        subject: &SubjectId,
+        credential: Option<&str>,
+    ) -> Result<Vec<CatalogService>, CatalogError>;
 }
 
 #[cfg(test)]

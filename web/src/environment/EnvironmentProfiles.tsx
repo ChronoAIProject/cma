@@ -6,6 +6,7 @@ import type {
   EnvironmentProfileStore,
   MandatoryEntries,
   ProfileDraft,
+  ServiceCatalogue,
   SkillCatalogue,
 } from './types';
 import { draftOf, emptyDraft, validate } from './types';
@@ -37,6 +38,10 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
   const [profiles, setProfiles] = useState<readonly EnvironmentProfile[] | null>(null);
   const [catalogue, setCatalogue] = useState<SkillCatalogue | null>(null);
   const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
+  const [servicesCatalogue, setServicesCatalogue] = useState<ServiceCatalogue | undefined>(
+    undefined,
+  );
+  const [servicesError, setServicesError] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [mode, setMode] = useState<Mode>({ kind: 'list' });
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
@@ -84,6 +89,29 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
         // this form still works, so it must not take the dialog down with it.
         if (live) {
           setSkillsError(message(cause, 'The skill registry could not be reached.'));
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [store]);
+
+  useEffect(() => {
+    let live = true;
+    store
+      .services()
+      .then((available) => {
+        if (live) {
+          setServicesCatalogue(available);
+          setServicesError(undefined);
+        }
+      })
+      .catch((cause: unknown) => {
+        // Same rule as the registry: a list that cannot be read costs the
+        // choice, not the form. A session still reaches what the deployment
+        // mandates, so a profile saved now is a working profile.
+        if (live) {
+          setServicesError(message(cause, 'Your services could not be listed.'));
         }
       });
     return () => {
@@ -167,6 +195,9 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
           onChange={setDraft}
           skills={catalogue?.skills ?? []}
           skillsError={skillsError}
+          services={servicesCatalogue?.services ?? []}
+          mandatoryServices={servicesCatalogue?.mandatory ?? []}
+          servicesError={servicesError}
           mandatory={mandatory}
           error={error}
         />
@@ -271,7 +302,7 @@ function summarise(profile: EnvironmentProfile): string {
   const parts = [
     `${profile.variables.length} variable${profile.variables.length === 1 ? '' : 's'}`,
     `${profile.packages.length} package${profile.packages.length === 1 ? '' : 's'}`,
-    `${profile.skills.length} skill${profile.skills.length === 1 ? '' : 's'}`,
+    `${profile.agent.skills.length} skill${profile.agent.skills.length === 1 ? '' : 's'}`,
   ];
   return parts.join(' · ');
 }

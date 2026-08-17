@@ -40,7 +40,14 @@ pub(crate) struct FixedCredential(pub(crate) String);
 
 #[async_trait::async_trait]
 impl crate::store::CredentialSource for FixedCredential {
-    async fn credential_for(&self, _subject: &SubjectId) -> Option<String> {
+    async fn credential_for(
+        &self,
+        _session: &crate::ids::SessionId,
+        _subject: &SubjectId,
+        _services: &[crate::environment::ServiceId],
+    ) -> Option<String> {
         Some(self.0.clone())
     }
+
+    async fn release(&self, _session: &crate::ids::SessionId) {}
 }
