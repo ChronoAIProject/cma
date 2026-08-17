@@ -9,15 +9,18 @@
 //! parses a turn, which is what keeps this working across agent versions that
 //! change what a turn looks like.
 //!
+//! Naive about the *layout* too, and that is newer. Where the agent keeps its
+//! rollouts used to be a constant here — one kernel's directory name, in the
+//! supervisor that is supposed to host any of them. It is now told to this pod
+//! by the adapter that started it, because the layer that knows a kernel's name
+//! is the layer that owns that kernel.
+//!
 //! Only the newest rollout is carried. A pod hosts one session, so any older
 //! ones belong to conversations that already ended, and sending them would
 //! grow every subsequent handover without adding anything resumable.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-/// Where the agent keeps its rollouts, relative to home.
-const SESSIONS_DIR: &str = ".codex/sessions";
 
 /// Refuse anything implausible as a rollout.
 ///
@@ -30,8 +33,8 @@ const MAX_ROLLOUT_BYTES: u64 = 64 * 1024 * 1024;
 ///
 /// `None` means the agent has not recorded anything yet, which is ordinary for
 /// a session nobody has used and is not a failure.
-pub fn capture(home: &Path) -> std::io::Result<Option<Vec<u8>>> {
-    let Some(newest) = newest_rollout(&home.join(SESSIONS_DIR))? else {
+pub fn capture(home: &Path, sessions_dir: &str) -> std::io::Result<Option<Vec<u8>>> {
+    let Some(newest) = newest_rollout(&home.join(sessions_dir))? else {
         return Ok(None);
     };
     let size = std::fs::metadata(&newest)?.len();
@@ -63,8 +66,13 @@ pub struct Restored {
 }
 
 /// Lay a captured conversation down where the agent will find it.
-pub fn restore(home: &Path, bytes: &[u8], stamp: &str) -> std::io::Result<Restored> {
-    let dir = home.join(SESSIONS_DIR).join("restored");
+pub fn restore(
+    home: &Path,
+    sessions_dir: &str,
+    bytes: &[u8],
+    stamp: &str,
+) -> std::io::Result<Restored> {
+    let dir = home.join(sessions_dir).join("restored");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("rollout-{stamp}.jsonl"));
     let mut file = std::fs::File::create(&path)?;
@@ -94,6 +102,13 @@ pub fn restore(home: &Path, bytes: &[u8], stamp: &str) -> std::io::Result<Restor
 /// Read rather than derived from the filename: the name is ours to choose and
 /// the agent's own record is not, so this keeps working when we change how the
 /// file is named and when the agent changes how it names them.
+///
+/// `None` is an ordinary answer, not a failure. This shape — a first line
+/// whose `payload.id` names the conversation — belongs to one kernel's
+/// rollout format, and a kernel that records something else, or something that
+/// is not text at all, simply has no identifier to give. Whether that matters
+/// is decided by whoever asked, not here: it matters only to a kernel that has
+/// to be told by name which conversation to continue.
 fn conversation_id(bytes: &[u8]) -> Option<String> {
     let first = bytes.split(|b| *b == b'\n').next()?;
     let value: serde_json::Value = serde_json::from_slice(first).ok()?;
@@ -112,9 +127,14 @@ fn newest_rollout(root: &Path) -> std::io::Result<Option<PathBuf>> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     let mut pending = vec![root.to_path_buf()];
 
-    // Iterative rather than recursive: the agent files rollouts under
-    // year/month/day, and a directory tree from disk is not something to
-    // recurse into without a bound on depth.
+    // Every regular file is a candidate, whatever it is called. One kernel
+    // writes newline-delimited JSON and another writes compressed frames; a
+    // filter on the extension would be this module knowing a format again,
+    // which is the thing it exists not to know.
+    //
+    // Iterative rather than recursive: rollouts are filed under a directory
+    // tree from disk, and that is not something to recurse into without a
+    // bound on depth.
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
@@ -124,7 +144,7 @@ fn newest_rollout(root: &Path) -> std::io::Result<Option<PathBuf>> {
                 pending.push(path);
                 continue;
             }
-            if !kind.is_file() || path.extension().is_none_or(|e| e != "jsonl") {
+            if !kind.is_file() {
                 continue;
             }
             let modified = entry.metadata()?.modified()?;
@@ -164,6 +184,9 @@ mod tests {
         }
     }
 
+    /// A stand-in for whatever an adapter tells this pod its kernel uses.
+    const SESSIONS_DIR: &str = ".a-kernel/sessions";
+
     fn write_rollout(home: &Path, day: &str, name: &str, body: &str) -> PathBuf {
         let dir = home.join(SESSIONS_DIR).join(day);
         std::fs::create_dir_all(&dir).expect("directories");
@@ -177,7 +200,9 @@ mod tests {
         // Not a failure: a pod may be replaced before anyone has used it, and
         // treating that as an error would refuse to move a healthy session.
         let dir = Home::new("never-ran");
-        assert!(capture(dir.path()).expect("readable").is_none());
+        assert!(capture(dir.path(), SESSIONS_DIR)
+            .expect("readable")
+            .is_none());
     }
 
     #[test]
@@ -188,7 +213,9 @@ mod tests {
         let body = "{\"turn\":1}\n{\"turn\":2}\n";
         write_rollout(dir.path(), "2026/08/14", "rollout-a.jsonl", body);
 
-        let captured = capture(dir.path()).expect("readable").expect("present");
+        let captured = capture(dir.path(), SESSIONS_DIR)
+            .expect("readable")
+            .expect("present");
         assert_eq!(captured, body.as_bytes());
     }
 
@@ -209,17 +236,54 @@ mod tests {
             .set_modified(later)
             .expect("timestamps are settable");
 
-        let captured = capture(dir.path()).expect("readable").expect("present");
+        let captured = capture(dir.path(), SESSIONS_DIR)
+            .expect("readable")
+            .expect("present");
         assert_eq!(captured, b"new");
     }
 
     #[test]
-    fn files_that_are_not_rollouts_are_ignored() {
-        // The sessions tree carries other things; resuming from one of them
-        // would hand the agent something it cannot read.
-        let dir = Home::new("not-rollouts");
-        write_rollout(dir.path(), "2026/08/14", "notes.txt", "not a rollout");
-        assert!(capture(dir.path()).expect("readable").is_none());
+    fn what_is_carried_does_not_depend_on_what_a_file_is_called() {
+        // The supervisor hosts any kernel, and kernels do not agree on how a
+        // conversation is stored — one writes newline-delimited JSON, another
+        // compressed frames. Filtering on a filename would be this module
+        // knowing a format, which is the thing it exists not to know.
+        //
+        // The safer failure runs this way round. Carrying something the next
+        // agent cannot read is caught downstream and refuses the rotation,
+        // leaving the session where it is; carrying nothing because the name
+        // was unfamiliar reads as "no conversation" and loses the history for
+        // real.
+        let dir = Home::new("any-filename");
+        write_rollout(dir.path(), "2026/08/14", "store.zst", "carried anyway");
+        assert_eq!(
+            capture(dir.path(), SESSIONS_DIR)
+                .expect("readable")
+                .expect("present"),
+            b"carried anyway"
+        );
+    }
+
+    #[test]
+    fn a_conversation_that_names_itself_in_another_shape_still_restores() {
+        // The first-line `payload.id` belongs to one kernel's rollout format.
+        // A kernel that records something else — or something that is not text
+        // at all — has no identifier to give, and that is an ordinary answer.
+        // Failing here instead would make this module's one piece of format
+        // knowledge into a requirement every kernel has to satisfy.
+        let dir = Home::new("foreign-shape");
+        let restored = restore(
+            dir.path(),
+            SESSIONS_DIR,
+            &[0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x01],
+            "2026-08-17T00-00-00",
+        )
+        .expect("a conversation in an unfamiliar shape is still laid down");
+        assert!(restored.path.exists());
+        assert!(
+            restored.session_id.is_none(),
+            "there is no identifier to invent"
+        );
     }
 
     /// A rollout's opening record, in the shape the agent writes it.
@@ -232,8 +296,13 @@ mod tests {
         // select among conversations recorded in this working directory —
         // which a conversation carried from another pod never is.
         let dir = Home::new("names-itself");
-        let restored =
-            restore(dir.path(), format!("{META}\n").as_bytes(), "stamp").expect("restorable");
+        let restored = restore(
+            dir.path(),
+            SESSIONS_DIR,
+            format!("{META}\n").as_bytes(),
+            "stamp",
+        )
+        .expect("restorable");
         assert_eq!(
             restored.session_id.as_deref(),
             Some("019ed5ef-b5eb-7f60-96d1-8b8202fa7eff")
@@ -244,7 +313,8 @@ mod tests {
     fn a_conversation_that_does_not_name_itself_is_not_guessed_at() {
         // Better to start fresh loudly than to resume something arbitrary.
         let dir = Home::new("unnamed");
-        let restored = restore(dir.path(), b"not json at all\n", "stamp").expect("restorable");
+        let restored =
+            restore(dir.path(), SESSIONS_DIR, b"not json at all\n", "stamp").expect("restorable");
         assert!(restored.session_id.is_none());
     }
 
@@ -255,12 +325,22 @@ mod tests {
         let source = Home::new("round-trip-source");
         let body = "{\"turn\":1}\n";
         write_rollout(source.path(), "2026/08/14", "rollout-a.jsonl", body);
-        let captured = capture(source.path()).expect("readable").expect("present");
+        let captured = capture(source.path(), SESSIONS_DIR)
+            .expect("readable")
+            .expect("present");
 
         let target = Home::new("round-trip-target");
-        restore(target.path(), &captured, "2026-08-14T00-00-00").expect("restorable");
+        restore(
+            target.path(),
+            SESSIONS_DIR,
+            &captured,
+            "2026-08-14T00-00-00",
+        )
+        .expect("restorable");
 
-        let found = capture(target.path()).expect("readable").expect("present");
+        let found = capture(target.path(), SESSIONS_DIR)
+            .expect("readable")
+            .expect("present");
         assert_eq!(found, body.as_bytes());
     }
 
@@ -268,7 +348,8 @@ mod tests {
     fn restoring_creates_the_directory_the_agent_reads() {
         // A fresh pod has no sessions tree at all, so restore cannot assume one.
         let dir = Home::new("round-trip");
-        let restored = restore(dir.path(), b"{}", "2026-08-14T00-00-00").expect("restorable");
+        let restored =
+            restore(dir.path(), SESSIONS_DIR, b"{}", "2026-08-14T00-00-00").expect("restorable");
         assert!(restored.path.exists());
         assert!(restored.path.starts_with(dir.path().join(SESSIONS_DIR)));
     }
@@ -285,6 +366,6 @@ mod tests {
             .expect("openable");
         file.set_len(MAX_ROLLOUT_BYTES + 1).expect("resizable");
 
-        assert!(capture(dir.path()).is_err());
+        assert!(capture(dir.path(), SESSIONS_DIR).is_err());
     }
 }
