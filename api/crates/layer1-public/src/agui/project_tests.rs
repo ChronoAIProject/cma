@@ -245,3 +245,50 @@ fn the_sequence_rides_outside_the_payload() {
     assert!(rendered.get("seq").is_none(), "got {rendered}");
     assert_eq!(rendered["type"], "RUN_STARTED");
 }
+
+#[test]
+fn a_plane_change_is_drawn_as_a_boundary() {
+    // The surface changed under whoever is watching, and the snapshot moment
+    // is where their history stops being continuous. A client that skips it
+    // silently leaves its reader to notice the agent seems to have forgotten
+    // something.
+    let p = projected(EventKind::PlaneChanged {
+        from: layer2_core::SessionMode::Terminal,
+        to: layer2_core::SessionMode::Conversation,
+        snapshot_at: "2026-08-18T09:00:00Z".into(),
+    });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    let value = &p.events[0].body["delta"][0]["value"];
+    assert_eq!(value["from"], "terminal");
+    assert_eq!(value["to"], "conversation");
+    assert_eq!(value["snapshotAt"], "2026-08-18T09:00:00Z");
+    assert!(
+        p.ending.is_none(),
+        "the change itself is history; what ends the run is the session going non-interactive"
+    );
+}
+
+#[test]
+fn a_session_being_moved_ends_the_run_rather_than_going_silent() {
+    // The non-interactive window. A client left holding a stream that simply
+    // stops cannot tell a handover from an agent taking its time, and the one
+    // thing it must not do is keep sending turns at a runtime being torn down.
+    let p = projected(EventKind::StatusChanged {
+        status: SessionStatus::Rotating,
+        stop_reason: None,
+        detail: Some(
+            "moving this session to the other plane; it will come back where it left off".into(),
+        ),
+    });
+
+    assert_eq!(kinds(&p), vec!["RUN_ERROR"]);
+    assert!(matches!(p.ending, Some(Ending::Failed)));
+    assert!(
+        p.events[0].body["message"]
+            .as_str()
+            .expect("carries a message")
+            .contains("come back"),
+        "the message must say the session returns"
+    );
+}

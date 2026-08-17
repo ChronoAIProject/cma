@@ -216,6 +216,33 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             )],
             ending: None,
         },
+        /*
+         * The surface changed under whoever is watching. Drawn as a boundary
+         * for the same reason a dropped stretch of conversation is: the
+         * snapshot moment is where history stops being continuous, and a
+         * client that skips it silently leaves its reader to notice that the
+         * agent seems to have forgotten something.
+         *
+         * A state delta rather than an invented event kind, matching how a gap
+         * is already carried, so a client needs no new vocabulary to read it.
+         */
+        EventKind::PlaneChanged {
+            from,
+            to,
+            snapshot_at,
+        } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "add", "path": "/planeChanges/-", "value": {
+                        "from": from,
+                        "to": to,
+                        "snapshotAt": snapshot_at,
+                    } },
+                ]}),
+            )],
+            ending: None,
+        },
         // Recorded for the log's own sake and carried by other interfaces. No
         // honest AG-UI shape exists for a resize or an attachment, and an
         // approval's resolution is already known to whoever sent it.
@@ -251,6 +278,14 @@ fn reason_for(action: Option<&str>) -> String {
 fn ends_the_run(status: SessionStatus, stop_reason: Option<StopReason>) -> bool {
     match status {
         SessionStatus::Terminated => true,
+        // A handover, either onto a newer runtime or onto the other plane. The
+        // session is coming back, but this run is not: its runtime is being
+        // torn down, and a client left holding a stream that simply stops
+        // cannot tell that from an agent taking its time. The detail carried
+        // with the status says which handover it is and that the session
+        // returns, so ending the run here is a statement rather than a
+        // failure dressed up as one.
+        SessionStatus::Rotating => true,
         SessionStatus::Idle => matches!(
             stop_reason,
             Some(StopReason::Error) | Some(StopReason::Revoked) | Some(StopReason::BudgetReached)
