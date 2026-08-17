@@ -1,20 +1,28 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Dialog } from '../ui/Dialog';
 import type { Capability } from '../auth/types';
 import type { ActivityFilter } from './activity';
 import { namesFrom } from './directory';
 import { viewsFor, type OperatorViewId } from './access';
 import { ActivityView, NamespaceView, PeopleView, SessionsView } from './views';
 import type { ActivityEntry, AdminSession, OperatorStore, Person, RuntimeInventory } from './types';
-import './OperatorPanel.css';
+import './OperatorPage.css';
 
 /**
- * Running the service, per docs/Web_Style.md §15.
+ * Running the service — docs/Web_Style.md §14.
  *
- * Four questions nobody but an operator can answer — who is using it, what it
- * has been asked to do, what is running, and stop that — in a dialog opened
- * from the profile menu as an account action. §1 still holds: one page, one
- * terminal, no navigation and no second route.
+ * Four questions nobody but an operator can answer: who is using it, what it
+ * has been asked to do, what is running, and stop that.
+ *
+ * **A page, not a dialog.** It is the one surface that shows many rows at
+ * once, and a 560px dialog was why its rows truncated. As a page its four
+ * views have somewhere to live without stacking chrome inside a modal: they
+ * are a tablist in the page's second band, beneath the head band every column
+ * shares.
+ *
+ * It is the second of §1's two views, not a third and not a route. There is no
+ * router and no URL: the app bar's switch chooses it, and the choice does not
+ * survive a reload, because a view is where somebody is rather than something
+ * they configured.
  *
  * **This protects nothing.** Which views are offered is decided from the
  * capabilities the control plane reported, and every read and control behind
@@ -23,16 +31,15 @@ import './OperatorPanel.css';
  * should not be drawn, and a drawn control is not what makes it safe.
  */
 
-interface OperatorPanelProps {
+interface OperatorPageProps {
   readonly store: OperatorStore;
   readonly capabilities: readonly Capability[];
-  readonly onClose: () => void;
 }
 
 /** What one view has loaded, or why it could not. */
 type Loaded<T> = { readonly kind: 'loading' } | { readonly kind: 'ready'; readonly value: T };
 
-export function OperatorPanel({ store, capabilities, onClose }: OperatorPanelProps) {
+export function OperatorPage({ store, capabilities }: OperatorPageProps) {
   const views = viewsFor(capabilities);
   const [active, setActive] = useState<OperatorViewId | undefined>(() => views[0]?.id);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -162,8 +169,18 @@ export function OperatorPanel({ store, capabilities, onClose }: OperatorPanelPro
   );
 
   return (
-    <Dialog title="Operations" onClose={onClose}>
-      <div className="operator__tabs" role="tablist" aria-label="Operator views">
+    <section className="operator" aria-label="Operations">
+      {/*
+       * The head band every column shares, so the page's rule lands where the
+       * sessions view's does and the window does not shift as somebody
+       * switches between them.
+       */}
+      <div className="band band--head operator__head">
+        <span className="band__label">Operations</span>
+      </div>
+
+      {/* The four views, in the page's second band — §14. */}
+      <div className="band operator__tabs" role="tablist" aria-label="Operator views">
         {views.map((view) => (
           <button
             key={view.id}
@@ -245,7 +262,7 @@ export function OperatorPanel({ store, capabilities, onClose }: OperatorPanelPro
           )
         ) : null}
       </div>
-    </Dialog>
+    </section>
   );
 }
 
