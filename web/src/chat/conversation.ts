@@ -51,6 +51,15 @@ export interface GapEntry {
   readonly id: string;
   readonly rotatedAt?: string;
   readonly reason?: string;
+  /**
+   * Where the session was moved to, when the boundary is a plane change.
+   *
+   * The same boundary either way — history stopped being continuous at
+   * `rotatedAt` — and worth naming, because an owner who asked for the move is
+   * looking for confirmation that this gap is the one they caused rather than
+   * a second thing that went wrong.
+   */
+  readonly movedTo?: string;
   readonly seq: number;
 }
 
@@ -228,9 +237,10 @@ function upsertMessage(state: Conversation, message: MessageEntry): Conversation
 /**
  * Apply the patches a `STATE_DELTA` carries.
  *
- * Two paths matter to this surface and the rest are ignored rather than
- * guessed at: `/usage` is what a session has cost (§18.5) and `/gaps` is where
- * a stretch of lost conversation lands (§18.6).
+ * Three paths matter to this surface and the rest are ignored rather than
+ * guessed at: `/usage` is what a session has cost (§18.5), `/gaps` is where a
+ * stretch of lost conversation lands, and `/planeChanges` is where a session
+ * moved between planes says so (§18.6).
  */
 function applyPatches(
   state: Conversation,
@@ -242,6 +252,22 @@ function applyPatches(
       next = { ...next, usage: { ...next.usage, tokens: patch.value } };
     } else if (patch.path === '/usage/cost' && typeof patch.value === 'string') {
       next = { ...next, usage: { ...next.usage, cost: patch.value } };
+    } else if (patch.path.startsWith('/planeChanges')) {
+      /*
+       * §18.6: drawn as a rule across the stream at the snapshot moment, not
+       * as a status chip. Anything the agent did after that moment did not
+       * travel, and a gap somebody can see is one they can recognise.
+       */
+      const value = (
+        typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
+      ) as Record<string, unknown>;
+      next = append(next, {
+        kind: 'gap',
+        id: `plane-${String(event.seq)}`,
+        rotatedAt: typeof value.snapshotAt === 'string' ? value.snapshotAt : undefined,
+        movedTo: typeof value.to === 'string' ? value.to : undefined,
+        seq: event.seq,
+      });
     } else if (patch.path.startsWith('/gaps')) {
       const value = (
         typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
