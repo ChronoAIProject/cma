@@ -103,6 +103,29 @@ pub(crate) struct SessionEntry {
     /// Transcript length at the last capture, so an unchanged one is not rewritten.
     pub(crate) captured_len: usize,
     pub(crate) live: broadcast::Sender<Vec<u8>>,
+    /// Liveness on the conversation plane: pieces of a message being assembled.
+    ///
+    /// Separate from the terminal's byte stream because the two are different
+    /// kinds of thing and a session has one plane or the other. Kept typed
+    /// rather than as bytes, because a token-level piece of a message is not a
+    /// screen and rendering it into one would be a decision the core has no
+    /// business making.
+    pub(crate) live_frames: broadcast::Sender<crate::event::LiveFrame>,
+    /// Input toward the session's conversation, when it holds one.
+    pub(crate) conversation: Option<mpsc::Sender<layer3_adapter::ConversationInput>>,
+    /// The message the agent is still assembling, and which one it is.
+    ///
+    /// A runtime streams a message in pieces and says nothing to mark the end
+    /// of one; what marks it is the next message starting, or the turn ending.
+    /// Held here so the finished message can be committed at that moment
+    /// rather than each piece being written down as though it were history.
+    pub(crate) assembling: Option<(Option<String>, String)>,
+    /// Decisions the runtime is blocked on, by the identifier that answers one.
+    ///
+    /// Held so an answer to something nothing is waiting for is refused rather
+    /// than forwarded: a runtime handed one will either ignore it or act on
+    /// the wrong thing, and neither is visible to whoever answered.
+    pub(crate) pending_approvals: HashSet<String>,
     /// The live attachment, when one is held.
     pub(crate) attached: Option<Attachment>,
     /// How many attachments this session has issued.
