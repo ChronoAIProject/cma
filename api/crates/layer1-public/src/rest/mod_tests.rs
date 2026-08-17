@@ -113,7 +113,7 @@ fn a_view_carries_geometry_as_plain_integers() {
     let s = Session {
         id: SessionId("sesn_1".into()),
         owner: layer2_core::SubjectId("subject-a".into()),
-        kernel: KernelId::new("example-runtime"),
+        kernel: layer2_core::KernelId::new("example-runtime"),
         status: layer2_core::SessionStatus::Ready,
         recovery_state: layer2_core::RecoveryState::Normal,
         stop_reason: None,

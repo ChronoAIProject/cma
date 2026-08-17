@@ -172,7 +172,6 @@ impl SessionService {
 
         let geometry = moved.session.geometry;
         let spec = SessionSpec {
-            kernel: moved.session.kernel.clone(),
             geometry: Some(geometry),
             options: moved.session.options.clone(),
             environment_profile: moved.session.environment_profile.clone(),

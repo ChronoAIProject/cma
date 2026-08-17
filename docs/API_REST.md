@@ -56,7 +56,6 @@ Idempotency-Key: <client-generated-uuid>
 Content-Type: application/json
 
 {
-  "kernel": "codex",
   "llm_source": "chrono",
   "environment": "default",
   "workspace": { "type": "git", "url": "https://github.com/org/repo", "ref": "main" },
@@ -67,14 +66,15 @@ Content-Type: application/json
 
 | Field | Required | Notes |
 |---|---|---|
-| `kernel` | yes | `codex` \| `claude_code` |
 | `llm_source` | yes | `chrono` (brokered through NyxID) or `own` (the user's own account) |
 | `environment` | no | Name of a pre-provisioned environment profile. **Never carries secret values** — it selects a profile provisioned out of band |
 | `workspace` | no | Omit for an empty workspace |
 | `concurrent_input` | no | `reject` \| `enqueue` \| `interrupt` \| `rollback`. Default `enqueue`. Immutable for the session's life |
 | `metadata` | no | Opaque to chrono-bot; echoed back |
 
-`llm_source`, `kernel`, and `environment` are **frozen at creation**. Changing any of them means a new session.
+**A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
+
+`llm_source` and `environment` are **frozen at creation**, as is the kernel they resolve to. Changing any of them means a new session.
 
 **`201 Created`**
 
