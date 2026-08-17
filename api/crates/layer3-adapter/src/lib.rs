@@ -40,6 +40,7 @@ pub use conversation::{
 
 pub mod claude_code;
 pub mod codex;
+pub mod dsh;
 pub mod hosted;
 pub mod sandbox;
 pub mod supervisor;
