@@ -136,12 +136,13 @@ pub(crate) fn baseline() -> Baseline {
     Baseline::new(
         [SoftwarePackage::new("platform-cli")],
         [SkillId::new("mandatory-one"), SkillId::new("mandatory-two")],
+        [],
     )
 }
 
 /// A profile service over the given store, with the standard baseline.
 pub(crate) fn environments(store: Arc<FakeProfileStore>) -> Arc<EnvironmentProfileService> {
-    EnvironmentProfileService::new(store, baseline(), None)
+    EnvironmentProfileService::new(store, baseline(), None, None, fake_agent())
 }
 
 /// A profile service wired to a catalogue.
@@ -150,13 +151,34 @@ pub(crate) fn catalog_service(catalog: Arc<FakeSkillCatalog>) -> Arc<Environment
         Arc::new(FakeProfileStore::default()),
         baseline(),
         Some(catalog),
+        None,
+        crate::environment::AgentConfiguration {
+            // The kernel the fake adapter is registered under. The default is
+            // the one this deployment ships, and a fixture that left it there
+            // would be asking for a runtime the test never registered.
+            kernel: crate::ids::KernelId::new("fake"),
+            ..Default::default()
+        },
     )
+}
+
+/// The agent configuration these fixtures can actually start.
+///
+/// The real default names the kernel this deployment ships, which no test
+/// registers an adapter for. Naming the fake one here keeps every fixture
+/// startable without each test having to know why.
+pub(crate) fn fake_agent() -> crate::environment::AgentConfiguration {
+    crate::environment::AgentConfiguration {
+        kernel: crate::ids::KernelId::new("fake"),
+        ..Default::default()
+    }
 }
 
 /// A named profile with nothing else in it.
 pub(crate) fn profile_spec(name: &str) -> EnvironmentProfileSpec {
     EnvironmentProfileSpec {
         name: name.to_string(),
+        agent: fake_agent(),
         ..EnvironmentProfileSpec::default()
     }
 }

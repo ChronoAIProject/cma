@@ -92,6 +92,7 @@ async fn signing_in_records_a_person_an_operator_can_then_see() {
             &SubjectId("subject-a".into()),
             Some("Ada Lovelace".into()),
             Some("ada@example.com".into()),
+            Some("https://pictures.example/ada.png".into()),
         )
         .await;
 
@@ -113,7 +114,7 @@ async fn signing_in_again_keeps_the_first_time_they_were_seen() {
     let subject = SubjectId("subject-a".into());
 
     directory
-        .note_sign_in(&subject, Some("Ada".into()), None)
+        .note_sign_in(&subject, Some("Ada".into()), None, None)
         .await;
     let first = directory
         .list(&operator(), DirectoryQuery::default())
@@ -122,7 +123,7 @@ async fn signing_in_again_keeps_the_first_time_they_were_seen() {
         .clone();
 
     directory
-        .note_sign_in(&subject, Some("Ada Lovelace".into()), None)
+        .note_sign_in(&subject, Some("Ada Lovelace".into()), None, None)
         .await;
     let again = directory
         .list(&operator(), DirectoryQuery::default())
@@ -180,7 +181,7 @@ async fn a_sign_in_survives_a_directory_that_is_down() {
     });
     let directory = UserDirectory::new(Arc::clone(&store) as Arc<dyn UserDirectoryStore>);
     directory
-        .note_sign_in(&SubjectId("subject-a".into()), None, None)
+        .note_sign_in(&SubjectId("subject-a".into()), None, None, None)
         .await;
     assert!(store.users.lock().await.is_empty());
 }
@@ -191,6 +192,7 @@ fn a_person_is_named_by_their_account_and_only_then_by_their_email() {
         SubjectId("subject-a".into()),
         Some("Ada Lovelace".into()),
         Some("ada@example.com".into()),
+        None,
     );
     assert_eq!(both.label(), Some("Ada Lovelace"));
 
@@ -198,6 +200,7 @@ fn a_person_is_named_by_their_account_and_only_then_by_their_email() {
         SubjectId("subject-a".into()),
         None,
         Some("ada@example.com".into()),
+        None,
     );
     assert_eq!(email_only.label(), Some("ada@example.com"));
 }
@@ -206,7 +209,7 @@ fn a_person_is_named_by_their_account_and_only_then_by_their_email() {
 fn a_provider_that_released_nothing_leaves_nothing_to_show() {
     // `None` is the honest answer, and it is what stops a surface printing an
     // opaque identifier at somebody as though it were their name.
-    let anonymous = RegisteredUser::seen_now(SubjectId("76fe9d91".into()), None, None);
+    let anonymous = RegisteredUser::seen_now(SubjectId("76fe9d91".into()), None, None, None);
     assert_eq!(anonymous.label(), None);
 
     // A provider returning whitespace has not given a name either; treating it
@@ -215,10 +218,15 @@ fn a_provider_that_released_nothing_leaves_nothing_to_show() {
         SubjectId("76fe9d91".into()),
         Some("   ".into()),
         Some("".into()),
+        Some("  ".into()),
     );
     assert_eq!(blank.label(), None);
     assert!(blank.display_name.is_none());
     assert!(blank.email.is_none());
+    assert!(
+        blank.avatar_url.is_none(),
+        "whitespace is not a picture either"
+    );
 }
 
 #[test]
@@ -227,6 +235,7 @@ fn a_person_serialises_without_null_fields_a_client_must_special_case() {
         SubjectId("subject-a".into()),
         None,
         Some("ada@example.com".into()),
+        None,
     );
     let json = serde_json::to_value(&user).expect("serialises");
     assert!(json.get("display_name").is_none(), "got {json}");
@@ -287,6 +296,7 @@ async fn naming_a_page_asks_only_about_the_people_on_it() {
                 &SubjectId(subject.into()),
                 Some("Ada Lovelace".into()),
                 None,
+                None,
             )
             .await;
     }
@@ -315,7 +325,12 @@ async fn a_caller_who_may_not_read_the_directory_gets_no_names_rather_than_no_pa
     let store = Arc::new(FakeDirectoryStore::default());
     let directory = UserDirectory::new(Arc::clone(&store) as Arc<dyn UserDirectoryStore>);
     directory
-        .note_sign_in(&SubjectId("subject-a".into()), Some("Ada".into()), None)
+        .note_sign_in(
+            &SubjectId("subject-a".into()),
+            Some("Ada".into()),
+            None,
+            None,
+        )
         .await;
 
     let names = directory
@@ -340,4 +355,51 @@ async fn naming_nobody_asks_the_store_nothing() {
         .expect("readable");
     assert!(names.is_empty());
     assert_eq!(*store.named.lock().await, None);
+}
+
+#[tokio::test]
+async fn a_caller_is_always_told_who_they_are() {
+    // Reading the directory is a grant about learning *other* people's names.
+    // Refusing somebody their own would leave them looking at their own work
+    // attributed to nobody, which reads as a fault rather than as a boundary.
+    let store = Arc::new(FakeDirectoryStore::default());
+    let directory = UserDirectory::new(Arc::clone(&store) as Arc<dyn UserDirectoryStore>);
+    directory
+        .note_sign_in(
+            &SubjectId("alice".into()),
+            Some("Alice".into()),
+            None,
+            Some("https://pictures.example/alice.png".into()),
+        )
+        .await;
+
+    let seen = directory
+        .identities_known_to(&ordinary(), &[SubjectId("alice".into())])
+        .await
+        .expect("their own identity is not a refusal");
+    let me = seen.get(&SubjectId("alice".into())).expect("themselves");
+    assert_eq!(me.display_name.as_deref(), Some("Alice"));
+    assert_eq!(
+        me.avatar_url.as_deref(),
+        Some("https://pictures.example/alice.png"),
+        "the face travels with the name, or a row has one and not the other"
+    );
+}
+
+#[tokio::test]
+async fn naming_somebody_else_still_takes_the_grant() {
+    let store = Arc::new(FakeDirectoryStore::default());
+    let directory = UserDirectory::new(Arc::clone(&store) as Arc<dyn UserDirectoryStore>);
+    directory
+        .note_sign_in(&SubjectId("bob".into()), Some("Bob".into()), None, None)
+        .await;
+
+    let seen = directory
+        .identities_known_to(&ordinary(), &[SubjectId("bob".into())])
+        .await
+        .expect("not a refusal, only unaided");
+    assert!(
+        seen.is_empty(),
+        "an ordinary caller learns nobody else's name from a session they can see"
+    );
 }

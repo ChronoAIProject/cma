@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRestProfileStore, toProfile } from './rest';
+import { DEFAULT_AGENT } from './types';
 
 /**
  * The profile store that talks to the control plane.
@@ -30,7 +31,8 @@ describe('reading a profile off the wire', () => {
       name: 'build tools',
       variables: [{ key: 'BUILD_MODE', value: 'release' }],
       packages: [{ name: 'ripgrep', version: '14' }],
-      skills: ['nyxid'],
+      agent: { ...DEFAULT_AGENT, skills: ['nyxid'] },
+      nyxid: { services: [] },
       mandatory: { packages: ['nyxid'], skills: ['ornn-agent-manual-cli'] },
       created_at: '2026-08-14T00:00:00Z',
       updated_at: '2026-08-14T01:00:00Z',
@@ -53,7 +55,7 @@ describe('reading a profile off the wire', () => {
     const profile = toProfile({ id: 'envp_2', name: 'bare' });
     expect(profile.variables).toEqual([]);
     expect(profile.packages).toEqual([]);
-    expect(profile.skills).toEqual([]);
+    expect(profile.agent.skills).toEqual([]);
     expect(profile.mandatory.packages).toEqual([]);
   });
 
@@ -93,7 +95,13 @@ describe('talking to the control plane', () => {
       vi.fn().mockResolvedValue(respond({ detail: 'BUILD MODE is not a usable name' }, 422)),
     );
     await expect(
-      createRestProfileStore().create({ name: 'x', variables: [], packages: [], skills: [] }),
+      createRestProfileStore().create({
+        name: 'x',
+        variables: [],
+        packages: [],
+        agent: DEFAULT_AGENT,
+        nyxid: { services: [] },
+      }),
     ).rejects.toThrow(/not a usable name/);
   });
 
@@ -110,7 +118,8 @@ describe('talking to the control plane', () => {
       name: 'renamed',
       variables: [],
       packages: [],
-      skills: [],
+      agent: { ...DEFAULT_AGENT, skills: [] },
+      nyxid: { services: [] },
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];

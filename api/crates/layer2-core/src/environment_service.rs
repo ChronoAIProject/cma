@@ -19,8 +19,8 @@ use std::sync::Arc;
 use crate::authz::{Caller, Capability};
 use crate::clock::now_rfc3339;
 use crate::environment::{
-    Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec, ResolvedEnvironment,
-    SkillCatalog,
+    AgentConfiguration, Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
+    ResolvedEnvironment, SkillCatalog,
 };
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
@@ -31,6 +31,15 @@ pub struct EnvironmentProfileService {
     store: Arc<dyn EnvironmentProfileStore>,
     /// What every session carries whether or not anyone asked for it.
     baseline: Baseline,
+    /// Where the services a caller may allow are listed, when there is one.
+    services: Option<Arc<dyn crate::environment::ServiceCatalog>>,
+    /// How the agent behaves in a session that names no profile.
+    ///
+    /// The deployment's answer rather than a hardcoded one: which model is
+    /// worth spending and how freely an agent may act are decisions about this
+    /// installation, and a session started without a profile still has to be
+    /// started somehow.
+    default_agent: AgentConfiguration,
     /// Where selectable skills are listed, when a deployment has one.
     ///
     /// Optional: without it profiles still store and resolve skill identifiers,
@@ -45,17 +54,113 @@ impl EnvironmentProfileService {
         store: Arc<dyn EnvironmentProfileStore>,
         baseline: Baseline,
         catalog: Option<Arc<dyn SkillCatalog>>,
+        services: Option<Arc<dyn crate::environment::ServiceCatalog>>,
+        default_agent: AgentConfiguration,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
             baseline,
             catalog,
+            services,
+            default_agent,
         })
+    }
+
+    /// Services this caller may allow a session to reach.
+    ///
+    /// An empty list where no catalogue is configured, rather than a failure:
+    /// a deployment without a picker still stores and honours selections, it
+    /// simply has nothing to offer.
+    pub async fn available_services(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+    ) -> Result<Vec<crate::environment::CatalogService>, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let Some(catalog) = self.services.as_ref() else {
+            return Ok(Vec::new());
+        };
+        catalog
+            .available(&caller.subject, credential)
+            .await
+            .map_err(|e| CoreError::RuntimeUnavailable(format!("service catalogue: {e}")))
     }
 
     /// What this deployment mandates in every session.
     pub fn baseline(&self) -> &Baseline {
         &self.baseline
+    }
+
+    /// How the agent behaves when a session names no profile.
+    pub fn default_agent(&self) -> &AgentConfiguration {
+        &self.default_agent
+    }
+
+    /// Fill in the kernel when a caller did not name one.
+    ///
+    /// The core holds no opinion about which kernels exist, so a profile that
+    /// named none arrives unset and is settled here from what this deployment
+    /// configured. Doing it on the way in rather than on the way out means a
+    /// stored profile says what it will actually run, and reads the same
+    /// tomorrow as it does today.
+    fn settle_kernel(&self, spec: &mut EnvironmentProfileSpec) {
+        if spec.agent.kernel.is_unset() {
+            spec.agent.kernel = self.default_agent.kernel.clone();
+        }
+    }
+
+    /// Which services a session started with this selection may reach.
+    ///
+    /// Always includes what the deployment mandates, whichever profile is
+    /// named and whether one is named at all. A profile that has since been
+    /// deleted leaves the floor rather than nothing: a session already running
+    /// must not lose its model endpoint because a bundle was tidied up.
+    pub async fn services_for(
+        &self,
+        owner: &SubjectId,
+        selection: Option<&EnvironmentProfileId>,
+    ) -> Vec<crate::environment::ServiceId> {
+        let mut chosen: Vec<crate::environment::ServiceId> = match selection {
+            Some(id) => match self.store.get(id).await {
+                Ok(Some(profile)) if profile.is_owned_by(owner) => profile.services.clone(),
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        for mandatory in self.baseline.services() {
+            if !chosen.contains(mandatory) {
+                chosen.push(mandatory.clone());
+            }
+        }
+        chosen
+    }
+
+    /// How the agent should behave for a session started with this selection.
+    ///
+    /// The profile is the whole answer. A caller does not get to say which
+    /// agent, which model, or how freely it may act — those are the profile's
+    /// to state, which is what makes a session reproducible from the name of
+    /// the bundle it was started with.
+    ///
+    /// Naming nothing is a choice too, and it resolves to what the deployment
+    /// considers ordinary rather than to an empty configuration.
+    pub async fn agent_for(
+        &self,
+        caller: &Caller,
+        selection: Option<&EnvironmentProfileId>,
+    ) -> Result<AgentConfiguration, CoreError> {
+        let Some(id) = selection else {
+            return Ok(self.default_agent.clone());
+        };
+        let mut agent = self.get(caller, id).await?.agent;
+        // A profile stored before the kernel was settled on the way in. It
+        // runs what this deployment runs rather than nothing at all.
+        if agent.kernel.is_unset() {
+            agent.kernel = self.default_agent.kernel.clone();
+        }
+        Ok(agent)
     }
 
     /// Store a new profile for the caller.
@@ -71,6 +176,7 @@ impl EnvironmentProfileService {
         // their request is too large because of entries the platform added.
         spec.validate()?;
         self.baseline.apply(&mut spec);
+        self.settle_kernel(&mut spec);
 
         let now = now_rfc3339();
         let profile = EnvironmentProfile {
@@ -79,7 +185,8 @@ impl EnvironmentProfileService {
             name: spec.name.trim().to_string(),
             variables: spec.variables,
             packages: spec.packages,
-            skills: spec.skills,
+            agent: spec.agent,
+            services: spec.services,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -89,7 +196,7 @@ impl EnvironmentProfileService {
             owner = %profile.owner,
             variables = profile.variables.len(),
             packages = profile.packages.len(),
-            skills = profile.skills.len(),
+            skills = profile.agent.skills.len(),
             "environment profile created"
         );
         Ok(profile)
@@ -140,7 +247,8 @@ impl EnvironmentProfileService {
             name: spec.name.trim().to_string(),
             variables: spec.variables,
             packages: spec.packages,
-            skills: spec.skills,
+            agent: spec.agent,
+            services: spec.services,
             created_at: existing.created_at,
             updated_at: now_rfc3339(),
         };

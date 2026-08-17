@@ -12,7 +12,6 @@
 
 use std::sync::Arc;
 
-use crate::options::AgentOptions;
 use crate::service::Deployment;
 use crate::session::{SessionStatus, StopReason};
 use crate::store::SessionStore;
@@ -117,13 +116,22 @@ async fn recovery_keeps_the_session_the_owner_configured() {
     let adapter = Arc::new(FakeAdapter::default());
     let alice = user("alice");
 
-    let mut chosen = spec();
-    chosen.options = AgentOptions {
-        model: Some("a-specific-model".to_string()),
-        ..AgentOptions::default()
-    };
+    // The model is pinned where it now lives: on what the session is started
+    // from, rather than on the request. The guarantee under test is unchanged —
+    // whatever the session was started with must survive its sandbox.
+    let pinned =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            model: Some("a-specific-model".to_string()),
+            ..Default::default()
+        });
+    let chosen = spec();
 
-    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let first = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&pinned),
+    );
     let created = first.create_session(&alice, chosen).await.expect("created");
     await_settled(&first, &alice, &created.id).await;
     let lost = store
@@ -136,7 +144,11 @@ async fn recovery_keeps_the_session_the_owner_configured() {
 
     drop(first);
     adapter.lose(&lost).await;
-    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let restarted = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&pinned),
+    );
     restarted.reconcile().await;
     await_settled(&restarted, &alice, &created.id).await;
 

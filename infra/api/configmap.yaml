@@ -133,7 +133,20 @@ data:
   # a session on an image nobody maintains, and forbids interrupting it to fix
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:8dbd315"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:646b61c"
+  # What one session reserves, and therefore how many run at once.
+  #
+  # The namespace carries a ResourceQuota, and these divide into it: at 2 CPU
+  # and 4Gi a quota of 20 CPU and 40Gi held nine sessions, and the tenth was
+  # refused by the admission controller while its owner watched it sit in
+  # "provisioning". At these figures the same quota holds twenty.
+  #
+  # Requests and limits are the same value at the provider, so this is a
+  # reservation rather than a ceiling to burst against. Raising it costs
+  # concurrency; lowering it below what the agent needs costs the session,
+  # which fails partway through somebody's work rather than refusing to start.
+  CHRONO_SANDBOX_CPU: "1"
+  CHRONO_SANDBOX_MEMORY: "1Gi"
   # The subcommand that makes the agent continue a named conversation, used
   # when a session is carried onto a newer runtime. The conversation's own
   # identifier is appended, so this must be a form that takes one.
@@ -168,3 +181,38 @@ data:
   # orphaned. A second control plane must set this false.
   CHRONO_ADOPT_UNTAGGED_RUNTIMES: "true"
   RUST_LOG: "info"
+  # What a session is when it names no environment profile.
+  #
+  # A profile is the whole description of a session — which agent, which model,
+  # how hard it thinks, how often it stops to ask, whose model access it spends
+  # — so a session that names none still needs those answers, and this is where
+  # this deployment gives them.
+  #
+  # Every value is refused rather than defaulted if the software does not
+  # recognise it. A deployment that meant "ask first" and mistyped it must be
+  # told at startup, not discovered later by an agent that never asked.
+  CHRONO_DEFAULT_AGENT_KERNEL: "codex"
+  CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"
+  CHRONO_DEFAULT_AGENT_EFFORT: "high"
+  # "guarded" is ask-first. The cautious answer is the default answer, because
+  # the cost of asking too often is somebody's patience and the cost of asking
+  # too rarely is somebody's repository.
+  CHRONO_DEFAULT_AGENT_PERMISSION: "guarded"
+  # "delegated" spends this platform's model access rather than the owner's own
+  # credential, which is what makes a session work with nothing to set up.
+  CHRONO_DEFAULT_AGENT_CREDENTIAL: "delegated"
+  # Services every session's credential may reach, whatever its profile says.
+  #
+  # A session no longer carries its owner's whole identity. It is given a
+  # credential minted for it alone, limited to the services its environment
+  # profile named — and to these, always.
+  #
+  # A floor rather than a default, because one credential serves every call a
+  # session makes. The agent's own model calls go through the same key as the
+  # platform CLI, so a profile that excluded the model endpoint would not
+  # produce a narrower session but one that cannot think. The skill registry is
+  # here for the same reason: the baseline skills above are fetched through it.
+  #
+  # Named the way a person reads them; the identifiers the provider wants are
+  # resolved when a credential is minted.
+  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api"
