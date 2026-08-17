@@ -118,6 +118,14 @@ export interface MockProfileOptions {
   readonly failWith?: string;
   /** Force the skill registry alone to fail, which is a recoverable state. */
   readonly failSkillsWith?: string;
+  /**
+   * Force the service catalogue alone to fail.
+   *
+   * Its own switch because it is its own case: the catalogue is answered as
+   * the caller, so a deployment that cannot answer must still author profiles
+   * and start sessions.
+   */
+  readonly failServicesWith?: string;
 }
 
 export function createMockProfileStore(options: MockProfileOptions = {}): EnvironmentProfileStore {
@@ -169,6 +177,9 @@ export function createMockProfileStore(options: MockProfileOptions = {}): Enviro
 
     async services() {
       guard();
+      if (options.failServicesWith !== undefined) {
+        throw new Error(options.failServicesWith);
+      }
       return { services: SERVICES, mandatory: MANDATORY_SERVICES };
     },
 
