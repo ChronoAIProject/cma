@@ -432,3 +432,36 @@ async fn carrying_a_session_twice_is_counted_twice() {
     assert_eq!(settled.rotations, 2);
     assert_eq!(settled.runtime_version.as_deref(), Some("runtime:3"));
 }
+
+#[tokio::test]
+async fn a_session_whose_kernel_cannot_snapshot_is_never_offered_for_rotation() {
+    // Asked statically rather than found out by trying. Without this the sweep
+    // attempts a capture it already knows will fail, every few minutes, for as
+    // long as the session lives — and logs each one as though something had
+    // gone wrong.
+    let store = Arc::new(FakeStore::default());
+    let unmovable = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            terminal: true,
+            snapshot: false,
+            ..Default::default()
+        },
+        ..FakeAdapter::default()
+    });
+    let alice = user("alice");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&unmovable), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    drop(old);
+
+    let new = service_on_version(Arc::clone(&store), Arc::clone(&unmovable), "runtime:2");
+    assert_eq!(new.reconcile().await.rotated_sessions, 0);
+
+    let settled = await_usable(&new, &alice, &created.id).await;
+    assert_eq!(
+        settled.status,
+        SessionStatus::Ready,
+        "a session that was never movable must simply keep working"
+    );
+}
