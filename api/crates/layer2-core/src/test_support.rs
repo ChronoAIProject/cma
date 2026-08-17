@@ -154,6 +154,12 @@ pub(crate) struct FakeAdapter {
     /// Handles issued so far. Monotonic rather than a count of what is running,
     /// so a replacement sandbox is never named after the one it replaced.
     pub(crate) issued: std::sync::atomic::AtomicUsize,
+    /// Times provisioning was asked for at all, successful or not.
+    ///
+    /// Distinct from `issued`, which counts only the attempts that produced a
+    /// runtime. This is what makes "the core retried" and "the core accepted
+    /// the answer" tellable apart.
+    pub(crate) provision_calls: std::sync::atomic::AtomicUsize,
     /// What each runtime says its agent's conversation is.
     pub(crate) conversations: Mutex<HashMap<String, Vec<u8>>>,
     /// Conversations handed to newly provisioned runtimes, in order.
@@ -189,8 +195,19 @@ impl KernelAdapter for FakeAdapter {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
+        self.provision_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.refuse_provision {
             return Err(AdapterError::Unavailable("no capacity".into()));
+        }
+        // No kernel authenticates against the owner's own vendor account yet,
+        // so every adapter refuses it. Modelled here because what the core has
+        // to do with such a refusal — record it where the owner can read it —
+        // is the core's own behaviour, not the adapter's.
+        if spec.options.own_credential {
+            return Err(AdapterError::Unsupported(
+                "this kernel does not support the owner's own credential yet".into(),
+            ));
         }
         // Fail the first few attempts, then succeed, as a provider under load
         // does.
