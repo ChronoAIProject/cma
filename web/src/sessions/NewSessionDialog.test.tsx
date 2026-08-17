@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { NewSessionDialog } from './NewSessionDialog';
 import type { EnvironmentProfile } from '../environment/types';
 import { DEFAULT_AGENT } from '../environment/types';
+import { chooseOption, openedOptions } from '../test/select';
 
 /**
  * The dialog now makes one choice: which profile the session is started from.
@@ -49,20 +50,21 @@ describe('the new session dialog', () => {
     const user = userEvent.setup();
     const { onStart } = renderDialog([profile('envp_1', 'Talos Controller')]);
 
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: /environment profile/i }),
-      'envp_1',
-    );
+    await chooseOption(user, /environment profile/i, 'Talos Controller');
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
     expect(onStart).toHaveBeenCalledWith('envp_1');
   });
 
-  it('offers every profile the person owns', () => {
+  it('offers every profile the person owns', async () => {
+    const user = userEvent.setup();
     renderDialog([profile('envp_1', 'Talos Controller'), profile('envp_2', 'Reviewer')]);
 
-    expect(screen.getByRole('option', { name: 'Talos Controller' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Reviewer' })).toBeInTheDocument();
+    expect(await openedOptions(user, /environment profile/i)).toEqual([
+      "This deployment's defaults",
+      'Talos Controller',
+      'Reviewer',
+    ]);
   });
 
   it('no longer asks about the agent, which the profile decides', () => {
