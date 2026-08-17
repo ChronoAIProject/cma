@@ -228,7 +228,12 @@ async fn a_persisted_session_reports_no_runtime_rather_than_attaching_blindly() 
 
     let restarted = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
     let result = restarted
-        .attach_terminal(&caller, &created.id, TerminalGeometry::default())
+        .attach_terminal(
+            &caller,
+            &created.id,
+            TerminalGeometry::default(),
+            Default::default(),
+        )
         .await;
     assert!(
         matches!(result, Err(CoreError::RuntimeUnavailable(_))),
@@ -300,7 +305,12 @@ async fn a_session_survives_the_control_plane_restarting_under_it() {
     // does.
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
     let attached = restarted
-        .attach_terminal(&caller, &created.id, TerminalGeometry::default())
+        .attach_terminal(
+            &caller,
+            &created.id,
+            TerminalGeometry::default(),
+            Default::default(),
+        )
         .await;
 
     assert!(
@@ -334,7 +344,12 @@ async fn a_session_whose_sandbox_is_gone_says_so_plainly() {
     // The handle carries a live socket and is not printable, so the result is
     // matched rather than unwrapped.
     match restarted
-        .attach_terminal(&caller, &created.id, TerminalGeometry::default())
+        .attach_terminal(
+            &caller,
+            &created.id,
+            TerminalGeometry::default(),
+            Default::default(),
+        )
         .await
     {
         Ok(_) => panic!("a vanished sandbox must not appear to reconnect"),
