@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { Session } from './types';
 import { toneFor } from './types';
+import type { Stage } from './progress';
+import { lastActivity } from './lastActivity';
 import { fullTimestamp, sortSessions, tabLabel, type SortOrder } from './sessionTime';
 import './SessionRail.css';
 
@@ -21,7 +23,16 @@ import './SessionRail.css';
  * a band beneath the first rather than growing its header — the rail's second
  * band being the one documented exception to the row shape, since it stacks
  * the new-session key over the filters.
+ *
+ * Collapsed it is a handle, never nothing (§7): a 48px strip that keeps both
+ * bands, so the way back is exactly where the panel was and the page's rules
+ * still line up. The strip carries the summary the list would have given —
+ * the status dots in state order, and a count — because collapsing gives up
+ * detail, not awareness.
  */
+
+/** Which dots the collapsed strip shows, and in which order. */
+const TONE_ORDER = ['live', 'wait', 'fail', 'ended'] as const;
 
 interface SessionRailProps {
   readonly sessions: readonly Session[];
@@ -39,8 +50,10 @@ interface SessionRailProps {
    * changes shape as somebody switches view.
    */
   readonly arrangement?: ReactNode;
-  /** The collapse handle, at the trailing edge of the head band. */
-  readonly collapse?: ReactNode;
+  readonly collapsed: boolean;
+  readonly onToggleCollapsed: () => void;
+  /** The step each starting session has reached, for its activity line. */
+  readonly stages?: Readonly<Record<string, Stage>>;
 }
 
 export function SessionRail({
@@ -51,9 +64,91 @@ export function SessionRail({
   onCreate,
   onReorder,
   arrangement,
-  collapse,
+  collapsed,
+  onToggleCollapsed,
+  stages = {},
 }: SessionRailProps) {
   const ordered = sortSessions(sessions, order);
+  const handleRef = useRef<HTMLButtonElement>(null);
+  // Focus moves to the handle when the panel collapses or opens, because §7
+  // says so and because the alternative is stranding somebody on a control
+  // that has just left the layout.
+  const firstRender = useRef(true);
+
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    handleRef.current?.focus();
+  }, [collapsed]);
+
+  // ⌃← collapses a column and ⌃→ opens it (§7). Bound on the document rather
+  // than on the rail: the shortcut has to work while the caret is anywhere on
+  // the page, which is the whole reason for having one.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      const wants = event.key === 'ArrowLeft' ? true : event.key === 'ArrowRight' ? false : null;
+      if (wants === null || wants === collapsed) {
+        return;
+      }
+      event.preventDefault();
+      onToggleCollapsed();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [collapsed, onToggleCollapsed]);
+
+  const handle = (
+    <button
+      ref={handleRef}
+      type="button"
+      className="collapse-handle rail__handle"
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? 'Show the session list' : 'Hide the session list'}
+      onClick={onToggleCollapsed}
+    >
+      {/*
+       * The glyph points where the panel will go and reverses when collapsed,
+       * so the control describes its outcome rather than its state (§7).
+       */}
+      <span aria-hidden="true">{collapsed ? '›' : '‹'}</span>
+    </button>
+  );
+
+  if (collapsed) {
+    const counted = TONE_ORDER.map((tone) => ({
+      tone,
+      count: sessions.filter((session) => toneFor(session.lifecycle) === tone).length,
+    })).filter((entry) => entry.count > 0);
+
+    return (
+      <div className="rail rail--collapsed">
+        <div className="band band--head rail__head">{handle}</div>
+        <div className="band rail__chrome rail__chrome--collapsed">
+          <span className="band__value">{sessions.length}</span>
+        </div>
+        <ul className="rail__summary" aria-label={`${String(sessions.length)} sessions`}>
+          {counted.map(({ tone, count }) => (
+            <li className="rail__summaryitem" key={tone}>
+              <span className={`rail__dot tone-bg-${tone}`} aria-hidden="true" />
+              {/*
+               * The number is drawn and the tone repeated in words, because a
+               * summary carried by colour alone is not a summary (§10).
+               */}
+              <span className="rail__summarycount">{count}</span>
+              <span className="sr-only">{tone}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
 
   return (
     <div className="rail">
@@ -62,7 +157,7 @@ export function SessionRail({
         <span className="band__value">{sessions.length}</span>
         <span className="band__spacer" />
         {arrangement}
-        {collapse}
+        {handle}
       </div>
 
       {/*
@@ -115,9 +210,13 @@ export function SessionRail({
                   aria-hidden="true"
                 />
                 <span className="rail__time">{tabLabel(session.createdAt)}</span>
-                <span className="rail__meta">
-                  {session.kernel} · {session.lifecycle}
-                </span>
+                {/*
+                 * What makes a list of times into a list of work (§12). It
+                 * never wraps: a row that grows with its longest sentence
+                 * makes the list a different height every time it reloads.
+                 */}
+                <span className="rail__activity">{lastActivity(session, stages[session.id])}</span>
+                <span className="rail__meta">{session.kernel}</span>
               </button>
             </li>
           );

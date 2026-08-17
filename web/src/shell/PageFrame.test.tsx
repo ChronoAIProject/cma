@@ -61,10 +61,15 @@ describe('the page frame', () => {
     const single = renderFrame().container.querySelector('.statusband__lead');
     expect(single).toBeNull();
 
-    const { container } = renderFrame({ leadingColumn: true });
+    const { container } = renderFrame({ leadingColumn: 'var(--rail-width)' });
     const lead = container.querySelector('.statusband__lead');
-    expect(lead?.textContent).toBe('ZoneSGT');
-    // Still in §6's order overall: the zone leads, the build is last.
+    // The cell exists so the band's first vertical rule continues the rail's,
+    // and holds nothing that must be read: a collapsed rail is 48px wide, and
+    // a fact that disappears when a panel collapses is a fact collapsing cost
+    // somebody, which §7 forbids.
+    expect(lead?.textContent).toBe('');
+    expect(lead).toHaveAttribute('aria-hidden', 'true');
+    // The band still reads in §6's order: the zone leads, the build is last.
     const text = [
       ...container.querySelectorAll('.statusband .band__label, .statusband .band__value'),
     ].map((node) => node.textContent);
