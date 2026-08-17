@@ -15,11 +15,17 @@ import './TopBar.css';
 interface TopBarProps {
   /** The view switch. Absent on a page that has no views to switch between. */
   readonly views?: ReactNode;
+  /**
+   * Below 30rem — §16. The bar drops to 48px and gives the switch and the
+   * command field to the drawer, keeping the mark and the account control so
+   * the window's top edge still reads as the same product.
+   */
+  readonly compact?: boolean;
   /** The account control, at the trailing edge. */
   readonly children?: ReactNode;
 }
 
-export function TopBar({ views, children }: TopBarProps) {
+export function TopBar({ views, compact = false, children }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar__brand">
@@ -41,15 +47,19 @@ export function TopBar({ views, children }: TopBarProps) {
        * accepting text it would silently drop. §7: controls are disabled,
        * never removed, and every disabled control states why.
        */}
-      <div className="topbar__command">
-        <input
-          className="field__control topbar__commandfield"
-          type="text"
-          disabled
-          aria-label="Command"
-          placeholder="Command — not yet available"
-        />
-      </div>
+      {compact ? (
+        <span className="band__spacer" />
+      ) : (
+        <div className="topbar__command">
+          <input
+            className="field__control topbar__commandfield"
+            type="text"
+            disabled
+            aria-label="Command"
+            placeholder="Command — not yet available"
+          />
+        </div>
+      )}
 
       <div className="topbar__actions">{children}</div>
     </header>

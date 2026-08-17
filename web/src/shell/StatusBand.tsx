@@ -44,9 +44,16 @@ interface StatusBandProps {
    * column's width, because a collapsed rail is still a column.
    */
   readonly leadingColumn?: string;
+  /**
+   * Below 30rem — §16. "The status band keeps the zone and the count and drops
+   * the build." The zone and what the page is showing are what somebody needs
+   * to read a time and know where they are; the build is what they quote in a
+   * report, and a phone is not where that happens.
+   */
+  readonly compact?: boolean;
 }
 
-export function StatusBand({ showing, note, leadingColumn }: StatusBandProps) {
+export function StatusBand({ showing, note, leadingColumn, compact = false }: StatusBandProps) {
   return (
     <footer className="band band--foot statusband">
       {/*
@@ -76,8 +83,12 @@ export function StatusBand({ showing, note, leadingColumn }: StatusBandProps) {
         {note !== undefined ? <span className="band__value statusband__note">{note}</span> : null}
 
         <span className="band__spacer" />
-        <span className="band__label">Build</span>
-        <span className="band__value">{BUILD}</span>
+        {compact ? null : (
+          <>
+            <span className="band__label">Build</span>
+            <span className="band__value">{BUILD}</span>
+          </>
+        )}
       </div>
     </footer>
   );

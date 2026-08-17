@@ -243,12 +243,22 @@
 }
 
 /*
- * §5 and §7: below 30rem the app bar drops to 48px and every target grows to
- * 44px. Only the token moves here — what the narrow layout does with it is §16.
+ * §5, §7 and §16: below 30rem the app bar drops to 48px and every target grows
+ * to 44px. The control heights grow with the minimum, because a control is a
+ * target: leaving --control-h at 32px and only raising --hit would satisfy the
+ * token and none of the buttons.
+ *
+ * The bands do not change. §16 is explicit that the number of columns changes
+ * and the bands never do, so the page reads as the same shape on a phone as on
+ * a desk.
  */
 @media (max-width: 29.999rem) {
   :root {
     --bar-height: 48px;
     --hit: 44px;
+    --control-h: 44px;
+    --control-h-sm: 44px;
+    --control-h-block: 44px;
+    --segment-h: 44px;
   }
 }
