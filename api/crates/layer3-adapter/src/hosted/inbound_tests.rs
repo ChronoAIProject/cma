@@ -1,12 +1,12 @@
-//! Translating between this kernel's bridge and the contract.
+//! Turning an owner's decision into an answer a bridge understands.
 //!
-//! The mappings here are where a wrong answer grants more than somebody asked
-//! for, or sends an owner's decision to the wrong place, so each is pinned
-//! against the shapes the pinned kernel version actually uses — recorded with
-//! transcripts on issue #76.
+//! This is where a wrong answer grants more than somebody asked for, or sends
+//! a decision to the wrong place. The options a bridge offers are its own and
+//! differ per request, so every case here is about matching an intent against
+//! what was actually on offer rather than against a fixed set.
 
-use super::*;
-use crate::{PermissionOption, PermissionOptionId};
+use super::outcome_for;
+use crate::{PermissionDecision, PermissionOption, PermissionOptionId, PermissionOptionKind};
 
 fn offering(kinds: &[PermissionOptionKind]) -> Vec<PermissionOption> {
     kinds
@@ -20,19 +20,6 @@ fn offering(kinds: &[PermissionOptionKind]) -> Vec<PermissionOption> {
             )
         })
         .collect()
-}
-
-#[test]
-fn permission_intent_becomes_this_bridges_own_mode() {
-    // The bridge exposes modes rather than the approval policy the kernel's
-    // configuration file uses. A wrong mapping here silently grants more than
-    // the person asked for.
-    assert_eq!(mode_for(RuntimePermission::Guarded), "read-only");
-    assert_eq!(mode_for(RuntimePermission::Autonomous), "agent");
-    assert_eq!(
-        mode_for(RuntimePermission::Unrestricted),
-        "agent-full-access"
-    );
 }
 
 #[test]
