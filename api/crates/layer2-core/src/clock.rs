@@ -6,7 +6,17 @@
 
 /// The current time as RFC 3339 in UTC.
 pub(crate) fn now_rfc3339() -> String {
-    let now = std::time::SystemTime::now()
+    rfc3339_at(std::time::SystemTime::now())
+}
+
+/// A given instant as RFC 3339 in UTC.
+///
+/// Public so an interface can render a moment it computed itself — a deadline,
+/// an expiry — in the one format everything else in this model uses. A second
+/// format reaching a client would be this service disagreeing with itself
+/// about what a time looks like.
+pub fn rfc3339_at(time: std::time::SystemTime) -> String {
+    let now = time
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
