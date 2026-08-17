@@ -1,0 +1,57 @@
+/*
+ * The view switch — docs/Web_Style.md §7, segmented options.
+ *
+ * The selected segment is the one thing in the bar that takes an impression:
+ * §3 lists "the selected segment" among the raised things, because it is the
+ * one you have pressed.
+ */
+
+.viewswitch {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  align-items: center;
+  padding: 3px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.viewswitch__segment {
+  height: var(--segment-h);
+  padding-inline: var(--space-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.viewswitch__segment:hover {
+  color: var(--ink-2);
+}
+
+.viewswitch__segment[aria-pressed='true'] {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--rule-2);
+  box-shadow: var(--press-quiet-rest);
+}
+
+.viewswitch__segment:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .viewswitch__segment {
+    transition:
+      color var(--motion-colour) ease,
+      background var(--motion-colour) ease,
+      box-shadow var(--motion-press) ease;
+  }
+}
