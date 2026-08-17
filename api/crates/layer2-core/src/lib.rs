@@ -24,6 +24,7 @@ pub mod error;
 pub mod event;
 pub mod ids;
 pub mod inventory;
+mod lease;
 mod lifecycle;
 mod provision;
 mod provision_failure;
