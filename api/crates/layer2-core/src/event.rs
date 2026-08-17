@@ -122,10 +122,74 @@ pub enum EventKind {
         /// New height in rows.
         rows: u16,
     },
+    /// A message the agent finished and committed to.
+    ///
+    /// Durable because it is what the agent actually said; the token-level
+    /// pieces it was assembled from are liveness and travel as ephemeral
+    /// frames. Numbering every delta would punch permanent holes in the
+    /// sequence a resuming client cursors on, and replaying them would show
+    /// somebody their conversation being typed a second time.
+    MessageCommitted {
+        /// What the agent said, as it committed it.
+        content: String,
+    },
+    /// The agent began using a tool.
+    ToolCallStarted {
+        /// Correlates with every later update to the same call.
+        call_id: String,
+        /// What it is doing, as the runtime would show a person.
+        title: String,
+        /// The kind of thing it is, in the runtime's own words.
+        ///
+        /// Opaque here. Interfaces render it and the core never branches on
+        /// it: the set differs between runtimes and grows without warning, and
+        /// a session must not fail because a kernel invented a tool category.
+        kind: String,
+    },
+    /// A tool call moved on.
+    ToolCallUpdated {
+        /// The call this is about.
+        call_id: String,
+        /// Where it has got to, in the runtime's own words.
+        status: String,
+    },
+    /// What this session has used, as its runtime reports it.
+    ///
+    /// Totals rather than deltas, because that is what runtimes report and
+    /// because a lost delta would silently understate a bill forever, where a
+    /// lost total is corrected by the next one.
+    UsageReported {
+        /// Tokens sent to the model.
+        input_tokens: u64,
+        /// Tokens the model produced.
+        output_tokens: u64,
+        /// How much of the model's context the conversation currently fills.
+        context_used: u64,
+    },
+    /// Part of the conversation was lost rather than recorded.
+    ///
+    /// Written where the loss happened, in the same spirit as a rotation's
+    /// timestamp: the owner is shown a boundary rather than left to puzzle
+    /// over a conversation that skips. It means the runtime held more than it
+    /// could while nothing was listening — a long control-plane restart — and
+    /// dropped the oldest of it.
+    ConversationGap {
+        /// How many frames were dropped, as the runtime counted them.
+        frames: u64,
+    },
     /// The runtime is blocked awaiting a decision from the client.
     ApprovalRequested {
         /// Correlates with the resolving decision.
         request_id: String,
+        /// What the runtime is asking to do, as it would show a person.
+        ///
+        /// Absent on approvals recorded before this was carried, and on a
+        /// runtime that offers no description of what it is asking.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        /// Anything further the runtime offered about the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     /// A pending approval was resolved.
     ApprovalResolved {
@@ -147,6 +211,11 @@ const KNOWN_TAGS: &[&str] = &[
     "status_changed",
     "turn_started",
     "turn_completed",
+    "message_committed",
+    "tool_call_started",
+    "tool_call_updated",
+    "usage_reported",
+    "conversation_gap",
     "terminal_attached",
     "terminal_detached",
     "terminal_resized",
@@ -173,6 +242,13 @@ impl EventKind {
 pub enum LiveFrame {
     /// Raw output from the runtime's terminal.
     TerminalOutput(Vec<u8>),
+    /// A piece of a message the agent is still assembling.
+    ///
+    /// The conversation plane's counterpart to terminal output, and ephemeral
+    /// for the same reason: it is what is happening, not what happened. The
+    /// finished message is committed durably, and a client that missed the
+    /// pieces finds the whole thing waiting when it reconnects.
+    MessageDelta(String),
     /// The runtime process ended.
     Exited {
         /// Process exit code, when one was reported.
@@ -231,6 +307,24 @@ mod tests {
             },
             EventKind::TurnStarted,
             EventKind::TurnCompleted,
+            EventKind::MessageCommitted {
+                content: "hello".into(),
+            },
+            EventKind::ToolCallStarted {
+                call_id: "call-1".into(),
+                title: "read a file".into(),
+                kind: "read".into(),
+            },
+            EventKind::ToolCallUpdated {
+                call_id: "call-1".into(),
+                status: "completed".into(),
+            },
+            EventKind::UsageReported {
+                input_tokens: 1234,
+                output_tokens: 56,
+                context_used: 1290,
+            },
+            EventKind::ConversationGap { frames: 7 },
             EventKind::TerminalAttached,
             EventKind::TerminalDetached,
             EventKind::TerminalResized {
@@ -239,6 +333,8 @@ mod tests {
             },
             EventKind::ApprovalRequested {
                 request_id: "r-1".into(),
+                action: Some("run a command".into()),
+                detail: None,
             },
             EventKind::ApprovalResolved {
                 request_id: "r-1".into(),
@@ -252,6 +348,11 @@ mod tests {
                 | EventKind::StatusChanged { .. }
                 | EventKind::TurnStarted
                 | EventKind::TurnCompleted
+                | EventKind::MessageCommitted { .. }
+                | EventKind::ToolCallStarted { .. }
+                | EventKind::ToolCallUpdated { .. }
+                | EventKind::UsageReported { .. }
+                | EventKind::ConversationGap { .. }
                 | EventKind::TerminalAttached
                 | EventKind::TerminalDetached
                 | EventKind::TerminalResized { .. }
