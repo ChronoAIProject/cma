@@ -7,7 +7,7 @@
 //! from quietly acquiring a user model of its own.
 
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, OptionalFromRequestParts},
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -66,6 +66,29 @@ where
             .cloned()
             .unwrap_or_else(Authorization::none);
         Ok(Self(Caller::new(subject.0, authorization)))
+    }
+}
+
+/// Absent rather than refused, for the one route that has a second way in.
+///
+/// The terminal upgrade accepts either an already-authenticated caller or a
+/// ticket, and it must be able to look at both before deciding. Every other
+/// route asks for [`AuthenticatedCaller`] directly and is refused without one.
+impl<S> OptionalFromRequestParts<S> for AuthenticatedCaller
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        Ok(
+            <Self as FromRequestParts<S>>::from_request_parts(parts, state)
+                .await
+                .ok(),
+        )
     }
 }
 
