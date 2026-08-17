@@ -155,3 +155,95 @@ describe('the details sheet', () => {
     expect(css).toMatch(/\.details--closed\s*\{[^}]*height: var\(--band-foot\)/);
   });
 });
+
+describe('what a session reaches', () => {
+  it('shows it without leaving the sessions view', () => {
+    // §11 and §12: an owner watching an agent work on their behalf has one
+    // question the interface did not answer — what does this thing have
+    // access to right now?
+    render(
+      <SessionDetails
+        session={{
+          ...session('running'),
+          reach: [
+            { id: 'api-github', name: 'GitHub', mandated: false },
+            { id: 'nyxid', name: 'NyxID', mandated: true },
+          ],
+        }}
+        open
+        onToggle={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('GitHub')).toBeInTheDocument();
+    expect(screen.getByText('NyxID')).toBeInTheDocument();
+  });
+
+  it('draws a mandated service as fixed', () => {
+    // Matching the picker's existing treatment, for the same stated reason: a
+    // person deciding what a session may touch should see the whole answer.
+    const { container } = render(
+      <SessionDetails
+        session={{
+          ...session('running'),
+          reach: [
+            { id: 'api-github', name: 'GitHub', mandated: false },
+            { id: 'nyxid', name: 'NyxID', mandated: true },
+          ],
+        }}
+        open
+        onToggle={vi.fn()}
+      />,
+    );
+    const services = container.querySelectorAll('.details__service');
+    expect(services[0]?.textContent).not.toContain('always');
+    expect(services[1]?.textContent).toContain('always');
+  });
+
+  it('keeps the identifier when the catalogue offered no name', () => {
+    // A catalogue that could not be asked costs the names and not the answer,
+    // and an identifier alone is still true.
+    render(
+      <SessionDetails
+        session={{ ...session('running'), reach: [{ id: 'api-github', mandated: false }] }}
+        open
+        onToggle={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('api-github')).toBeInTheDocument();
+  });
+
+  it('tells "reaches nothing" apart from "was not reported"', () => {
+    // The acceptance this component exists to hold. An empty list and an
+    // absent mechanism must not look alike: one is a fact somebody can act
+    // on, the other is a question nobody has answered.
+    const empty = render(
+      <SessionDetails session={{ ...session('running'), reach: [] }} open onToggle={vi.fn()} />,
+    );
+    expect(empty.getByText(/reaches no services/i)).toBeInTheDocument();
+    empty.unmount();
+
+    const unknown = render(<SessionDetails session={session('running')} open onToggle={vi.fn()} />);
+    expect(unknown.getByText(/not reported/i)).toBeInTheDocument();
+    expect(unknown.queryByText(/reaches no services/i)).toBeNull();
+  });
+
+  it('shows nothing resembling a credential', () => {
+    // What a session may reach is a fact about its configuration; what it
+    // holds is not. The projection carries none, and this asserts the surface
+    // draws none either.
+    const { container } = render(
+      <SessionDetails
+        session={{
+          ...session('running'),
+          reach: [{ id: 'api-github', name: 'GitHub', mandated: false }],
+        }}
+        open
+        onToggle={vi.fn()}
+      />,
+    );
+    const text = container.textContent ?? '';
+    for (const smell of ['token', 'Bearer', 'secret', 'expires']) {
+      expect(text.toLowerCase()).not.toContain(smell.toLowerCase());
+    }
+  });
+});
