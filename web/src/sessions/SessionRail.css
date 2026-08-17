@@ -29,7 +29,7 @@
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 2px;
+  border-radius: var(--radius);
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
 }
@@ -87,7 +87,7 @@
 }
 
 .rail__tab:hover {
-  background: var(--surface-2);
+  background: var(--raised);
 }
 
 /*

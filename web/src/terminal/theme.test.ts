@@ -33,12 +33,13 @@ describe('terminal theme', () => {
     const theme = terminalTheme(name);
 
     expect(theme.background?.toUpperCase()).toBe(token('surface', name));
+    expect(theme.foreground?.toUpperCase()).toBe(token('ink', name));
     expect(theme.cursor?.toUpperCase()).toBe(token('accent', name));
-    expect(theme.cyan?.toUpperCase()).toBe(token('accent', name));
-    expect(theme.magenta?.toUpperCase()).toBe(token('emphasis', name));
-    expect(theme.green?.toUpperCase()).toBe(token('ok', name));
-    expect(theme.yellow?.toUpperCase()).toBe(token('warn', name));
-    expect(theme.red?.toUpperCase()).toBe(token('danger', name));
+    // The slots that carry product meaning are the semantic tokens themselves.
+    expect(theme.green?.toUpperCase()).toBe(token('live', name));
+    expect(theme.yellow?.toUpperCase()).toBe(token('wait', name));
+    expect(theme.red?.toUpperCase()).toBe(token('fail', name));
+    expect(theme.brightBlack?.toUpperCase()).toBe(token('ended', name));
     expect(theme.brightBlack?.toUpperCase()).toBe(token('ink-3', name));
   });
 
@@ -69,9 +70,10 @@ describe('terminal theme', () => {
   });
 
   it('does not use the dark accent in the light theme', () => {
-    // #00E5FF measures 1.83:1 on white, far below AA.
+    // The lime accent fill measures 1.35:1 on white, far below AA, so the
+    // light palette takes the accent INK rather than the shared fill.
     const light = JSON.stringify(terminalTheme('light')).toUpperCase();
-    expect(light).not.toContain('#00E5FF');
+    expect(light).not.toContain('#C6F24E');
   });
 
   it('honours an explicit theme choice over the system preference', () => {

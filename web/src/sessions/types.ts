@@ -66,7 +66,7 @@ export interface SessionCreator {
 }
 
 /** Which semantic token paints a lifecycle state. */
-export type StateTone = 'ok' | 'warn' | 'danger' | 'neutral';
+export type StateTone = 'live' | 'wait' | 'fail' | 'ended';
 
 /**
  * `idle` is the state most often misread. A session whose bot pod was
@@ -77,13 +77,13 @@ export function toneFor(lifecycle: SessionLifecycle): StateTone {
   switch (lifecycle) {
     case 'ready':
     case 'running':
-      return 'ok';
+      return 'live';
     case 'provisioning':
     case 'rotating':
     case 'idle':
-      return 'warn';
+      return 'wait';
     case 'terminated':
-      return 'neutral';
+      return 'ended';
     default: {
       // Exhaustiveness: a new lifecycle state must be given a tone
       // deliberately rather than silently rendering as unknown.

@@ -205,7 +205,7 @@ export function IntroTerminal() {
 
         <div className="intro__row" data-live={complete ? 'true' : 'false'}>
           <span className="intro__ps1" aria-hidden="true">
-            <span className="tone-emphasis">guest</span>
+            <span className="tone-accent">guest</span>
             <span className="tone-accent">@chrono-bot</span>
             <span className="tone-dim">:~$</span>
           </span>
