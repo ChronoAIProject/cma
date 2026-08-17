@@ -1,0 +1,312 @@
+name: Publish release
+
+# Runs once a pull request from develop has been merged into main. It decides
+# the release version, publishes the three images under it, and then records
+# what happened as a tag and a release.
+#
+# The ordering is the point. The tag is the claim that a version exists and is
+# fetchable, so it is written last: a build that fails leaves no tag, and the
+# re-run computes the same number again because nothing consumed it.
+#
+# Nothing here changes how anything is deployed. The manifests in infra/ keep
+# naming whatever image they already name. CHRONO_SANDBOX_IMAGE especially is
+# left alone — under CLAUDE.md section 5 that value is the runtime version
+# every live session is measured against, so moving it rotates every session.
+# Publishing an image is not a decision to adopt it, and the two must stay
+# separate steps.
+
+on:
+  push:
+    branches: [main]
+
+# Two merges landing close together would read the same latest tag and compute
+# the same next version, and the second would collide.
+#
+# cancel-in-progress: false protects the run that is already going, and that is
+# all it protects: a group holds one pending run, so a third merge arriving
+# during a publish supersedes the second one's pending run rather than joining
+# a queue behind it. Releasing three times inside one build window is not a
+# thing this branch does — every merge into main is a release — but if it
+# happens, the superseded run is re-runnable from the Actions tab and its
+# version is still unclaimed.
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+# Granted per job instead, so the job that pushes images cannot write refs and
+# the job that writes the tag cannot push images.
+permissions: {}
+
+jobs:
+  plan:
+    name: Release plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Tags included: the next version is computed from the highest one.
+          fetch-depth: 0
+
+      - name: Find the pull request this commit came from
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Filtered to pull requests targeting main, because the endpoint
+          # reports every pull request containing the commit — which for a
+          # merge commit includes the develop-side ones it carries.
+          number=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '[.[] | select(.base.ref == "main")] | first | .number // empty')
+          if [ -z "$number" ]; then
+            echo "::error::commit $GITHUB_SHA reached main outside a pull request, so no bump level was declared and no version can be derived; tag and publish by hand, or revert and merge properly"
+            exit 1
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Read the declared bump and the release notes
+        id: declaration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          # Checked again here rather than trusted from the gate: an
+          # administrator can merge past a failing check, and this job would
+          # otherwise turn an unlabelled merge into a released version.
+          levels=$(gh pr view "$PR" --json labels \
+            --jq '[.labels[].name | select(startswith("release:"))] | join(" ")')
+          case "$levels" in
+            release:major) level="major" ;;
+            release:minor) level="minor" ;;
+            release:patch) level="patch" ;;
+            *)
+              echo "::error::pull request #$PR must carry exactly one of release:major, release:minor, release:patch (found: ${levels:-none})"
+              exit 1
+              ;;
+          esac
+          echo "level=$level" >> "$GITHUB_OUTPUT"
+
+          # The same script the gate ran, so what ships is the section that was
+          # reviewed. Only the Release Notes section survives it; whatever else
+          # the body said was addressed to the reviewer.
+          gh pr view "$PR" --json body --jq '.body // ""' \
+            | .github/release-notes.sh > "$RUNNER_TEMP/notes.md"
+
+      - name: Compute the next version
+        id: version
+        env:
+          LEVEL: ${{ steps.declaration.outputs.level }}
+        run: |
+          set -euo pipefail
+          # Matched strictly, so a tag like v1.2.3-rc1 cannot be read as a base
+          # and turn its suffix into an arithmetic error.
+          latest=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          latest="${latest:-v0.0.0}"
+          IFS=. read -r major minor patch <<<"${latest#v}"
+          case "$LEVEL" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::$next already exists; the previous run published it and this one would overwrite its meaning"
+            exit 1
+          fi
+          echo "Releasing $next ($LEVEL bump from $latest)"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes.md
+          retention-days: 7
+
+  images:
+    name: Images
+    needs: plan
+    runs-on: ubuntu-latest
+    # Well above a cold cacheless build, so this catches a stall rather than
+    # slowness, matching the equivalent job in ci.yml.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # One component failing must not strand the others half-published; the
+      # release job will not run either way.
+      fail-fast: false
+      matrix:
+        component: [api, web, runtime]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve the image reference
+        id: image
+        run: |
+          set -euo pipefail
+          # GHCR rejects an uppercase path, and the organisation is spelled
+          # ChronoAIProject.
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "repository=ghcr.io/${owner}/chrono-bot-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+          echo "revision=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      # arm64 builds run under emulation on the amd64 runner.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Built and scanned before anything is pushed. The same content passed
+      # this scan on the pull request minutes ago, so a failure here means a
+      # vulnerability was published in between — which is exactly when it
+      # matters, since this image is about to become a release artifact rather
+      # than a discarded build.
+      - name: Build the native image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/${{ matrix.component }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: chrono-bot-${{ matrix.component }}:release
+          # Populated by ci.yml. A run on main can restore caches from main and
+          # from the default branch, and develop is the default branch, so the
+          # layers the merged pull request built are still warm here.
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: chrono-bot-${{ matrix.component }}:release
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # Reuses the layers cached above, so this is close to an upload.
+      #
+      # Platforms match ci.yml, so what ships is what CI validated. Only web
+      # carries arm64: emulated Rust builds ran for hours there and every node
+      # in the target cluster is amd64 anyway.
+      #
+      # provenance is off deliberately. With it on, buildx wraps even a
+      # single-platform image in an index carrying an attestation, and these
+      # images are expected to be pulled and re-pushed into whichever registry
+      # a deployment uses. A plain image survives that; an index of
+      # attestations is where such copies start behaving differently.
+      - name: Publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/${{ matrix.component }}/Dockerfile
+          platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: true
+          provenance: false
+          # Both immutable. The version is what a deployment names; the short
+          # SHA is how an image already in hand is traced back to its commit.
+          tags: |
+            ${{ steps.image.outputs.repository }}:${{ needs.plan.outputs.version }}
+            ${{ steps.image.outputs.repository }}:${{ steps.image.outputs.revision }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+
+  release:
+    name: Tag and release
+    needs: [plan, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes
+
+      - name: Assemble the release notes
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/release.md"
+          # The version heading is added here, not written by the author. The
+          # number is not known until the merge decides it, so a body carrying
+          # one would be a guess at what this job is about to compute.
+          printf '## Release Notes %s\n\n' "$VERSION" > "$out"
+          # Concatenated rather than printf'd: the notes are author text, and a
+          # per cent sign in them would otherwise be read as a format specifier.
+          cat "$RUNNER_TEMP/notes/notes.md" >> "$out"
+          # Level three, matching the subsections the notes are written in.
+          #
+          # Both forms, because they answer different questions: the reference
+          # is what a deployment names, and the package page is where the tags
+          # already published can be seen.
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          {
+            printf '\n### Images\n\n'
+            printf 'Published to GitHub Container Registry, private to the organisation.\n\n'
+            printf '```\n'
+            for component in api web runtime; do
+              printf 'ghcr.io/%s/chrono-bot-%s:%s\n' "$owner" "$component" "$VERSION"
+            done
+            printf '```\n\n'
+            for component in api web runtime; do
+              printf -- '- [chrono-bot-%s](%s/orgs/%s/packages/container/package/chrono-bot-%s)\n' \
+                "$component" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY_OWNER" "$component"
+            done
+          } >> "$out"
+          cat "$out"
+
+      - name: Tag the release
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # --cleanup=verbatim is required, not tidiness. git tag defaults to
+          # 'strip', which treats every line opening with '#' as commentary and
+          # deletes it — which here is all five markdown headings, leaving the
+          # three sections as one undifferentiated run of bullets. The release
+          # body would keep them, since gh does not strip, so the tag and the
+          # release would describe the same version differently.
+          git tag -a --cleanup=verbatim "$VERSION" -F "$RUNNER_TEMP/release.md"
+          git push origin "refs/tags/$VERSION"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # --verify-tag rather than letting the release create the tag, so the
+          # annotated tag pushed above stays the one the release points at.
+          #
+          # The source archives are not uploaded here. GitHub generates a zip
+          # and a tarball for the tag and attaches them to every release, and
+          # an uploaded copy would sit beside them claiming to be something
+          # else.
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes-file "$RUNNER_TEMP/release.md" \
+            --verify-tag
