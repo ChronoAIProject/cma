@@ -29,52 +29,12 @@ use crate::terminal::{ScreenModel, TerminalGeometry};
 /// so lagging is survivable; unbounded buffering is not.
 pub(crate) const LIVE_BUFFER: usize = 512;
 
+pub use crate::lease::AttachmentHandle;
+
 /// Builds a screen model at a given geometry.
 ///
 /// Injected so the core never depends on a particular terminal parser.
 pub type ScreenFactory = Arc<dyn Fn(TerminalGeometry) -> Box<dyn ScreenModel> + Send + Sync>;
-
-/// An exclusive terminal attachment.
-///
-/// Holding this is what makes an attachment exclusive; dropping it releases the
-/// lease. Attachment is not a tenth core operation — it is an exclusivity mode
-/// on the live stream.
-pub struct AttachmentHandle {
-    pub(crate) session_id: SessionId,
-    pub(crate) service: Arc<SessionService>,
-    /// Which attachment this is, among those this session has issued.
-    ///
-    /// Carried so releasing is not a blunt instrument. A superseded holder
-    /// drops its handle after its replacement is already live, and a release
-    /// that did not check would detach the new client instead of the old one.
-    pub(crate) generation: u64,
-    /// Live terminal output for as long as the attachment is held.
-    pub output: broadcast::Receiver<Vec<u8>>,
-    /// Fires once when the owner has handed this attachment to somebody else.
-    ///
-    /// The superseded client is told rather than simply going quiet. A terminal
-    /// that stops updating with no explanation is indistinguishable from a
-    /// broken one, and the person looking at it will reload and take the
-    /// attachment back — which is a fight nobody wins.
-    pub superseded: broadcast::Receiver<()>,
-    /// Bytes that repaint the current screen, delivered before live output.
-    pub repaint: Vec<u8>,
-    /// Geometry the repaint was rendered at.
-    pub geometry: TerminalGeometry,
-}
-
-impl Drop for AttachmentHandle {
-    fn drop(&mut self) {
-        let service = Arc::clone(&self.service);
-        let id = self.session_id.clone();
-        let generation = self.generation;
-        // Release synchronously where possible; the lock is never held across
-        // an await inside the service, so a blocking release cannot deadlock.
-        tokio::spawn(async move {
-            service.release_attachment(&id, generation).await;
-        });
-    }
-}
 
 /// Who currently holds a session's terminal.
 pub(crate) struct Attachment {
