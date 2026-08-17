@@ -205,6 +205,21 @@ pub enum EventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
+    /// The session was moved onto the other plane, because its owner asked.
+    ///
+    /// Durable because the surface changed under somebody, and the event log
+    /// is where they read their session's history. It carries both planes and
+    /// the moment the conversation was captured: anything the agent did after
+    /// that moment did not travel, and a boundary somebody can see is one they
+    /// can recognise.
+    PlaneChanged {
+        /// The plane the session was on.
+        from: crate::options::SessionMode,
+        /// The plane it is on now.
+        to: crate::options::SessionMode,
+        /// When its conversation was taken, RFC 3339.
+        snapshot_at: String,
+    },
     /// A pending approval was resolved.
     ApprovalResolved {
         /// The request that was resolved.
@@ -236,6 +251,7 @@ const KNOWN_TAGS: &[&str] = &[
     "terminal_resized",
     "approval_requested",
     "approval_resolved",
+    "plane_changed",
 ];
 
 impl EventKind {
@@ -358,6 +374,11 @@ mod tests {
             EventKind::ConversationOpened {
                 conversation_id: "conv-1".into(),
             },
+            EventKind::PlaneChanged {
+                from: crate::options::SessionMode::Terminal,
+                to: crate::options::SessionMode::Conversation,
+                snapshot_at: "2026-08-18T09:00:00Z".into(),
+            },
         ];
         for kind in &all {
             match kind {
@@ -376,7 +397,8 @@ mod tests {
                 | EventKind::TerminalDetached
                 | EventKind::TerminalResized { .. }
                 | EventKind::ApprovalRequested { .. }
-                | EventKind::ApprovalResolved { .. } => {}
+                | EventKind::ApprovalResolved { .. }
+                | EventKind::PlaneChanged { .. } => {}
             }
         }
         all
