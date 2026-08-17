@@ -152,3 +152,37 @@ async fn a_kernel_this_deployment_does_not_run_is_refused_before_anything_is_rec
         "nothing may be recorded for a session that was refused"
     );
 }
+
+#[tokio::test]
+async fn a_runtime_is_advertised_as_what_it_says_it_can_be() {
+    // What a client is offered comes from the adapter, not from a list kept
+    // beside it: a kernel that gains the conversation plane is offered for it
+    // the moment it says so, and one that loses a plane stops being offered
+    // without anything here being edited.
+    let store = Arc::new(FakeStore::default());
+    let screen_only = Arc::new(FakeAdapter::default());
+    let svc = crate::test_support::service(Arc::clone(&store), screen_only);
+
+    assert_eq!(
+        svc.available_kernels(),
+        vec![(crate::test_support::kernel(), vec![SessionMode::Terminal])],
+        "the fake runtime renders a screen and holds no conversation"
+    );
+
+    let both = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    });
+    let svc = crate::test_support::service(Arc::clone(&store), both);
+
+    assert_eq!(
+        svc.available_kernels(),
+        vec![(
+            crate::test_support::kernel(),
+            vec![SessionMode::Terminal, SessionMode::Conversation]
+        )],
+    );
+}

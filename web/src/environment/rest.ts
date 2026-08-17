@@ -2,6 +2,7 @@ import { ApiError } from '../api/client';
 import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
 import type { CredentialMode, PermissionMode, ReasoningEffort } from '../sessions/options';
 import { DEFAULT_AGENT } from './types';
+import type { SessionPlane } from '../sessions/types';
 import type {
   AgentConfiguration,
   NyxIdAccess,
@@ -132,6 +133,7 @@ function readAgent(raw: unknown): AgentConfiguration {
   const a = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   return {
     kernel: typeof a.kernel === 'string' ? a.kernel : DEFAULT_AGENT.kernel,
+    mode: isPlane(a.mode) ? a.mode : DEFAULT_AGENT.mode,
     model: typeof a.model === 'string' ? a.model : undefined,
     reasoningEffort: isEffort(a.reasoning_effort)
       ? a.reasoning_effort
@@ -146,6 +148,10 @@ function readAgent(raw: unknown): AgentConfiguration {
 function readNyxId(raw: unknown): NyxIdAccess {
   const n = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   return { services: Array.isArray(n.services) ? n.services.map(String) : [] };
+}
+
+function isPlane(v: unknown): v is SessionPlane {
+  return v === 'terminal' || v === 'conversation';
 }
 
 function isEffort(v: unknown): v is ReasoningEffort {
@@ -167,6 +173,7 @@ function body(draft: ProfileDraft): string {
     packages: draft.packages.map((p) => ({ name: p.name, version: p.version })),
     agent: {
       kernel: draft.agent.kernel,
+      mode: draft.agent.mode,
       model: draft.agent.model,
       reasoning_effort: draft.agent.reasoningEffort,
       permission: draft.agent.permission,
