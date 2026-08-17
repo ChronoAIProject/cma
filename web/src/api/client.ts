@@ -305,6 +305,26 @@ export async function createSession(
 }
 
 /**
+ * Move a session onto the other plane.
+ *
+ * A rotation, and answered as one: the session comes back `rotating`, which is
+ * the window in which it takes no input. What it costs — the turn in flight,
+ * and the pause — is stated before this is called, never after.
+ *
+ * A refusal arrives as an `ApiError` carrying the control plane's own sentence,
+ * which names the capability that is missing. It is shown rather than
+ * flattened: an API that names what is absent is worth nothing if the
+ * interface renders it as "something went wrong".
+ */
+export async function changePlane(id: string, plane: SessionPlane): Promise<Session> {
+  const body = await request(`/api/v1/sessions/${encodeURIComponent(id)}/plane`, {
+    method: 'POST',
+    body: JSON.stringify({ plane }),
+  });
+  return toSession(body);
+}
+
+/**
  * End a session, leaving it listed.
  *
  * Distinct from removing it: a finished conversation is still worth reading,
