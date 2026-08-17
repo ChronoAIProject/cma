@@ -233,7 +233,8 @@ impl SessionService {
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),
             assembling: None,
-            attached: false,
+            attached: None,
+            attachments_issued: 0,
             context_ref,
             captured_len: 0,
         };

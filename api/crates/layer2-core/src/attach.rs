@@ -8,13 +8,30 @@
 use std::sync::Arc;
 
 use layer3_adapter::{TermSize, TerminalInput};
+use tokio::sync::broadcast;
 
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::service::{append, AttachmentHandle, SessionService};
+use crate::service::{append, Attachment, AttachmentHandle, SessionService};
 use crate::terminal::TerminalGeometry;
+
+/// How an attach should treat an attachment somebody already holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AttachmentClaim {
+    /// Refuse when the terminal is already held. The default, and the right
+    /// answer for anything that might be a second tab opened by accident.
+    #[default]
+    Exclusive,
+    /// Take it from whoever has it, and tell them so.
+    ///
+    /// Only the owner may do this, and only deliberately. It exists because
+    /// the alternative — a client whose connection died in a way the server
+    /// has not noticed yet, holding an attachment its owner cannot reclaim —
+    /// leaves somebody locked out of their own session with no way back in.
+    Takeover,
+}
 
 impl SessionService {
     /// Take the exclusive terminal attachment.
@@ -26,6 +43,7 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
         geometry: TerminalGeometry,
+        claim: AttachmentClaim,
     ) -> Result<AttachmentHandle, CoreError> {
         caller.authorization.require(Capability::UseOwnSessions)?;
         // A session whose process is gone still exists. Reviving it is the
@@ -62,7 +80,7 @@ impl SessionService {
             self.supply_credential(id, &caller.subject).await;
         }
 
-        let (screen, live) = {
+        let (screen, live, generation, superseded) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
             // Attaching is acting, not observing, so ownership is required
@@ -73,13 +91,32 @@ impl SessionService {
             if entry.session.status.is_terminal() {
                 return Err(CoreError::SessionTerminated);
             }
-            if entry.attached {
-                return Err(CoreError::AlreadyAttached);
+            match (&entry.attached, claim) {
+                (Some(_), AttachmentClaim::Exclusive) => return Err(CoreError::AlreadyAttached),
+                (Some(held), AttachmentClaim::Takeover) => {
+                    // A send with no receiver means the holder has already
+                    // gone, which is not a failure — it is the case takeover
+                    // exists to rescue.
+                    let _ = held.supersede.send(());
+                    tracing::info!(session_id = %id, "the terminal attachment was taken over");
+                }
+                (None, _) => {}
             }
-            entry.attached = true;
+            entry.attachments_issued += 1;
+            let generation = entry.attachments_issued;
+            let (supersede, superseded) = broadcast::channel(1);
+            entry.attached = Some(Attachment {
+                generation,
+                supersede,
+            });
             entry.session.geometry = geometry;
             append(entry, EventKind::TerminalAttached);
-            (Arc::clone(&entry.screen), entry.live.clone())
+            (
+                Arc::clone(&entry.screen),
+                entry.live.clone(),
+                generation,
+                superseded,
+            )
         };
         self.flush(id).await;
 
@@ -106,18 +143,29 @@ impl SessionService {
         Ok(AttachmentHandle {
             session_id: id.clone(),
             service: Arc::clone(self),
+            generation,
             output,
+            superseded,
             repaint,
             geometry,
         })
     }
 
     /// Release the exclusive attachment. Idempotent.
-    pub async fn release_attachment(&self, id: &SessionId) {
+    ///
+    /// Scoped to the attachment that is releasing. A superseded client drops
+    /// its handle only after its replacement is already live, so an unscoped
+    /// release would detach the new holder on the old one's way out — and the
+    /// person who just took their own session back would watch it go dead.
+    pub async fn release_attachment(&self, id: &SessionId, generation: u64) {
         let mut entries = self.entries.write().await;
         if let Some(entry) = entries.get_mut(id) {
-            if entry.attached {
-                entry.attached = false;
+            if entry
+                .attached
+                .as_ref()
+                .is_some_and(|a| a.generation == generation)
+            {
+                entry.attached = None;
                 append(entry, EventKind::TerminalDetached);
                 tracing::info!(session_id = %id, "terminal detached");
             }
