@@ -74,6 +74,15 @@ pub struct KernelCapabilities {
     pub snapshot: bool,
     /// Accepts input while a turn is in flight, without cancelling it first.
     pub steer: bool,
+    /// A turn in flight can be abandoned without ending the session.
+    ///
+    /// Separate from steering, which continues a turn rather than abandoning
+    /// one. A kernel may have neither, either, or both: one wire offers a
+    /// cancel and no mid-turn input, another the reverse. Claimed and absent,
+    /// this is an operation a session accepts and silently does nothing with —
+    /// the worst shape a refusal can take, because the person who asked
+    /// watches the agent carry on.
+    pub interrupt: bool,
     /// Reports token usage as it accrues.
     pub usage: bool,
 }
