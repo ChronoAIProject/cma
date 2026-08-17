@@ -25,15 +25,15 @@
   color: var(--ink);
 }
 
-.topbar__mark {
-  color: var(--accent);
-  font-size: var(--text-lg);
-  line-height: 1;
-}
-
+/*
+ * The wordmark — §17: Geist 500, lowercase, at the display tracking. Set
+ * beside the mark rather than in place of it, so the product is legible when
+ * the geometry alone would not be.
+ */
 .topbar__name {
-  font-size: var(--text-base);
-  letter-spacing: var(--track-label);
+  font-size: var(--text-md);
+  font-weight: 500;
+  letter-spacing: var(--track-display);
 }
 
 .topbar__actions {
