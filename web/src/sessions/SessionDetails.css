@@ -29,38 +29,18 @@
   margin: 0;
 }
 
-.details__collapse,
-.details__handle {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  color: var(--ink-3);
-  cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: var(--text-base);
-  line-height: 1;
-  padding: 2px var(--space-1);
-}
-
-.details__collapse:hover,
-.details__handle:hover {
-  color: var(--ink);
-  border-color: var(--rule-2);
-}
-
-.details__collapse:focus-visible,
-.details__handle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
+/*
+ * The handle itself is `.collapse-handle` in the component layer, which holds
+ * §7's minimum target. Only where it sits is decided here.
+ */
 
 /* Collapsed, the panel is a full-height strip so the target is easy to hit. */
 .details__handle {
   flex: 0 0 auto;
+  height: 100%;
+  background: var(--surface);
   border-left: 1px solid var(--rule);
   border-radius: 0;
-  background: var(--ground);
-  padding: 0 var(--space-1);
 }
 
 .details__list {
