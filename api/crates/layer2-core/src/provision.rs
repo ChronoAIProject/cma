@@ -299,11 +299,33 @@ impl SessionService {
             .await;
         self.note_progress(&id, ProvisioningStage::Attaching).await;
 
-        let channel = adapter.attach_terminal(&handle).await.map_err(|e| {
-            StartFailure::transient(format!("could not attach to the runtime: {e}"))
-        })?;
+        // Whichever plane this session was granted, and only that one. A
+        // terminal session opens no conversation and a conversation session
+        // attaches no terminal: the two are exclusive by construction, and
+        // opening both would put a kernel on two planes for one session.
+        let conversing = session.capabilities.conversation;
+        let terminal = match conversing {
+            false => Some(adapter.attach_terminal(&handle).await.map_err(|e| {
+                StartFailure::transient(format!("could not attach to the runtime: {e}"))
+            })?),
+            true => None,
+        };
+        let conversation = match conversing {
+            true => Some(adapter.open_conversation(&handle).await.map_err(|e| {
+                // A kernel that advertised a conversation and cannot open one
+                // will not start being able to. Refused permanently so the
+                // owner is told now rather than after the backoff.
+                StartFailure::permanent(format!("could not open the conversation: {e}"))
+            })?),
+            false => None,
+        };
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
+        let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
+        // Built for either plane, and fed only by the terminal. A conversation
+        // session never writes to it — the honest shape would be one entry per
+        // plane, which is a larger change than this and is worth making once
+        // rather than halfway.
         let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
             Arc::new(Mutex::new((self.screen_factory)(geometry)));
 
@@ -319,14 +341,23 @@ impl SessionService {
         };
         seeded.geometry = geometry;
 
+        let (terminal_input, terminal_output) = match terminal {
+            Some(channel) => (Some(channel.input), Some(channel.output)),
+            None => (None, None),
+        };
+
         let mut entry = SessionEntry {
             session: seeded,
             subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
-            input: Some(channel.input.clone()),
+            input: terminal_input.clone(),
             live: live.clone(),
+            live_frames: live_frames.clone(),
+            conversation: conversation.as_ref().map(|c| c.input.clone()),
+            pending_approvals: Default::default(),
+            assembling: None,
             attached: None,
             attachments_issued: 0,
             context_ref,
@@ -343,8 +374,16 @@ impl SessionService {
         );
         self.entries.write().await.insert(id.clone(), entry);
 
-        // The relay runs for the session's life, independent of any client.
-        spawn_relay(id.clone(), channel.output, screen, live);
+        // Both run for the session's life, independent of any client. A
+        // session nobody is watching still paints its screen and still records
+        // what its agent did, which is what makes the log a record rather than
+        // a broadcast.
+        if let Some(output) = terminal_output {
+            spawn_relay(id.clone(), output, screen, live);
+        }
+        if let Some(channel) = conversation {
+            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
+        }
 
         // Handed over before the agent can need it, so the first turn is
         // already authenticated. Asked of the adapter rather than pushed down
@@ -364,13 +403,14 @@ impl SessionService {
                 );
             }
         }
-        let _ = channel
-            .input
-            .send(TerminalInput::Resize(TermSize {
-                cols: geometry.columns(),
-                rows: geometry.rows(),
-            }))
-            .await;
+        if let Some(input) = &terminal_input {
+            let _ = input
+                .send(TerminalInput::Resize(TermSize {
+                    cols: geometry.columns(),
+                    rows: geometry.rows(),
+                }))
+                .await;
+        }
 
         self.flush(&id).await;
         self.note_progress(&id, ProvisioningStage::Ready).await;
