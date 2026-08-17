@@ -308,3 +308,74 @@ fn a_ticket_never_reaches_a_record() {
         "the allowlisted cursor should still be kept: {rendered}"
     );
 }
+
+#[test]
+fn every_operating_verb_is_recorded_as_its_own_action() {
+    // Grouping them would make "somebody typed" and "somebody stopped the
+    // agent" the same entry, which is the distinction anybody reading this log
+    // after an incident is looking for.
+    for (verb, expected) in [
+        ("input", Action::SessionInput),
+        ("interrupt", Action::SessionInterrupt),
+        ("steer", Action::SessionSteer),
+        ("resize", Action::SessionResize),
+    ] {
+        let classified = classify(&Method::POST, &format!("/api/v1/sessions/sesn_1/{verb}"))
+            .unwrap_or_else(|| panic!("{verb} is served"));
+        assert_eq!(classified.action, expected, "for {verb}");
+        assert_eq!(
+            classified.target,
+            Some(ActivityTarget::Session(SessionId("sesn_1".into())))
+        );
+    }
+}
+
+#[test]
+fn nothing_a_caller_sends_to_a_session_is_read_into_the_record() {
+    // Keystrokes and prompts are the owner's own words to their own agent, and
+    // an approval payload is a decision about their own work. The guarantee is
+    // structural: these classifications read no body at all, so there is
+    // nowhere for any of it to land however the request shape grows.
+    for path in [
+        "/api/v1/sessions/sesn_1/input",
+        "/api/v1/sessions/sesn_1/steer",
+        "/api/v1/sessions/sesn_1/interrupt",
+        "/api/v1/sessions/sesn_1/resize",
+        "/api/v1/sessions/sesn_1/approvals/req_1",
+    ] {
+        let classified =
+            classify(&Method::POST, path).unwrap_or_else(|| panic!("{path} is served"));
+        assert!(
+            !classified.reads_body,
+            "{path} must not read a body into the record"
+        );
+    }
+}
+
+#[test]
+fn answering_an_approval_names_the_session_rather_than_the_request() {
+    // Which request was answered is in the session's own event log, where it
+    // belongs to the conversation. This log is about who touched what.
+    let classified = classify(&Method::POST, "/api/v1/sessions/sesn_1/approvals/req_9")
+        .expect("approvals are served");
+    assert_eq!(classified.action, Action::SessionApprovalResolve);
+    assert_eq!(
+        classified.target,
+        Some(ActivityTarget::Session(SessionId("sesn_1".into())))
+    );
+}
+
+#[test]
+fn reading_usage_is_a_read_rather_than_an_operation() {
+    let classified =
+        classify(&Method::GET, "/api/v1/sessions/sesn_1/usage").expect("usage is served");
+    assert_eq!(classified.action, Action::SessionUsageRead);
+}
+
+#[test]
+fn an_operating_verb_asked_for_with_the_wrong_method_is_not_served() {
+    // The router would answer 405, and a record of an action that never
+    // happened is worse than no record.
+    assert!(classify(&Method::GET, "/api/v1/sessions/sesn_1/input").is_none());
+    assert!(classify(&Method::POST, "/api/v1/sessions/sesn_1/usage").is_none());
+}
