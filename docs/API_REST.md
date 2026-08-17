@@ -180,11 +180,24 @@ While an approval is pending the session is `idle` with `stop_reason: requires_a
 ```http
 GET  /api/v1/sessions/{id}/screen          → current rendered screen
 POST /api/v1/sessions/{id}/resize          { "cols": 120, "rows": 40 }
+POST /api/v1/sessions/{id}/terminal-ticket { "takeover": false }
 ```
 
 REST exposes these for clients that need terminal state without holding a stream. The live byte stream itself is the [PTY interface](./API_PTY.md).
 
 `resize` with a zero dimension is rejected with `422`.
+
+### Attach ticket
+
+```json
+{ "ticket": "…", "expires_at": "2026-08-17T14:37:14Z" }
+```
+
+The browser WebSocket API cannot set a header on an upgrade, so a bearer-authenticated frontend exchanges its credential here — over a route that *can* carry one — for a single-use, ~30-second, session- and subject-bound ticket, and presents that as `?ticket=…` on the upgrade. Same-origin cookie clients need none of this and attach unchanged.
+
+`{"takeover": true}` supersedes whoever currently holds the attachment; the superseded client is sent a close frame naming the reason. Without it, attaching over a live attachment is a typed conflict.
+
+A session with no terminal capability is refused here with `capability_unsupported`, not issued a ticket for something it cannot do. The full contract, including what makes a ticket in a URL acceptable and what is never recorded, is in [API_PTY.md §2.1](./API_PTY.md).
 
 **Both are owner-only, and no operator capability reaches them.** A screen carries whatever the agent has printed, and a session started from an environment bundle has that bundle's values in its process environment — so what is on a screen may be its owner's secrets. This is the same rule `transcript` follows, for the same content by another route.
 
