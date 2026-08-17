@@ -20,6 +20,7 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 
 mod events;
+mod operate;
 mod tickets;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
@@ -325,6 +326,27 @@ pub fn router(state: SessionsState) -> Router {
             "/api/v1/sessions/{id}/terminal-ticket",
             post(tickets::terminal_ticket),
         )
+        // What a caller sends to a session, on whichever plane it holds:
+        // keystrokes to a terminal, a prompt turn to a conversation. One route
+        // because it is one operation in the core, and the session's granted
+        // capabilities decide what it means.
+        .route("/api/v1/sessions/{id}/input", post(operate::input))
+        // Stop what it is doing without ending it. A signal on the terminal
+        // plane, the conversation's own cancel on the other.
+        .route("/api/v1/sessions/{id}/interrupt", post(operate::interrupt))
+        // Adding to a turn already running, which is not the same as starting
+        // one — and is refused by name where a kernel cannot tell them apart.
+        .route("/api/v1/sessions/{id}/steer", post(operate::steer))
+        .route("/api/v1/sessions/{id}/resize", post(operate::resize))
+        // Answering what a runtime is blocked on. Conversation sessions only:
+        // a terminal kernel asks on its own screen, and its answer is a
+        // keystroke, so inventing an operation here would be a second way to
+        // say something this session cannot hear.
+        .route(
+            "/api/v1/sessions/{id}/approvals/{request_id}",
+            post(operate::resolve_approval),
+        )
+        .route("/api/v1/sessions/{id}/usage", get(operate::usage))
         .route("/api/v1/sessions/{id}/screen", get(screen))
         // What the session has shown, for one that has no runtime to attach
         // to. Reading stopped work is not the same as resuming it.
