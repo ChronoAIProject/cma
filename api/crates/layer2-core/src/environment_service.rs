@@ -98,6 +98,19 @@ impl EnvironmentProfileService {
         &self.default_agent
     }
 
+    /// Fill in the kernel when a caller did not name one.
+    ///
+    /// The core holds no opinion about which kernels exist, so a profile that
+    /// named none arrives unset and is settled here from what this deployment
+    /// configured. Doing it on the way in rather than on the way out means a
+    /// stored profile says what it will actually run, and reads the same
+    /// tomorrow as it does today.
+    fn settle_kernel(&self, spec: &mut EnvironmentProfileSpec) {
+        if spec.agent.kernel.is_unset() {
+            spec.agent.kernel = self.default_agent.kernel.clone();
+        }
+    }
+
     /// Which services a session started with this selection may reach.
     ///
     /// Always includes what the deployment mandates, whichever profile is
@@ -141,7 +154,13 @@ impl EnvironmentProfileService {
         let Some(id) = selection else {
             return Ok(self.default_agent.clone());
         };
-        Ok(self.get(caller, id).await?.agent)
+        let mut agent = self.get(caller, id).await?.agent;
+        // A profile stored before the kernel was settled on the way in. It
+        // runs what this deployment runs rather than nothing at all.
+        if agent.kernel.is_unset() {
+            agent.kernel = self.default_agent.kernel.clone();
+        }
+        Ok(agent)
     }
 
     /// Store a new profile for the caller.
@@ -157,6 +176,7 @@ impl EnvironmentProfileService {
         // their request is too large because of entries the platform added.
         spec.validate()?;
         self.baseline.apply(&mut spec);
+        self.settle_kernel(&mut spec);
 
         let now = now_rfc3339();
         let profile = EnvironmentProfile {

@@ -118,15 +118,11 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 })
                 .collect(),
             agent: AgentConfiguration {
-                // An absent field means "whatever this deployment considers
-                // ordinary", not "empty". A profile is a convenience, and one
-                // that behaved differently from the default because a client
-                // omitted a key would be a trap.
-                kernel: body
-                    .agent
-                    .kernel
-                    .map(KernelId::new)
-                    .unwrap_or_else(|| AgentConfiguration::default().kernel),
+                // Left unset when a client says nothing, and settled by the
+                // core from what this deployment configured. An absent field
+                // means "whatever is ordinary here", never "empty" — and this
+                // layer is not the one that knows what ordinary is.
+                kernel: body.agent.kernel.map(KernelId::new).unwrap_or_default(),
                 model: body.agent.model,
                 reasoning_effort: body.agent.reasoning_effort.unwrap_or_default(),
                 permission: body.agent.permission.unwrap_or_default(),
@@ -540,11 +536,17 @@ mod tests {
     #[test]
     fn a_body_that_says_nothing_about_the_agent_gets_this_deployments_answer() {
         // A client that only wants to name some variables must not thereby
-        // choose a kernel, a model, or how freely the agent may act. Absent
-        // means "whatever is ordinary here", never "empty".
+        // choose a model or how freely the agent may act. Absent means
+        // "whatever is ordinary here", never "empty".
         let body: ProfileRequest = serde_json::from_str(r#"{"name":"mine"}"#).expect("parses");
         let spec: EnvironmentProfileSpec = body.into();
-        assert_eq!(spec.agent.kernel, KernelId::new("codex"));
+        // The kernel is the exception, and deliberately: this layer does not
+        // know which kernels a deployment can start, so it leaves it unset and
+        // the core settles it from configuration.
+        assert!(
+            spec.agent.kernel.is_unset(),
+            "naming a kernel here would put a runtime's name in a layer that must not know one"
+        );
         assert_eq!(spec.agent.reasoning_effort, ReasoningEffort::High);
         assert_eq!(
             spec.agent.permission,
