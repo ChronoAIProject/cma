@@ -86,8 +86,16 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
             Method::DELETE => Some(Classified::new(Action::SessionDelete).on(session(id))),
             _ => None,
         },
-        ["api", "v1", "sessions", id, verb] => classify_session_verb(method, verb)
-            .map(|action| Classified::new(action).on(session(id))),
+        ["api", "v1", "sessions", id, verb] => classify_session_verb(method, verb).map(|action| {
+            let classified = Classified::new(action).on(session(id));
+            // The one session verb whose body says something worth keeping:
+            // which plane. Everything else a caller sends to a session is
+            // their own content — see below.
+            match action {
+                Action::SessionPlaneChange => classified.with_body(),
+                _ => classified,
+            }
+        }),
         // The request identifier is in the path rather than the body, so it is
         // recorded without reading one — and the decision, which is in the
         // body, deliberately is not.
@@ -135,6 +143,7 @@ fn classify_session_verb(method: &Method, verb: &str) -> Option<Action> {
         (&Method::POST, "terminate") => Some(Action::SessionTerminate),
         (&Method::POST, "stop") => Some(Action::SessionStop),
         (&Method::POST, "revive") => Some(Action::SessionRevive),
+        (&Method::POST, "plane") => Some(Action::SessionPlaneChange),
         (&Method::GET, "screen") => Some(Action::SessionScreenRead),
         (&Method::GET, "transcript") => Some(Action::SessionTranscriptRead),
         (&Method::GET, "events") => Some(Action::SessionEventsRead),
@@ -162,6 +171,16 @@ fn classify_session_verb(method: &Method, verb: &str) -> Option<Action> {
         (&Method::GET, "usage") => Some(Action::SessionUsageRead),
         _ => None,
     }
+}
+
+/// The one field of a plane-change request that may be kept.
+///
+/// Which plane, and nothing else. The same allowlist rule as everything above:
+/// a field added to this request later has nowhere here to land.
+#[derive(Debug, Deserialize)]
+struct SessionPlaneBody {
+    #[serde(default)]
+    plane: Option<String>,
 }
 
 /// The fields of a session-creation request that may be kept.
@@ -241,6 +260,14 @@ pub fn detail_from_body(action: Action, body: &[u8]) -> ActivityDetail {
                 if let Some(permission) = options.permission {
                     detail.record(DetailKey::PermissionMode, permission);
                 }
+            }
+        }
+        Action::SessionPlaneChange => {
+            let Ok(parsed) = serde_json::from_slice::<SessionPlaneBody>(body) else {
+                return detail;
+            };
+            if let Some(plane) = parsed.plane {
+                detail.record(DetailKey::Plane, plane);
             }
         }
         Action::EnvironmentProfileCreate | Action::EnvironmentProfileReplace => {

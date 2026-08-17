@@ -17,6 +17,24 @@ use crate::ids::SessionId;
 use crate::service::SessionService;
 use crate::terminal::TerminalGeometry;
 
+/// Why an attachment was taken away from whoever held it.
+///
+/// Carried rather than inferred. A terminal that stops updating is
+/// indistinguishable from a broken one, and a terminal that stops updating
+/// while being told the wrong reason is worse: somebody told their session was
+/// opened elsewhere goes looking for the other tab, and somebody whose session
+/// is being carried onto a replacement runtime only has to wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Detached {
+    /// The owner attached this terminal from somewhere else.
+    Superseded,
+    /// The session was moved onto the conversation plane, so this terminal no
+    /// longer exists. The session does, and holds a conversation instead.
+    PlaneChanged,
+    /// The session is being carried onto a newer runtime and will come back.
+    RuntimeReplaced,
+}
+
 /// An exclusive terminal attachment.
 ///
 /// Holding this is what makes an attachment exclusive; dropping it releases the
@@ -33,13 +51,13 @@ pub struct AttachmentHandle {
     pub(crate) generation: u64,
     /// Live terminal output for as long as the attachment is held.
     pub output: broadcast::Receiver<Vec<u8>>,
-    /// Fires once when the owner has handed this attachment to somebody else.
+    /// Fires once when this attachment has been taken away, saying why.
     ///
-    /// The superseded client is told rather than simply going quiet. A terminal
-    /// that stops updating with no explanation is indistinguishable from a
-    /// broken one, and the person looking at it will reload and take the
-    /// attachment back — which is a fight nobody wins.
-    pub superseded: broadcast::Receiver<()>,
+    /// The client is told rather than simply going quiet. A terminal that
+    /// stops updating with no explanation is indistinguishable from a broken
+    /// one, and the person looking at it will reload and take the attachment
+    /// back — which is a fight nobody wins.
+    pub superseded: broadcast::Receiver<Detached>,
     /// Bytes that repaint the current screen, delivered before live output.
     pub repaint: Vec<u8>,
     /// Geometry the repaint was rendered at.

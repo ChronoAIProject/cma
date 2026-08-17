@@ -60,6 +60,12 @@ pub enum DetailKey {
     Limit,
     /// A subject the action concerned, when it is not the actor.
     Subject,
+    /// The plane a session was asked to be moved onto.
+    ///
+    /// One of two words, neither of which is the owner's content: which
+    /// surface a session is driven on is exactly what a reader of this record
+    /// needs to make sense of a handover somebody asked for.
+    Plane,
 }
 
 impl DetailKey {
@@ -79,6 +85,7 @@ impl DetailKey {
             Self::Cursor => "cursor",
             Self::Limit => "limit",
             Self::Subject => "subject",
+            Self::Plane => "plane",
         }
     }
 
@@ -102,6 +109,7 @@ impl DetailKey {
             Self::Cursor,
             Self::Limit,
             Self::Subject,
+            Self::Plane,
         ]
         .into_iter()
         .find(|k| k.as_str() == code)
