@@ -327,7 +327,8 @@ impl SessionService {
             runtime: Some(handle),
             input: Some(channel.input.clone()),
             live: live.clone(),
-            attached: false,
+            attached: None,
+            attachments_issued: 0,
             context_ref,
             captured_len: 0,
         };
