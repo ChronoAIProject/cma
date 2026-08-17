@@ -5,16 +5,23 @@
 //! retrying, only the first is worth telling a person at creation, and a
 //! caller who cannot distinguish them ends up doing neither well.
 //!
-//! So a session carries a granted set, decided once when it is created and
-//! never revisited. It is the intersection of what its runtime can do with
-//! what its mode asks for, which means a request outside it is refused by name
-//! before anything is provisioned — rather than accepted, provisioned, and
-//! found wanting by whoever tries to use it.
+//! So a session carries a granted set, decided when it is created. It is the
+//! intersection of what its runtime can do with what its mode asks for, which
+//! means a request outside it is refused by name before anything is
+//! provisioned — rather than accepted, provisioned, and found wanting by
+//! whoever tries to use it.
 //!
 //! Recorded rather than recomputed. A runtime's abilities can change when its
 //! implementation does, and a live session finding itself with a different set
 //! than it started with is the kind of surprise this whole design exists to
 //! remove.
+//!
+//! The invariant is therefore **"this changes only by an explicit, recorded
+//! act"**, not "this never changes". One act qualifies: an owner moving their
+//! session between planes, which is a rotation — the set is re-derived from
+//! the same rule, against the same runtime, and the change is written to the
+//! session's log where its owner reads it. That is the opposite of a quiet
+//! recomputation, and it is what the sentence above is protecting against.
 
 use layer3_adapter::KernelCapabilities;
 use serde::{Deserialize, Serialize};

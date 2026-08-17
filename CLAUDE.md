@@ -128,7 +128,7 @@ Layer 2 is protocol-agnostic, kernel-agnostic and terminal-agnostic. **No protoc
 
 Layer 2 is the superset: it models the union of what all interfaces and all kernels need, never the intersection.
 
-#### Capabilities: what a session can do is decided once and never revisited
+#### Capabilities: what a session can do never changes quietly
 
 Two facts have to be told apart everywhere in this service: **"this session can never do that"** and **"that just failed"**. Only the second is worth retrying; only the first is worth telling somebody at creation; a caller who cannot distinguish them does neither well.
 
@@ -136,6 +136,7 @@ So:
 
 - A kernel **advertises** what it can do — hold a conversation, render a terminal, be carried onto a replacement runtime, accept input mid-turn, be interrupted, report usage. Statically, because these describe the kernel rather than the moment.
 - A session carries a **granted set**, decided when it is created and recorded rather than recomputed. It is the intersection of what its kernel can do with what its mode needs.
+- That set changes **only by an explicit, recorded act of its owner** — moving a session between planes, which is a rotation and is written to its log. Never by a recomputation, never as a side effect, and never without the owner having asked. A caller who reads a session's granted set once and acts on it is right until the owner changes it themselves.
 - A request outside that set fails **typed and named** — the ability it lacks, in words a caller can act on — before anything is provisioned, and never as a 404 and never by silently doing nothing.
 
 **A capability is claimed only after it has been demonstrated against the pinned kernel version.** Every one currently advertised was established by driving the real thing; "the documentation says so" is not evidence. A capability claimed and absent is discovered by whoever tried to use it, which is the failure this whole model exists to remove.
