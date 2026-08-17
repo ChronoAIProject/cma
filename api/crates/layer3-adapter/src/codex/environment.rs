@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use crate::hosted::Deployment;
-use crate::{RuntimePermission, RuntimeSpec};
+use crate::RuntimeSpec;
 
 /// Where this kernel records its conversation, relative to the pod's home.
 ///
@@ -69,7 +69,8 @@ impl super::CodexAdapter {
     /// without standing up a provider.
     pub(super) fn environment_for(&self, spec: &RuntimeSpec) -> BTreeMap<String, String> {
         let conversing = matches!(spec.options.mode, crate::RuntimeMode::Conversation);
-        let mut controlled = self.spec.deployment.base_environment(spec);
+        let deployment = &self.spec.deployment;
+        let mut controlled = deployment.base_environment(spec);
         controlled.extend([
             (
                 "CHRONO_RUNTIME_COMMAND".to_string(),
@@ -77,7 +78,7 @@ impl super::CodexAdapter {
                     // The bridge, which speaks the contract. Started by the
                     // supervisor with piped stdio rather than under a pty: it
                     // has no screen to paint.
-                    true => self.spec.deployment.bridge_command.clone(),
+                    true => deployment.bridge_command.clone(),
                     false => "codex".to_string(),
                 },
             ),
@@ -108,36 +109,29 @@ impl super::CodexAdapter {
                 "CHRONO_RUNTIME_SNAPSHOT_DIR".to_string(),
                 SESSIONS_DIR.to_string(),
             ),
-            // This kernel's own names for the intent the core expressed. The
-            // translation lives here because these strings mean nothing to any
-            // other runtime.
+            // The file this kernel reads before it starts, composed here and
+            // written by the supervisor — which is handed a path and a body and
+            // reads neither. It used to be rendered there, in this kernel's
+            // vocabulary, into every pod including the ones running something
+            // else.
             (
-                "CHRONO_AGENT_EFFORT".to_string(),
-                spec.options
-                    .reasoning_effort
-                    .clone()
-                    .unwrap_or_else(|| "medium".to_string()),
+                crate::layer4::CONFIG_PATH_VAR.to_string(),
+                super::config::CONFIG_PATH.to_string(),
             ),
             (
-                "CHRONO_AGENT_APPROVAL".to_string(),
-                match spec.options.permission {
-                    RuntimePermission::Guarded => "on-request",
-                    RuntimePermission::Autonomous => "on-failure",
-                    // No approvals at all. Survivable only because the sandbox
-                    // is still the boundary; this removes the ones inside it.
-                    RuntimePermission::Unrestricted => "never",
-                }
-                .to_string(),
+                crate::layer4::CONFIG_BODY_VAR.to_string(),
+                super::config::render(
+                    spec,
+                    deployment.proxy_base_url(),
+                    &spec
+                        .options
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| deployment.upstream_model.clone()),
+                    &deployment.upstream_wire_api,
+                ),
             ),
-            (
-                "CHRONO_AGENT_SANDBOX".to_string(),
-                match spec.options.permission {
-                    RuntimePermission::Guarded => "read-only",
-                    RuntimePermission::Autonomous => "workspace-write",
-                    RuntimePermission::Unrestricted => "danger-full-access",
-                }
-                .to_string(),
-            ),
+            super::config::placeholder(),
         ]);
         // The session's own variables, added last and refused where they
         // collide. `apply_to` is what enforces that: the names above are how
