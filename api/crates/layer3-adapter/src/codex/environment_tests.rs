@@ -34,10 +34,15 @@ fn adapter(base: &str) -> CodexAdapter {
 }
 
 #[tokio::test]
-async fn permission_intent_is_rendered_into_this_kernels_own_names() {
+async fn permission_intent_reaches_this_kernel_through_the_file_it_reads() {
     // The core says how much rope to give the agent; this layer is the one
-    // place that knows what this kernel calls those settings. A wrong
-    // mapping here silently grants more than the person asked for.
+    // place that knows what this kernel calls those settings. A wrong mapping
+    // silently grants more than the person asked for.
+    //
+    // It travels in the configuration this kernel reads rather than as
+    // environment, because that is where this kernel looks — and the file is
+    // composed here rather than in the supervisor, which hosts kernels that
+    // read no file at all.
     use crate::{RuntimeOptions, RuntimePermission};
 
     let cases = [
@@ -67,20 +72,31 @@ async fn permission_intent_is_rendered_into_this_kernels_own_names() {
                 ..RuntimeOptions::default()
             },
         };
-        // Provisioning fails against a dead provider, which is fine: the
-        // environment is built before the call, and that is what is under
-        // test here.
-        let _ = a.provision(&spec).await;
         let env = a.environment_for(&spec);
-        assert_eq!(
-            env.get("CHRONO_AGENT_APPROVAL").map(String::as_str),
-            Some(approval)
+        let config = env
+            .get(crate::layer4::CONFIG_BODY_VAR)
+            .expect("this kernel is handed a configuration");
+        assert!(
+            config.contains(&format!("approval_policy = \"{approval}\"")),
+            "{permission:?} got {config}"
         );
-        assert_eq!(
-            env.get("CHRONO_AGENT_SANDBOX").map(String::as_str),
-            Some(sandbox)
+        assert!(
+            config.contains(&format!("sandbox_mode = \"{sandbox}\"")),
+            "{permission:?} got {config}"
         );
     }
+}
+
+#[test]
+fn the_supervisor_is_told_where_this_kernels_file_goes() {
+    // It writes what it is handed and reads none of it, which is what lets the
+    // same pod image host a kernel that reads no file at all.
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&spec_with(Default::default()));
+    assert_eq!(
+        env.get(crate::layer4::CONFIG_PATH_VAR).map(String::as_str),
+        Some(".codex/config.toml")
+    );
 }
 
 #[tokio::test]
