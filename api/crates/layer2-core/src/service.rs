@@ -13,6 +13,7 @@ use layer3_adapter::{KernelAdapter, RuntimeHandle, TerminalInput};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
 use crate::authz::{Caller, Capability};
+use crate::capabilities::SessionCapabilities;
 use crate::clock::now_rfc3339;
 use crate::environment_service::EnvironmentProfileService;
 use crate::error::CoreError;
@@ -269,6 +270,7 @@ impl SessionService {
         let mut spec = spec;
         spec.kernel = agent.kernel.clone();
         spec.options = AgentOptions {
+            mode: agent.mode,
             model: agent.model.clone(),
             reasoning_effort: agent.reasoning_effort,
             permission: agent.permission,
@@ -281,6 +283,20 @@ impl SessionService {
         let adapter =
             self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
                 CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
+            })?;
+
+        // Settled here, while somebody is still on the line to be told. A
+        // session whose kernel cannot do what its mode requires can never work,
+        // and accepting it would mean writing a record and then failing it
+        // asynchronously against a caller who has long since gone.
+        let capabilities = SessionCapabilities::granted(spec.options.mode, adapter.capabilities())
+            .inspect_err(|refusal| {
+                tracing::info!(
+                    subject = %caller.subject,
+                    kernel = %spec.kernel,
+                    reason = %refusal,
+                    "refused a session its runtime could not be"
+                );
             })?;
 
         let geometry = spec.geometry.unwrap_or_default();
@@ -299,6 +315,7 @@ impl SessionService {
             runtime_version: None,
             rotations: 0,
             rotated_at: None,
+            capabilities,
             created_at: now_rfc3339(),
         };
 

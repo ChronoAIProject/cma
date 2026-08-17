@@ -60,6 +60,13 @@ struct SessionDoc {
     rotations: Option<i64>,
     #[serde(default)]
     rotated_at: Option<String>,
+    /// What the session was granted when it was created.
+    ///
+    /// Optional because records written before capabilities existed have no
+    /// such field; those load claiming nothing, which is settled the next time
+    /// the session is placed.
+    #[serde(default)]
+    capabilities: Option<mongodb::bson::Bson>,
 }
 
 /// A MongoDB-backed session store.
@@ -141,6 +148,10 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         runtime_version: s.runtime_version.clone(),
         rotations: Some(i64::from(s.rotations)),
         rotated_at: s.rotated_at.clone(),
+        capabilities: Some(
+            mongodb::bson::serialize_to_bson(&s.capabilities)
+                .map_err(|e| StoreError::Malformed(e.to_string()))?,
+        ),
     })
 }
 
@@ -181,6 +192,11 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             runtime_version: d.runtime_version,
             rotations: d.rotations.unwrap_or(0).clamp(0, i64::from(u32::MAX)) as u32,
             rotated_at: d.rotated_at,
+            capabilities: match d.capabilities {
+                Some(v) => mongodb::bson::deserialize_from_bson(v)
+                    .map_err(|e| StoreError::Malformed(e.to_string()))?,
+                None => Default::default(),
+            },
             environment_profile: d.environment_profile.map(layer2_core::EnvironmentProfileId),
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)

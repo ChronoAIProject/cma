@@ -17,8 +17,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TerminalChannel,
-    TerminalInput,
+    AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeListing, RuntimeSpec,
+    TerminalChannel, TerminalInput,
 };
 
 /// Port the supervisor listens on inside the sandbox.
@@ -292,6 +292,20 @@ impl CodexAdapter {
 impl KernelAdapter for CodexAdapter {
     fn kernel_name(&self) -> &'static str {
         "codex"
+    }
+
+    fn capabilities(&self) -> KernelCapabilities {
+        // Honest for the pseudo-terminal path, which is all this adapter drives
+        // today: bytes for a screen, and a conversation the supervisor can
+        // capture and hand to a replacement runtime. Nothing structured crosses
+        // the boundary yet, so nothing structured is advertised.
+        KernelCapabilities {
+            conversation: false,
+            terminal: true,
+            snapshot: true,
+            steer: false,
+            usage: false,
+        }
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
