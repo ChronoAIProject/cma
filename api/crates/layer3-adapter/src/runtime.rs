@@ -118,6 +118,22 @@ pub struct RuntimeSpec {
     pub created_by: Option<String>,
     /// What the runtime should already carry when the agent starts.
     pub environment: RuntimeEnvironment,
+    /// What this session's credential may reach, by name.
+    ///
+    /// Names only. A service identifier is not sensitive and a credential is,
+    /// and nothing here may put one where a transcript or a log could pick it
+    /// up — which is why this carries the list and never the token minted
+    /// against it.
+    ///
+    /// Told to the agent rather than left to be inferred. An agent that does
+    /// not know it may act on a service will reason about why it cannot, and
+    /// produce a confident wrong explanation — the worst available failure,
+    /// because it looks like an answer.
+    ///
+    /// Empty means this session reaches nothing, which is a real answer. It is
+    /// not the same as the runtime never having been told, and the two are
+    /// kept apart where this is rendered.
+    pub reaches: Vec<String>,
 }
 
 /// What a runtime should be told about how to behave.

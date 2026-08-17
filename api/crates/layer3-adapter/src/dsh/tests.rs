@@ -20,6 +20,7 @@ fn adapter(base: &str) -> DshAdapter {
 fn conversation() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),
         session_id: "sesn_x".into(),
