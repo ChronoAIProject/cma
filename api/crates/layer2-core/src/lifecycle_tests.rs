@@ -110,8 +110,13 @@ async fn a_terminated_session_cannot_be_attached_to() {
         .expect("terminates");
 
     assert!(matches!(
-        svc.attach_terminal(&caller, &created.id, TerminalGeometry::default())
-            .await,
+        svc.attach_terminal(
+            &caller,
+            &created.id,
+            TerminalGeometry::default(),
+            Default::default()
+        )
+        .await,
         Err(CoreError::SessionTerminated)
     ));
 }
