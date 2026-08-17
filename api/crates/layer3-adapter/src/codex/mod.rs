@@ -13,7 +13,10 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
+mod acp;
+mod dialect;
 mod environment;
+mod permission;
 
 use environment::absent;
 pub use environment::CodexSandboxSpec;
@@ -66,7 +69,7 @@ const READY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 /// immediately, and an older one usually answers with terminal output just as
 /// fast. Bounded so a silent runtime settles on the older wire rather than
 /// holding an attach open indefinitely.
-const DIALECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+pub(super) const DIALECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl From<SandboxError> for AdapterError {
     fn from(e: SandboxError) -> Self {
@@ -153,72 +156,45 @@ impl CodexAdapter {
         )
     }
 
-    /// Learn which wire this pod speaks, from the first thing it says.
+    /// Open an authenticated socket to a runtime's link.
     ///
-    /// A pod that knows lanes declares itself before anything else, so a
-    /// declaration arrives immediately or not at all. A pod that does not
-    /// simply starts relaying its terminal, which is itself the answer — and
-    /// the bytes it sent while answering are handed back rather than dropped,
-    /// because they are the first thing on somebody's screen.
-    ///
-    /// Waiting is bounded, and the bound is only ever paid by an older pod
-    /// whose agent happens to be silent at startup. A newer one answers at
-    /// once; an older one usually answers with output just as fast.
-    async fn negotiate<S>(source: &mut S) -> (bool, Option<Vec<u8>>)
-    where
-        S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
-    {
-        match tokio::time::timeout(DIALECT_DEADLINE, source.next()).await {
-            Ok(Some(Ok(Message::Text(text)))) => {
-                match supervisor::Ready::from_control(&text) {
-                    Some(ready) => {
-                        tracing::info!(
-                            wire = ready.wire_version,
-                            lanes = ?ready.lanes,
-                            "the runtime declared its wire"
-                        );
-                        (true, None)
-                    }
-                    // Some other control frame. Nothing is inferred from it:
-                    // the older wire is the reading a pod cannot misunderstand.
-                    None => (false, None),
-                }
-            }
-            // Terminal output before any declaration means there was never
-            // going to be one.
-            Ok(Some(Ok(Message::Binary(bytes)))) => (false, Some(bytes.to_vec())),
-            Ok(Some(Ok(_))) => (false, None),
-            Ok(Some(Err(_))) | Ok(None) => (false, None),
-            Err(_) => {
-                tracing::info!("the runtime declared no wire; using the one that predates lanes");
-                (false, None)
-            }
+    /// The proxied endpoint is authenticated, so the handshake carries the
+    /// provider key. A browser could not set this header, which is exactly why
+    /// the control plane holds the link and the browser talks only to the
+    /// control plane.
+    async fn connect(
+        &self,
+        handle: &RuntimeHandle,
+        lanes: Option<&str>,
+    ) -> Result<
+        (
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            String,
+        ),
+        AdapterError,
+    > {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let mut url = self.terminal_url(&endpoint.endpoint, &handle.0);
+        if let Some(lanes) = lanes {
+            url.push_str("&lanes=");
+            url.push_str(lanes);
         }
-    }
-
-    /// Render one piece of terminal input for the wire this link speaks.
-    ///
-    /// Only the data lane is framed. Control travels as text and is identical
-    /// on both dialects, which is what lets a credential reach a pod that
-    /// predates lanes and one that does not without either being told which it
-    /// is talking to.
-    fn encode(input: TerminalInput, framed: bool) -> Message {
-        match input {
-            TerminalInput::Bytes(b) => Message::Binary(match framed {
-                true => supervisor::frame(supervisor::LANE_TERMINAL, &b),
-                false => b,
-            }),
-            TerminalInput::Resize(size) => Message::Text(format!(
-                r#"{{"t":"resize","cols":{},"rows":{}}}"#,
-                size.cols, size.rows
-            )),
-            TerminalInput::Signal(sig) => {
-                Message::Text(format!(r#"{{"t":"signal","sig":"{sig}"}}"#))
-            }
-            TerminalInput::Credential(value) => {
-                Message::Text(serde_json::json!({ "t": "credential", "value": value }).to_string())
-            }
-        }
+        let mut request = url
+            .as_str()
+            .into_client_request()
+            .map_err(|e| AdapterError::Unavailable(format!("bad runtime url {url}: {e}")))?;
+        let (header, key) = self.client.auth_header();
+        request.headers_mut().insert(
+            header,
+            HeaderValue::from_str(key)
+                .map_err(|e| AdapterError::Unavailable(format!("bad api key header: {e}")))?,
+        );
+        let (stream, _response) = tokio_tungstenite::connect_async(request)
+            .await
+            .map_err(|e| AdapterError::Unavailable(format!("connect {url}: {e}")))?;
+        Ok((stream, url))
     }
 
     /// Wait until a sandbox reports itself running.
@@ -247,16 +223,20 @@ impl KernelAdapter for CodexAdapter {
     }
 
     fn capabilities(&self) -> KernelCapabilities {
-        // Honest for the pseudo-terminal path, which is all this adapter drives
-        // today: bytes for a screen, and a conversation the supervisor can
-        // capture and hand to a replacement runtime. Nothing structured crosses
-        // the boundary yet, so nothing structured is advertised.
+        // Every one of these was proven against the pinned kernel version
+        // before it was claimed here, rather than assumed from its
+        // documentation — see the spike recorded on issue #76.
         KernelCapabilities {
-            conversation: false,
+            conversation: true,
             terminal: true,
+            // A rollout carried into a fresh home resumes by identifier, which
+            // is what makes a session survive its runtime being replaced.
             snapshot: true,
-            steer: false,
-            usage: false,
+            // The kernel accepts input mid-turn and continues the same turn
+            // rather than needing it cancelled and restarted.
+            steer: true,
+            // Reported per turn, with the context window alongside.
+            usage: true,
         }
     }
 
@@ -356,28 +336,8 @@ impl KernelAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
-        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
-        let url = self.terminal_url(&endpoint.endpoint, &handle.0);
+        let (stream, url) = self.connect(handle, None).await?;
         tracing::info!(sandbox = %handle.0, %url, "attaching to sandbox terminal");
-
-        // The proxied endpoint is authenticated, so the handshake carries the
-        // provider key. A browser could not set this header, which is exactly
-        // why the control plane holds the attachment and the browser talks only
-        // to the control plane.
-        let mut request = url
-            .as_str()
-            .into_client_request()
-            .map_err(|e| AdapterError::Unavailable(format!("bad terminal url {url}: {e}")))?;
-        let (header, key) = self.client.auth_header();
-        request.headers_mut().insert(
-            header,
-            HeaderValue::from_str(key)
-                .map_err(|e| AdapterError::Unavailable(format!("bad api key header: {e}")))?,
-        );
-
-        let (stream, _response) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|e| AdapterError::Unavailable(format!("connect {url}: {e}")))?;
         let (mut sink, mut source) = stream.split();
 
         // Settled before anything is relayed, so both directions agree on how
@@ -454,6 +414,16 @@ impl KernelAdapter for CodexAdapter {
         })
     }
 
+    async fn open_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        options: &crate::RuntimeOptions,
+    ) -> Result<crate::ConversationChannel, AdapterError> {
+        let (stream, url) = self.connect(handle, Some("conv")).await?;
+        tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
+        acp::Bridge::open(stream, self.spec.workspace.clone(), options.permission).await
+    }
+
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
@@ -520,3 +490,7 @@ impl KernelAdapter for CodexAdapter {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "link_tests.rs"]
+mod link_tests;
