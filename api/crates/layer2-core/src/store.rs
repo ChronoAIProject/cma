@@ -262,6 +262,7 @@ mod tests {
             rotations: 0,
             rotated_at: None,
             capabilities: Default::default(),
+            granted_services: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }
     }

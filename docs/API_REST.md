@@ -107,6 +107,27 @@ DELETE /api/v1/sessions/{id}
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
 
+### What a session may reach
+
+A read carries `reach`: the services this session's credential may call on its owner's behalf.
+
+```json
+"reach": [
+  { "id": "api-github", "name": "GitHub", "description": "Repositories and pull requests", "mandated": false },
+  { "id": "nyxid", "name": "NyxID", "mandated": true }
+]
+```
+
+This is the other half of a fact whose first half is `capabilities`. Capabilities are what a session can **do**; `reach` is what it can **touch**. A client showing one and not the other is describing half a session.
+
+**It is the session's answer, not its profile's.** A session's reach is decided when it is provisioned and recorded on the session. A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps the scope it was provisioned with, so reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one. It survives a rotation for the same reason: a replaced runtime is the same session.
+
+`mandated` marks what this deployment requires in every session, so a client can draw those entries as fixed rather than guessing which cannot be removed.
+
+`name` and `description` come from the caller's own service catalogue and are **absent when it could not be asked**. A catalogue that is down costs the names and not the answer: the identifiers alone are still true, and reporting an error here would render a transient outage as a session that reaches nothing. See `docs/Services.md`.
+
+**Never a credential.** `reach` carries identifiers and display names. What a session may reach is a fact about its configuration; what it holds is not, and no token, no expiry and nothing that could be used to fingerprint one appears here.
+
 ---
 
 ## 3. Input, interrupt, steer
