@@ -9,6 +9,7 @@ import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
 import type { Stage } from './sessions/progress';
 import { SessionActions } from './sessions/SessionActions';
+import { SessionHeader } from './sessions/SessionHeader';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
@@ -276,6 +277,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   return (
     <PageFrame
       showing={showing}
+      leadingColumn
       views={
         <ViewSwitch
           views={[{ name: 'sessions', label: 'Sessions' }]}
@@ -332,6 +334,8 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         />
 
         <main className="console__surface">
+          <SessionHeader session={active} />
+
           {/*
            * Above the surface, never in place of it. A failure belongs to one
            * request about one session, and the surface below may hold a dozen
