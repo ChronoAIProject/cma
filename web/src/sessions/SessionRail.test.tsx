@@ -5,6 +5,7 @@ import { SessionRail } from './SessionRail';
 import { lastActivity } from './lastActivity';
 import { loadCollapsed, saveCollapsed } from '../shell/collapse';
 import type { Session, SessionLifecycle } from './types';
+import { NO_CAPABILITIES } from '../agui';
 
 /**
  * The session rail — docs/Web_Style.md §12, and §7 for collapsing it.
@@ -16,6 +17,7 @@ function session(id: string, lifecycle: SessionLifecycle, extra: Partial<Session
     kernel: 'codex',
     lifecycle,
     createdAt: Date.parse('2026-08-18T08:53:00Z'),
+    capabilities: NO_CAPABILITIES,
     ...extra,
   };
 }

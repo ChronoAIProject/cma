@@ -56,6 +56,22 @@ export type ConcurrentInput = 'reject' | 'enqueue' | 'interrupt' | 'rollback';
 const POLICIES: readonly ConcurrentInput[] = ['reject', 'enqueue', 'interrupt', 'rollback'];
 
 /**
+ * A session that was granted nothing.
+ *
+ * The value `toCapabilities` produces for a payload that declared none, named
+ * so a fixture can say "this session holds nothing" rather than spelling six
+ * falses out — and so the two can never drift apart.
+ */
+export const NO_CAPABILITIES: SessionCapabilities = {
+  conversation: false,
+  terminal: false,
+  steer: false,
+  interrupt: false,
+  usage: false,
+  concurrentInput: 'reject',
+};
+
+/**
  * Read a session's granted set.
  *
  * Failing closed: anything the control plane did not clearly grant is not

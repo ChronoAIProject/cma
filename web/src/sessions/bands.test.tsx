@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { SessionRail } from './SessionRail';
 import { SessionHeader } from './SessionHeader';
 import type { Session } from './types';
+import { NO_CAPABILITIES } from '../agui';
 
 /**
  * The band grid — docs/Web_Style.md §5.
@@ -21,6 +22,7 @@ const SESSION: Session = {
   kernel: 'codex',
   lifecycle: 'running',
   createdAt: Date.parse('2026-08-18T08:53:00Z'),
+  capabilities: NO_CAPABILITIES,
 };
 
 function sheet(name: string): string {
