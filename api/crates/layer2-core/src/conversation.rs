@@ -109,9 +109,14 @@ impl SessionService {
     }
 
     /// Abandon the turn in flight, leaving the conversation open.
+    ///
+    /// Its own ability rather than part of holding a conversation. A kernel's
+    /// wire may offer a prompt and no way to take it back, and a session that
+    /// accepted the request and did nothing would leave whoever asked watching
+    /// the agent carry on with no explanation.
     pub async fn interrupt_turn(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
         let input = self
-            .conversation_input(caller, id, Capability::Conversation)
+            .conversation_input(caller, id, Capability::Interrupt)
             .await?;
         self.toward_runtime(id, &input, ConversationInput::Cancel)
             .await
