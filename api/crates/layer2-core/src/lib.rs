@@ -13,7 +13,7 @@ pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
 pub mod capabilities;
-mod clock;
+pub mod clock;
 mod credentials;
 pub mod directory;
 pub mod environment;
@@ -46,7 +46,10 @@ mod test_support;
 #[path = "persistence_tests.rs"]
 mod persistence_tests;
 
-mod attach;
+pub mod attach;
+#[cfg(test)]
+#[path = "attach_tests.rs"]
+mod attach_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
@@ -73,8 +76,10 @@ pub use activity::{
 };
 pub use activity_detail::{ActivityDetail, DetailKey};
 pub use activity_service::ActivityService;
+pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{Capability as SessionCapability, SessionCapabilities};
+pub use clock::rfc3339_at;
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
     MAX_DIRECTORY_LIMIT,
