@@ -148,6 +148,8 @@ A read carries `reach`: the services this session's credential may call on its o
 
 This is the other half of a fact whose first half is `capabilities`. Capabilities are what a session can **do**; `reach` is what it can **touch**. A client showing one and not the other is describing half a session.
 
+The whole path — catalogue, profile, grant, credential, sandbox — is `docs/Services.md`.
+
 **It is the session's answer, not its profile's.** A session's reach is decided when it is provisioned and recorded on the session. A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps the scope it was provisioned with, so reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one. It survives a rotation for the same reason: a replaced runtime is the same session.
 
 `mandated` marks what this deployment requires in every session, so a client can draw those entries as fixed rather than guessing which cannot be removed.
