@@ -3,7 +3,9 @@
 //! Not implemented in this version. The module exists so that adding the kernel
 //! is a matter of filling this in, never of editing the trait it implements.
 
-use crate::{AdapterError, KernelAdapter, RuntimeHandle, RuntimeSpec, TerminalChannel};
+use crate::{
+    AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeSpec, TerminalChannel,
+};
 
 /// Placeholder adapter. Every operation reports the kernel as unavailable.
 pub struct ClaudeCodeAdapter;
@@ -12,6 +14,14 @@ pub struct ClaudeCodeAdapter;
 impl KernelAdapter for ClaudeCodeAdapter {
     fn kernel_name(&self) -> &'static str {
         "claude_code"
+    }
+
+    fn capabilities(&self) -> KernelCapabilities {
+        // Nothing is implemented, so nothing is advertised. A stub claiming an
+        // ability would have that claim discovered at the moment of use rather
+        // than at the moment of asking, which is the failure capabilities exist
+        // to prevent.
+        KernelCapabilities::default()
     }
 
     async fn provision(&self, _spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
@@ -54,5 +64,18 @@ mod tests {
         let handle = RuntimeHandle("sesn_1".into());
         assert!(a.attach_terminal(&handle).await.is_err());
         assert!(a.terminate(&handle).await.is_err());
+    }
+
+    #[test]
+    fn a_stub_advertises_nothing_it_cannot_do() {
+        // The "unavailable" answers above are only honest if nothing is
+        // claimed in advance; otherwise a session gets placed here and finds
+        // out afterwards.
+        let c = ClaudeCodeAdapter.capabilities();
+        assert!(!c.conversation);
+        assert!(!c.terminal);
+        assert!(!c.snapshot);
+        assert!(!c.steer);
+        assert!(!c.usage);
     }
 }

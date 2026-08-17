@@ -264,6 +264,18 @@ pub struct Session {
     /// rather than puzzled over.
     #[serde(default)]
     pub rotated_at: Option<String>,
+    /// What this session was granted when it was created.
+    ///
+    /// Held with the session for the same reason its options are: it decides
+    /// what the session can be asked to do, and recomputing it later against a
+    /// runtime whose abilities have since changed would silently make a live
+    /// session into a different one.
+    ///
+    /// Empty on sessions recorded before this existed. That is the safe
+    /// direction — such a session claims nothing until it is next placed, at
+    /// which point its set is settled against the runtime it actually gets.
+    #[serde(default)]
+    pub capabilities: crate::capabilities::SessionCapabilities,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
@@ -334,6 +346,7 @@ mod tests {
             runtime_version: None,
             rotations: 0,
             rotated_at: None,
+            capabilities: Default::default(),
             created_at: "2026-01-01T00:00:00Z".into(),
         };
         assert!(session.is_owned_by(&owner));

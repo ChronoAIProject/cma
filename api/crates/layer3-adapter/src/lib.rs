@@ -184,6 +184,39 @@ pub struct TerminalChannel {
     pub input: mpsc::Sender<TerminalInput>,
 }
 
+/// What a kernel can do, stated once rather than discovered by trying.
+///
+/// A capability found out by attempting it is a failure nobody can attribute:
+/// the caller sees an error and cannot tell "this kernel never could" from
+/// "this went wrong just now", and neither can the person they escalate to.
+/// So each kernel declares its abilities up front, the core checks a session's
+/// requested shape against them before placing it, and anything missing is
+/// refused by name at creation — never degraded quietly into a session that
+/// looks fine and cannot do what it was asked for.
+///
+/// Static on purpose. These describe the kernel, not the moment: a kernel that
+/// can stream a conversation can always stream one, and a conversation that
+/// fails right now is a failure, which is a different thing and reported as
+/// one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KernelCapabilities {
+    /// Emits structured conversation events — messages, tool calls, turns —
+    /// rather than only bytes for a screen.
+    pub conversation: bool,
+    /// Renders a human-facing terminal.
+    pub terminal: bool,
+    /// Can capture its conversation so a session resumes it elsewhere.
+    ///
+    /// What makes a session survivable when its runtime is replaced. Read
+    /// statically as well as attempted, so rotation can decline to move a
+    /// session it already knows cannot be moved.
+    pub snapshot: bool,
+    /// Accepts input while a turn is in flight, without cancelling it first.
+    pub steer: bool,
+    /// Reports token usage as it accrues.
+    pub usage: bool,
+}
+
 /// Errors an adapter may surface.
 #[derive(Debug, thiserror::Error)]
 pub enum AdapterError {
@@ -209,14 +242,31 @@ pub trait KernelAdapter: Send + Sync {
     /// Human-readable kernel name, for diagnostics only.
     fn kernel_name(&self) -> &'static str;
 
+    /// What this kernel can do, whatever it happens to be doing now.
+    ///
+    /// Required rather than defaulted: a kernel that forgot to answer would
+    /// otherwise advertise nothing and every session on it would be refused,
+    /// or advertise everything and every refusal would arrive too late.
+    /// Making it a decision the author must state is the point.
+    fn capabilities(&self) -> KernelCapabilities;
+
     /// Bring up a runtime for a session.
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError>;
 
     /// Open a bidirectional attachment to the runtime's terminal.
+    ///
+    /// Defaults to unsupported, for the same reason `snapshot` and
+    /// `list_runtimes` do: a kernel that renders no terminal is a kernel, not
+    /// a broken one, and requiring every implementation to write a refusal by
+    /// hand is how a stub ends up returning an empty screen instead.
     async fn attach_terminal(
         &self,
-        handle: &RuntimeHandle,
-    ) -> Result<TerminalChannel, AdapterError>;
+        _handle: &RuntimeHandle,
+    ) -> Result<TerminalChannel, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this kernel does not render a terminal".to_string(),
+        ))
+    }
 
     /// Tear the runtime down.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;
