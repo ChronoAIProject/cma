@@ -22,6 +22,16 @@
 //! name. The core must outlive any particular protocol, which is why the name
 //! stops here.
 
+mod conversation;
+
+pub use conversation::{
+    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
+    ConversationUpdate, MessageId, PermissionDecision, PermissionOption, PermissionOptionId,
+    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
+    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind, TurnStopReason, TurnUsage, UsageUpdate,
+};
+
 pub mod claude_code;
 pub mod codex;
 pub mod sandbox;
@@ -192,76 +202,6 @@ pub enum TerminalInput {
     /// restarting it to pick up a new credential would discard the session's
     /// context, which is the thing a terminal exists to preserve.
     Credential(String),
-}
-
-/// The protocol's own types, re-exported rather than re-declared.
-///
-/// Re-declaring them would mean maintaining a copy of a published schema, and
-/// a copy is wrong from the first release that moves. `StopReason` is renamed
-/// on the way through: the core has a stop reason of its own about whole
-/// sessions, and these five are about a single turn.
-pub use agent_client_protocol_schema::v1::{
-    ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
-    RequestPermissionOutcome as PermissionOutcome, RequestPermissionRequest, SessionUpdate,
-    StopReason as TurnStopReason, ToolCall, ToolCallUpdate,
-};
-
-/// A decision the runtime is blocked on, and the handle to answer it with.
-#[derive(Debug, Clone)]
-pub struct PermissionRequest {
-    /// Correlates an answer with the request that is waiting for it.
-    ///
-    /// Minted by the adapter. The protocol carries this at the JSON-RPC layer
-    /// rather than in the payload, and the core needs something it can record
-    /// against an approval event, hand to whoever is being asked, and accept
-    /// back from them minutes later — possibly after a restart, and possibly
-    /// through a different interface than the one that showed it.
-    pub id: String,
-    /// What the runtime is asking to do, and the answers it will accept.
-    ///
-    /// The offered options come from the runtime rather than from here. A
-    /// fixed allow/deny pair invented at this layer would drop the choices a
-    /// kernel actually distinguishes — refusing one command and refusing the
-    /// whole turn are different answers, and only the kernel knows which of
-    /// them it is offering.
-    pub request: RequestPermissionRequest,
-}
-
-/// Something sent toward a runtime's conversation.
-#[derive(Debug, Clone)]
-pub enum ConversationInput {
-    /// Content that opens a prompt turn.
-    Prompt(Vec<ContentBlock>),
-    /// The answer to a permission request the runtime is blocked on.
-    PermissionAnswer {
-        /// The request being answered, as [`PermissionRequest::id`] named it.
-        id: String,
-        /// What the owner decided.
-        outcome: PermissionOutcome,
-    },
-    /// Abandon the turn in flight.
-    ///
-    /// The turn ends; the conversation does not. A runtime that treats this as
-    /// a reason to stop has lost the session, which is the distinction between
-    /// interrupting and terminating.
-    Cancel,
-}
-
-/// A bidirectional attachment to a runtime's conversation.
-///
-/// Three streams rather than one, because they are answered in different
-/// places and at different speeds. Updates are a firehose nothing has to
-/// reply to; a permission request blocks the runtime until somebody decides,
-/// which may be minutes; and input arrives whenever its owner types. Folding
-/// them together would make the slowest of the three set the pace for all.
-#[derive(Debug)]
-pub struct ConversationChannel {
-    /// Everything the runtime says about what it is doing.
-    pub updates: mpsc::Receiver<SessionUpdate>,
-    /// Decisions the runtime is waiting on before it can continue.
-    pub requests: mpsc::Receiver<PermissionRequest>,
-    /// Input destined for the runtime.
-    pub input: mpsc::Sender<ConversationInput>,
 }
 
 /// A bidirectional attachment to a runtime's terminal.
@@ -547,12 +487,12 @@ mod tests {
         // and accept back minutes later, possibly after a restart.
         let input = ConversationInput::PermissionAnswer {
             id: "req-1".into(),
-            outcome: PermissionOutcome::Cancelled,
+            decision: PermissionDecision::Abort,
         };
         match input {
-            ConversationInput::PermissionAnswer { id, outcome } => {
+            ConversationInput::PermissionAnswer { id, decision } => {
                 assert_eq!(id, "req-1");
-                assert!(matches!(outcome, PermissionOutcome::Cancelled));
+                assert_eq!(decision, PermissionDecision::Abort);
             }
             other => panic!("expected a permission answer, got {other:?}"),
         }

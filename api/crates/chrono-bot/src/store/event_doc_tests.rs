@@ -60,7 +60,27 @@ fn every_current_variant_survives_the_round_trip() {
         },
         EventKind::ApprovalRequested {
             request_id: "req-1".into(),
+            action: Some("run a command".into()),
+            detail: None,
         },
+        EventKind::MessageCommitted {
+            content: "hello".into(),
+        },
+        EventKind::ToolCallStarted {
+            call_id: "call-1".into(),
+            title: "read a file".into(),
+            kind: "read".into(),
+        },
+        EventKind::ToolCallUpdated {
+            call_id: "call-1".into(),
+            status: "completed".into(),
+        },
+        EventKind::UsageReported {
+            input_tokens: 1234,
+            output_tokens: 56,
+            context_used: 1290,
+        },
+        EventKind::ConversationGap { frames: 7 },
         EventKind::ApprovalResolved {
             request_id: "req-1".into(),
             allowed: false,
@@ -88,14 +108,14 @@ fn a_kind_from_a_newer_writer_is_carried_back_rather_than_refused() {
     let stored = from_document(doc! {
         "session_id": "s-1",
         "seq": 42_i64,
-        "kind": { "type": "message_committed", "content": "hello" },
+        "kind": { "type": "a_kind_a_newer_control_plane_invented", "content": "hello" },
     })
     .expect("an unfamiliar kind is not a failure");
 
     assert_eq!(stored.seq, 42);
     match stored.kind {
         StoredEventKind::Unknown { tag, payload } => {
-            assert_eq!(tag, "message_committed");
+            assert_eq!(tag, "a_kind_a_newer_control_plane_invented");
             assert_eq!(
                 payload["content"], "hello",
                 "the payload is kept so an operator can see what was skipped"
