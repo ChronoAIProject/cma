@@ -276,3 +276,78 @@ fn this_kernel_advertises_the_terminal_it_actually_drives() {
         "nothing structured crosses this boundary yet"
     );
 }
+
+#[tokio::test]
+async fn a_credential_reaches_a_runtime_over_the_link_it_already_has() {
+    // The frame is unchanged, which is the point: a pod started before this
+    // method existed still understands what arrives, so no live session has to
+    // be replaced to keep its credential fresh.
+    let a = adapter("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx-1".into());
+    let (tx, mut rx) = mpsc::channel(4);
+    a.links.lock().await.insert(handle.0.clone(), tx);
+
+    a.refresh_credential(&handle, "a-fresh-credential")
+        .await
+        .expect("a live link carries a credential");
+
+    match rx.recv().await.expect("the frame was sent") {
+        TerminalInput::Credential(value) => assert_eq!(value, "a-fresh-credential"),
+        other => panic!("expected a credential frame, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_credential_for_a_runtime_with_no_link_is_refused_rather_than_dropped() {
+    // Silence here would leave a session that looks alive and refuses every
+    // call the agent makes on its owner's behalf, with nothing said about why.
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .refresh_credential(&RuntimeHandle("never-attached".into()), "unused")
+        .await
+        .expect_err("there is nowhere for this to go");
+    assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn a_link_that_closed_is_forgotten_rather_than_retried_forever() {
+    let a = adapter("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx-1".into());
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    a.links.lock().await.insert(handle.0.clone(), tx);
+
+    assert!(a.refresh_credential(&handle, "unused").await.is_err());
+    assert!(
+        !a.links.lock().await.contains_key(&handle.0),
+        "a dead link kept in the map would fail every renewal the same way forever"
+    );
+}
+
+#[tokio::test]
+async fn tearing_a_runtime_down_forgets_its_link() {
+    // Otherwise this map grows with the remains of every session the process
+    // has ever served.
+    let a = adapter("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx-1".into());
+    let (tx, _rx) = mpsc::channel(1);
+    a.links.lock().await.insert(handle.0.clone(), tx);
+
+    // Against a dead provider the delete fails; the link is dropped first, on
+    // purpose, because the sandbox is going either way.
+    let _ = a.terminate(&handle).await;
+    assert!(!a.links.lock().await.contains_key(&handle.0));
+}
+
+#[tokio::test]
+async fn a_kernel_with_no_conversation_says_so_rather_than_failing_obscurely() {
+    // The default body from the trait. Terminal-mode codex holds no
+    // conversation, and a caller has to be able to tell that from a
+    // conversation that broke.
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .open_conversation(&RuntimeHandle("sbx-1".into()))
+        .await
+        .expect_err("this kernel has no conversation plane yet");
+    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+}
