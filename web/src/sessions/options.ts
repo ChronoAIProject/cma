@@ -34,22 +34,6 @@ export const DEFAULT_OPTIONS: AgentOptions = {
   credential: 'delegated',
 };
 
-/** The kernels on offer, and whether they can be chosen yet. */
-export interface KernelChoice {
-  readonly id: string;
-  readonly label: string;
-  /** Shown but unselectable, with a reason. */
-  readonly unavailable?: string;
-}
-
-export const KERNELS: readonly KernelChoice[] = [
-  { id: 'codex', label: 'Codex' },
-  // Listed so the shape of the product is visible — this is a service that
-  // runs kernels, not one that runs a kernel — and disabled because nothing
-  // behind it works yet. Offering it as selectable would be a lie.
-  { id: 'claude-code', label: 'Claude Code', unavailable: 'Not available yet' },
-];
-
 export const EFFORTS: readonly { id: ReasoningEffort; label: string; hint: string }[] = [
   { id: 'minimal', label: 'Minimal', hint: 'Fastest, for mechanical work' },
   { id: 'low', label: 'Low', hint: '' },

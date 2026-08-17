@@ -40,6 +40,20 @@ export type SessionPlane = 'terminal' | 'conversation';
 export type Kernel = 'codex' | 'claude-code';
 
 /**
+ * A runtime this deployment can start a session on, and what it can be.
+ *
+ * Read from `GET /api/v1/kernels` rather than listed here, because which
+ * runtimes exist and what each can serve are facts about a deployment. A list
+ * kept in the client is wrong the first time one changes, and being wrong here
+ * means offering somebody a session the control plane will refuse.
+ */
+export interface KernelOffer {
+  readonly id: string;
+  /** The planes this runtime can serve. Empty means it can serve none. */
+  readonly modes: readonly SessionPlane[];
+}
+
+/**
  * One service a session's credential may reach.
  *
  * Identifiers always; a name and a description only when the caller's own
