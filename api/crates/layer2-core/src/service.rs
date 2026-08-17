@@ -320,6 +320,20 @@ impl SessionService {
             .services_for(&caller.subject, spec.environment_profile.as_ref())
             .await;
 
+        // Refused here, by name, while somebody is still on the line to be
+        // told. A grant can be revoked between saving a profile and starting a
+        // session from it, so this is the truthful moment to check — and a
+        // session started against a service its owner has taken back would run
+        // perfectly and refuse every call the agent made on their behalf,
+        // which is the failure this refusal exists to replace.
+        self.environments
+            .refuse_ungranted(
+                caller,
+                spec.subject_credential.as_deref(),
+                &granted_services,
+            )
+            .await?;
+
         let geometry = spec.geometry.unwrap_or_default();
         let id = SessionId::generate();
         let session = Session {
