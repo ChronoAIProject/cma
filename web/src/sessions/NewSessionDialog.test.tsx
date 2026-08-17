@@ -2,108 +2,77 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { NewSessionDialog } from './NewSessionDialog';
-import { DEFAULT_OPTIONS } from './options';
+import type { EnvironmentProfile } from '../environment/types';
+import { DEFAULT_AGENT } from '../environment/types';
 
 /**
- * The settings decide what an agent may do unattended, so the cases that
- * matter are the defaults and the moment someone selects the permissive mode.
+ * The dialog now makes one choice: which profile the session is started from.
+ *
+ * What the agent may do unattended is decided in the profile, so the cases
+ * that matter here are that a session can always be started without choosing
+ * one, and that choosing one is carried through exactly.
  */
 
-function renderDialog(onStart = vi.fn(), onCancel = vi.fn()) {
-  render(<NewSessionDialog open onCancel={onCancel} onStart={onStart} />);
+function profile(id: string, name: string): EnvironmentProfile {
+  return {
+    id,
+    name,
+    agent: DEFAULT_AGENT,
+    nyxid: { services: [] },
+    variables: [],
+    packages: [],
+    mandatory: { packages: [], skills: [] },
+    createdAt: '2026-08-14T00:00:00Z',
+    updatedAt: '2026-08-14T00:00:00Z',
+  };
+}
+
+function renderDialog(profiles: readonly EnvironmentProfile[] = [], onStart = vi.fn()) {
+  const onCancel = vi.fn();
+  render(<NewSessionDialog open onCancel={onCancel} onStart={onStart} profiles={profiles} />);
   return { onStart, onCancel };
 }
 
 describe('the new session dialog', () => {
-  it('starts with the cautious defaults', async () => {
-    // Pressing Start without touching anything must never produce a session
-    // that acts without asking.
+  it('starts from this deployment’s defaults when no profile is chosen', async () => {
+    // Naming nothing is a legitimate choice and must not require a profile to
+    // exist first: the control plane still has an answer for how to start.
     const user = userEvent.setup();
     const { onStart } = renderDialog();
 
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
-    // The third argument is the environment bundle; none chosen means the
-    // session carries what the platform mandates and nothing more.
-    expect(onStart).toHaveBeenCalledWith('codex', DEFAULT_OPTIONS, null);
-    expect(DEFAULT_OPTIONS.permission).toBe('guarded');
+    expect(onStart).toHaveBeenCalledWith(null);
   });
 
-  it('offers the second kernel but does not let it be chosen', async () => {
-    // Listed so the product's shape is visible; disabled because nothing
-    // behind it works yet, and offering it would be a lie.
-    renderDialog();
-    const option = screen.getByRole('option', { name: /claude code/i }) as HTMLOptionElement;
-    expect(option.disabled).toBe(true);
-  });
-
-  it('warns when full access is selected', async () => {
-    // Stated plainly rather than hidden behind another click: what someone
-    // needs here is to know what it means.
+  it('carries the chosen profile through', async () => {
     const user = userEvent.setup();
-    renderDialog();
+    const { onStart } = renderDialog([profile('envp_1', 'Talos Controller')]);
 
-    await user.selectOptions(screen.getByLabelText(/permissions/i), 'unrestricted');
-
-    expect(screen.getByRole('alert')).toHaveTextContent(/without asking/i);
-  });
-
-  it('does not warn for the guarded modes', async () => {
-    const user = userEvent.setup();
-    renderDialog();
-
-    await user.selectOptions(screen.getByLabelText(/permissions/i), 'autonomous');
-
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
-  it('carries the chosen settings through', async () => {
-    const user = userEvent.setup();
-    const { onStart } = renderDialog();
-
-    await user.selectOptions(screen.getByLabelText(/thinking effort/i), 'xhigh');
-    await user.selectOptions(screen.getByLabelText(/permissions/i), 'unrestricted');
-    await user.selectOptions(screen.getByLabelText(/model access/i), 'own');
-    await user.type(screen.getByPlaceholderText(/default for this deployment/i), 'a-model');
-    await user.click(screen.getByRole('button', { name: /start session/i }));
-
-    expect(onStart).toHaveBeenCalledWith(
-      'codex',
-      {
-        model: 'a-model',
-        reasoning_effort: 'xhigh',
-        permission: 'unrestricted',
-        credential: 'own',
-      },
-      null,
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /environment profile/i }),
+      'envp_1',
     );
-  });
-
-  it('leaves the model unset when the field is empty', async () => {
-    // An empty string would ask the upstream for a model with no name; absent
-    // means "the deployment's default", which is a different thing.
-    const user = userEvent.setup();
-    const { onStart } = renderDialog();
-
-    await user.type(screen.getByPlaceholderText(/default for this deployment/i), '   ');
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
-    expect(onStart.mock.calls[0]?.[1]).not.toHaveProperty('model', '   ');
-    expect(onStart.mock.calls[0]?.[1].model).toBeUndefined();
+    expect(onStart).toHaveBeenCalledWith('envp_1');
   });
 
-  it('closes on Escape without starting anything', async () => {
-    const user = userEvent.setup();
-    const { onStart, onCancel } = renderDialog();
+  it('offers every profile the person owns', () => {
+    renderDialog([profile('envp_1', 'Talos Controller'), profile('envp_2', 'Reviewer')]);
 
-    await user.keyboard('{Escape}');
-
-    expect(onCancel).toHaveBeenCalled();
-    expect(onStart).not.toHaveBeenCalled();
+    expect(screen.getByRole('option', { name: 'Talos Controller' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Reviewer' })).toBeInTheDocument();
   });
 
-  it('renders nothing when closed', () => {
-    render(<NewSessionDialog open={false} onCancel={vi.fn()} onStart={vi.fn()} />);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  it('no longer asks about the agent, which the profile decides', () => {
+    // The same setting editable in two places is a setting that can disagree
+    // with itself. These moved into the profile and must not reappear here.
+    renderDialog([profile('envp_1', 'Talos Controller')]);
+
+    expect(screen.queryByRole('combobox', { name: /^agent$/i })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: /thinking effort/i })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: /permissions/i })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: /model access/i })).toBeNull();
   });
 });

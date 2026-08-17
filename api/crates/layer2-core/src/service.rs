@@ -18,6 +18,7 @@ use crate::environment_service::EnvironmentProfileService;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
+use crate::options::AgentOptions;
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
@@ -249,14 +250,6 @@ impl SessionService {
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
         caller.authorization.require(Capability::CreateSession)?;
-        // Resolved before the record is written: an unknown kernel is the
-        // caller's mistake and should be refused outright rather than accepted
-        // and then failed asynchronously.
-        let adapter =
-            self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
-                CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
-            })?;
-
         // Checked before anything is recorded: a selection this caller may not
         // use, or a store that cannot be read, must fail the request rather
         // than leave a session provisioning towards an environment it will
@@ -264,6 +257,31 @@ impl SessionService {
         self.environments
             .resolve(caller, spec.environment_profile.as_ref())
             .await?;
+
+        // The profile says how the agent behaves, so the request does not.
+        // Taking it from here rather than from the caller is what makes a
+        // session reproducible from the bundle it names: two sessions started
+        // on one profile are the same session twice, whoever started them.
+        let agent = self
+            .environments
+            .agent_for(caller, spec.environment_profile.as_ref())
+            .await?;
+        let mut spec = spec;
+        spec.kernel = agent.kernel.clone();
+        spec.options = AgentOptions {
+            model: agent.model.clone(),
+            reasoning_effort: agent.reasoning_effort,
+            permission: agent.permission,
+            credential: agent.credential,
+        };
+
+        // Resolved before the record is written: a profile naming a kernel this
+        // deployment cannot start is refused outright rather than accepted and
+        // then failed asynchronously.
+        let adapter =
+            self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
+                CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
+            })?;
 
         let geometry = spec.geometry.unwrap_or_default();
         let id = SessionId::generate();

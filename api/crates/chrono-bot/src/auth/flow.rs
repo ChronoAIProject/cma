@@ -297,21 +297,97 @@ pub(crate) async fn resolve_subject(
         .map(|s| SubjectId(s.to_string()))
         .ok_or_else(|| "userinfo carried no subject claim".to_string())?;
 
-    // Permissions arrive flattened from the subject's roles when the roles
-    // scope was granted. Absent means no capabilities here, which denies.
-    let permissions: Vec<String> = body
-        .get("permissions")
+    // Asked of introspection first, because userinfo only carries these when
+    // the token was granted a scope asking for them. Tokens this service did
+    // not mint are the ordinary case on the bearer path and carry no such
+    // scope, so reading userinfo alone leaves every one of them with nothing
+    // and denies a caller the provider considers fully entitled.
+    let permissions = match introspect_permissions(auth, meta, access_token).await {
+        Ok(Some(found)) => found,
+        Ok(None) => permissions_claim(&body),
+        Err(e) => {
+            // Not fatal on its own: the token already identified a subject, so
+            // the caller is who they say they are and only their grants are
+            // unknown. Falling back to userinfo keeps a provider that offers no
+            // introspection working exactly as before.
+            tracing::warn!(error = %e, "could not ask the provider about this token's grants");
+            permissions_claim(&body)
+        }
+    };
+    // Captured at sign-in because this is the only moment the provider's own
+    // account details are in hand; nothing later has a token to ask with.
+    let profile = crate::auth::profile::Profile::from_userinfo(&body);
+    Ok((subject, permissions, profile))
+}
+
+/// The permissions a userinfo response carries, if it carries any.
+fn permissions_claim(body: &serde_json::Value) -> Vec<String> {
+    body.get("permissions")
         .and_then(|v| v.as_array())
         .map(|a| {
             a.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect()
         })
-        .unwrap_or_default();
-    // Captured at sign-in because this is the only moment the provider's own
-    // account details are in hand; nothing later has a token to ask with.
-    let profile = crate::auth::profile::Profile::from_userinfo(&body);
-    Ok((subject, permissions, profile))
+        .unwrap_or_default()
+}
+
+/// What the provider says this token may do, asked as this service.
+///
+/// `None` when the provider advertises no introspection endpoint, which is the
+/// signal to fall back to the userinfo claim rather than to deny.
+///
+/// The credentials travel in the form body rather than as basic auth: both are
+/// advertised, and this is the one the provider actually accepts here. An
+/// inactive token yields no permissions rather than an error — it is an answer,
+/// not a failure, and the subject it was resolved for is refused by the same
+/// deny-by-default path as any caller holding nothing.
+async fn introspect_permissions(
+    auth: &AuthState,
+    meta: &ProviderMetadata,
+    access_token: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(endpoint) = meta.introspection_endpoint.as_ref() else {
+        return Ok(None);
+    };
+    let AuthMode::Provider {
+        client_id,
+        client_secret,
+        ..
+    } = &auth.mode
+    else {
+        return Ok(None);
+    };
+
+    let form = [
+        ("token", access_token),
+        ("token_type_hint", "access_token"),
+        ("client_id", client_id.as_str()),
+        ("client_secret", client_secret.as_str()),
+    ];
+    let resp = auth
+        .http
+        .post(endpoint)
+        .form(&form)
+        // The form carries the secret, so nothing here logs it.
+        .send()
+        .await
+        .map_err(|e| format!("introspection request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("introspection returned {}", resp.status()));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("introspection body not usable: {e}"))?;
+    if !body
+        .get("active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(Some(Vec::new()));
+    }
+    Ok(Some(permissions_claim(&body)))
 }
 
 async fn session(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
@@ -472,5 +548,52 @@ mod tests {
     fn urlencoding_escapes_what_a_redirect_uri_needs() {
         assert_eq!(urlencode("http://a/b?c=d"), "http%3A%2F%2Fa%2Fb%3Fc%3Dd");
         assert_eq!(urlencode("plain-Value_1.0~"), "plain-Value_1.0~");
+    }
+
+    #[test]
+    fn permissions_are_read_from_whichever_document_carries_them() {
+        // The same reader serves userinfo and introspection, because the claim
+        // is the claim wherever it appears.
+        let body = serde_json::json!({ "permissions": ["chrono-bot:session:use", "*"] });
+        assert_eq!(
+            permissions_claim(&body),
+            vec!["chrono-bot:session:use".to_string(), "*".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_document_without_permissions_yields_none_rather_than_failing() {
+        // Exactly the shape this provider's userinfo returns for a token that
+        // was never granted a scope asking for roles. Reading it as empty is
+        // what made every such caller unauthorized.
+        let body = serde_json::json!({ "sub": "s", "email": "a@b.c", "name": "A" });
+        assert!(permissions_claim(&body).is_empty());
+        // A non-array, and entries that are not strings, are equally not
+        // permissions and must not panic or half-read.
+        assert!(permissions_claim(&serde_json::json!({ "permissions": "all" })).is_empty());
+        assert_eq!(
+            permissions_claim(&serde_json::json!({ "permissions": [1, "chrono-bot:session:use"] })),
+            vec!["chrono-bot:session:use".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_provider_offering_no_introspection_falls_back_rather_than_denying() {
+        // None is the signal to read userinfo instead. Returning an empty list
+        // here would deny every caller against a provider that simply does not
+        // offer the endpoint.
+        let meta = ProviderMetadata {
+            authorization_endpoint: "http://provider.invalid/authorize".into(),
+            token_endpoint: "http://provider.invalid/token".into(),
+            userinfo_endpoint: Some("http://provider.invalid/userinfo".into()),
+            introspection_endpoint: None,
+        };
+        let found = introspect_permissions(&provider_auth(), &meta, "t")
+            .await
+            .expect("no endpoint is not an error");
+        assert!(
+            found.is_none(),
+            "absent endpoint must not read as no grants"
+        );
     }
 }

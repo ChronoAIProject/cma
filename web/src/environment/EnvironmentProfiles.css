@@ -162,3 +162,22 @@
     transition: background 150ms ease;
   }
 }
+
+/*
+ * The heading that splits a profile into what the agent is and what surrounds
+ * it. Quiet on purpose: it separates two groups of fields, and a heading that
+ * competed with the field labels would read as a third kind of control.
+ */
+.editor__section {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-3);
+}
+
+.editor__section:first-of-type {
+  border-top: none;
+}

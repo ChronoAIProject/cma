@@ -1,11 +1,29 @@
 import { useId, useState } from 'react';
+import { ServicePicker } from './ServicePicker';
 import { SkillPicker } from './SkillPicker';
 import { Chip } from '../ui/Chip';
-import type { CatalogSkill, MandatoryEntries, ProfileDraft, ProfileVariable } from './types';
+import { CREDENTIALS, EFFORTS, KERNELS, PERMISSIONS } from '../sessions/options';
+import type {
+  CatalogSkill,
+  MandatoryEntries,
+  PlatformService,
+  ProfileDraft,
+  ProfileVariable,
+} from './types';
 import { isValidKey } from './types';
 
 /**
- * The profile form: a name, variables, software, and skills.
+ * The profile form, in two halves.
+ *
+ * **Agent configuration** is what the agent is and how it behaves: which
+ * agent, which model, how hard it thinks, how often it stops to ask, whose
+ * model access it spends, and what it knows how to do. **Environment
+ * configuration** is the box around it: software, and variables.
+ *
+ * Split because they answer different questions, and because a profile is now
+ * the whole description of a session — these settings were once chosen again
+ * on every start, which left two sessions comparable only by reading both
+ * forms.
  *
  * Controlled by its parent so the dialog's footer owns the save action — a
  * form whose submit button lives outside it is the price of the dialog pattern
@@ -17,6 +35,9 @@ interface ProfileEditorProps {
   readonly onChange: (draft: ProfileDraft) => void;
   readonly skills: readonly CatalogSkill[];
   readonly skillsError?: string | undefined;
+  readonly services: readonly PlatformService[];
+  readonly mandatoryServices: readonly string[];
+  readonly servicesError?: string | undefined;
   readonly mandatory: MandatoryEntries;
   /** What went wrong with the last attempt to save, if anything. */
   readonly error?: string | undefined;
@@ -27,11 +48,19 @@ export function ProfileEditor({
   onChange,
   skills,
   skillsError,
+  services,
+  mandatoryServices,
+  servicesError,
   mandatory,
   error,
 }: ProfileEditorProps) {
   const nameId = useId();
   const packagesId = useId();
+  const kernelId = useId();
+  const modelId = useId();
+  const effortId = useId();
+  const permissionId = useId();
+  const credentialId = useId();
   /*
    * Which values are currently shown. A variable's value is where a user puts
    * a token, so it is masked until they deliberately reveal it — per row, and
@@ -77,6 +106,195 @@ export function ProfileEditor({
             onChange({ ...draft, name: event.target.value });
           }}
         />
+      </div>
+
+      <h3 className="editor__section">Agent configuration</h3>
+
+      <div className="field">
+        <label className="field__label" htmlFor={kernelId}>
+          Agent
+        </label>
+        <select
+          id={kernelId}
+          className="field__input"
+          value={draft.agent.kernel}
+          onChange={(event) => {
+            onChange({ ...draft, agent: { ...draft.agent, kernel: event.target.value } });
+          }}
+        >
+          {KERNELS.map((k) => (
+            <option key={k.id} value={k.id} disabled={k.unavailable !== undefined}>
+              {k.unavailable === undefined ? k.label : `${k.label} — ${k.unavailable}`}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="field">
+        <label className="field__label" htmlFor={modelId}>
+          Model
+        </label>
+        <input
+          id={modelId}
+          className="field__input"
+          aria-describedby={`${modelId}-hint`}
+          value={draft.agent.model ?? ''}
+          onChange={(event) => {
+            const next = event.target.value.trim();
+            onChange({
+              ...draft,
+              agent: { ...draft.agent, model: next.length === 0 ? undefined : next },
+            });
+          }}
+        />
+        <p className="field__hint" id={`${modelId}-hint`}>
+          Leave empty to use whatever this deployment answers with.
+        </p>
+      </div>
+
+      <div className="field">
+        <label className="field__label" htmlFor={effortId}>
+          Thinking effort
+        </label>
+        <select
+          id={effortId}
+          className="field__input"
+          value={draft.agent.reasoningEffort}
+          onChange={(event) => {
+            onChange({
+              ...draft,
+              agent: {
+                ...draft.agent,
+                reasoningEffort: event.target.value as typeof draft.agent.reasoningEffort,
+              },
+            });
+          }}
+        >
+          {EFFORTS.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.hint === '' ? e.label : `${e.label} — ${e.hint}`}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="field">
+        <label className="field__label" htmlFor={permissionId}>
+          Permissions
+        </label>
+        <select
+          id={permissionId}
+          className="field__input"
+          value={draft.agent.permission}
+          onChange={(event) => {
+            onChange({
+              ...draft,
+              agent: {
+                ...draft.agent,
+                permission: event.target.value as typeof draft.agent.permission,
+              },
+            });
+          }}
+        >
+          {PERMISSIONS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="field">
+        <label className="field__label" htmlFor={credentialId}>
+          Model access
+        </label>
+        <select
+          id={credentialId}
+          className="field__input"
+          value={draft.agent.credential}
+          onChange={(event) => {
+            onChange({
+              ...draft,
+              agent: {
+                ...draft.agent,
+                credential: event.target.value as typeof draft.agent.credential,
+              },
+            });
+          }}
+        >
+          {CREDENTIALS.map((c) => (
+            <option key={c.id} value={c.id}>
+              {`${c.label} — ${c.hint}`}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="field">
+        <span className="field__label">Skills</span>
+        <SkillPicker
+          skills={skills}
+          selected={draft.agent.skills}
+          mandatory={mandatory.skills}
+          onChange={(selected) => {
+            onChange({ ...draft, agent: { ...draft.agent, skills: [...selected] } });
+          }}
+          error={skillsError}
+        />
+      </div>
+
+      <h3 className="editor__section">NyxID</h3>
+
+      <div className="field">
+        <span className="field__label">Services this session may reach</span>
+        <p className="field__hint">
+          A session is given its own credential rather than yours, and it reaches only what is
+          ticked here. Everything else on your account stays out of its reach.
+        </p>
+        <ServicePicker
+          services={services}
+          selected={draft.nyxid.services}
+          mandatory={mandatoryServices}
+          onChange={(selected) => {
+            onChange({ ...draft, nyxid: { services: [...selected] } });
+          }}
+          error={servicesError}
+        />
+      </div>
+
+      <h3 className="editor__section">Environment configuration</h3>
+      <div className="field">
+        <label className="field__label" htmlFor={packagesId}>
+          Software
+        </label>
+        <input
+          id={packagesId}
+          className="field__input"
+          aria-describedby={`${packagesId}-hint`}
+          value={chosen
+            .map((p) => (p.version === undefined ? p.name : `${p.name}@${p.version}`))
+            .join(', ')}
+          onChange={(event) => {
+            // The mandated entries the field does not show are carried through
+            // rather than dropped and re-added by the server, so a round trip
+            // through the editor is not a rewrite of what the profile holds.
+            onChange({ ...draft, packages: [...implied, ...parsePackages(event.target.value)] });
+          }}
+        />
+        <p className="field__hint" id={`${packagesId}-hint`}>
+          Comma separated, optionally pinned as <code>name@version</code>.
+          {mandatory.packages.length === 0 ? null : (
+            <>
+              {' '}
+              Every session also carries{' '}
+              {mandatory.packages.map((name) => (
+                <Chip inline key={name}>
+                  {name}
+                </Chip>
+              ))}
+            </>
+          )}
+        </p>
       </div>
 
       <div className="field">
@@ -152,53 +370,6 @@ export function ProfileEditor({
         >
           Add variable
         </button>
-      </div>
-
-      <div className="field">
-        <label className="field__label" htmlFor={packagesId}>
-          Software
-        </label>
-        <input
-          id={packagesId}
-          className="field__input"
-          aria-describedby={`${packagesId}-hint`}
-          value={chosen
-            .map((p) => (p.version === undefined ? p.name : `${p.name}@${p.version}`))
-            .join(', ')}
-          onChange={(event) => {
-            // The mandated entries the field does not show are carried through
-            // rather than dropped and re-added by the server, so a round trip
-            // through the editor is not a rewrite of what the profile holds.
-            onChange({ ...draft, packages: [...implied, ...parsePackages(event.target.value)] });
-          }}
-        />
-        <p className="field__hint" id={`${packagesId}-hint`}>
-          Comma separated, optionally pinned as <code>name@version</code>.
-          {mandatory.packages.length === 0 ? null : (
-            <>
-              {' '}
-              Every session also carries{' '}
-              {mandatory.packages.map((name) => (
-                <Chip inline key={name}>
-                  {name}
-                </Chip>
-              ))}
-            </>
-          )}
-        </p>
-      </div>
-
-      <div className="field">
-        <span className="field__label">Skills</span>
-        <SkillPicker
-          skills={skills}
-          selected={draft.skills}
-          mandatory={mandatory.skills}
-          onChange={(selected) => {
-            onChange({ ...draft, skills: [...selected] });
-          }}
-          error={skillsError}
-        />
       </div>
     </>
   );

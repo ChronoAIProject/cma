@@ -350,7 +350,35 @@ pub(crate) fn service_with_environments(
 /// Every session resolves an environment, so one always has to be present;
 /// this is the one that adds nothing to what the deployment mandates.
 pub(crate) fn no_environments() -> Arc<EnvironmentProfileService> {
-    EnvironmentProfileService::new(Arc::new(FakeProfileStore::default()), baseline(), None)
+    EnvironmentProfileService::new(
+        Arc::new(FakeProfileStore::default()),
+        baseline(),
+        None,
+        None,
+        crate::environment::AgentConfiguration {
+            // The kernel the fake adapter is registered under. The default is
+            // the one this deployment ships, and a fixture that left it there
+            // would be asking for a runtime the test never registered.
+            kernel: KernelId::new("fake"),
+            ..Default::default()
+        },
+    )
+}
+
+/// A profile service whose deployment default pins these agent settings.
+///
+/// For tests about what a session is started with, now that the answer comes
+/// from the deployment or a profile rather than from the request.
+pub(crate) fn environments_defaulting_to(
+    agent: crate::environment::AgentConfiguration,
+) -> Arc<EnvironmentProfileService> {
+    EnvironmentProfileService::new(
+        Arc::new(FakeProfileStore::default()),
+        baseline(),
+        None,
+        None,
+        agent,
+    )
 }
 
 pub(crate) fn user(subject: &str) -> Caller {
