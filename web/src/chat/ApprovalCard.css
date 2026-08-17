@@ -1,0 +1,52 @@
+/*
+ * The approval card — docs/Web_Style.md §18.3.
+ *
+ * A card among peers, taking the card impression, sitting in the message
+ * stream where the turn stopped. Not a plate and not a modal: a plate floats
+ * over the page, and a session can wait on this while its owner reads
+ * something else.
+ */
+
+.approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--press-card-rest);
+}
+
+/*
+ * The kernel's own wording, at the size the rest of the conversation is read
+ * at. It is the sentence the decision turns on.
+ */
+.approval__question {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-md);
+  line-height: var(--leading-base);
+  text-wrap: pretty;
+}
+
+.approval__reason {
+  margin: 0;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+/*
+ * The answers the kernel offered. A row rather than a stack, because they are
+ * alternatives rather than a sequence, and the affirmative one takes the
+ * surface's single accent key (§7).
+ */
+.approval__answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
