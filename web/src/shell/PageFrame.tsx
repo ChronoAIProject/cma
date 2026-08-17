@@ -25,15 +25,29 @@ interface PageFrameProps {
   readonly showing: string;
   /** What this page is not showing, when that is a fact worth stating. */
   readonly note?: string;
+  /**
+   * Whether the page opens with a column at its leading edge.
+   *
+   * The band divides to match, so its first vertical rule lands on that
+   * column's and the page reads as one surface (§6).
+   */
+  readonly leadingColumn?: boolean;
   readonly children: ReactNode;
 }
 
-export function PageFrame({ views, account, showing, note, children }: PageFrameProps) {
+export function PageFrame({
+  views,
+  account,
+  showing,
+  note,
+  leadingColumn,
+  children,
+}: PageFrameProps) {
   return (
     <div className="pageframe">
       <TopBar views={views}>{account}</TopBar>
       <div className="pageframe__body">{children}</div>
-      <StatusBand showing={showing} note={note} />
+      <StatusBand showing={showing} note={note} leadingColumn={leadingColumn} />
     </div>
   );
 }
