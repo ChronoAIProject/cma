@@ -67,7 +67,6 @@ export function SessionCanvas({ nodes, focusedId, focusHistory, onFocus }: Sessi
     [focusHistory, focusedId],
   );
   const live = useMemo(() => selectLiveWindow(connectable, recency), [connectable, recency]);
-  const dropped = connectable.length - live.size;
 
   const registerHandle = useCallback((id: string, element: HTMLButtonElement | null) => {
     if (element === null) {
@@ -179,19 +178,13 @@ export function SessionCanvas({ nodes, focusedId, focusHistory, onFocus }: Sessi
       </div>
 
       {/*
-       * What the budget cost, said out loud, and outside the scrolling
-       * viewport so it cannot be panned away from. Truncating silently would
-       * leave someone looking at a frame with no terminal in it and no account
-       * of why, which reads as sessions having broken rather than as a limit
-       * being enforced.
+       * What the budget cost is said in the status band, not here (§13). It
+       * belongs outside the scrolling viewport so it cannot be panned away
+       * from, and the band is the one part of the page that is never panned.
+       * Truncating silently would leave somebody looking at a frame with no
+       * terminal in it and no account of why, which reads as sessions having
+       * broken rather than as a limit being enforced.
        */}
-      {dropped > 0 ? (
-        <p className="canvas__budget" role="status">
-          {dropped} of {connectable.length} sessions are not attached, to bound what this page
-          costs. Select one to attach it.
-        </p>
-      ) : null}
-
       {/* Announces the move, since the visual focus treatment is not available
           to a screen reader and the node label alone does not say "focused". */}
       <p className="sr-only" aria-live="polite">
