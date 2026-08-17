@@ -12,7 +12,7 @@ import './Chip.css';
  */
 
 /** Which semantic token the chip takes. */
-export type Tone = 'ok' | 'warn' | 'danger' | 'neutral';
+export type Tone = 'live' | 'wait' | 'fail' | 'ended';
 
 interface ChipProps {
   /** The state word. Always drawn — colour never carries meaning alone. */
@@ -26,6 +26,6 @@ interface ChipProps {
   readonly inline?: boolean;
 }
 
-export function Chip({ children, tone = 'neutral', inline = false }: ChipProps) {
+export function Chip({ children, tone = 'ended', inline = false }: ChipProps) {
   return <span className={`chip chip--${tone}${inline ? ' chip--inline' : ''}`}>{children}</span>;
 }

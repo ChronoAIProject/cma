@@ -78,7 +78,7 @@
  */
 .node[data-focused='true'] {
   border-color: var(--accent);
-  box-shadow: var(--glow-rest);
+  box-shadow: var(--press-card-rest);
 }
 
 .node__head {
@@ -118,7 +118,7 @@
 .node__readonly {
   overflow: hidden;
   font-size: var(--text-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
   text-overflow: ellipsis;
   text-transform: uppercase;
   color: var(--ink-3);
@@ -160,7 +160,7 @@
 @media (prefers-reduced-motion: no-preference) {
   .node {
     transition:
-      border-color 150ms ease,
-      box-shadow 150ms ease;
+      border-color var(--motion-colour) ease,
+      box-shadow var(--motion-press) ease;
   }
 }

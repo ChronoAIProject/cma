@@ -1,7 +1,10 @@
 /*
- * Dialog — docs/Web_Style.md section 6. Every value here is a token from that
- * document; the shared button classes live beside it because a dialog's footer
- * is where they are always used.
+ * The dialog shell — docs/Web_Style.md §3 and §7.
+ *
+ * A plate: it floats over the page, takes the card impression and never moves.
+ * The button classes it used to carry moved to styles/components.css; a dialog
+ * footer is where they are most often used but not where they belong, and two
+ * stylesheets declaring `.button` is how one of them drifts.
  */
 
 .dialog__scrim {
@@ -23,8 +26,8 @@
   max-height: 80dvh;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
-  box-shadow: var(--glow-rest);
+  border-radius: var(--radius);
+  box-shadow: var(--press-card-rest);
 }
 
 .dialog__header {
@@ -38,23 +41,23 @@
 }
 
 .dialog__title {
-  font-size: var(--text-lg);
+  font-size: var(--text-xl);
   line-height: var(--leading-lg);
 }
 
 .dialog__close {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: var(--hit);
+  height: var(--hit);
   color: var(--ink-2);
   border: 1px solid transparent;
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .dialog__close:hover {
   color: var(--ink);
-  background: var(--surface-2);
+  background: var(--raised);
 }
 
 .dialog__body {
@@ -76,56 +79,10 @@
   border-top: 1px solid var(--rule);
 }
 
-/* Buttons — Web_Style.md section 6. One accent button per view; the rest quiet. */
-
-.button {
-  min-height: 32px;
-  padding: var(--space-2) var(--space-4);
-  color: var(--ink-2);
-  font-size: var(--text-base);
-  background: none;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
-}
-
-.button:hover {
-  color: var(--ink);
-  background: var(--surface-2);
-}
-
-.button:disabled {
-  color: var(--ink-3);
-  cursor: not-allowed;
-}
-
-.button--accent {
-  color: var(--ground);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.button--accent:hover {
-  color: var(--ground);
-  background: var(--accent);
-  box-shadow: var(--glow-active);
-}
-
-.button--danger {
-  color: var(--danger);
-  border-color: var(--rule);
-}
-
-.button--quiet {
-  padding: var(--space-1) var(--space-2);
-  border-color: transparent;
-}
-
 @media (prefers-reduced-motion: no-preference) {
-  .dialog__close,
-  .button {
+  .dialog__close {
     transition:
-      color 150ms ease,
-      background 150ms ease,
-      box-shadow 150ms ease;
+      color var(--motion-colour) ease,
+      background var(--motion-colour) ease;
   }
 }
