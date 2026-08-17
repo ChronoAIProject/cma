@@ -28,6 +28,7 @@ fn hosted(base: &str) -> HostedKernel {
 fn spec() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),

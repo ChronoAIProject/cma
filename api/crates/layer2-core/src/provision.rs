@@ -146,6 +146,21 @@ impl SessionService {
         // runtime, so this is needed twice and computing it twice would be two
         // places for the translation to drift.
         let options = runtime_options(&spec.options);
+        /*
+         * Read from the session rather than from the profile, exactly as the
+         * credential's own scope is: a session keeps what it was granted when
+         * it was provisioned, and a bundle widened or narrowed since must not
+         * change what a running session believes it may reach.
+         *
+         * Names only. The credential minted against them travels a different
+         * path entirely and never enters the sandbox.
+         */
+        let reaches: Vec<String> = self
+            .services_for(&id)
+            .await
+            .into_iter()
+            .map(|service| service.0)
+            .collect();
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
@@ -156,6 +171,7 @@ impl SessionService {
                 subject_credential: spec.subject_credential.clone(),
                 options: options.clone(),
                 restore_from: restore.cloned(),
+                reaches,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })
