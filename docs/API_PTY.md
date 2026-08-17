@@ -107,7 +107,7 @@ Resize frames with `cols` or `rows` of `0` are rejected with `{"t":"error"}` and
 1. (bearer clients) POST …/terminal-ticket   ← a ticket is single-use; reconnecting means a new one
 2. Open the WebSocket
 3. Send {"t":"resize", …}                    ← still mandatory, still before any binary frame
-4. Receive {"t":"ready", …}                  ← limits, conformance classes, wire version
+4. Receive {"t":"ready", …}                  ← limits and conformance classes
 5. Receive the screen snapshot and scrollback as binary
 6. Live bytes
 ```
