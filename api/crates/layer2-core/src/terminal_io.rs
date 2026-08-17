@@ -20,11 +20,11 @@ use crate::terminal::{ScreenSnapshot, TerminalGeometry};
 impl SessionService {
     /// Deliver input to the session's terminal.
     ///
-    /// Refused where somebody is holding the terminal. Keystrokes injected
-    /// into a live attachment land in the middle of whatever escape sequence
-    /// that client is drawing, and neither side can tell afterwards which
-    /// characters were whose — so the call fails and says what is holding it
-    /// rather than corrupting a screen somebody is looking at.
+    /// Unguarded against a live attachment on purpose: the client holding one
+    /// drives the terminal through this very call, so refusing here would
+    /// refuse the attachment its own keystrokes. Whether a caller that is *not*
+    /// the holder may write is a question about that caller, and is asked where
+    /// the caller is known — see [`Self::terminal_is_held`].
     pub async fn send_input(
         &self,
         caller: &Caller,
@@ -32,7 +32,6 @@ impl SessionService {
         bytes: Vec<u8>,
     ) -> Result<(), CoreError> {
         self.may_drive_terminal(caller, id).await?;
-        self.refuse_while_attached(id).await?;
         self.forward_input(id, TerminalInput::Bytes(bytes)).await;
         Ok(())
     }
@@ -54,9 +53,8 @@ impl SessionService {
     }
     /// Change the session's terminal geometry.
     ///
-    /// Refused while somebody is attached, for the reason input is: the
-    /// attached client declared the geometry it is drawing for, and resizing
-    /// underneath it reflows a screen it is halfway through painting.
+    /// Unguarded here for the same reason as input: the attached client
+    /// declares its own geometry through this call.
     pub async fn resize_terminal(
         &self,
         caller: &Caller,
@@ -64,7 +62,6 @@ impl SessionService {
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
         self.may_drive_terminal(caller, id).await?;
-        self.refuse_while_attached(id).await?;
         let screen = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
@@ -107,14 +104,25 @@ impl SessionService {
         entry.session.capabilities.require(Capability::Terminal)
     }
 
-    /// Refuse if a client is holding this session's terminal.
-    async fn refuse_while_attached(&self, id: &SessionId) -> Result<(), CoreError> {
+    /// Whether a client is currently holding this session's terminal.
+    ///
+    /// Asked by an interface that is about to write on behalf of somebody who
+    /// is *not* that client. Keystrokes from elsewhere land in the middle of
+    /// whatever escape sequence the holder is drawing, and afterwards neither
+    /// side can tell which characters were whose.
+    ///
+    /// A question rather than a refusal, because the answer is not the same for
+    /// every caller: the holder drives the terminal through the same calls, and
+    /// a guard buried in them would refuse the attachment its own input.
+    pub async fn terminal_is_held(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<bool, CoreError> {
+        self.authorize(caller, id).await?;
         let entries = self.entries.read().await;
         let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        match entry.attached.is_some() {
-            true => Err(CoreError::AlreadyAttached),
-            false => Ok(()),
-        }
+        Ok(entry.attached.is_some())
     }
 
     /// Read the current screen without holding a stream.

@@ -143,6 +143,14 @@ pub(super) async fn input(
         return Ok(StatusCode::ACCEPTED);
     }
 
+    // Refused where somebody is holding the terminal. This caller is not that
+    // client — one that were would be writing over its own attachment rather
+    // than through this route — so its keystrokes would land inside an escape
+    // sequence the holder is drawing.
+    if service.terminal_is_held(&caller, &id).await? {
+        return Err(CoreError::AlreadyAttached.into());
+    }
+
     // The terminal plane. Bytes win over text when both are sent: a caller
     // that supplied raw bytes meant something text could not express, and
     // guessing which they meant would put characters on somebody's screen.
@@ -190,10 +198,14 @@ pub(super) async fn resize(
     Path(id): Path<String>,
     Json(body): Json<ResizeRequest>,
 ) -> Result<StatusCode, Problem> {
+    let id = SessionId(id);
     let geometry = TerminalGeometry::new(body.cols, body.rows).map_err(CoreError::from)?;
-    service
-        .resize_terminal(&caller, &SessionId(id), geometry)
-        .await?;
+    // The attached client declared the geometry it is drawing for, and
+    // resizing underneath it reflows a screen it is halfway through painting.
+    if service.terminal_is_held(&caller, &id).await? {
+        return Err(CoreError::AlreadyAttached.into());
+    }
+    service.resize_terminal(&caller, &id, geometry).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
