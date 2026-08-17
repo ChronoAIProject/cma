@@ -35,6 +35,25 @@ struct AppState {
     credential: CredentialHolder,
     /// This pod's home directory, where the agent keeps its conversation.
     home: std::path::PathBuf,
+    /// Where under home this kernel records its conversation, if it records
+    /// one at all.
+    ///
+    /// Told to this pod by the adapter that started it rather than known here.
+    /// A supervisor that named one kernel's directory could host only that
+    /// kernel — and it is the layer that owns a kernel's name that should be
+    /// spelling it.
+    ///
+    /// `None` means this kernel declared no snapshot support, which is a
+    /// different answer from "nothing recorded yet" and is reported as one.
+    snapshot_dir: Option<String>,
+    /// How this kernel is told to continue a named conversation, if it must be.
+    ///
+    /// Held because it decides whether a restored conversation that does not
+    /// name itself is a problem. A kernel resumed by name and given no name
+    /// starts a fresh conversation and reports success, which is silent loss;
+    /// a kernel that finds its own history needs no name and is fine without
+    /// one.
+    resume_args: Option<String>,
     /// The conversation this pod is taking over, once one has been handed to it.
     ///
     /// The agent is not started until something attaches, which is what makes
@@ -57,8 +76,10 @@ impl AppState {
         // continued is the agent's decision, it differs between kernels, and
         // it changes between agent versions. Getting it wrong must be
         // correctable without shipping a new binary.
-        let resume =
-            std::env::var("CHRONO_RUNTIME_RESUME_ARGS").unwrap_or_else(|_| "resume".to_string());
+        let Some(resume) = self.resume_args.as_deref() else {
+            // This kernel finds its own history; there is nothing to append.
+            return self.command.clone();
+        };
         // Named, never "the latest". The agent selects among conversations
         // recorded in the current working directory, and one carried from
         // another pod was recorded somewhere else — so "the latest" finds
@@ -119,6 +140,21 @@ async fn main() {
     // kernel, and so a shell can stand in when no kernel is installed.
     let command =
         std::env::var("CHRONO_RUNTIME_COMMAND").unwrap_or_else(|_| "/bin/bash -l".to_string());
+
+    // Where this kernel records its conversation, and how it is told to
+    // continue one. Both are the kernel's business and neither is known here;
+    // the adapter that started this pod supplies them. Read once at startup
+    // rather than per request, so a pod's behaviour cannot change under it.
+    let snapshot_dir = non_empty("CHRONO_RUNTIME_SNAPSHOT_DIR");
+    let resume_args = non_empty("CHRONO_RUNTIME_RESUME_ARGS");
+    match snapshot_dir.as_deref() {
+        Some(dir) => tracing::info!(dir, "this runtime can hand its conversation over"),
+        // Said at startup rather than discovered at rotation, when the answer
+        // decides whether a session can be carried anywhere.
+        None => tracing::info!(
+            "no snapshot directory configured; this runtime cannot hand its conversation over"
+        ),
+    }
 
     let credential = CredentialHolder::new();
 
@@ -193,6 +229,8 @@ async fn main() {
         command: command.clone(),
         credential,
         home: home.clone(),
+        snapshot_dir,
+        resume_args,
         resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
     };
 
@@ -241,22 +279,33 @@ async fn conversation_restore(
         )
             .into_response();
     }
-    match conversation::restore(&state.home, &body, &stamp()) {
+    let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
+        return unsupported();
+    };
+    match conversation::restore(&state.home, sessions_dir, &body, &stamp()) {
         Ok(restored) => {
-            let Some(conversation) = restored.session_id else {
-                // Accepting this would start a fresh conversation while the
-                // caller believes the old one was carried across — and the
-                // runtime it came from is about to be torn down.
-                tracing::error!("the conversation handed over does not name itself");
-                return (
-                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                    "the conversation does not name itself, so the agent cannot be told to continue it",
-                )
-                    .into_response();
-            };
-            match state.resuming.lock() {
-                Ok(mut guard) => *guard = Some(conversation),
-                Err(poisoned) => *poisoned.into_inner() = Some(conversation),
+            match restored.session_id {
+                Some(conversation) => match state.resuming.lock() {
+                    Ok(mut guard) => *guard = Some(conversation),
+                    Err(poisoned) => *poisoned.into_inner() = Some(conversation),
+                },
+                // Whether this matters depends on the kernel, and the kernel
+                // has already said which it is. One that must be told by name
+                // which conversation to continue, and is not told, starts a
+                // fresh one and reports success — silent loss, and the runtime
+                // this came from is about to be torn down. One that finds its
+                // own history was never going to be told anything.
+                None if state.resume_args.is_some() => {
+                    tracing::error!("the conversation handed over does not name itself");
+                    return (
+                        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                        "the conversation does not name itself, so the agent cannot be told to continue it",
+                    )
+                        .into_response();
+                }
+                None => tracing::info!(
+                    "the conversation handed over names no identifier; this kernel finds its own"
+                ),
             }
             axum::http::StatusCode::NO_CONTENT.into_response()
         }
@@ -273,6 +322,18 @@ async fn conversation_restore(
     }
 }
 
+/// An environment value, treating blank as absent.
+///
+/// A key set to the empty string is how a deployment says "not this one" in a
+/// manifest, and reading that as a configured value would point a snapshot at
+/// the home directory itself.
+fn non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 /// A filename-safe stamp, distinct per restore within a pod.
 fn stamp() -> String {
     let seconds = std::time::SystemTime::now()
@@ -282,9 +343,25 @@ fn stamp() -> String {
     format!("carried-{seconds}")
 }
 
+/// This runtime declared no snapshot support.
+///
+/// Distinct from having nothing recorded yet, and deliberately so: a caller
+/// that read "cannot" as "nothing" would replace a runtime and silently drop
+/// the session's history.
+fn unsupported() -> axum::response::Response {
+    (
+        axum::http::StatusCode::NOT_IMPLEMENTED,
+        "this runtime does not capture its agent's conversation",
+    )
+        .into_response()
+}
+
 /// Hand over the agent's conversation so it can be resumed elsewhere.
 async fn conversation_snapshot(State(state): State<AppState>) -> impl IntoResponse {
-    match conversation::capture(&state.home) {
+    let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
+        return unsupported();
+    };
+    match conversation::capture(&state.home, sessions_dir) {
         Ok(Some(bytes)) => (
             axum::http::StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
