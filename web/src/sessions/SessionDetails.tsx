@@ -50,8 +50,9 @@ export function SessionDetails({ session, open, onToggle, ending, actions }: Ses
 
   return (
     <aside className="details" aria-label="Session details">
-      <div className="details__head">
-        <h2 className="details__title">Session</h2>
+      <div className="band band--head details__head">
+        <h2 className="band__label details__title">Session</h2>
+        <span className="band__spacer" />
         <button
           type="button"
           className="details__collapse"

@@ -6,30 +6,27 @@
  */
 
 .details {
-  width: 17rem;
+  display: flex;
   flex: 0 0 auto;
+  flex-direction: column;
+  width: 17rem;
   min-height: 0;
-  overflow-y: auto;
-  border-left: 1px solid var(--rule);
-  background: var(--ground);
   font-family: var(--font-ui);
+  background: var(--surface);
+  border-left: 1px solid var(--rule);
 }
 
+/*
+ * The head band. Height comes from .band--head, so its rule lands on the
+ * session header's and the rail's, and the three run as one line across the
+ * page (§5).
+ */
 .details__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--rule);
+  gap: var(--space-2);
 }
 
 .details__title {
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: var(--track-label);
-  color: var(--ink-3);
 }
 
 .details__collapse,
@@ -67,11 +64,14 @@
 }
 
 .details__list {
-  margin: 0;
-  padding: var(--space-3);
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-3);
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-3);
+  overflow-y: auto;
 }
 
 .details__row {
