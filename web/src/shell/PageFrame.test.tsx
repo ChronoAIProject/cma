@@ -47,11 +47,28 @@ describe('the page frame', () => {
   it('reads zone, then what the page shows, then the build', () => {
     const { container } = renderFrame();
     const band = container.querySelector('.statusband');
-    const text = [...(band?.children ?? [])].map((node) => node.textContent);
+    const text = [...(band?.querySelectorAll('.band__label, .band__value') ?? [])].map(
+      (node) => node.textContent,
+    );
 
-    expect(text.slice(0, 2)).toEqual(['Zone', 'SGT']);
-    expect(text).toContain('4 sessions · 1 live');
-    expect(text.slice(-2)).toEqual(['Build', 'dev']);
+    expect(text).toEqual(['Zone', 'SGT', '4 sessions · 1 live', 'Build', 'dev']);
+  });
+
+  it('divides the band to match the page columns', () => {
+    // §6: in a multi-column view the band's 40px is shared by the columns'
+    // own footers, and the rule still runs across. One band divided rather
+    // than a footer per column, so two footers cannot drift apart.
+    const single = renderFrame().container.querySelector('.statusband__lead');
+    expect(single).toBeNull();
+
+    const { container } = renderFrame({ leadingColumn: true });
+    const lead = container.querySelector('.statusband__lead');
+    expect(lead?.textContent).toBe('ZoneSGT');
+    // Still in §6's order overall: the zone leads, the build is last.
+    const text = [
+      ...container.querySelectorAll('.statusband .band__label, .statusband .band__value'),
+    ].map((node) => node.textContent);
+    expect(text).toEqual(['Zone', 'SGT', '4 sessions · 1 live', 'Build', 'dev']);
   });
 
   it('states what it is not showing when the page says so', () => {
