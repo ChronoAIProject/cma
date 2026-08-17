@@ -173,6 +173,8 @@ A live PTY attachment holds the terminal exclusively, and that changes what thes
 | `resize` | `409` `/already-attached` | the attached client declared the geometry it is drawing for, and resizing reflows a screen it is halfway through painting |
 | `interrupt` | **allowed** | a signal is not a keystroke — it does not enter the byte stream and cannot corrupt what is being drawn, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
 
+The rule is about *this* route, not about the terminal. The client holding the attachment drives it through its own connection and is unaffected: refusing writes at the operation itself would refuse that client its own keystrokes.
+
 With no attachment live, all three operate the terminal directly.
 
 ---
