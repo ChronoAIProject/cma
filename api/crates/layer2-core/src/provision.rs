@@ -195,6 +195,10 @@ impl SessionService {
             false => None,
         };
 
+        let named_conversation = conversation
+            .as_ref()
+            .and_then(|c| c.conversation_id.clone());
+
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
         // Built for either plane, and fed only by the terminal. A conversation
@@ -257,6 +261,20 @@ impl SessionService {
             spawn_relay(id.clone(), output, screen, live);
         }
         if let Some(channel) = conversation {
+            // Recorded before anything is said on it. What this is for is a
+            // control plane that has not started yet: the one replacing this
+            // process reads the log to learn what the runtime calls the
+            // conversation already running in it, and without that it opens a
+            // second one beside it.
+            if let Some(conversation_id) = named_conversation {
+                let mut entries = self.entries.write().await;
+                if let Some(entry) = entries.get_mut(&id) {
+                    crate::service::append(
+                        entry,
+                        EventKind::ConversationOpened { conversation_id },
+                    );
+                }
+            }
             crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
         }
 
@@ -347,7 +365,7 @@ impl SessionService {
 /// The two vocabularies are separate on purpose — the core must not speak any
 /// runtime's dialect — so this is the single place they meet, and the only
 /// place a new option has to be taught to cross.
-fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
+pub(crate) fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
     RuntimeOptions {
         mode: match options.mode {
             crate::options::SessionMode::Terminal => layer3_adapter::RuntimeMode::Terminal,
@@ -361,5 +379,9 @@ fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
             PermissionMode::Unrestricted => RuntimePermission::Unrestricted,
         },
         own_credential: matches!(options.credential, crate::options::CredentialMode::Own),
+        // Nothing to rejoin: this is a runtime being started, which has no
+        // conversation yet. Taking one back over is the readopt path's, and it
+        // reads the name from the record rather than from anything held here.
+        resume_conversation: None,
     }
 }
