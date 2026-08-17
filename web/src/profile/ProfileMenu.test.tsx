@@ -114,25 +114,15 @@ describe('ProfileMenu', () => {
 });
 
 describe('the operator entry point', () => {
-  it('is absent unless the control plane says the caller may operate', async () => {
+  it('is not in the account menu at all', async () => {
+    // §14 makes Operations a page and one of §1's two views, so it is reached
+    // by the app bar's switch rather than by an account action. It was here
+    // when it was a dialog; a menu item beside it would be a second route to
+    // a view, which is how a page frame starts becoming navigation.
     const user = userEvent.setup();
     render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: /account menu/i }));
     expect(screen.queryByRole('menuitem', { name: /operations/i })).toBeNull();
-  });
-
-  it('opens the panel as an account action, closing the menu behind it', async () => {
-    // An account action rather than navigation: the product is one page, and
-    // this menu must not grow into a nav menu.
-    const user = userEvent.setup();
-    const onOperate = vi.fn();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperate={onOperate} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    await user.click(screen.getByRole('menuitem', { name: /operations/i }));
-
-    expect(onOperate).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('menu')).toBeNull();
   });
 });
