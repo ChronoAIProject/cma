@@ -14,6 +14,7 @@
 
 import type {
   Kernel,
+  KernelOffer,
   Session,
   SessionCreator,
   SessionLifecycle,
@@ -237,6 +238,43 @@ export async function listSessions(): Promise<readonly Session[]> {
     throw new ApiError(0, 'session list was not a list');
   }
   return items.map(toSession);
+}
+
+/**
+ * The runtimes this deployment can start a session on, and what each can be.
+ *
+ * Asked once and passed down, rather than asked wherever a form needs it: the
+ * answer describes the deployment and does not change while somebody fills a
+ * form in.
+ */
+export async function listKernels(): Promise<readonly KernelOffer[]> {
+  const body = await request('/api/v1/kernels');
+  const items = (body as { kernels?: unknown })?.kernels;
+  if (!Array.isArray(items)) {
+    throw new ApiError(0, 'the kernel list was not a list');
+  }
+  return items.map(toKernelOffer);
+}
+
+/**
+ * Read one runtime's offer.
+ *
+ * A plane this client cannot draw is dropped rather than carried: offering it
+ * would put a choice on screen that ends in a surface nobody has written. A
+ * runtime left with no planes is still listed, because it exists and saying
+ * otherwise is a different claim.
+ */
+function toKernelOffer(raw: unknown): KernelOffer {
+  const k = raw as { id?: unknown; modes?: unknown };
+  if (typeof k?.id !== 'string' || k.id === '') {
+    throw new ApiError(0, 'a runtime arrived with no identifier');
+  }
+  const modes = Array.isArray(k.modes) ? k.modes : [];
+  return { id: k.id, modes: modes.filter(isPlane) };
+}
+
+function isPlane(value: unknown): value is SessionPlane {
+  return value === 'terminal' || value === 'conversation';
 }
 
 /**

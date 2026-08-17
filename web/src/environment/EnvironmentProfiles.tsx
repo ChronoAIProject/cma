@@ -11,6 +11,7 @@ import type {
   SkillCatalogue,
 } from './types';
 import { draftOf, emptyDraft, validate } from './types';
+import type { KernelOffer } from '../sessions/types';
 import './EnvironmentProfiles.css';
 
 /**
@@ -28,6 +29,14 @@ import './EnvironmentProfiles.css';
 interface EnvironmentProfilesProps {
   readonly store: EnvironmentProfileStore;
   readonly onClose: () => void;
+  /**
+   * The runtimes this deployment can run, and what each can be.
+   *
+   * Passed through to the editor rather than fetched here: the console already
+   * asks once, and a second asker is a second answer that can disagree with
+   * the first while somebody is choosing between them.
+   */
+  readonly kernels?: readonly KernelOffer[];
 }
 
 /** Until a profile has been read back, this is what the platform mandates. */
@@ -35,7 +44,7 @@ const NOTHING_MANDATED: MandatoryEntries = { packages: [], skills: [] };
 
 type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'edit'; id: string };
 
-export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps) {
+export function EnvironmentProfiles({ store, onClose, kernels = [] }: EnvironmentProfilesProps) {
   const [profiles, setProfiles] = useState<readonly EnvironmentProfile[] | null>(null);
   const [catalogue, setCatalogue] = useState<SkillCatalogue | null>(null);
   const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
@@ -197,6 +206,7 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
         <ProfileEditor
           draft={draft}
           onChange={setDraft}
+          kernels={kernels}
           skills={catalogue?.skills ?? []}
           skillsError={skillsError}
           services={servicesCatalogue?.services ?? []}

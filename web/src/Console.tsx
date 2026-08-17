@@ -4,7 +4,7 @@ import { SessionDetails } from './sessions/SessionDetails';
 import { PageFrame } from './shell/PageFrame';
 import { ViewSwitch } from './shell/ViewSwitch';
 import type { SortOrder } from './sessions/sessionTime';
-import type { Session, SessionLifecycle } from './sessions/types';
+import type { KernelOffer, Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
 import type { Stage } from './sessions/progress';
@@ -24,7 +24,7 @@ import type { Arrangement } from './sessions/arrangement';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
-import { ApiError, followSession, listSessions } from './api/client';
+import { ApiError, followSession, listKernels, listSessions } from './api/client';
 import { abilitiesFor, listable } from './sessions/availability';
 import { useSessionActions } from './sessions/useSessionActions';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
@@ -102,6 +102,12 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // because everything consuming it loads in an effect keyed on its identity.
   const [profileStore] = useState<EnvironmentProfileStore>(() => createRestProfileStore());
   const [profiles, setProfiles] = useState<readonly EnvironmentProfile[]>([]);
+  /*
+   * What this deployment can run, and what each runtime can be. Asked once and
+   * passed to every form that needs it: two askers are two answers that can
+   * disagree while somebody is choosing between them.
+   */
+  const [kernels, setKernels] = useState<readonly KernelOffer[]>([]);
   const [managingProfiles, setManagingProfiles] = useState(false);
   // Built once, for the same reason the profile store is.
   const [operatorStore] = useState<OperatorStore>(() => createRestOperatorStore());
@@ -120,6 +126,16 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         // reports the failure when someone actually opens it.
       });
   }, [profileStore]);
+
+  useEffect(() => {
+    void listKernels()
+      .then(setKernels)
+      .catch(() => {
+        // An empty list is "nothing is known", which the forms draw as an
+        // offer to author a profile they cannot honour — rather than as a
+        // deployment that runs nothing.
+      });
+  }, []);
   // The last startup step each session reported. Kept per session so switching
   // tabs shows that session's progress rather than another's.
   const [stages, setStages] = useState<Record<string, Stage>>({});
@@ -697,6 +713,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       {managingProfiles ? (
         <EnvironmentProfiles
           store={profileStore}
+          kernels={kernels}
           onClose={() => {
             setManagingProfiles(false);
             // Reread on close rather than on every render: what someone just
