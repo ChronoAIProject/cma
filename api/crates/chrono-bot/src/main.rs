@@ -102,6 +102,12 @@ async fn main() {
                 upstream_wire_api: config.upstream_wire_api.clone(),
                 platform_base_url: config.platform_base_url.clone(),
                 resume_args: config.runtime_resume_args.clone(),
+                // What the image is built with, which is the same list this
+                // deployment promises every session. Stated to the adapter so
+                // a profile asking for anything else is refused at provision
+                // rather than started without it.
+                provided_packages: config.baseline_packages.clone(),
+                provided_skills: config.baseline_skills.clone(),
                 resource_limits: std::collections::BTreeMap::from([
                     ("cpu".to_string(), config.sandbox_cpu.clone()),
                     ("memory".to_string(), config.sandbox_memory.clone()),

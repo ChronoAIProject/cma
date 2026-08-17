@@ -35,6 +35,7 @@ pub use conversation::{
 pub mod claude_code;
 pub mod codex;
 pub mod sandbox;
+pub mod supervisor;
 pub mod terminal;
 
 use std::collections::BTreeMap;
