@@ -13,10 +13,11 @@ import { SessionHeader } from './sessions/SessionHeader';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
-import { ViewModeToggle } from './view/ViewModeToggle';
-import { loadViewMode, saveViewMode } from './view/mode';
+import { selectLiveWindow, unattachedNote } from './canvas/layout';
+import { ArrangementToggle } from './sessions/ArrangementToggle';
+import { loadArrangement, saveArrangement } from './sessions/arrangement';
 import { loadCollapsed, saveCollapsed } from './shell/collapse';
-import type { ViewMode } from './view/mode';
+import type { Arrangement } from './sessions/arrangement';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
@@ -116,7 +117,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // value reaching the layout would be a rail nobody can draw (§7).
   const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<ViewMode>(() => loadViewMode());
+  const [arrangement, setArrangement] = useState<Arrangement>(() => loadArrangement());
   /*
    * Most recently selected first. The canvas spends its attachment budget from
    * this, so it is kept here rather than there: every route that changes the
@@ -258,9 +259,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     [nodes],
   );
 
-  const changeMode = useCallback((next: ViewMode) => {
-    setMode(next);
-    saveViewMode(next);
+  const changeArrangement = useCallback((next: Arrangement) => {
+    setArrangement(next);
+    saveArrangement(next);
   }, []);
 
   /*
@@ -273,6 +274,19 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       return !wasCollapsed;
     });
   }, []);
+
+  /*
+   * What the canvas's attachment budget cost, for the status band (§13).
+   * Truncation is never silent, and the band is the one part of the page that
+   * cannot be panned out of sight.
+   */
+  const note = useMemo(() => {
+    if (arrangement !== 'canvas') {
+      return undefined;
+    }
+    const connectable = canvasNodes.filter((node) => node.driver !== null).map((n) => n.session.id);
+    return unattachedNote(connectable.length, selectLiveWindow(connectable, focusHistory).size);
+  }, [arrangement, canvasNodes, focusHistory]);
 
   /*
    * What the status band says this page is showing (§6).
@@ -296,6 +310,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   return (
     <PageFrame
       showing={showing}
+      note={note}
       leadingColumn={railCollapsed ? 'var(--rail-collapsed)' : 'var(--rail-width)'}
       views={
         <ViewSwitch
@@ -349,7 +364,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
            * resizes every one of them to roughly 47 columns. §13 records why
            * that is right and what it costs.
            */
-          arrangement={<ViewModeToggle mode={mode} onChange={changeMode} />}
+          arrangement={<ArrangementToggle arrangement={arrangement} onChange={changeArrangement} />}
           collapsed={railCollapsed}
           onToggleCollapsed={toggleRail}
           stages={stages}
@@ -407,7 +422,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
           {loading ? (
             <p className="console__empty">Loading your sessions…</p>
-          ) : mode === 'canvas' && canvasNodes.length > 0 ? (
+          ) : arrangement === 'canvas' && canvasNodes.length > 0 ? (
             <SessionCanvas
               /*
                * Remounted when the palette changes, for the same reason the

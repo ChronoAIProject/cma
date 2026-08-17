@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ViewModeToggle } from './ViewModeToggle';
+import { ArrangementToggle } from './ArrangementToggle';
 
-describe('ViewModeToggle', () => {
+describe('ArrangementToggle', () => {
   it('offers both arrangements', () => {
-    render(<ViewModeToggle mode="tabs" onChange={vi.fn()} />);
+    render(<ArrangementToggle arrangement="tabs" onChange={vi.fn()} />);
 
-    expect(screen.getByRole('group', { name: /view mode/i })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /arrangement/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Tabs' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Canvas' })).toBeInTheDocument();
   });
 
   it('marks the current mode without relying on colour', () => {
-    render(<ViewModeToggle mode="canvas" onChange={vi.fn()} />);
+    render(<ArrangementToggle arrangement="canvas" onChange={vi.fn()} />);
 
     expect(screen.getByRole('button', { name: 'Canvas' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Tabs' })).toHaveAttribute('aria-pressed', 'false');
@@ -22,7 +22,7 @@ describe('ViewModeToggle', () => {
   it('reports a change', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<ViewModeToggle mode="tabs" onChange={onChange} />);
+    render(<ArrangementToggle arrangement="tabs" onChange={onChange} />);
 
     await user.click(screen.getByRole('button', { name: 'Canvas' }));
 
@@ -34,7 +34,7 @@ describe('ViewModeToggle', () => {
     // not flip to canvas.
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<ViewModeToggle mode="tabs" onChange={onChange} />);
+    render(<ArrangementToggle arrangement="tabs" onChange={onChange} />);
 
     await user.click(screen.getByRole('button', { name: 'Tabs' }));
 
@@ -44,7 +44,7 @@ describe('ViewModeToggle', () => {
   it('is reachable by keyboard', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<ViewModeToggle mode="tabs" onChange={onChange} />);
+    render(<ArrangementToggle arrangement="tabs" onChange={onChange} />);
 
     await user.tab();
     await user.tab();
