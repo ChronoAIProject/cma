@@ -44,6 +44,14 @@ if (canvasProto) {
   canvasProto.getContext = (() => null) as unknown as typeof canvasProto.getContext;
 }
 
+/*
+ * jsdom opens at 1024px, which §16 reads as the width where the rail arrives
+ * collapsed. That is a real behaviour and it has its own tests; it is not what
+ * every other test is about, so the window opens at a desk width and a test
+ * that cares sets its own.
+ */
+Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1440 });
+
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class {
     observe(): void {}

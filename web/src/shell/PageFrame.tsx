@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { StatusBand } from './StatusBand';
 import { TopBar } from './TopBar';
+import { useWidth } from './widths';
 import './PageFrame.css';
 
 /**
@@ -45,11 +46,30 @@ export function PageFrame({
   leadingColumn,
   children,
 }: PageFrameProps) {
+  /*
+   * §16: below 30rem the app bar drops to 48px and gives the switch and the
+   * command field to the drawer. The bar keeps the mark and the account
+   * control, so the window's top edge still reads as the same product.
+   *
+   * The switch is not merely hidden — a view somebody can no longer reach is
+   * worse than one they have to open a drawer for — so the page is handed it
+   * back to place in the drawer it already draws.
+   */
+  const compact = useWidth() === 'compact';
+
   return (
-    <div className="pageframe">
-      <TopBar views={views}>{account}</TopBar>
+    <div className="pageframe" data-compact={compact}>
+      <TopBar views={compact ? undefined : views} compact={compact}>
+        {account}
+      </TopBar>
       <div className="pageframe__body">{children}</div>
-      <StatusBand showing={showing} note={note} leadingColumn={leadingColumn} />
+      <StatusBand
+        showing={showing}
+        note={note}
+        leadingColumn={leadingColumn}
+        /* §16: the band keeps the zone and the count and drops the build. */
+        compact={compact}
+      />
     </div>
   );
 }
