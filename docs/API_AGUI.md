@@ -14,6 +14,8 @@ AG-UI carries **semantic events**. It cannot carry a terminal byte stream — th
 
 Consequently AG-UI projects **seven** of the nine core operations. `resize_terminal` and `screen_snapshot` are absent, and their absence is declared rather than discovered.
 
+It projects **conversation sessions**. A session created in terminal mode carries no conversation capability, and a run against it is refused with the typed capability error naming `conversation` — before a stream opens, because a stream that opened and then said nothing would look like an agent thinking.
+
 ---
 
 ## 2. Endpoints
@@ -63,12 +65,27 @@ chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative l
 | Group | Emitted | Carries |
 |---|---|---|
 | Run lifecycle | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | turn boundaries and outcome |
-| Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | streamed prose |
-| Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls |
-| Reasoning | `THINKING_START`, `THINKING_END` | that the kernel is reasoning. Content is emitted only when the kernel exposes it |
-| State | `STATE_SNAPSHOT`, `STATE_DELTA` | session status, recovery state, usage |
+| Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
+| Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
+| State | `STATE_DELTA` | usage, and boundaries where conversation was lost |
 
-Not emitted: everything else in the enum. A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
+Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `THINKING_START`, `THINKING_END`, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
+
+A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
+
+### Text arrives whole, not as tokens
+
+`TEXT_MESSAGE_CONTENT` carries the finished message rather than a stream of deltas. The token-level pieces exist — they travel as liveness on the interfaces that hold a live connection — but they are deliberately not part of the durable log: numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time.
+
+The consequence for a chat UI is worth stating plainly: this stream gives you the message when the agent commits to it, not while it is being written.
+
+`messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
+
+**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A stretch of conversation the runtime had to drop arrives the same way, appended to `/gaps` — shown as a boundary rather than a stream that silently skips.
+
+### Tool kinds are the runtime's own word
+
+`TOOL_CALL_START` carries `chrono:toolKind`, and `TOOL_CALL_END` carries `chrono:status`, both verbatim from the kernel. They are not mapped onto a fixed set: the vocabularies differ between kernels and grow without warning, and a session must not fail because one invented a category. Render what you recognise.
 
 **`STATE_DELTA` is where `get_usage` lands.** Token counts and cost arrive as state patches rather than a separate call, so a chat UI can show spend without polling.
 
@@ -105,7 +122,9 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 5. The session resumes and streams the continuation
 ```
 
-`reason` uses the standard values `tool_call`, `input_required`, `confirmation`, or a chrono-specific `chrono:<name>` for cases the standard set does not cover — `chrono:command_execution`, `chrono:file_write`, `chrono:network_egress`.
+`reason` is `confirmation` where the runtime offered no description of what it wants, and `chrono:<what the runtime called it>` where it did — `chrono:command_execution`, `chrono:file_write`, `chrono:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
+
+`payload.decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions, and a client that meant the second and sent the first watches the agent try something else instead of stopping. **A decision or status this service does not recognise is read as a refusal** — the one direction this can safely fail in, because the alternative is granting on a word it did not understand.
 
 Between step 2 and step 4 the session is `idle` with `stop_reason: requires_action`. **That state is durable.** A client that closes the tab and returns finds the interrupt still pending and answerable; it does not need to have held the stream.
 
@@ -133,14 +152,14 @@ GET /api/v1/agui/capabilities
   "events": {
     "RUN_STARTED": true, "RUN_FINISHED": true, "RUN_ERROR": true,
     "TEXT_MESSAGE_START": true, "TEXT_MESSAGE_CONTENT": true, "TEXT_MESSAGE_END": true,
-    "TOOL_CALL_START": true, "TOOL_CALL_ARGS": true, "TOOL_CALL_END": true,
-    "TOOL_CALL_RESULT": true, "THINKING_START": true, "THINKING_END": true,
-    "STATE_SNAPSHOT": true, "STATE_DELTA": true
+    "TOOL_CALL_START": true, "TOOL_CALL_ARGS": false, "TOOL_CALL_END": true,
+    "TOOL_CALL_RESULT": false, "THINKING_START": false, "THINKING_END": false,
+    "STATE_SNAPSHOT": false, "STATE_DELTA": true
   },
   "features": {
     "transport":      { "streaming": true, "resumable": true,
                         "websocket": false, "pushNotifications": false },
-    "state":          { "snapshots": true, "deltas": true, "persistentState": true },
+    "state":          { "snapshots": false, "deltas": true, "persistentState": true },
     "humanInTheLoop": { "supported": true, "approvals": true, "interrupts": true,
                         "approveWithEdits": false, "interventions": false },
     "execution":      { "codeExecution": true, "sandboxed": true },
