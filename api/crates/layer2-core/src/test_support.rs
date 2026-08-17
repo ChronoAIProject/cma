@@ -171,6 +171,11 @@ pub(crate) struct FakeAdapter {
     pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
     /// When set, the runtime cannot hand its conversation over.
     pub(crate) refuse_snapshot: bool,
+    /// The conversation this runtime is holding, once one has been opened.
+    ///
+    /// Held so a test can be the kernel: push an update or a request down, and
+    /// read back what the core sent up.
+    pub(crate) conversation: Mutex<Option<crate::conversation_support::FakeConversation>>,
     /// Credentials this runtime was handed, in order.
     ///
     /// The credential no longer travels as terminal input, so the only place
@@ -207,6 +212,7 @@ impl Default for FakeAdapter {
             conversations: Mutex::default(),
             handovers: Mutex::default(),
             refuse_snapshot: false,
+            conversation: Mutex::default(),
             credentials: Mutex::default(),
             capabilities: layer3_adapter::KernelCapabilities {
                 conversation: false,
@@ -316,6 +322,20 @@ impl KernelAdapter for FakeAdapter {
             output: out_rx,
             input: in_tx,
         })
+    }
+
+    async fn open_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
+        if !self.capabilities.conversation {
+            return Err(AdapterError::Unsupported(
+                "this kernel does not hold a conversation".into(),
+            ));
+        }
+        let (channel, held) = crate::conversation_support::FakeConversation::open();
+        *self.conversation.lock().await = Some(held);
+        Ok(channel)
     }
 
     async fn refresh_credential(
