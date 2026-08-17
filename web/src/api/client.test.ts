@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { ApiError, toSession } from './client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, listKernels, toSession } from './client';
 
 /**
  * The wire is a trust boundary. These cover what the control plane actually
@@ -144,5 +144,64 @@ describe('what a session reaches', () => {
       reach: [{ id: 'api-github' }],
     });
     expect(session.reach?.[0]?.mandated).toBe(false);
+  });
+});
+
+describe('listKernels', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function answer(body: unknown): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(body),
+      } as unknown as Response),
+    );
+  }
+
+  it('reads what each runtime can be', async () => {
+    answer({
+      kernels: [
+        { id: 'codex', modes: ['terminal', 'conversation'] },
+        { id: 'claude-code', modes: ['conversation'] },
+      ],
+    });
+
+    await expect(listKernels()).resolves.toEqual([
+      { id: 'codex', modes: ['terminal', 'conversation'] },
+      { id: 'claude-code', modes: ['conversation'] },
+    ]);
+  });
+
+  it('drops a plane this client cannot draw', async () => {
+    // Offering it would put a choice on screen that ends in a surface nobody
+    // has written. The runtime is still listed, because it still exists.
+    answer({ kernels: [{ id: 'future', modes: ['terminal', 'holodeck'] }] });
+
+    await expect(listKernels()).resolves.toEqual([{ id: 'future', modes: ['terminal'] }]);
+  });
+
+  it('keeps a runtime that serves nothing', async () => {
+    // "Runs no sessions" and "does not exist" are different answers, and a
+    // form draws them differently.
+    answer({ kernels: [{ id: 'stub', modes: [] }] });
+
+    await expect(listKernels()).resolves.toEqual([{ id: 'stub', modes: [] }]);
+  });
+
+  it('fails visibly on a runtime with no identifier', async () => {
+    answer({ kernels: [{ modes: ['terminal'] }] });
+
+    await expect(listKernels()).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('fails visibly when the answer is not a list', async () => {
+    answer({ kernels: 'codex' });
+
+    await expect(listKernels()).rejects.toBeInstanceOf(ApiError);
   });
 });

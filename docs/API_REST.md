@@ -345,6 +345,25 @@ GET /api/v1/conformance
 
 Representations carry `Link: <…/conf/rest-core>; rel="profile"`, and the service advertises `Link: </openapi.json>; rel="service-desc"`.
 
+### What this deployment can run
+
+```http
+GET /api/v1/kernels
+```
+
+```json
+{ "kernels": [
+  { "id": "codex", "modes": ["terminal", "conversation"] },
+  { "id": "claude-code", "modes": ["conversation"] }
+] }
+```
+
+Which runtimes this deployment can back a session with, and which planes each one can be asked to serve. A caller still does not choose a kernel on a session — an environment profile names it — so this is what a client offers while somebody is *authoring* a profile.
+
+`modes` is derived from what the adapter advertises, through the same code that decides a session's granted set. A pairing listed here is one the deployment will accept, and a pairing absent from it is refused with `capability_unsupported` naming the plane. That is the point of publishing it: the refusal belongs where the choice is being made, not after a session has been asked for.
+
+A runtime that serves neither plane is listed with an empty `modes`. It is still a runtime this deployment knows about, and reporting it as absent would be a different claim.
+
 The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated from code so it cannot drift.
 
 ---
