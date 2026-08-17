@@ -138,14 +138,20 @@ impl KernelAdapter for DshAdapter {
     async fn open_conversation(
         &self,
         handle: &RuntimeHandle,
-        _options: &RuntimeOptions,
+        options: &RuntimeOptions,
     ) -> Result<ConversationChannel, AdapterError> {
         let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
         // The permission mode is not sent: this harness reads it from its
         // environment at boot, and the one mode it could be asked to change to
         // is the one this kernel refuses to provision at all.
-        translate::Harness::open(stream, self.hosted.workspace().to_string(), &self.spec).await
+        translate::Harness::open(
+            stream,
+            self.hosted.workspace().to_string(),
+            &self.spec,
+            options.resume_conversation.clone(),
+        )
+        .await
     }
 
     async fn refresh_credential(

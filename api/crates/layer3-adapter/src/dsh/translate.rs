@@ -70,9 +70,12 @@ pub(super) struct Harness {
     /// The conversation's identifier on this wire.
     ///
     /// Chosen here rather than returned by the harness: its only session call
-    /// takes an id and creates one under it. One identifier per attachment is
-    /// enough — this kernel cannot resume a conversation across pods, so there
-    /// is nothing to carry a name forward for.
+    /// takes an id and creates one under it. That is also what makes rejoining
+    /// possible where resuming is not — the harness keys a live session on the
+    /// id it was given, so a control plane that comes back with the same one
+    /// finds the conversation still running in the process it left. What it
+    /// cannot do is take one back off disk, which is why this kernel carries no
+    /// conversation across pods.
     session: String,
     /// The running read of this harness's session log.
     ///
@@ -88,6 +91,7 @@ impl Harness {
         stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
         cwd: String,
         spec: &DshSandboxSpec,
+        rejoin: Option<String>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -111,7 +115,11 @@ impl Harness {
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(std::collections::HashMap::new())),
             next_id: AtomicI64::new(1),
-            session: uuid::Uuid::new_v4().simple().to_string(),
+            // A name to rejoin when a control plane is taking a live runtime
+            // back over, and a fresh one otherwise. Reusing the name is the
+            // whole mechanism: the harness hands back the session it already
+            // holds under it rather than opening a second one beside it.
+            session: rejoin.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             folder: Arc::new(Mutex::new(Folder::default())),
         });
 
@@ -156,9 +164,11 @@ impl Harness {
             tracing::info!("conversation input ended");
         });
 
+        let conversation_id = harness.session.clone();
         Ok(ConversationChannel {
             updates: updates_rx,
             input: input_tx,
+            conversation_id: Some(conversation_id),
         })
     }
 
