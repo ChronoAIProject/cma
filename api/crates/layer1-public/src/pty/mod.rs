@@ -229,6 +229,13 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
         CoreError::InvalidState => "invalid_state",
         CoreError::CapabilityUnsupported(_) => "capability_unsupported",
+        // This interface attaches to a session that already exists, so a
+        // service refusal cannot arise here — a session that reached this far
+        // was already provisioned past it. Named rather than folded into a
+        // catch-all so that adding a variant to the core is a compile error
+        // here rather than a frame that quietly says the wrong thing.
+        CoreError::ServiceNotGranted(_) => "service_not_granted",
+        CoreError::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
     }
 }
 

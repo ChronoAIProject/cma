@@ -336,3 +336,68 @@ mod reach {
         assert_eq!(json["reach"].as_array().expect("an array").len(), 0);
     }
 }
+
+/// A caller can tell the three service refusals apart from the response alone.
+mod service_refusals {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_ungranted_service_is_unprocessable_and_never_unavailable() {
+        // Not transient. Retrying will not grant it, and a 503 would tell a
+        // client to keep trying something that can only be fixed in NyxID.
+        let (status, body) = rendered(CoreError::ServiceNotGranted("api-github".into())).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["code"], "service_not_granted");
+        assert!(
+            body["detail"]
+                .as_str()
+                .expect("a detail")
+                .contains("api-github"),
+            "a refusal that does not name the service is one nobody can act on"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_catalogue_is_unavailable_and_never_unprocessable() {
+        // Transient. The owner's services are fine and we could not list them,
+        // so retrying is exactly the right thing to do.
+        let (status, body) = rendered(CoreError::ServiceCatalogUnavailable("down".into())).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["code"], "service_catalogue_unavailable");
+    }
+
+    #[tokio::test]
+    async fn the_two_are_distinguishable_by_type_rather_than_by_string() {
+        // #132's whole point. A client matching on prose is a client that
+        // breaks when somebody rewords a sentence.
+        let (granted_status, granted) =
+            rendered(CoreError::ServiceNotGranted("api-github".into())).await;
+        let (down_status, down) = rendered(CoreError::ServiceCatalogUnavailable("x".into())).await;
+
+        assert_ne!(granted_status, down_status);
+        assert_ne!(granted["code"], down["code"]);
+        assert_ne!(granted["type"], down["type"]);
+    }
+
+    #[tokio::test]
+    async fn neither_is_a_bare_not_found() {
+        // A 404 sends the caller looking for a spelling mistake. Both routes
+        // exist and both requests are well-formed.
+        for refusal in [
+            CoreError::ServiceNotGranted("api-github".into()),
+            CoreError::ServiceCatalogUnavailable("down".into()),
+        ] {
+            let (status, _) = rendered(refusal).await;
+            assert_ne!(status, StatusCode::NOT_FOUND);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_outage_is_not_reported_as_the_sandbox_provider() {
+        // A caller told "runtime unavailable" goes and looks at the sandbox
+        // provider, which has nothing to do with it.
+        let (_, catalogue) = rendered(CoreError::ServiceCatalogUnavailable("down".into())).await;
+        let (_, runtime) = rendered(CoreError::RuntimeUnavailable("down".into())).await;
+        assert_ne!(catalogue["code"], runtime["code"]);
+    }
+}
