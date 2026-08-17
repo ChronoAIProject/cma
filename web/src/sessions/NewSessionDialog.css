@@ -19,21 +19,6 @@
   color: var(--ink-3);
 }
 
-.dialog__control {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--ink);
-  background: var(--ground);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
-  padding: var(--space-2);
-}
-
-.dialog__control:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
 .dialog__hint {
   font-size: var(--text-xs);
   color: var(--ink-3);
