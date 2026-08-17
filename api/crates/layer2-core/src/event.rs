@@ -123,6 +123,19 @@ pub enum EventKind {
         /// New height in rows.
         rows: u16,
     },
+    /// The runtime named the conversation this session is holding.
+    ///
+    /// Recorded rather than remembered, for the reason §5 gives for recording
+    /// anything: a control plane that restarts holds no state that matters, and
+    /// what it needs to take a live runtime back over is what that runtime
+    /// calls the conversation already running in it. Without this the
+    /// replacement opens a second conversation beside the first — the agent
+    /// loses its context, and the owner, reading a log that has everything,
+    /// cannot tell.
+    ConversationOpened {
+        /// The runtime's own name for it, carried through opaquely.
+        conversation_id: String,
+    },
     /// A message the agent finished and committed to.
     ///
     /// Durable because it is what the agent actually said; the token-level
@@ -212,6 +225,7 @@ const KNOWN_TAGS: &[&str] = &[
     "status_changed",
     "turn_started",
     "turn_completed",
+    "conversation_opened",
     "message_committed",
     "tool_call_started",
     "tool_call_updated",
@@ -341,6 +355,9 @@ mod tests {
                 request_id: "r-1".into(),
                 allowed: true,
             },
+            EventKind::ConversationOpened {
+                conversation_id: "conv-1".into(),
+            },
         ];
         for kind in &all {
             match kind {
@@ -349,6 +366,7 @@ mod tests {
                 | EventKind::StatusChanged { .. }
                 | EventKind::TurnStarted
                 | EventKind::TurnCompleted
+                | EventKind::ConversationOpened { .. }
                 | EventKind::MessageCommitted { .. }
                 | EventKind::ToolCallStarted { .. }
                 | EventKind::ToolCallUpdated { .. }

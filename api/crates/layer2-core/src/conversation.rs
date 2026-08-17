@@ -27,6 +27,8 @@
 //! sets differ between runtimes and grow without warning, and a session must
 //! not fail because a kernel invented a category.
 
+use std::sync::Arc;
+
 use layer3_adapter::{ContentBlock, ConversationInput, PermissionDecision};
 use tokio::sync::mpsc;
 
@@ -73,7 +75,7 @@ impl SessionService {
     /// model answers, and a client that prompted and saw nothing recorded
     /// cannot tell a slow agent from a lost prompt.
     pub async fn send_prompt(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         text: String,
@@ -114,7 +116,11 @@ impl SessionService {
     /// wire may offer a prompt and no way to take it back, and a session that
     /// accepted the request and did nothing would leave whoever asked watching
     /// the agent carry on with no explanation.
-    pub async fn interrupt_turn(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+    pub async fn interrupt_turn(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<(), CoreError> {
         let input = self
             .conversation_input(caller, id, Capability::Interrupt)
             .await?;
@@ -129,7 +135,7 @@ impl SessionService {
     /// allowed it, because that is the question every interface projects and
     /// the one anybody reading the log later is asking.
     pub async fn resolve_approval(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         request_id: String,
@@ -228,13 +234,32 @@ impl SessionService {
     }
 
     /// The channel toward a session's runtime, if the caller may drive it.
+    ///
+    /// Takes the runtime back over where this process has never seen it. The
+    /// sandbox outlives a control plane, so a restart loses the channel and not
+    /// the conversation — and the terminal plane has done this at its own
+    /// entry point since sessions became durable. Without it here, a
+    /// conversation session comes back listed, intact, and refusing every
+    /// prompt, which is a lie its owner cannot act on.
     async fn conversation_input(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         capability: Capability,
     ) -> Result<mpsc::Sender<ConversationInput>, CoreError> {
-        self.authorize(caller, id).await?;
+        // Read from the record rather than from what this process happens to
+        // hold, because after a restart it holds nothing — and a session it has
+        // never seen is not a session that does not exist.
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if !self.entries.read().await.contains_key(id) {
+            self.readopt(&record).await?;
+        }
         let entries = self.entries.read().await;
         let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
         entry.session.capabilities.require(capability)?;

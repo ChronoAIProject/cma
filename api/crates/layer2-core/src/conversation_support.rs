@@ -50,6 +50,7 @@ impl FakeConversation {
 
         (
             ConversationChannel {
+                conversation_id: Some("conv-fixture".to_string()),
                 updates: update_rx,
                 input,
             },
