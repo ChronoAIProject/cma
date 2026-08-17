@@ -22,147 +22,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
+
+// Re-exported so the split is a move rather than a rename: everything that
+// referred to these through this module still does, and a reader looking for
+// "what a profile is made of" is pointed at the file that holds it.
+pub use crate::environment_catalog::{
+    CatalogError, CatalogService, CatalogSkill, ServiceCatalog, SkillCatalog,
+};
+pub use crate::environment_values::{EnvironmentVariable, ServiceId, SkillId, SoftwarePackage};
+
+use crate::environment_values::{MAX_ENTRIES, MAX_NAME, MAX_VALUE};
 use crate::options::{CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
-
-/// Longest accepted profile name.
-const MAX_NAME: usize = 120;
-/// Longest accepted variable value.
-///
-/// Generous enough for a certificate or a long token, short enough that a
-/// profile cannot be used as a general-purpose file store.
-const MAX_VALUE: usize = 8192;
-/// Most entries any one list may carry.
-///
-/// A bound rather than a limit anyone will meet: it exists so a single profile
-/// cannot grow until it is too large for the store that holds it.
-const MAX_ENTRIES: usize = 100;
-
-/// One environment variable handed to the session.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentVariable {
-    /// Variable name, as the process will see it.
-    pub key: String,
-    /// Value, opaque to the core.
-    pub value: String,
-}
-
-impl std::fmt::Debug for EnvironmentVariable {
-    /// Redacted, so no accidental `{:?}` puts a caller's token in a log.
-    ///
-    /// The key is safe to print and is what makes a log line useful; the value
-    /// is the part a caller will inevitably use for a credential.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "EnvironmentVariable {{ key: {:?}, value: <redacted {} bytes> }}",
-            self.key,
-            self.value.len()
-        )
-    }
-}
-
-impl EnvironmentVariable {
-    /// Build a variable.
-    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            value: value.into(),
-        }
-    }
-
-    /// Whether a name is usable as an environment variable.
-    ///
-    /// The POSIX shape: a letter or underscore, then letters, digits, or
-    /// underscores. Anything else is rejected rather than sanitised, because a
-    /// silently renamed variable is one the session will not find.
-    pub fn is_valid_key(key: &str) -> bool {
-        let mut chars = key.chars();
-        match chars.next() {
-            Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-            _ => return false,
-        }
-        chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-    }
-}
-
-/// A piece of software the session should have available.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoftwarePackage {
-    /// Package name, as the runtime image understands it.
-    pub name: String,
-    /// Version to pin, when the caller cares which one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
-
-impl SoftwarePackage {
-    /// A package at whatever version the runtime provides.
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            version: None,
-        }
-    }
-
-    /// How this package is named to whatever installs it.
-    pub fn requirement(&self) -> String {
-        match &self.version {
-            Some(v) => format!("{}@{}", self.name, v),
-            None => self.name.clone(),
-        }
-    }
-}
-
-/// Identifier of a skill in the catalogue.
-///
-/// Opaque: the core stores and forwards it, and only the catalogue knows how
-/// to resolve one.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct SkillId(pub String);
-
-/// A service on the identity platform, as that platform names it.
-///
-/// Opaque here, exactly like the credential itself: the core carries the
-/// selection from a profile to whatever mints a credential, and never asks
-/// what any of them mean. Only the provider knows.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct ServiceId(pub String);
-
-impl ServiceId {
-    /// Wrap an identifier.
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// The identifier as written.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for ServiceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl SkillId {
-    /// Wrap an identifier.
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// Borrow the underlying string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for SkillId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
 
 /// How the agent behaves in a session started from this profile.
 ///
@@ -519,82 +389,6 @@ impl From<ResolvedEnvironment> for layer3_adapter::RuntimeEnvironment {
             skills: value.skills,
         }
     }
-}
-
-/// A platform service a caller may allow a session to reach.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CatalogService {
-    /// Identifier to store in a profile.
-    pub id: ServiceId,
-    /// Name the owner recognises it by.
-    pub name: String,
-    /// One-line summary, when the catalogue offers one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-/// A skill a caller may select.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CatalogSkill {
-    /// Identifier to store in a profile.
-    pub id: SkillId,
-    /// Human-readable name.
-    pub name: String,
-    /// One-line summary.
-    pub description: String,
-    /// Why this subject can see it, when the catalogue says.
-    ///
-    /// Free-form and for display only: the core never branches on it, because
-    /// the catalogue is the authority on who may select what.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<String>,
-}
-
-/// Failures a catalogue may report.
-#[derive(Debug, thiserror::Error)]
-pub enum CatalogError {
-    /// The catalogue could not be reached.
-    #[error("skill catalogue unavailable: {0}")]
-    Unavailable(String),
-    /// The catalogue answered with something unusable.
-    #[error("skill catalogue response not usable: {0}")]
-    Malformed(String),
-}
-
-/// Where the skills a caller may select come from.
-///
-/// A port, so the core never learns which registry a deployment uses, and a
-/// deployment without one still stores and resolves profiles — it simply
-/// cannot offer a list to choose from.
-#[async_trait::async_trait]
-pub trait SkillCatalog: Send + Sync {
-    /// Skills this subject may select.
-    ///
-    /// The credential is the subject's own, when one has been delegated. It is
-    /// what lets the catalogue answer with the subject's private and shared
-    /// skills rather than only what is public; without it the catalogue answers
-    /// as this service rather than as the caller.
-    async fn available(
-        &self,
-        subject: &SubjectId,
-        credential: Option<&str>,
-    ) -> Result<Vec<CatalogSkill>, CatalogError>;
-}
-
-/// Where the services a caller may allow are listed.
-///
-/// Answered as the caller, always: which services exist is a fact about their
-/// account, and this service's own identity would answer with its own. A
-/// deployment without one has no picker — profiles still store selections and
-/// sessions still honour them, there is simply nothing to choose from.
-#[async_trait::async_trait]
-pub trait ServiceCatalog: Send + Sync {
-    /// Services this subject may allow a session to reach.
-    async fn available(
-        &self,
-        subject: &SubjectId,
-        credential: Option<&str>,
-    ) -> Result<Vec<CatalogService>, CatalogError>;
 }
 
 #[cfg(test)]

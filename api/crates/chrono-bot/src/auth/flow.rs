@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, StatusCode},
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Json, Router,
@@ -16,10 +16,9 @@ use axum::{
 use layer2_core::SubjectId;
 use serde::Deserialize;
 
-use super::{
-    code_challenge, random_token, session_cookie, AuthMode, AuthState, ProviderMetadata,
-    SESSION_COOKIE,
-};
+use super::permissions::{introspect_permissions, permissions_claim};
+use super::session_routes::{logout, session, urlencode};
+use super::{code_challenge, random_token, AuthMode, AuthState, ProviderMetadata, SESSION_COOKIE};
 
 /// Query parameters returned by the provider on the redirect back.
 #[derive(Debug, Deserialize)]
@@ -320,139 +319,10 @@ pub(crate) async fn resolve_subject(
     Ok((subject, permissions, profile))
 }
 
-/// The permissions a userinfo response carries, if it carries any.
-fn permissions_claim(body: &serde_json::Value) -> Vec<String> {
-    body.get("permissions")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// What the provider says this token may do, asked as this service.
-///
-/// `None` when the provider advertises no introspection endpoint, which is the
-/// signal to fall back to the userinfo claim rather than to deny.
-///
-/// The credentials travel in the form body rather than as basic auth: both are
-/// advertised, and this is the one the provider actually accepts here. An
-/// inactive token yields no permissions rather than an error — it is an answer,
-/// not a failure, and the subject it was resolved for is refused by the same
-/// deny-by-default path as any caller holding nothing.
-async fn introspect_permissions(
-    auth: &AuthState,
-    meta: &ProviderMetadata,
-    access_token: &str,
-) -> Result<Option<Vec<String>>, String> {
-    let Some(endpoint) = meta.introspection_endpoint.as_ref() else {
-        return Ok(None);
-    };
-    let AuthMode::Provider {
-        client_id,
-        client_secret,
-        ..
-    } = &auth.mode
-    else {
-        return Ok(None);
-    };
-
-    let form = [
-        ("token", access_token),
-        ("token_type_hint", "access_token"),
-        ("client_id", client_id.as_str()),
-        ("client_secret", client_secret.as_str()),
-    ];
-    let resp = auth
-        .http
-        .post(endpoint)
-        .form(&form)
-        // The form carries the secret, so nothing here logs it.
-        .send()
-        .await
-        .map_err(|e| format!("introspection request failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("introspection returned {}", resp.status()));
-    }
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("introspection body not usable: {e}"))?;
-    if !body
-        .get("active")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return Ok(Some(Vec::new()));
-    }
-    Ok(Some(permissions_claim(&body)))
-}
-
-async fn session(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
-    match auth.resolve(&headers).await {
-        Some(subject) => {
-            // The identifier stays, because clients key on it; the display
-            // details ride alongside so nothing has to render a UUID at a
-            // person.
-            let profile = auth.profiles.read().await.get(&subject).cloned();
-            // What this caller may do, so a client can offer only what will be
-            // permitted rather than guessing from a role name it has no
-            // business knowing. Advisory: every one of these is checked again
-            // by the core on the request that uses it.
-            let entitled = auth.effective_authorization(&subject).await;
-            let mut body = serde_json::json!({
-                "authenticated": true,
-                "subject": subject.as_str(),
-                "capabilities": super::entitlements::reported(&entitled),
-            });
-            if let (Some(profile), Some(map)) = (profile, body.as_object_mut()) {
-                if let Ok(serde_json::Value::Object(fields)) = serde_json::to_value(&profile) {
-                    map.extend(fields);
-                }
-            }
-            Json(body).into_response()
-        }
-        None => (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "authenticated": false })),
-        )
-            .into_response(),
-    }
-}
-
-async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
-    if let Some(token) = session_cookie(&headers) {
-        auth.sessions.write().await.remove(&token);
-    }
-    (
-        StatusCode::SEE_OTHER,
-        [
-            (
-                header::SET_COOKIE,
-                format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"),
-            ),
-            (header::LOCATION, "/".into()),
-        ],
-    )
-        .into_response()
-}
-
-fn urlencode(value: &str) -> String {
-    value
-        .bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
+    use axum::http::HeaderMap;
+
     use super::*;
 
     /// Read a handler's response body as JSON.
