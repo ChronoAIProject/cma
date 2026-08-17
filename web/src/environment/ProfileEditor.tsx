@@ -4,7 +4,9 @@ import { ServicePicker } from './ServicePicker';
 import { SkillPicker } from './SkillPicker';
 import { Chip } from '../ui/Chip';
 import { Select } from '../ui/Select';
-import { CREDENTIALS, EFFORTS, KERNELS, PERMISSIONS } from '../sessions/options';
+import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
+import { kernelLabel, modesOf, planeRefusal, PLANES } from '../sessions/kernels';
+import type { KernelOffer, SessionPlane } from '../sessions/types';
 import type {
   CatalogSkill,
   MandatoryEntries,
@@ -35,6 +37,14 @@ import { isValidKey } from './types';
 interface ProfileEditorProps {
   readonly draft: ProfileDraft;
   readonly onChange: (draft: ProfileDraft) => void;
+  /**
+   * The runtimes this deployment can run, and what each one can be.
+   *
+   * Passed in rather than read here: it describes the deployment, and the one
+   * answer serves every form that needs it. Empty means the list could not be
+   * read, which refuses nothing — see `modesOf`.
+   */
+  readonly kernels: readonly KernelOffer[];
   readonly skills: readonly CatalogSkill[];
   readonly skillsError?: string | undefined;
   readonly services: readonly PlatformService[];
@@ -48,6 +58,7 @@ interface ProfileEditorProps {
 export function ProfileEditor({
   draft,
   onChange,
+  kernels,
   skills,
   skillsError,
   services,
@@ -59,6 +70,7 @@ export function ProfileEditor({
   const nameId = useId();
   const packagesId = useId();
   const kernelId = useId();
+  const planeId = useId();
   const modelId = useId();
   const effortId = useId();
   const permissionId = useId();
@@ -76,6 +88,10 @@ export function ProfileEditor({
    * implied and stays out of the way, because a name a user cannot remove is
    * noise in a field they are typing into.
    */
+  // Read while the form is open rather than after a save: a pairing this
+  // deployment will refuse is worth saying beside the control that caused it.
+  const refusal = planeRefusal(kernels, draft.agent.kernel, draft.agent.mode);
+
   const implied = draft.packages.filter(
     (p) => mandatory.packages.includes(p.name) && p.version === undefined,
   );
@@ -120,15 +136,40 @@ export function ProfileEditor({
           id={kernelId}
           label="Agent"
           value={draft.agent.kernel}
-          options={KERNELS.map((k) => ({
-            value: k.id,
-            label: k.label,
-            unavailable: k.unavailable,
-          }))}
+          options={kernelOptions(kernels, draft.agent.kernel)}
           onChange={(kernel) => {
             onChange({ ...draft, agent: { ...draft.agent, kernel } });
           }}
         />
+      </div>
+
+      <div className="field">
+        <label className="field__label" htmlFor={planeId}>
+          Plane
+        </label>
+        {/*
+         * On the profile because that is where the core keeps it: a session
+         * cannot be moved onto the other plane without being rotated, so two
+         * sessions started from one profile must agree about which they are.
+         */}
+        <Select
+          id={planeId}
+          label="Plane"
+          value={draft.agent.mode}
+          options={planeOptions(kernels, draft.agent.kernel)}
+          onChange={(mode: SessionPlane) => {
+            onChange({ ...draft, agent: { ...draft.agent, mode } });
+          }}
+        />
+        <span className="field__hint">
+          A terminal is a screen someone types at; a conversation is messages, tool calls and
+          approvals. Fixed for a session's life.
+        </span>
+        {refusal === undefined ? null : (
+          <p className="field__error" role="alert">
+            {refusal}
+          </p>
+        )}
       </div>
 
       <div className="field">
@@ -360,4 +401,43 @@ function parsePackages(raw: string): ProfileDraft['packages'] {
       }
       return { name: entry.slice(0, at), version: entry.slice(at + 1) };
     });
+}
+
+/**
+ * The runtimes on offer, plus whichever one this profile already names.
+ *
+ * A profile naming a runtime the deployment no longer runs keeps it in the
+ * list, marked, rather than silently reading as something else. Where nothing
+ * is known — the list could not be read — the profile's own runtime is offered
+ * without a mark, because refusing on the strength of a failed request would
+ * empty a form over a network error.
+ */
+function kernelOptions(kernels: readonly KernelOffer[], chosen: string) {
+  const offered = kernels.map((kernel) => ({
+    value: kernel.id,
+    label: kernelLabel(kernel.id),
+    unavailable: kernel.modes.length === 0 ? 'Runs no sessions' : undefined,
+  }));
+  if (offered.some((option) => option.value === chosen)) {
+    return offered;
+  }
+  return [
+    {
+      value: chosen,
+      label: kernelLabel(chosen),
+      unavailable: kernels.length === 0 ? undefined : 'Not run by this deployment',
+    },
+    ...offered,
+  ];
+}
+
+/** The planes this runtime serves, with the rest shown refused rather than hidden (§7). */
+function planeOptions(kernels: readonly KernelOffer[], kernel: string) {
+  const modes = modesOf(kernels, kernel);
+  return PLANES.map((plane) => ({
+    value: plane.id,
+    label: plane.label,
+    unavailable:
+      modes === undefined || modes.includes(plane.id) ? undefined : `Not on ${kernelLabel(kernel)}`,
+  }));
 }

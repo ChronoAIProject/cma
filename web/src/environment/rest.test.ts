@@ -154,3 +154,48 @@ describe('talking to the control plane', () => {
     expect(catalogue.mandatory.skills).toEqual(['ornn-agent-manual-cli']);
   });
 });
+
+describe('the plane a profile starts sessions on', () => {
+  it('reads what the control plane recorded', () => {
+    const profile = toProfile({
+      id: 'envp_1',
+      name: 'reviewer',
+      agent: { kernel: 'claude-code', mode: 'conversation' },
+    });
+    expect(profile.agent.mode).toBe('conversation');
+  });
+
+  it('reads a profile written before planes existed as a terminal', () => {
+    // What every session was then, and what the core still defaults to.
+    // Reading it back as anything else would change what an existing profile
+    // starts.
+    expect(toProfile({ id: 'envp_1', name: 'old', agent: { kernel: 'codex' } }).agent.mode).toBe(
+      'terminal',
+    );
+  });
+
+  it('refuses to invent a plane from a value it does not recognise', () => {
+    expect(
+      toProfile({ id: 'envp_1', name: 'odd', agent: { kernel: 'codex', mode: 'holodeck' } }).agent
+        .mode,
+    ).toBe('terminal');
+  });
+
+  it('sends the plane back when a profile is stored', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond({ id: 'envp_1', name: 'reviewer' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createRestProfileStore().create({
+      name: 'reviewer',
+      agent: { ...DEFAULT_AGENT, mode: 'conversation' },
+      nyxid: { services: [] },
+      variables: [],
+      packages: [],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      agent: { mode: string };
+    };
+    expect(body.agent.mode).toBe('conversation');
+  });
+});
