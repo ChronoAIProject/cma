@@ -7,12 +7,15 @@ import { useAuth } from '../auth/context';
 import './IntroTerminal.css';
 
 /**
- * The unauthenticated surface: a full-bleed terminal that prints an
- * introduction and then accepts a real prompt.
+ * The signed-out surface — docs/Web_Style.md §15.
  *
- * Two structural decisions drive everything here.
+ * "A statement, and a terminal that already works." A statement column beside
+ * a live terminal panel, inside the same page frame as every other page: a
+ * visitor and an owner are looking at one product.
  *
- * The input is a genuine <input>, mounted and focused from the first frame.
+ * Three structural decisions drive everything here.
+ *
+ * The input is a genuine <input>, mounted and **focused from the first frame**.
  * Time-to-interactive is therefore zero and the animation is decoration over an
  * already-usable field — a visitor who types at 300ms keeps every character.
  * Deferring focus until the animation finished would silently eat their
@@ -21,6 +24,9 @@ import './IntroTerminal.css';
  * The visible text IS input.value. No mirror element renders it, so the whole
  * class of mirror-desync defects (IME composition, mobile autocorrect,
  * selection, RTL) cannot occur.
+ *
+ * The sign-in affordance appears only once the visitor has typed a character.
+ * §15: do not nag an empty prompt.
  */
 
 export function IntroTerminal() {
@@ -28,6 +34,16 @@ export function IntroTerminal() {
   const { frame, complete, skip, reducedMotion } = useIntroAnimation();
 
   const inputRef = useRef<HTMLInputElement>(null);
+  /*
+   * §10 and §15: focus on load rests on the prompt, so a keyboard visitor can
+   * type immediately without hunting. Done on mount rather than when the
+   * animation finishes, which is what makes time-to-interactive zero rather
+   * than 3.2 seconds.
+   */
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   const [value, setValue] = useState('');
   const [skipOffered, setSkipOffered] = useState(false);
   const [showHint, setShowHint] = useState(reducedMotion);
@@ -118,6 +134,26 @@ export function IntroTerminal() {
     };
   }, [value, showHint]);
 
+  /**
+   * Hold the visitor's words and take them to sign in.
+   *
+   * Shared by Enter and by the statement's opening action, so the two cannot
+   * come to mean different things — and so the text survives the round trip
+   * either way and becomes the first turn of their first session.
+   */
+  function submit() {
+    const text = value.trim();
+    if (text.length === 0 || capturing) {
+      return;
+    }
+    capturePendingTurn(text);
+    setCapturing(true);
+    // Announced because a redirect that nothing announces is genuinely
+    // disorienting for a screen reader user.
+    setStatus('Holding your prompt. Redirecting to sign in.');
+    void signIn();
+  }
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     // Any keystroke completes the animation. Deliberately not preventDefault:
     // the character falls through into the input, so the impatient visitor's
@@ -145,22 +181,13 @@ export function IntroTerminal() {
       return;
     }
 
-    capturePendingTurn(text);
-    setCapturing(true);
-    // Announced because a redirect that nothing announces is genuinely
-    // disorienting for a screen reader user.
-    setStatus('Holding your prompt. Redirecting to sign in.');
-    void signIn();
+    submit();
   }
 
   const visible = INTRO_LINES.slice(0, frame.visibleLines);
 
   return (
     <section className="intro" aria-labelledby="intro-heading">
-      <h1 id="intro-heading" className="sr-only">
-        chrono-bot — managed coding agents on ChronoAI infrastructure. Nothing to install.
-      </h1>
-
       {/*
         The static equivalent of the animation, present from first paint and
         deliberately NOT a live region. Character-by-character mutation inside a
@@ -170,9 +197,43 @@ export function IntroTerminal() {
       */}
       <p className="sr-only">{ACCESSIBLE_TRANSCRIPT.join(' ')}</p>
 
+      {/* The statement — §15. */}
+      <div className="intro__statement">
+        <h1 id="intro-heading" className="intro__headline">
+          Nothing to install.
+        </h1>
+        <p className="intro__lede">
+          Managed coding agents on ChronoAI infrastructure. Say what you want built, and sign in to
+          run it.
+        </p>
+        {/*
+         * The sign-in affordance, offered only once the visitor has typed a
+         * character (§15). An empty prompt is not nagged: somebody who has
+         * said nothing has not yet asked for anything to happen.
+         */}
+        {value.trim().length > 0 ? (
+          <button
+            type="button"
+            className="button button--accent button--lg press--accent"
+            disabled={capturing}
+            onClick={() => {
+              submit();
+            }}
+          >
+            Sign in and run it
+          </button>
+        ) : null}
+      </div>
+
       <div
         className="intro__frame"
         onClick={() => {
+          // §15: any keypress or click completes the animation. A click that
+          // only moved focus left the one gesture a visitor reaches for when
+          // they have decided the introduction is an obstacle doing nothing.
+          if (!complete) {
+            skip();
+          }
           inputRef.current?.focus();
         }}
       >
