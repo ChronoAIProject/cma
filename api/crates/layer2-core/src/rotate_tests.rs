@@ -466,7 +466,7 @@ async fn a_session_whose_kernel_cannot_snapshot_is_never_offered_for_rotation() 
     );
 }
 
-/// A runtime that serves both planes, which is what Codex actually is.
+/// A runtime that serves both planes, as the deployment's own does.
 ///
 /// The default fake renders a screen and holds no conversation, which is the
 /// shape the rest of this file needs. Everything below is about moving between
