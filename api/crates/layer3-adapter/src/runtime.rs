@@ -143,6 +143,18 @@ pub struct RuntimeOptions {
     /// Whether the agent authenticates with the owner's own vendor account
     /// instead of being handed a delegated credential.
     pub own_credential: bool,
+    /// A conversation to rejoin rather than begin.
+    ///
+    /// Set when a control plane is taking back over a runtime that kept
+    /// running without it — a restart, not a rotation. The runtime still holds
+    /// the conversation; what was lost is the control plane's knowledge of what
+    /// it is called, which is why this is read from the record rather than
+    /// remembered.
+    ///
+    /// A kernel that cannot rejoin fails rather than opening a second
+    /// conversation: the first would still be running, the agent's context
+    /// would be gone, and nothing would say so.
+    pub resume_conversation: Option<String>,
 }
 
 /// Which plane a runtime is being started for.

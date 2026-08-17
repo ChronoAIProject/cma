@@ -140,7 +140,31 @@ impl SessionService {
     /// The screen is rebuilt from the stored transcript, so what someone left
     /// is what they come back to. Without that the session would be alive and
     /// usable but visibly empty, which reads as lost work.
-    pub(crate) async fn readopt(&self, record: &SessionRecord) -> Result<(), CoreError> {
+    /// What the runtime called this session's conversation, from the record.
+    ///
+    /// Read rather than remembered, which is the §5 rule applied to the one
+    /// thing a replacement control plane cannot rebuild for itself. The last
+    /// one wins: a session may have been rejoined before, and each rejoin
+    /// records the name it ended up with.
+    ///
+    /// `None` where nothing named one — a session whose runtime has no name for
+    /// a conversation, or one recorded before this was written down. The caller
+    /// says so out loud rather than treating it as ordinary.
+    async fn recorded_conversation(&self, id: &SessionId) -> Option<String> {
+        let stored = self.store.events_since(id, 0).await.ok()?;
+        stored
+            .into_iter()
+            .filter_map(crate::event::StoredEvent::into_known)
+            .rev()
+            .find_map(|event| match event.kind {
+                crate::event::EventKind::ConversationOpened { conversation_id } => {
+                    Some(conversation_id)
+                }
+                _ => None,
+            })
+    }
+
+    pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
         let id = record.session.id.clone();
         let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
             // Nothing to reclaim: the session never got a runtime, or its
@@ -156,14 +180,53 @@ impl SessionService {
             )));
         };
 
-        let channel = adapter.attach_terminal(&handle).await.map_err(|e| {
+        // Whichever plane this session was granted, and only that one — the
+        // same rule provisioning follows, and for the same reason: the two are
+        // exclusive, and a conversation session picked back up as a terminal
+        // one is a session that is listed, intact, and unusable.
+        let conversing = record.session.capabilities.conversation;
+        let unreachable = |e: layer3_adapter::AdapterError| {
             // The sandbox is genuinely gone. Say so in terms of what the person
             // can do rather than repeating the provider's wording.
             tracing::warn!(session_id = %id, error = %e, "cannot reconnect to the runtime");
             CoreError::RuntimeUnavailable(
                 "the sandbox for this session is no longer running".to_string(),
             )
-        })?;
+        };
+
+        let terminal = match conversing {
+            false => Some(
+                adapter
+                    .attach_terminal(&handle)
+                    .await
+                    .map_err(unreachable)?,
+            ),
+            true => None,
+        };
+        let conversation = match conversing {
+            true => {
+                // What the runtime calls the conversation already running in
+                // it, read from the record because this process was not here
+                // when it was opened. Rejoining is the whole point: without it
+                // the runtime opens a second conversation beside the first and
+                // the agent loses everything it knew.
+                let mut options = crate::provision::runtime_options(&record.session.options);
+                options.resume_conversation = self.recorded_conversation(&id).await;
+                if options.resume_conversation.is_none() {
+                    tracing::warn!(
+                        session_id = %id,
+                        "this session's conversation was never named; the runtime will be asked for a new one"
+                    );
+                }
+                Some(
+                    adapter
+                        .open_conversation(&handle, &options)
+                        .await
+                        .map_err(unreachable)?,
+                )
+            }
+            false => None,
+        };
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
@@ -191,10 +254,10 @@ impl SessionService {
             events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle),
-            input: Some(channel.input.clone()),
+            input: terminal.as_ref().map(|c| c.input.clone()),
             live: live.clone(),
             live_frames: live_frames.clone(),
-            conversation: None,
+            conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),
             assembling: None,
             attached: None,
@@ -203,7 +266,12 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
-        spawn_relay(id.clone(), channel.output, screen, live);
+        if let Some(channel) = terminal {
+            spawn_relay(id.clone(), channel.output, screen, live);
+        }
+        if let Some(channel) = conversation {
+            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
+        }
 
         // The sandbox kept running, but the credential it was given belonged to
         // a process that has gone. Without this the session answers every

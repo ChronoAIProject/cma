@@ -136,6 +136,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
             stream,
             self.hosted.workspace().to_string(),
             Some(permission::mode_for(options.permission).to_string()),
+            options.resume_conversation.clone(),
         )
         .await
     }
