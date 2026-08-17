@@ -5,13 +5,53 @@
 //! interprets. The value is opaque here: the core forwards it, and only the
 //! runtime and the provider ever understand it.
 
-use tokio::sync::mpsc;
-
-use crate::ids::{SessionId, SubjectId};
+use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::SessionService;
-use layer3_adapter::TerminalInput;
 
 impl SessionService {
+    /// Hand a running runtime the credential it should present from now on.
+    ///
+    /// Asked of the adapter rather than pushed down the terminal channel. The
+    /// credential's consumer was always the supervisor's proxy; it travelled as
+    /// terminal input only because the terminal was the sole channel there was,
+    /// which made it impossible to give one to a runtime that renders no
+    /// terminal at all.
+    ///
+    /// Reports whether it arrived. A credential that quietly failed to land
+    /// leaves a session that looks alive and refuses every call the agent makes
+    /// on its owner's behalf.
+    async fn deliver_credential(&self, id: &SessionId, credential: &str) -> bool {
+        let placed = {
+            let entries = self.entries.read().await;
+            entries
+                .get(id)
+                .and_then(|e| e.runtime.clone().map(|h| (e.session.kernel.clone(), h)))
+        };
+        let Some((kernel, handle)) = placed else {
+            tracing::warn!(session_id = %id, "no runtime to give a credential to");
+            return false;
+        };
+        let Some(adapter) = self.adapter_for(&kernel) else {
+            tracing::warn!(session_id = %id, %kernel, "no adapter to give a credential through");
+            return false;
+        };
+        match adapter.refresh_credential(&handle, credential).await {
+            Ok(()) => true,
+            Err(e) => {
+                // Never logged with its value — only that one did not arrive.
+                tracing::warn!(session_id = %id, error = %e, "could not deliver the credential");
+                false
+            }
+        }
+    }
+
+    /// The adapter backing a kernel, if this deployment has one.
+    fn adapter_for(
+        &self,
+        kernel: &KernelId,
+    ) -> Option<std::sync::Arc<dyn layer3_adapter::KernelAdapter>> {
+        self.adapters.get(kernel).cloned()
+    }
     /// The credential to present on an owner's behalf, if one can be had.
     pub(crate) async fn credential_for(
         &self,
@@ -49,18 +89,14 @@ impl SessionService {
     /// not shared: replacing every session's value when one was reissued would
     /// give each of them somebody else's.
     pub async fn push_session_credential(&self, id: &SessionId, credential: String) -> bool {
-        let sender = {
+        {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
                 return false;
             };
             entry.subject_credential = Some(credential.clone());
-            entry.input.clone()
-        };
-        match sender {
-            Some(tx) => tx.send(TerminalInput::Credential(credential)).await.is_ok(),
-            None => false,
         }
+        self.deliver_credential(id, &credential).await
     }
 
     pub(crate) async fn services_for(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
@@ -87,22 +123,15 @@ impl SessionService {
             tracing::debug!(session_id = %id, "no credential held for this session's owner");
             return;
         };
-        let sender = {
+        {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
                 return;
             };
             entry.subject_credential = Some(credential.clone());
-            entry.input.clone()
-        };
-        match sender {
-            Some(tx) => match tx.send(TerminalInput::Credential(credential)).await {
-                Ok(()) => {
-                    tracing::info!(session_id = %id, "credential supplied to a recovered session")
-                }
-                Err(_) => tracing::warn!(session_id = %id, "could not supply the credential"),
-            },
-            None => tracing::warn!(session_id = %id, "no input channel to supply a credential on"),
+        }
+        if self.deliver_credential(id, &credential).await {
+            tracing::info!(session_id = %id, "credential supplied to a recovered session");
         }
     }
 
@@ -151,28 +180,22 @@ impl SessionService {
         subject: &SubjectId,
         credential: String,
     ) -> usize {
-        let targets: Vec<(SessionId, mpsc::Sender<TerminalInput>)> = {
+        let targets: Vec<SessionId> = {
             let mut entries = self.entries.write().await;
             entries
                 .values_mut()
                 .filter(|e| e.session.is_owned_by(subject) && !e.session.status.is_terminal())
-                .filter_map(|e| {
+                .map(|e| {
                     e.subject_credential = Some(credential.clone());
-                    e.input.clone().map(|tx| (e.session.id.clone(), tx))
+                    e.session.id.clone()
                 })
                 .collect()
         };
 
         let mut delivered = 0;
-        for (id, tx) in targets {
-            if tx
-                .send(TerminalInput::Credential(credential.clone()))
-                .await
-                .is_ok()
-            {
+        for id in targets {
+            if self.deliver_credential(&id, &credential).await {
                 delivered += 1;
-            } else {
-                tracing::warn!(session_id = %id, "could not deliver refreshed credential");
             }
         }
         if delivered > 0 {
