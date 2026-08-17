@@ -14,6 +14,8 @@ pub mod activity_service;
 pub mod authz;
 pub mod capabilities;
 pub mod clock;
+pub mod conversation;
+mod conversation_log;
 mod credentials;
 pub mod directory;
 pub mod environment;
@@ -33,6 +35,8 @@ mod rotate;
 #[path = "provision_tests.rs"]
 mod provision_tests;
 
+#[cfg(test)]
+mod conversation_support;
 #[cfg(test)]
 mod environment_support;
 #[cfg(test)]
@@ -80,6 +84,7 @@ pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{Capability as SessionCapability, SessionCapabilities};
 pub use clock::rfc3339_at;
+pub use conversation::{ApprovalDecision, Usage};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
     MAX_DIRECTORY_LIMIT,
