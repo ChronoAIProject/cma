@@ -38,7 +38,7 @@ export function SessionDetails({ session, open, onToggle, ending, actions }: Ses
     return (
       <button
         type="button"
-        className="details__handle"
+        className="collapse-handle details__handle"
         onClick={onToggle}
         aria-expanded={false}
         aria-label="Show session details"
@@ -55,7 +55,7 @@ export function SessionDetails({ session, open, onToggle, ending, actions }: Ses
         <span className="band__spacer" />
         <button
           type="button"
-          className="details__collapse"
+          className="collapse-handle details__collapse"
           onClick={onToggle}
           aria-expanded
           aria-label="Hide session details"
