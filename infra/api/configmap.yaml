@@ -114,6 +114,21 @@ data:
   # alone would have picked the broken one.
   CHRONO_UPSTREAM_MODEL: "gpt-5.6-sol"
   CHRONO_UPSTREAM_WIRE_API: "responses"
+  # The second kernel's model. It speaks a messages-shaped API rather than the
+  # completions-shaped one above, which is a fact about the kernel and is not
+  # configured here.
+  #
+  # Unlike the model above, this one has NOT been checked against the live
+  # service — the gateway requires a credential this repository does not hold,
+  # so neither the name nor whether that gateway serves a messages-shaped
+  # endpoint at all could be confirmed from here. It is a key rather than a
+  # constant for exactly that reason: correcting it is an edit to this file, not
+  # a rebuild. Confirm both before offering this kernel to anyone.
+  #
+  # CHRONO_CLAUDE_UPSTREAM_BASE_URL is deliberately unset: the second kernel
+  # inherits the gateway above. A deployment whose gateways differ sets that key
+  # and the two part ways.
+  CHRONO_CLAUDE_UPSTREAM_MODEL: "claude-opus-5"
   # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
   # never leaves the cluster, and the sandbox provider terminates no TLS of its
   # own. This mirrors how the neighbouring control plane reaches it.
