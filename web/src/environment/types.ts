@@ -8,6 +8,7 @@
  * it whatever this code does.
  */
 import type { CredentialMode, PermissionMode, ReasoningEffort } from '../sessions/options';
+import type { SessionPlane } from '../sessions/types';
 
 /** One environment variable in a profile. */
 export interface ProfileVariable {
@@ -51,6 +52,16 @@ export interface EnvironmentProfile {
  */
 export interface AgentConfiguration {
   readonly kernel: string;
+  /**
+   * Which plane sessions from this profile are driven on.
+   *
+   * On the profile rather than on the request, exactly as the core has it:
+   * two sessions started from one profile must be the same session twice, and
+   * the plane is the largest difference there could be between them. It is
+   * also why the choice is offered where a profile is authored — a session
+   * cannot be moved onto the other plane without being rotated (§18.6).
+   */
+  readonly mode: SessionPlane;
   readonly model?: string;
   readonly reasoningEffort: ReasoningEffort;
   readonly permission: PermissionMode;
@@ -92,6 +103,10 @@ export interface ServiceCatalogue {
  */
 export const DEFAULT_AGENT: AgentConfiguration = {
   kernel: 'codex',
+  // What every session was before the conversation plane existed, and what
+  // the core still defaults to. Reading a profile back as something else
+  // would change what an existing profile starts.
+  mode: 'terminal',
   model: undefined,
   reasoningEffort: 'high',
   permission: 'guarded',
