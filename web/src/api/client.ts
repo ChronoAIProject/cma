@@ -12,7 +12,13 @@
  * undefined through the UI.
  */
 
-import type { Kernel, Session, SessionCreator, SessionLifecycle } from '../sessions/types';
+import type {
+  Kernel,
+  Session,
+  SessionCreator,
+  SessionLifecycle,
+  SessionService,
+} from '../sessions/types';
 import { isStage, type Stage } from '../sessions/progress';
 
 /** A request that failed, carrying enough to tell the user why. */
@@ -53,6 +59,7 @@ interface SessionPayload {
   rotations?: unknown;
   rotated_at?: unknown;
   creator?: unknown;
+  reach?: unknown;
 }
 
 /**
@@ -91,7 +98,46 @@ export function toSession(raw: unknown): Session {
     // becomes absent rather than a date nobody can interpret.
     rotatedAt: rotatedAt(p.rotated_at),
     creator: creator(p.creator),
+    reach: reach(p.reach),
   };
+}
+
+/**
+ * What this session's credential may reach, as the control plane reported it.
+ *
+ * `undefined` when the field is absent — an older control plane, or one that
+ * does not project it — and an empty array when it is present and empty. The
+ * two are different facts: "we were not told" is not "this session reaches
+ * nothing", and drawing them alike would answer a question nobody asked.
+ *
+ * An entry with no usable identifier is dropped rather than rendered blank. An
+ * entry carrying anything that looks like credential material is not filtered
+ * here, because the projection carries none — see `docs/API_REST.md`.
+ */
+function reach(raw: unknown): readonly SessionService[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw.flatMap((entry): SessionService[] => {
+    if (typeof entry !== 'object' || entry === null) {
+      return [];
+    }
+    const service = entry as Record<string, unknown>;
+    if (typeof service.id !== 'string' || service.id === '') {
+      return [];
+    }
+    return [
+      {
+        id: service.id,
+        name: typeof service.name === 'string' ? service.name : undefined,
+        description: typeof service.description === 'string' ? service.description : undefined,
+        // Absent reads as not mandated, which is the safe direction: drawing a
+        // chosen service as fixed would tell somebody they cannot remove
+        // something they can.
+        mandated: service.mandated === true,
+      },
+    ];
+  });
 }
 
 /** The person who started a session, when the control plane named them. */
