@@ -324,7 +324,7 @@ impl SessionService {
             subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
-            runtime: Some(handle),
+            runtime: Some(handle.clone()),
             input: Some(channel.input.clone()),
             live: live.clone(),
             attached: None,
@@ -346,13 +346,23 @@ impl SessionService {
         // The relay runs for the session's life, independent of any client.
         spawn_relay(id.clone(), channel.output, screen, live);
 
-        // Hand over the owner's credential before the agent can need it, so the
-        // first turn is already authenticated.
-        if let Some(credential) = spec.subject_credential.clone() {
-            let _ = channel
-                .input
-                .send(TerminalInput::Credential(credential))
-                .await;
+        // Handed over before the agent can need it, so the first turn is
+        // already authenticated. Asked of the adapter rather than pushed down
+        // the terminal channel: the credential's consumer is the supervisor's
+        // proxy, and a runtime that renders no terminal still calls out on its
+        // owner's behalf.
+        if let Some(credential) = spec.subject_credential.as_deref() {
+            if let Err(e) = adapter.refresh_credential(&handle, credential).await {
+                // Logged rather than fatal, and never with the value. The
+                // session is usable — someone can read it and type into it —
+                // and what it cannot do is act on their behalf until a
+                // credential lands. The top-up sweep is what retries that.
+                tracing::warn!(
+                    session_id = %id,
+                    error = %e,
+                    "the runtime started without its owner's credential"
+                );
+            }
         }
         let _ = channel
             .input
