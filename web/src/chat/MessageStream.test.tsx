@@ -190,3 +190,41 @@ describe('agent-emitted content', () => {
 function readCss(): string {
   return readFileSync(resolve(process.cwd(), 'src/chat/MessageStream.css'), 'utf8');
 }
+
+describe('the plane-change boundary', () => {
+  it('names where the session went and when history stopped being continuous', () => {
+    // §18.6: a rule across the stream, labelled with the time in the display
+    // zone. An owner who switched planes and finds their conversation
+    // apparently intact — but silently missing the last two minutes — has been
+    // misled by the interface rather than by the platform.
+    render(
+      <MessageStream
+        entries={[
+          {
+            kind: 'gap',
+            id: 'plane-9',
+            rotatedAt: '2026-08-18T09:14:22Z',
+            movedTo: 'conversation',
+            seq: 9,
+          },
+        ]}
+      />,
+    );
+
+    const boundary = screen.getByRole('separator');
+    expect(boundary).toHaveTextContent(/moved to conversation/i);
+    expect(boundary).toHaveTextContent(/did not travel/i);
+  });
+
+  it('still draws a boundary nobody asked for', () => {
+    // A stretch the runtime had to drop is the same kind of fact and is drawn
+    // the same way, minus a destination there is none of.
+    render(
+      <MessageStream entries={[{ kind: 'gap', id: 'gap-4', rotatedAt: undefined, seq: 4 }]} />,
+    );
+
+    const boundary = screen.getByRole('separator');
+    expect(boundary).toHaveTextContent(/carried forward/i);
+    expect(boundary).not.toHaveTextContent(/moved to/i);
+  });
+});

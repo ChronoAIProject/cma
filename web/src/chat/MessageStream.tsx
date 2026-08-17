@@ -138,7 +138,10 @@ function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: bool
       return (
         <div className="gap" role="separator">
           <span className="gap__label">
-            Carried forward from {fullTimestampOrNone(Date.parse(entry.rotatedAt ?? ''))}
+            {entry.movedTo === undefined
+              ? 'Carried forward from '
+              : `Moved to ${entry.movedTo}, carried forward from `}
+            {fullTimestampOrNone(Date.parse(entry.rotatedAt ?? ''))}
           </span>
           <span className="gap__note">Anything after that moment did not travel.</span>
         </div>

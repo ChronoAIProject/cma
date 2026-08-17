@@ -46,7 +46,8 @@ export function planeStateFor(session: Session): PlaneState {
      */
     return {
       interactive: false,
-      reason: 'This session is moving to an updated runtime. It cannot take input until it lands.',
+      reason:
+        'This session is being moved to another runtime. It cannot take input until it lands.',
       failed: false,
     };
   }
