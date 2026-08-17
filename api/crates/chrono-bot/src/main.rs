@@ -304,6 +304,7 @@ async fn main() {
                 sessions: Arc::clone(&service),
                 users: Arc::clone(&users),
                 tickets: Arc::clone(&tickets),
+                environments: Arc::clone(&environments),
             },
         ))
         .merge(layer1_public::rest::environments::router(Arc::clone(
@@ -317,6 +318,7 @@ async fn main() {
                 sessions: Arc::clone(&service),
                 users: Arc::clone(&users),
                 tickets: Arc::clone(&tickets),
+                environments: Arc::clone(&environments),
             },
         ))
         .merge(operator)

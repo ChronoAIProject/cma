@@ -67,6 +67,14 @@ struct SessionDoc {
     /// the session is placed.
     #[serde(default)]
     capabilities: Option<mongodb::bson::Bson>,
+    /// What the session's credential may reach, decided when it was created.
+    ///
+    /// Optional because records written before the grant was recorded have no
+    /// such field, and the absence is a different fact from an empty list: one
+    /// says the grant was never written down and falls back to the profile,
+    /// the other says the session may reach nothing.
+    #[serde(default)]
+    granted_services: Option<Vec<String>>,
 }
 
 /// A MongoDB-backed session store.
@@ -152,6 +160,10 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
             mongodb::bson::serialize_to_bson(&s.capabilities)
                 .map_err(|e| StoreError::Malformed(e.to_string()))?,
         ),
+        granted_services: s
+            .granted_services
+            .as_ref()
+            .map(|services| services.iter().map(|id| id.0.clone()).collect()),
     })
 }
 
@@ -198,6 +210,9 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
                 None => Default::default(),
             },
             environment_profile: d.environment_profile.map(layer2_core::EnvironmentProfileId),
+            granted_services: d
+                .granted_services
+                .map(|services| services.into_iter().map(layer2_core::ServiceId).collect()),
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,
