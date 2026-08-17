@@ -278,3 +278,33 @@ fn a_replaced_bundle_leaks_no_more_than_a_created_one() {
         "an edit has to be read for its shape to be recorded at all"
     );
 }
+
+#[test]
+fn asking_for_an_attach_ticket_records_the_attach_it_is_for() {
+    let c = classify(&Method::POST, "/api/v1/sessions/sesn_1/terminal-ticket").expect("classified");
+    assert!(matches!(c.action, Action::SessionTerminalAttach));
+    assert!(
+        !c.reads_body,
+        "the body decides only whether to supersede, and is nobody's business afterwards"
+    );
+}
+
+#[test]
+fn a_ticket_never_reaches_a_record() {
+    // The property the whole ticket design rests on: a credential in a URL is
+    // acceptable only while nothing writes it down.
+    let mut detail = ActivityDetail::new();
+    detail_from_query(
+        Some("ticket=aaaaaaaabbbbbbbbccccccccdddddddd&after=7"),
+        &mut detail,
+    );
+    let rendered = format!("{detail:?}");
+    assert!(
+        !rendered.contains("aaaaaaaa"),
+        "a ticket was recorded: {rendered}"
+    );
+    assert!(
+        rendered.contains('7'),
+        "the allowlisted cursor should still be kept: {rendered}"
+    );
+}
