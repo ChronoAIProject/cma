@@ -18,6 +18,16 @@
 //! An approval ends the run and the answer starts another. §4 of
 //! `docs/API_AGUI.md` explains why at length; the short version is that the
 //! asking is durable, so a client that closed the tab finds it waiting.
+//!
+//! ## A dropped stream cancels nothing
+//!
+//! The stream ending means somebody stopped watching, and nothing more. A
+//! connection dropped because a laptop slept is indistinguishable from one
+//! closed on purpose, and reading the first as a cancellation would end
+//! somebody's turn because their network blinked — which §5 forbids in the
+//! strongest terms it has. The turn carries on, its events land in the log,
+//! and a client that comes back finds them. Interrupting is an act and has a
+//! route of its own.
 
 use std::sync::Arc;
 use std::time::Duration;
