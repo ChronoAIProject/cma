@@ -15,6 +15,7 @@ import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
 import { ViewModeToggle } from './view/ViewModeToggle';
 import { loadViewMode, saveViewMode } from './view/mode';
+import { loadCollapsed, saveCollapsed } from './shell/collapse';
 import type { ViewMode } from './view/mode';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { consumePendingTurn } from './auth/pendingTurn';
@@ -107,6 +108,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // Open by default: someone arriving wants to know what they are looking at,
   // and the panel is the only place that says.
   const [detailsOpen, setDetailsOpen] = useState(true);
+  // Validated on read: web storage is untrusted input, and an unrecognised
+  // value reaching the layout would be a rail nobody can draw (§7).
+  const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<ViewMode>(() => loadViewMode());
   /*
@@ -256,6 +260,17 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, []);
 
   /*
+   * Collapsing changes no session's state. It is a display preference about
+   * this browser, and nothing here reaches the control plane.
+   */
+  const toggleRail = useCallback(() => {
+    setRailCollapsed((wasCollapsed) => {
+      saveCollapsed('rail', !wasCollapsed);
+      return !wasCollapsed;
+    });
+  }, []);
+
+  /*
    * What the status band says this page is showing (§6).
    *
    * Counted from what is actually drawn rather than from everything the
@@ -277,7 +292,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   return (
     <PageFrame
       showing={showing}
-      leadingColumn
+      leadingColumn={railCollapsed ? 'var(--rail-collapsed)' : 'var(--rail-width)'}
       views={
         <ViewSwitch
           views={[{ name: 'sessions', label: 'Sessions' }]}
@@ -331,6 +346,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
            * that is right and what it costs.
            */
           arrangement={<ViewModeToggle mode={mode} onChange={changeMode} />}
+          collapsed={railCollapsed}
+          onToggleCollapsed={toggleRail}
+          stages={stages}
         />
 
         <main className="console__surface">
