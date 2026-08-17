@@ -264,7 +264,6 @@ pub(crate) async fn await_settled(
 
 pub(crate) fn spec() -> SessionSpec {
     SessionSpec {
-        kernel: kernel(),
         geometry: None,
         environment_profile: None,
         subject_credential: None,
