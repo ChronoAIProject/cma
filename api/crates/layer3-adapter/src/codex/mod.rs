@@ -54,6 +54,7 @@ impl KernelAdapter for CodexAdapter {
             // The kernel accepts input mid-turn and continues the same turn
             // rather than needing it cancelled and restarted.
             steer: true,
+            interrupt: true,
             // Reported per turn, with the context window alongside.
             usage: true,
         }

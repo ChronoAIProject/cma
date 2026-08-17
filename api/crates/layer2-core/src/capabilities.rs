@@ -37,6 +37,9 @@ pub struct SessionCapabilities {
     /// Accepts input while a turn is in flight.
     #[serde(default)]
     pub steer: bool,
+    /// A turn in flight can be abandoned without ending the session.
+    #[serde(default)]
+    pub interrupt: bool,
     /// Reports token usage as it accrues.
     #[serde(default)]
     pub usage: bool,
@@ -64,11 +67,14 @@ impl SessionCapabilities {
                     conversation: false,
                     terminal: true,
                     snapshot: kernel.snapshot,
-                    // Steering and usage belong to the conversation plane: they
-                    // are expressed in turns and tokens, and a screen has
-                    // neither. Granting them here would advertise operations
-                    // with nothing behind them.
+                    // Steering, interrupting and usage belong to the
+                    // conversation plane: they are expressed in turns and
+                    // tokens, and a screen has neither. Granting them here
+                    // would advertise operations with nothing behind them —
+                    // a terminal stops what it is doing with a control
+                    // character, which is input rather than an operation.
                     steer: false,
+                    interrupt: false,
                     usage: false,
                 })
             }
@@ -81,6 +87,7 @@ impl SessionCapabilities {
                     terminal: false,
                     snapshot: kernel.snapshot,
                     steer: kernel.steer,
+                    interrupt: kernel.interrupt,
                     usage: kernel.usage,
                 })
             }
@@ -106,6 +113,7 @@ impl SessionCapabilities {
             Capability::Terminal => self.terminal,
             Capability::Snapshot => self.snapshot,
             Capability::Steer => self.steer,
+            Capability::Interrupt => self.interrupt,
             Capability::Usage => self.usage,
         }
     }
@@ -122,6 +130,8 @@ pub enum Capability {
     Snapshot,
     /// Input while a turn is in flight.
     Steer,
+    /// Abandoning a turn in flight.
+    Interrupt,
     /// Token usage as it accrues.
     Usage,
 }
@@ -137,6 +147,7 @@ impl Capability {
             Self::Terminal => "terminal",
             Self::Snapshot => "snapshot",
             Self::Steer => "steer",
+            Self::Interrupt => "interrupt",
             Self::Usage => "usage",
         }
     }

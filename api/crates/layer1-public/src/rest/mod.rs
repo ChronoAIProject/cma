@@ -51,6 +51,7 @@ fn conformance_for(capabilities: &SessionCapabilities) -> Vec<String> {
         (capabilities.terminal, "terminal"),
         (capabilities.conversation, "conversation"),
         (capabilities.steer, "steering"),
+        (capabilities.interrupt, "interrupt"),
         (capabilities.usage, "usage"),
     ] {
         if held {
