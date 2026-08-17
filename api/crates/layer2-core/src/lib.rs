@@ -14,6 +14,8 @@ pub mod activity_service;
 pub mod authz;
 pub mod capabilities;
 mod clock;
+pub mod conversation;
+mod conversation_log;
 mod credentials;
 pub mod directory;
 pub mod environment;
@@ -33,6 +35,8 @@ mod rotate;
 #[path = "provision_tests.rs"]
 mod provision_tests;
 
+#[cfg(test)]
+mod conversation_support;
 #[cfg(test)]
 mod environment_support;
 #[cfg(test)]
@@ -75,6 +79,7 @@ pub use activity_detail::{ActivityDetail, DetailKey};
 pub use activity_service::ActivityService;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{Capability as SessionCapability, SessionCapabilities};
+pub use conversation::{ApprovalDecision, Usage};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
     MAX_DIRECTORY_LIMIT,
