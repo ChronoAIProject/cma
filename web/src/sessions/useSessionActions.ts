@@ -1,6 +1,12 @@
 import { useCallback } from 'react';
-import { createSession, deleteSession, reviveSession, stopSession } from '../api/client';
-import type { Session, SessionLifecycle } from './types';
+import {
+  changePlane,
+  createSession,
+  deleteSession,
+  reviveSession,
+  stopSession,
+} from '../api/client';
+import type { Session, SessionLifecycle, SessionPlane } from './types';
 
 /**
  * The geometry a session is asked for before a terminal has measured itself.
@@ -49,6 +55,8 @@ export interface SessionActions {
   readonly reviveSessionById: (id: string) => Promise<void>;
   /** Remove the session and its history. */
   readonly removeSession: (id: string) => Promise<void>;
+  /** Move a session onto the other plane, which is a rotation. */
+  readonly changeSessionPlane: (id: string, to: SessionPlane) => Promise<void>;
 }
 
 export function useSessionActions({
@@ -123,6 +131,34 @@ export function useSessionActions({
     [report, setActing, setNotice, setSessions],
   );
 
+  /**
+   * Move a session onto the other plane.
+   *
+   * The session comes back `rotating` and finishes the move on its own, so the
+   * record is replaced with what the control plane answered rather than
+   * assumed: the plane, the granted set and the rotation count all changed,
+   * and every one of them decides what the middle column draws next.
+   *
+   * A refusal is reported as it arrived. The control plane names the
+   * capability that is missing, and that sentence is the whole value of a
+   * typed refusal — §18.6 draws it rather than hiding it.
+   */
+  const changeSessionPlane = useCallback(
+    async (id: string, to: SessionPlane) => {
+      setNotice(null);
+      setActing(true);
+      try {
+        const moving = await changePlane(id, to);
+        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...moving } : s)));
+      } catch (cause) {
+        report(cause);
+      } finally {
+        setActing(false);
+      }
+    },
+    [report, setActing, setNotice, setSessions],
+  );
+
   /** Remove the session and its history. */
   const removeSession = useCallback(
     async (id: string) => {
@@ -170,5 +206,5 @@ export function useSessionActions({
     ],
   );
 
-  return { start, endSession, reviveSessionById, removeSession };
+  return { start, endSession, reviveSessionById, removeSession, changeSessionPlane };
 }

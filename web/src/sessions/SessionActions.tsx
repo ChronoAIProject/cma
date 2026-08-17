@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
-import type { Session } from './types';
+import type { KernelOffer, Session } from './types';
 import { abilitiesFor } from './availability';
+import { switchFor, unavailableBecause } from './planeSwitch';
 import { Button } from '../ui/Button';
 import './SessionActions.css';
 
@@ -38,6 +39,16 @@ interface SessionActionsProps {
   readonly onRevive: () => void;
   readonly onStop: () => void;
   readonly onDelete: () => void;
+  /**
+   * What this deployment runs, and what each runtime can be.
+   *
+   * Decides whether a plane switch is offered at all. Empty means nothing is
+   * known, and nothing known draws no switch: offering a move that will be
+   * refused is worse than not offering one.
+   */
+  readonly kernels?: readonly KernelOffer[];
+  /** Move this session onto the other plane. */
+  readonly onChangePlane?: (to: 'terminal' | 'conversation') => void;
   readonly busy?: boolean;
 }
 
@@ -47,14 +58,56 @@ export function SessionActions({
   onRevive,
   onStop,
   onDelete,
+  kernels = [],
+  onChangePlane,
   busy = false,
 }: SessionActionsProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingSwitch, setConfirmingSwitch] = useState(false);
   const reasonId = useId();
   const can = abilitiesFor(session);
+  // Absent rather than disabled where the kernel does not advertise the other
+  // plane (§18.6): a control that can never work is not one that is currently
+  // unavailable.
+  const move = onChangePlane === undefined ? undefined : switchFor(session, kernels);
   // Points every control at the one sentence explaining the state that
   // disabled it, so the connection is announced rather than merely adjacent.
   const describedBy = can.reason === undefined ? undefined : reasonId;
+
+  if (confirmingSwitch && move !== undefined) {
+    /*
+     * §18.6: it confirms inline, in place of the header's own controls, and
+     * states the two things that are true and not obvious. Neither is
+     * recoverable by pressing the key again, which is why they are said before
+     * rather than reported after.
+     */
+    return (
+      <div className="actions">
+        <span className="actions__question actions__question--cost">
+          Move to {move.label.toLowerCase()}? The turn in flight is lost, and this session is not
+          interactive while it moves.
+        </span>
+        <Button
+          size="sm"
+          onClick={() => {
+            setConfirmingSwitch(false);
+          }}
+        >
+          Stay here
+        </Button>
+        <Button
+          size="sm"
+          disabled={busy}
+          onClick={() => {
+            setConfirmingSwitch(false);
+            onChangePlane?.(move.to);
+          }}
+        >
+          Move to {move.label.toLowerCase()}
+        </Button>
+      </div>
+    );
+  }
 
   if (confirmingDelete) {
     return (
@@ -87,6 +140,25 @@ export function SessionActions({
         <span className="band__value actions__reason" id={reasonId}>
           {can.reason}
         </span>
+      )}
+
+      {/*
+       * §18.6: a quiet small key naming the plane it moves to, beside the
+       * lifecycle controls. Quiet because the accent this surface is allowed
+       * belongs to revive, and because moving planes is a considered act
+       * rather than the thing this header exists for.
+       */}
+      {move === undefined ? null : (
+        <Button
+          size="sm"
+          disabled={busy || !move.available}
+          reason={move.available ? undefined : unavailableBecause(session)}
+          onClick={() => {
+            setConfirmingSwitch(true);
+          }}
+        >
+          {move.label}
+        </Button>
       )}
 
       {/*
