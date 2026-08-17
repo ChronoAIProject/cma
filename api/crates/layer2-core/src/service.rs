@@ -311,6 +311,15 @@ impl SessionService {
                 );
             })?;
 
+        // What the session may reach, settled now and written down. Resolved
+        // once here rather than on every later question, because the profile
+        // it comes from can be edited afterwards and the session's reach does
+        // not follow it.
+        let granted_services = self
+            .environments
+            .services_for(&caller.subject, spec.environment_profile.as_ref())
+            .await;
+
         let geometry = spec.geometry.unwrap_or_default();
         let id = SessionId::generate();
         let session = Session {
@@ -328,6 +337,7 @@ impl SessionService {
             rotations: 0,
             rotated_at: None,
             capabilities,
+            granted_services: Some(granted_services),
             created_at: now_rfc3339(),
         };
 
