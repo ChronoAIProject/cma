@@ -9,8 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TermSize,
-    TerminalChannel,
+    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TerminalChannel,
 };
 use tokio::sync::{mpsc, Mutex};
 
@@ -268,10 +267,6 @@ impl KernelAdapter for FakeAdapter {
             output: out_rx,
             input: in_tx,
         })
-    }
-
-    async fn resize(&self, _handle: &RuntimeHandle, _size: TermSize) -> Result<(), AdapterError> {
-        Ok(())
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
