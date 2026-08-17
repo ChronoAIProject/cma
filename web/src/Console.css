@@ -56,9 +56,9 @@
 }
 
 /*
- * Below this width three columns leave the terminal too narrow to be useful,
- * so the rail becomes a short scrolling strip above it and the details panel
- * gives up its column.
+ * Below this width two columns leave the terminal too narrow to be useful, so
+ * the rail becomes a short scrolling strip above it. The details sheet needs
+ * no rule here: it is already beneath the terminal, in the same column.
  */
 @media (max-width: 60rem) {
   .console__body {
@@ -70,12 +70,5 @@
     max-height: 12rem;
     border-right: 0;
     border-bottom: 1px solid var(--rule);
-  }
-
-  .details {
-    width: 100%;
-    max-height: 14rem;
-    border-left: 0;
-    border-top: 1px solid var(--rule);
   }
 }
