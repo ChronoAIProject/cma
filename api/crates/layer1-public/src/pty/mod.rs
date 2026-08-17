@@ -67,6 +67,45 @@ impl InterfaceProfile for PtyInterface {
 /// first application-defined code and nothing else in this interface uses one.
 const SUPERSEDED_CLOSE_CODE: u16 = 4000;
 
+/// Close code for a terminal whose session moved onto the conversation plane.
+///
+/// Its own code rather than the one above, because the two ask different
+/// things of whoever is looking: a superseded client goes to the tab that took
+/// the terminal, and this one has no terminal to go to at all — the session is
+/// still there and is now a conversation.
+const PLANE_CHANGED_CLOSE_CODE: u16 = 4001;
+
+/// Close code for a terminal whose session is being carried onto a newer runtime.
+///
+/// Distinguished for the same reason: the only thing this asks of anyone is to
+/// come back in a moment.
+const RUNTIME_REPLACED_CLOSE_CODE: u16 = 4002;
+
+/// Why this terminal ended, in a code and a sentence.
+///
+/// Every path through here says something. A terminal that closes with nothing
+/// is one whose owner reloads and takes the attachment back, which is the
+/// fight the reasons exist to prevent.
+fn ending(detached: Option<layer2_core::Detached>) -> (u16, &'static str) {
+    match detached {
+        Some(layer2_core::Detached::PlaneChanged) => (
+            PLANE_CHANGED_CLOSE_CODE,
+            "this session moved to the conversation plane and no longer has a terminal",
+        ),
+        Some(layer2_core::Detached::RuntimeReplaced) => (
+            RUNTIME_REPLACED_CLOSE_CODE,
+            "this session is being carried onto an updated runtime; attach again in a moment",
+        ),
+        // Including the channel closing with nothing said: the attachment is
+        // gone either way, and the reading that costs least is the one that
+        // does not send somebody looking for a runtime that is fine.
+        Some(layer2_core::Detached::Superseded) | None => (
+            SUPERSEDED_CLOSE_CODE,
+            "the owner attached this terminal from somewhere else",
+        ),
+    }
+}
+
 /// How often the server proves the connection is still there.
 ///
 /// Under the shortest idle timeout these connections pass through, so a silent
@@ -394,15 +433,17 @@ async fn serve(
                         break;
                     }
                 }
-                // The owner has handed this attachment to another client. Said
-                // rather than shown: a terminal that simply stops updating is
-                // indistinguishable from a broken one, and whoever is looking
-                // at it will reload and take it straight back.
-                _ = superseded.recv() => {
+                // This attachment has been taken away. Said rather than shown,
+                // and said accurately: a terminal that simply stops updating is
+                // indistinguishable from a broken one, and one that names the
+                // wrong reason sends its owner somewhere there is nothing to
+                // find.
+                taken = superseded.recv() => {
+                    let (code, reason) = ending(taken.ok());
                     let _ = sink
                         .send(Message::Close(Some(CloseFrame {
-                            code: SUPERSEDED_CLOSE_CODE,
-                            reason: "the owner attached this terminal from somewhere else".into(),
+                            code,
+                            reason: reason.into(),
                         })))
                         .await;
                     break;

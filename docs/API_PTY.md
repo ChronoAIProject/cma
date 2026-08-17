@@ -163,7 +163,17 @@ Multi-viewer fan-out is not offered in this version. The server-side emulator ma
 | `screen_snapshot` | delivered on attach; also available over [REST](./API_REST.md) |
 | `resolve_approval` | **at the TUI.** The user answers the kernel's own prompt by typing |
 
-`create_session`, `steer`, and `get_usage` are not projected here. Create the session over REST first, then attach.
+`create_session`, `steer`, `get_usage` and `change_plane` are not projected here. Create the session over REST first, then attach.
+
+`change_plane` is the one worth explaining. A terminal that could move its own session onto the conversation plane would be a control whose own surface stops existing the moment it succeeds, with nowhere left to draw the answer. It is asked for over [REST](./API_REST.md) — but it is **observed** here, because it happens to this attachment:
+
+| Close code | Means |
+|---|---|
+| `4000` | the owner attached this terminal from somewhere else |
+| `4001` | the session moved to the conversation plane and has no terminal any more |
+| `4002` | the session is being carried onto an updated runtime; attach again in a moment |
+
+All three are in the private range, and all three close with a reason rather than going quiet. They ask different things of whoever is looking — go to the other tab, stop looking for a terminal, wait a moment — which is why they cannot share a code.
 
 ### Approvals behave differently here, and it matters
 

@@ -107,6 +107,34 @@ DELETE /api/v1/sessions/{id}
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
 
+### Changing which plane a session is driven on
+
+```http
+POST /api/v1/sessions/{id}/plane
+Content-Type: application/json
+
+{ "plane": "conversation" }
+```
+
+`terminal` or `conversation`. Naming the plane the session is already on changes nothing and is not an error.
+
+**It is a rotation.** The session's conversation is captured, its sandbox is released, a replacement is started under the other front-end, and the agent resumes from the capture. The session keeps its identifier, its history, its configuration and its place in its owner's list; `rotations` and `rotated_at` move exactly as they do for a runtime upgrade, and `rotated_at` is the moment the conversation was taken — anything the agent did after it did not travel.
+
+**`200 OK`** returns the session mid-handover, `status: "rotating"`. That is the window in which a client must refuse input rather than accept and lose it; the session becomes usable again on its own, and the event stream says when.
+
+The granted set is re-derived and re-reported: a session moved to `conversation` stops conforming to `…/conf/terminal` and starts conforming to `…/conf/conversation`. A client that cached the old set will be refused by name, which is the point of refusing by name.
+
+**Only the owner.** An operator capability does not stand in here: ending somebody's session is something an operator has to be able to do, and deciding what they are looking at is not.
+
+Every refusal comes before anything is torn down, and a refused session keeps running exactly as it was:
+
+| Situation | Status | `code` |
+|---|---|---|
+| The kernel does not serve that plane | `422` | `capability_unsupported`, naming `conversation` or `terminal` |
+| The kernel cannot carry its conversation across | `422` | `capability_unsupported`, naming `snapshot` |
+| The session is already being moved, or has no runtime | `409` | `invalid_state` |
+| The session is somebody else's | `404` | `session_not_found` |
+
 ### What a session may reach
 
 A read carries `reach`: the services this session's credential may call on its owner's behalf.

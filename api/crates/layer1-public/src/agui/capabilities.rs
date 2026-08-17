@@ -39,9 +39,20 @@ pub(super) async fn declare() -> Json<serde_json::Value> {
             },
             "execution": { "codeExecution": true, "sandboxed": true },
             // Named with the prefix the protocol reserves for a vendor's own,
-            // because neither is part of its vocabulary. The terminal is false
-            // here and true elsewhere: this interface cannot carry one.
-            "custom": { "chrono:terminal": false, "chrono:usage": true }
+            // because none of these is part of its vocabulary. The terminal is
+            // false here and true elsewhere: this interface cannot carry one.
+            //
+            // The plane change is declared false rather than left out, and the
+            // two readings differ: absent says this build has not heard of it,
+            // and false says it exists and this interface does not offer it.
+            // A client is told where it does live — a state delta says when a
+            // session's plane changed, and REST is where one is asked for.
+            "custom": {
+                "chrono:terminal": false,
+                "chrono:usage": true,
+                "chrono:changePlane": false,
+                "chrono:planeChangeObserved": true
+            }
         },
         "conformsTo": [
             "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/agui-core",
