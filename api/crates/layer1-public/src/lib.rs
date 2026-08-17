@@ -14,6 +14,7 @@ pub mod auth;
 pub mod mcp;
 pub mod pty;
 pub mod rest;
+pub mod tickets;
 
 pub use auth::{ActedUpon, AuthenticatedSubject};
 
