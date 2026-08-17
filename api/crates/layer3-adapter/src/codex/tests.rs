@@ -261,3 +261,18 @@ fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
         "an unread variable reads as a setting that was honoured"
     );
 }
+
+#[test]
+fn this_kernel_advertises_the_terminal_it_actually_drives() {
+    // Honest for the pseudo-terminal path, which is all this adapter drives:
+    // bytes for a screen, and a conversation the supervisor can capture. A
+    // claim here that the wire cannot back would be discovered by whoever
+    // tried to use it, which is the failure capabilities exist to prevent.
+    let c = adapter("http://p").capabilities();
+    assert!(c.terminal, "the pty path is what this adapter is");
+    assert!(c.snapshot, "rotation depends on the supervisor's capture");
+    assert!(
+        !c.conversation && !c.steer && !c.usage,
+        "nothing structured crosses this boundary yet"
+    );
+}

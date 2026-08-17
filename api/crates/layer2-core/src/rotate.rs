@@ -48,6 +48,15 @@ impl SessionService {
             // No expected version configured, so nothing to be behind.
             return false;
         };
+        if !record.session.capabilities.snapshot {
+            // Asked statically rather than found out by trying. A session whose
+            // runtime cannot hand its conversation over would fail the capture
+            // below on every sweep, forever, and each failure would be logged
+            // as though something had gone wrong — when the truthful reading is
+            // that this session was never movable and its owner is better
+            // served by it simply continuing to work.
+            return false;
+        }
         record.session.status.wants_runtime()
             && !record.session.status.is_rotating()
             && record.runtime_id.is_some()
