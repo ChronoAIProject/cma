@@ -111,18 +111,69 @@ DELETE /api/v1/sessions/{id}
 
 ## 3. Input, interrupt, steer
 
+### One route, two planes
+
+`input` means different things to the two kinds of session, and the session's granted capabilities decide which. A caller never chooses: read `capabilities` on the session object, or just send — the projection is the same operation in the core either way.
+
+**Conversation session** — the text opens a prompt turn.
+
 ```http
 POST /api/v1/sessions/{id}/input
 { "text": "Refactor the auth module to use the new token type." }
 ```
 
+**Terminal session** — the text is typed at the terminal, with a newline unless you say otherwise.
+
+```http
+POST /api/v1/sessions/{id}/input
+{ "text": "ls -la", "newline": true }
+```
+
+`newline` defaults to `true`: a client sending a line means to submit it. Send `false` to compose a command in pieces.
+
+For anything a JSON string cannot carry — control characters, escape sequences, and the keypresses that answer a kernel's own on-screen approval prompt — send raw bytes instead:
+
+```http
+POST /api/v1/sessions/{id}/input
+{ "bytes_b64": "GwtC" }
+```
+
+`bytes_b64` is refused on a conversation session: a conversation takes words, and decoding bytes into a prompt would send something nobody typed. Sending both fields on a terminal session uses the bytes — a caller who supplied them meant something the text could not express.
+
+**On the terminal plane, input is how approvals are answered and how a turn is steered.** That kernel asks on its own screen, and the answer is a keypress. There is no separate operation for it, and §5 says so where a client would look.
+
+### Interrupt
+
 ```http
 POST /api/v1/sessions/{id}/interrupt
+```
+
+Stops what the session is doing without ending it. On a conversation this cancels the turn in flight; on a terminal it delivers `SIGINT`.
+
+Interrupting requires the `interrupt` capability on a conversation session. Not every kernel has one — a wire can offer a prompt and no way to withdraw it — and a session whose kernel cannot is refused by name rather than left waiting for something that will not happen.
+
+### Steer
+
+```http
 POST /api/v1/sessions/{id}/steer
 { "text": "Stop — only touch files under src/auth/." }
 ```
 
-`steer` redirects a turn already in progress. `interrupt` ends it. Sending input while a turn is in flight resolves according to the session's `concurrent_input` policy; on `reject` it returns `409` with `problem.type` ending `/turn-in-progress`.
+Redirects a turn already in progress, which is not the same as starting a new one. Projected only where the kernel advertises `steer`; elsewhere it returns the typed capability error. Subsets are declared, not discovered.
+
+Sending input while a turn is in flight resolves according to the session's `concurrent_input` policy; on `reject` it returns `409` with `problem.type` ending `/turn-in-progress`.
+
+### While a terminal is attached
+
+A live PTY attachment holds the terminal exclusively, and that changes what these routes do:
+
+| | while attached | reason |
+|---|---|---|
+| `input` | `409` `/already-attached` | keystrokes injected into a live attachment land inside an escape sequence that client is drawing; afterwards neither side can tell which characters were whose |
+| `resize` | `409` `/already-attached` | the attached client declared the geometry it is drawing for, and resizing reflows a screen it is halfway through painting |
+| `interrupt` | **allowed** | a signal is not a keystroke — it does not enter the byte stream and cannot corrupt what is being drawn, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
+
+With no attachment live, all three operate the terminal directly.
 
 ---
 
@@ -169,9 +220,11 @@ POST /api/v1/sessions/{id}/approvals/{request_id}
 { "decision": "allow" }
 ```
 
-`decision` is `allow` or `deny`; `reason` is optional on a deny and is surfaced to the agent so it can adapt.
+`decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions: `deny` refuses this and the turn carries on without it, `abort` refuses it and stops the turn. A client that meant the second and sent the first watches the agent try something else instead of stopping.
 
-While an approval is pending the session is `idle` with `stop_reason: requires_action`, and the pending request ids are listed on the session object. That state survives a client disconnect and a control plane restart — a request waiting when you reconnect is still answerable.
+**Conversation sessions only.** On a terminal session this returns the typed capability error naming `conversation`: that kernel asks on its own screen and its answer is a keypress, so the operation to use is `POST /input` with the bytes the prompt is waiting for (§3). Inventing an approval route there would be a second way to say something the session cannot hear.
+
+While an approval is pending the session is `idle` with `stop_reason: requires_action`, and the pending request ids are listed on the session object. That state survives a client disconnect and a control plane restart — a request waiting when you reconnect is still answerable. Answering one nothing is waiting for is refused rather than forwarded.
 
 ---
 
@@ -210,17 +263,14 @@ GET /api/v1/sessions/{id}/usage
 ```
 
 ```json
-{
-  "tokens": { "input": 184203, "cached_input": 121004, "output": 9877, "reasoning": 4120 },
-  "active_seconds": 1844,
-  "cost": { "amount": "412", "currency": "USD" },
-  "budget": { "max_cost": { "amount": "2500", "currency": "USD" } }
-}
+{ "input_tokens": 184203, "output_tokens": 9877, "context_used": 41204 }
 ```
 
-Monetary amounts are **integer strings in minor units** — `"412"` is $4.12. Never floats.
+Requires the `usage` capability. Not every kernel reports token counts, and one that does not returns the typed capability error rather than a plausible zero.
 
-For `llm_source: "own"` the token figures are absent: the user's turns bill to their own account and chrono-bot cannot observe them. Container time is still metered.
+`input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall — a conversation that was compacted genuinely holds less than it did.
+
+Monetary accounting is not served here yet. When it is, amounts will be **integer strings in minor units** — `"412"` is $4.12 — never floats.
 
 ---
 
