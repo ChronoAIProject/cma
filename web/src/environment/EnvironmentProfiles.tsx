@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Button } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
 import { ProfileEditor } from './ProfileEditor';
 import type {
@@ -167,26 +168,23 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
         onClose={onClose}
         footer={
           <>
-            <button
-              type="button"
-              className="button"
+            <Button
               onClick={() => {
                 setMode({ kind: 'list' });
                 setError(undefined);
               }}
             >
               Cancel
-            </button>
-            <button
-              type="button"
-              className="button button--accent"
+            </Button>
+            <Button
+              tone="accent"
               disabled={saving}
               onClick={() => {
                 void save();
               }}
             >
               {saving ? 'Saving' : 'Save profile'}
-            </button>
+            </Button>
           </>
         }
       >
@@ -210,9 +208,8 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
       title="Environment profiles"
       onClose={onClose}
       footer={
-        <button
-          type="button"
-          className="button button--accent"
+        <Button
+          tone="accent"
           onClick={() => {
             setDraft(emptyDraft());
             setError(undefined);
@@ -220,7 +217,7 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
           }}
         >
           New profile
-        </button>
+        </Button>
       }
     >
       {error === undefined ? null : (
@@ -246,30 +243,28 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
               </span>
               {confirmingRemoval === profile.id ? (
                 <>
-                  <button
-                    type="button"
-                    className="button button--danger"
+                  <Button
+                    size="sm"
+                    tone="danger"
                     onClick={() => {
                       void remove(profile.id);
                     }}
                   >
                     Confirm remove
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
+                  </Button>
+                  <Button
+                    size="sm"
                     onClick={() => {
                       setConfirmingRemoval(null);
                     }}
                   >
                     Keep
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className="button"
+                  <Button
+                    size="sm"
                     onClick={() => {
                       setDraft(draftOf(profile));
                       setError(undefined);
@@ -277,16 +272,16 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
                     }}
                   >
                     Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--danger"
+                  </Button>
+                  <Button
+                    size="sm"
+                    tone="danger"
                     onClick={() => {
                       setConfirmingRemoval(profile.id);
                     }}
                   >
                     Remove
-                  </button>
+                  </Button>
                 </>
               )}
             </li>
