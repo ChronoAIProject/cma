@@ -127,4 +127,14 @@ pub struct ConversationChannel {
     pub updates: mpsc::Receiver<ConversationUpdate>,
     /// Input destined for the runtime.
     pub input: mpsc::Sender<ConversationInput>,
+    /// What the runtime calls this conversation, when it has a name for one.
+    ///
+    /// Reported so it can be recorded, because a control plane that restarts
+    /// remembers nothing and the alternative is opening a second conversation
+    /// beside the one already running — the agent loses its context while the
+    /// owner, reading a durable log that has everything, cannot tell.
+    ///
+    /// `None` from a runtime whose conversations have no name. Such a runtime
+    /// cannot be rejoined either, and says so by refusing to be asked.
+    pub conversation_id: Option<String>,
 }
