@@ -42,6 +42,7 @@ pub mod claude_code;
 pub mod codex;
 pub mod dsh;
 pub mod hosted;
+pub mod layer4;
 pub mod sandbox;
 pub mod supervisor;
 pub mod terminal;
