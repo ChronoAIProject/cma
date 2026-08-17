@@ -8,6 +8,7 @@
 mod activity;
 mod auth;
 mod config;
+mod kernels;
 mod permissions;
 mod renewal;
 mod screen;
@@ -15,7 +16,6 @@ mod skills;
 mod store;
 mod sweep;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{routing::get, Json, Router};
@@ -24,13 +24,8 @@ use layer1_public::{
     rest::RestInterface, InterfaceProfile,
 };
 use layer2_core::{
-    ActivityService, Baseline, EnvironmentProfileService, KernelId, ScreenModel, SessionService,
-    SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
-};
-use layer3_adapter::{
-    codex::{CodexAdapter, CodexSandboxSpec},
-    sandbox::SandboxClient,
-    KernelAdapter,
+    ActivityService, Baseline, EnvironmentProfileService, ScreenModel, SessionService, SkillId,
+    SoftwarePackage, TerminalGeometry, UserDirectory,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -85,42 +80,7 @@ async fn main() {
         );
     }
 
-    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    // The only place a concrete runtime implementation is named. Everything
-    // upstream of here selects by opaque identifier.
-    adapters.insert(
-        KernelId::new("codex"),
-        Arc::new(CodexAdapter::new(
-            SandboxClient::new(
-                config.sandbox_base_url.clone(),
-                config.sandbox_api_key.clone(),
-            ),
-            CodexSandboxSpec {
-                deployment: layer3_adapter::hosted::Deployment {
-                    shape: layer3_adapter::hosted::SandboxShape {
-                        image: config.sandbox_image.clone(),
-                        resource_limits: std::collections::BTreeMap::from([
-                            ("cpu".to_string(), config.sandbox_cpu.clone()),
-                            ("memory".to_string(), config.sandbox_memory.clone()),
-                        ]),
-                        ..Default::default()
-                    },
-                    upstream_base_url: config.upstream_base_url.clone(),
-                    upstream_model: config.upstream_model.clone(),
-                    upstream_wire_api: config.upstream_wire_api.clone(),
-                    platform_base_url: config.platform_base_url.clone(),
-                    // What the image is built with, which is the same list this
-                    // deployment promises every session. Stated to the adapter
-                    // so a profile asking for anything else is refused at
-                    // provision rather than started without it.
-                    provided_packages: config.baseline_packages.clone(),
-                    provided_skills: config.baseline_skills.clone(),
-                    ..CodexSandboxSpec::default().deployment
-                },
-                ..CodexSandboxSpec::default()
-            },
-        )),
-    );
+    let adapters = crate::kernels::registry(&config);
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
