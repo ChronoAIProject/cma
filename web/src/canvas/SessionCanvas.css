@@ -106,6 +106,7 @@
 }
 
 .node__started {
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--ink-2);
 }
@@ -117,6 +118,7 @@
 .node__meta,
 .node__readonly {
   overflow: hidden;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   letter-spacing: var(--track-label);
   text-overflow: ellipsis;
