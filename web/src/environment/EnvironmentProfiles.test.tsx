@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { EnvironmentProfiles } from './EnvironmentProfiles';
 import { createMockProfileStore } from './mock';
 import { emptyDraft } from './types';
+import { chooseOption, chosenOption } from '../test/select';
 
 function open(store = createMockProfileStore(), onClose = vi.fn()) {
   return {
@@ -87,8 +88,8 @@ describe('EnvironmentProfiles', () => {
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
     await user.type(screen.getByLabelText(/^name$/i), 'unattended');
-    await user.selectOptions(screen.getByLabelText(/thinking effort/i), 'minimal');
-    await user.selectOptions(screen.getByLabelText(/permissions/i), 'autonomous');
+    await chooseOption(user, /thinking effort/i, /minimal/i);
+    await chooseOption(user, /permissions/i, /work unattended/i);
     await user.type(screen.getByLabelText(/^model$/i), 'a-specific-model');
     await user.click(screen.getByRole('button', { name: /save profile/i }));
 
@@ -109,9 +110,9 @@ describe('EnvironmentProfiles', () => {
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
 
-    expect(screen.getByLabelText(/thinking effort/i)).toHaveValue('high');
-    expect(screen.getByLabelText(/permissions/i)).toHaveValue('guarded');
-    expect(screen.getByLabelText(/model access/i)).toHaveValue('delegated');
+    expect(chosenOption(/thinking effort/i)).toMatch(/high/i);
+    expect(chosenOption(/permissions/i)).toMatch(/ask first/i);
+    expect(chosenOption(/model access/i)).toMatch(/chronoai/i);
   });
 
   it('lets a profile widen what a session may reach', async () => {

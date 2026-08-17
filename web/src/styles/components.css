@@ -304,6 +304,7 @@
   position: absolute;
   z-index: 20;
   min-width: var(--dropdown-min);
+  margin: 0;
   padding: var(--space-1);
   background: var(--surface);
   border: 1px solid var(--rule);
@@ -323,15 +324,27 @@
   font-family: var(--font-ui);
   font-size: var(--text-md);
   text-align: left;
+  list-style: none;
+  cursor: pointer;
   background: none;
   border: 0;
   border-left: 2px solid transparent;
   border-radius: var(--radius);
 }
 
-.menu__item:hover {
+.menu__item:hover,
+.menu__item--active {
   color: var(--ink);
   background: var(--raised);
+}
+
+/*
+ * Disabled, never removed (§7). The reason travels beside the label rather
+ * than in a tooltip, for the same reason a disabled key carries its own.
+ */
+.menu__item[aria-disabled='true'] {
+  color: var(--ink-3);
+  cursor: not-allowed;
 }
 
 /* Marked on the leading edge AND by a tick — never colour alone. */

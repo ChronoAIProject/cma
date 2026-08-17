@@ -1,7 +1,9 @@
+import { Button } from '../ui/Button';
 import { useId, useState } from 'react';
 import { ServicePicker } from './ServicePicker';
 import { SkillPicker } from './SkillPicker';
 import { Chip } from '../ui/Chip';
+import { Select } from '../ui/Select';
 import { CREDENTIALS, EFFORTS, KERNELS, PERMISSIONS } from '../sessions/options';
 import type {
   CatalogSkill,
@@ -114,20 +116,19 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={kernelId}>
           Agent
         </label>
-        <select
+        <Select
           id={kernelId}
-          className="field__input"
+          label="Agent"
           value={draft.agent.kernel}
-          onChange={(event) => {
-            onChange({ ...draft, agent: { ...draft.agent, kernel: event.target.value } });
+          options={KERNELS.map((k) => ({
+            value: k.id,
+            label: k.label,
+            unavailable: k.unavailable,
+          }))}
+          onChange={(kernel) => {
+            onChange({ ...draft, agent: { ...draft.agent, kernel } });
           }}
-        >
-          {KERNELS.map((k) => (
-            <option key={k.id} value={k.id} disabled={k.unavailable !== undefined}>
-              {k.unavailable === undefined ? k.label : `${k.label} — ${k.unavailable}`}
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
       <div className="field">
@@ -156,78 +157,48 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={effortId}>
           Thinking effort
         </label>
-        <select
+        <Select
           id={effortId}
-          className="field__input"
+          label="Thinking effort"
           value={draft.agent.reasoningEffort}
-          onChange={(event) => {
-            onChange({
-              ...draft,
-              agent: {
-                ...draft.agent,
-                reasoningEffort: event.target.value as typeof draft.agent.reasoningEffort,
-              },
-            });
+          options={EFFORTS.map((e) => ({
+            value: e.id,
+            label: e.hint === '' ? e.label : `${e.label} — ${e.hint}`,
+          }))}
+          onChange={(reasoningEffort) => {
+            onChange({ ...draft, agent: { ...draft.agent, reasoningEffort } });
           }}
-        >
-          {EFFORTS.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.hint === '' ? e.label : `${e.label} — ${e.hint}`}
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
       <div className="field">
         <label className="field__label" htmlFor={permissionId}>
           Permissions
         </label>
-        <select
+        <Select
           id={permissionId}
-          className="field__input"
+          label="Permissions"
           value={draft.agent.permission}
-          onChange={(event) => {
-            onChange({
-              ...draft,
-              agent: {
-                ...draft.agent,
-                permission: event.target.value as typeof draft.agent.permission,
-              },
-            });
+          options={PERMISSIONS.map((p) => ({ value: p.id, label: p.label }))}
+          onChange={(permission) => {
+            onChange({ ...draft, agent: { ...draft.agent, permission } });
           }}
-        >
-          {PERMISSIONS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
       <div className="field">
         <label className="field__label" htmlFor={credentialId}>
           Model access
         </label>
-        <select
+        <Select
           id={credentialId}
-          className="field__input"
+          label="Model access"
           value={draft.agent.credential}
-          onChange={(event) => {
-            onChange({
-              ...draft,
-              agent: {
-                ...draft.agent,
-                credential: event.target.value as typeof draft.agent.credential,
-              },
-            });
+          options={CREDENTIALS.map((c) => ({ value: c.id, label: `${c.label} — ${c.hint}` }))}
+          onChange={(credential) => {
+            onChange({ ...draft, agent: { ...draft.agent, credential } });
           }}
-        >
-          {CREDENTIALS.map((c) => (
-            <option key={c.id} value={c.id}>
-              {`${c.label} — ${c.hint}`}
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
       <div className="field">
@@ -326,9 +297,7 @@ export function ProfileEditor({
                     setVariable(index, { ...variable, value: event.target.value });
                   }}
                 />
-                <button
-                  type="button"
-                  className="button button--quiet"
+                <Button
                   aria-pressed={revealed.includes(index)}
                   onClick={() => {
                     setRevealed((current) =>
@@ -342,10 +311,9 @@ export function ProfileEditor({
                   <span className="sr-only">
                     {revealed.includes(index) ? 'Hide' : 'Show'} value of variable {index + 1}
                   </span>
-                </button>
-                <button
-                  type="button"
-                  className="button button--quiet button--danger"
+                </Button>
+                <Button
+                  tone="danger"
                   onClick={() => {
                     setRevealed((current) => current.filter((i) => i !== index));
                     onChange({
@@ -356,20 +324,18 @@ export function ProfileEditor({
                 >
                   <span aria-hidden="true">×</span>
                   <span className="sr-only">Remove variable {index + 1}</span>
-                </button>
+                </Button>
               </div>
             ))}
           </div>
         )}
-        <button
-          type="button"
-          className="button"
+        <Button
           onClick={() => {
             onChange({ ...draft, variables: [...draft.variables, { key: '', value: '' }] });
           }}
         >
           Add variable
-        </button>
+        </Button>
       </div>
     </>
   );
