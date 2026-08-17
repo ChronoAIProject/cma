@@ -71,9 +71,22 @@ RUN apt-get update \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
+# The second bridge pins a version of minimatch with two published
+# denial-of-service advisories, and pins it exactly — so npm will not move it and
+# a newer bridge is not available that does. The patched release of the same
+# major is installed over it here.
+#
+# Stated rather than allowlisted, which is the point: the scan gate is what
+# noticed, the gate is never weakened, and this is the remediation the gate was
+# asking for. It comes out again the moment upstream pins a fixed version, and
+# the scan is what will say so.
+ARG MINIMATCH_VERSION=10.2.3
 RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
         "@zed-industries/claude-code-acp@${CLAUDE_CODE_ACP_VERSION}" \
+    && npm install --no-save \
+        --prefix /usr/local/lib/node_modules/@zed-industries/claude-code-acp \
+        "minimatch@${MINIMATCH_VERSION}" \
     && npm cache clean --force
 
 # Install the platform CLI from its published release. The checksum is verified
