@@ -45,3 +45,27 @@ export {
   type SessionCapabilities,
 } from './operations';
 export { wireTransport } from './wire';
+
+/**
+ * Recorded conversations and the driver that replays them.
+ *
+ * Exported from the client's own index because a driver is how this client is
+ * used in development, not a separate thing beside it — the same arrangement
+ * `terminal/drivers/` already has.
+ */
+export { MockSession, type MockOptions } from './drivers/mock';
+export {
+  TRANSCRIPTS,
+  transcriptNamed,
+  APPROVAL_DENIED,
+  APPROVAL_GRANTED,
+  FAILED_TOOL_CALL,
+  INTERRUPTED_TURN,
+  NO_USAGE,
+  PLAIN_TURN,
+  REPORTS_USAGE,
+  ROTATES,
+  TWO_TOOL_CALLS,
+  UNKNOWN_KIND,
+} from './fixtures/transcripts';
+export type { Frame, Provenance, Transcript } from './fixtures/types';
