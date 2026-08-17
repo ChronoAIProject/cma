@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
+import { Button } from '../ui/Button';
+import { Dialog } from '../ui/Dialog';
 import { Select } from '../ui/Select';
 import type { EnvironmentProfile } from '../environment/types';
-import '../ui/Dialog.css';
-import './NewSessionDialog.css';
 
 /**
  * The choice made when a session starts.
@@ -14,6 +14,11 @@ import './NewSessionDialog.css';
  * Deliberately small. Everything has a working default, so someone who wants a
  * terminal can press Start and get one; the settings are there for the person
  * who has a reason to change them.
+ *
+ * It builds on the shared shell rather than beside it. It used to declare its
+ * own scrim, its own plate and its own Escape handler, and that copy trapped no
+ * focus at all — Tab out of it landed on the console behind, which is inert to
+ * the eye and not to the keyboard.
  */
 
 interface NewSessionDialogProps {
@@ -43,96 +48,54 @@ export function NewSessionDialog({
   profiles = [],
 }: NewSessionDialogProps) {
   const [profile, setProfile] = useState<string>('');
-  const headingId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
   const profileLabelId = useId();
-
-  // Focus moves into the dialog on open, or a keyboard user is left behind on
-  // the control that opened it with no indication anything happened.
-  useEffect(() => {
-    if (open) {
-      dialogRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onCancel();
-      }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open, onCancel]);
 
   if (!open) {
     return null;
   }
 
   return (
-    <div className="dialog__scrim" role="presentation" onClick={onCancel}>
-      <div
-        className="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={headingId}
-        ref={dialogRef}
-        onClick={(event) => {
-          // The scrim closes; the panel itself must not.
-          event.stopPropagation();
-        }}
-      >
-        <h2 className="dialog__title" id={headingId}>
-          New session
-        </h2>
-
-        <div className="dialog__field">
-          <span className="dialog__label" id={profileLabelId}>
-            Environment profile
-          </span>
-          {/*
-           * "None" is not "bare". A session that names no profile is started
-           * the way this deployment says an unqualified session should be —
-           * which agent, which model, how freely it acts — so this chooses
-           * between described sessions rather than between something and
-           * nothing.
-           */}
-          <Select
-            id={profileLabelId}
-            label="Environment profile"
-            value={profile}
-            options={[
-              { value: '', label: "This deployment's defaults" },
-              ...profiles.map((p) => ({ value: p.id, label: p.name })),
-            ]}
-            onChange={setProfile}
-          />
-          <span className="dialog__hint">
-            The whole description of the session: the agent and how it behaves, the software it
-            carries, and the variables it is started with.
-          </span>
-        </div>
-
-        <div className="dialog__actions">
-          <button type="button" className="button press--quiet" onClick={onCancel}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="button button--accent press--accent"
+    <Dialog
+      title="New session"
+      onClose={onCancel}
+      footer={
+        <>
+          <Button onClick={onCancel}>Cancel</Button>
+          <Button
+            tone="accent"
             onClick={() => {
               onStart(profile === '' ? null : profile);
             }}
           >
             Start session
-          </button>
-        </div>
+          </Button>
+        </>
+      }
+    >
+      <div className="field">
+        <span className="field__label" id={profileLabelId}>
+          Environment profile
+        </span>
+        {/*
+         * "None" is not "bare". A session that names no profile is started the
+         * way this deployment says an unqualified session should be — which
+         * agent, which model, how freely it acts — so this chooses between
+         * described sessions rather than between something and nothing.
+         */}
+        <Select
+          label="Environment profile"
+          value={profile}
+          options={[
+            { value: '', label: "This deployment's defaults" },
+            ...profiles.map((p) => ({ value: p.id, label: p.name })),
+          ]}
+          onChange={setProfile}
+        />
+        <span className="field__hint">
+          The whole description of the session: the agent and how it behaves, the software it
+          carries, and the variables it is started with.
+        </span>
       </div>
-    </div>
+    </Dialog>
   );
 }
