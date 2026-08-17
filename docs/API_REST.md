@@ -288,6 +288,7 @@ GET /api/v1/conformance
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/events-replay",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/steering",
+  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/interrupt",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/usage"
 ] }
