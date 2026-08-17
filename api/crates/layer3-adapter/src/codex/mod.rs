@@ -7,6 +7,7 @@
 //! rides on it, the protocol client — is shared machinery in `hosted`, because
 //! none of it changes with the agent inside.
 
+mod config;
 mod environment;
 mod permission;
 
@@ -54,6 +55,7 @@ impl KernelAdapter for CodexAdapter {
             // The kernel accepts input mid-turn and continues the same turn
             // rather than needing it cancelled and restarted.
             steer: true,
+            interrupt: true,
             // Reported per turn, with the context window alongside.
             usage: true,
         }

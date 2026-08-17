@@ -13,6 +13,7 @@ fn everything() -> KernelCapabilities {
         terminal: true,
         snapshot: true,
         steer: true,
+        interrupt: true,
         usage: true,
     }
 }
@@ -76,6 +77,7 @@ fn a_conversation_session_gets_only_what_its_runtime_offers() {
             terminal: false,
             snapshot: false,
             steer: false,
+            interrupt: false,
             usage: true,
         },
     )
@@ -121,4 +123,66 @@ fn a_session_recorded_before_capabilities_existed_reads_back_as_holding_none() {
     // time it is placed, and until then it claims nothing it cannot prove.
     let restored: SessionCapabilities = serde_json::from_str("{}").expect("deserialises");
     assert_eq!(restored, SessionCapabilities::default());
+}
+
+#[test]
+fn a_kernel_that_cannot_take_a_turn_back_does_not_grant_the_operation() {
+    // Interrupting is its own ability rather than part of holding a
+    // conversation. A wire can offer a prompt and no way to withdraw it, and a
+    // session that accepted the request and did nothing would leave whoever
+    // asked watching the agent carry on with no explanation.
+    let granted = SessionCapabilities::granted(
+        SessionMode::Conversation,
+        KernelCapabilities {
+            interrupt: false,
+            ..everything()
+        },
+    )
+    .expect("a conversation is still a conversation");
+    assert!(granted.conversation);
+    assert!(!granted.interrupt);
+    let err = granted
+        .require(Capability::Interrupt)
+        .expect_err("what the kernel cannot do must be refused by name");
+    assert!(
+        matches!(&err, CoreError::CapabilityUnsupported(named) if named == "interrupt"),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn interrupting_and_steering_are_told_apart() {
+    // Continuing a turn and abandoning one are different things, and kernels
+    // differ in which they offer. Collapsing them would advertise one on the
+    // strength of the other.
+    let steers_only = SessionCapabilities::granted(
+        SessionMode::Conversation,
+        KernelCapabilities {
+            steer: true,
+            interrupt: false,
+            ..everything()
+        },
+    )
+    .expect("ok");
+    assert!(steers_only.steer && !steers_only.interrupt);
+
+    let interrupts_only = SessionCapabilities::granted(
+        SessionMode::Conversation,
+        KernelCapabilities {
+            steer: false,
+            interrupt: true,
+            ..everything()
+        },
+    )
+    .expect("ok");
+    assert!(interrupts_only.interrupt && !interrupts_only.steer);
+}
+
+#[test]
+fn a_terminal_session_is_not_granted_an_interrupt_operation() {
+    // A screen stops what it is doing with a control character, which travels
+    // as input. An operation here would be a second way to say it, with
+    // nothing behind it.
+    let granted = SessionCapabilities::granted(SessionMode::Terminal, everything()).expect("ok");
+    assert!(!granted.interrupt);
 }
