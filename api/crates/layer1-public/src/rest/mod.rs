@@ -258,6 +258,7 @@ impl From<CoreError> for Problem {
 /// outlives every session that used one — so it has its own router, mounted
 /// beside this one.
 pub mod environments;
+mod environments_shapes;
 
 /// What somebody running the service can see and do.
 ///
