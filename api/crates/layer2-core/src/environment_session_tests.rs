@@ -355,4 +355,126 @@ mod granted_services {
         let scoped = service.session_services(&session.id).await;
         assert!(scoped.contains(&ServiceId::new("github")));
     }
+
+    #[tokio::test]
+    async fn the_runtime_is_told_what_the_session_may_reach() {
+        // Recording the grant is half of it. The half that changes what
+        // happens is the agent knowing: one that does not know it may act on a
+        // service reasons about why it cannot, and answers confidently and
+        // wrongly.
+        let profiles = Arc::new(FakeProfileStore::default());
+        let environment_service = environments_with_mandated(Arc::clone(&profiles));
+        let owner = user("subject-a");
+        let mut spec = profile_spec("github work");
+        spec.services.push(ServiceId::new("github"));
+        let profile = environment_service
+            .create(&owner, spec)
+            .await
+            .expect("creates");
+
+        let adapter = Arc::new(FakeAdapter::default());
+        let service = service_with_environments(
+            Arc::new(FakeStore::default()),
+            Arc::clone(&adapter),
+            environment_service,
+        );
+        service
+            .create_session(
+                &owner,
+                SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("creates");
+
+        let provisioned = await_provisioned(&adapter).await;
+        assert!(provisioned.reaches.contains(&"github".to_string()));
+        assert!(
+            provisioned.reaches.contains(&"nyxid".to_string()),
+            "the deployment's floor travels with the grant"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_that_reaches_nothing_hands_the_runtime_an_empty_list() {
+        // Not the absence of the mechanism. A runtime told "nothing" can say
+        // so; one told nothing at all cannot tell that apart from a control
+        // plane that never mentioned it.
+        let profiles = Arc::new(FakeProfileStore::default());
+        let environment_service = EnvironmentProfileService::new(
+            profiles,
+            Baseline::new([], [], []),
+            None,
+            None,
+            fake_agent(),
+        );
+        let owner = user("subject-a");
+        let profile = environment_service
+            .create(&owner, profile_spec("no services"))
+            .await
+            .expect("creates");
+
+        let adapter = Arc::new(FakeAdapter::default());
+        let service = service_with_environments(
+            Arc::new(FakeStore::default()),
+            Arc::clone(&adapter),
+            environment_service,
+        );
+        service
+            .create_session(
+                &owner,
+                SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("creates");
+
+        assert!(await_provisioned(&adapter).await.reaches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn what_the_runtime_is_told_carries_no_credential() {
+        // Names are a fact about a session's configuration; the token minted
+        // against them is not, and travels a different path that never enters
+        // the sandbox.
+        let profiles = Arc::new(FakeProfileStore::default());
+        let environment_service = environments_with_mandated(Arc::clone(&profiles));
+        let owner = user("subject-a");
+        let mut spec = profile_spec("github work");
+        spec.services.push(ServiceId::new("github"));
+        let profile = environment_service
+            .create(&owner, spec)
+            .await
+            .expect("creates");
+
+        let adapter = Arc::new(FakeAdapter::default());
+        let service = service_with_environments(
+            Arc::new(FakeStore::default()),
+            Arc::clone(&adapter),
+            environment_service,
+        );
+        service
+            .create_session(
+                &owner,
+                SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    subject_credential: Some("a-real-credential-value".into()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("creates");
+
+        let provisioned = await_provisioned(&adapter).await;
+        for name in &provisioned.reaches {
+            assert!(
+                !name.contains("a-real-credential-value"),
+                "a credential value reached the list of names"
+            );
+        }
+    }
 }
