@@ -1,0 +1,12 @@
+/*
+ * The session header — docs/Web_Style.md §5 and §12.
+ *
+ * Height comes from .band--head. Nothing here adds padding to the block axis:
+ * a band's height is set on the band, never accumulated, or two columns whose
+ * headers should share a rule drift apart the moment one gains a longer label.
+ */
+
+.sessionheader {
+  gap: var(--space-3);
+  overflow: hidden;
+}
