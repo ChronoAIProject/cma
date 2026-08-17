@@ -101,7 +101,6 @@ async fn main() {
                 upstream_model: config.upstream_model.clone(),
                 upstream_wire_api: config.upstream_wire_api.clone(),
                 platform_base_url: config.platform_base_url.clone(),
-                resume_args: config.runtime_resume_args.clone(),
                 // What the image is built with, which is the same list this
                 // deployment promises every session. Stated to the adapter so
                 // a profile asking for anything else is refused at provision
