@@ -496,3 +496,40 @@ async fn browsing_the_catalogue_needs_the_same_capability_as_the_profiles() {
 /// file-size limit.
 #[path = "environment_session_tests.rs"]
 mod session;
+
+#[tokio::test]
+async fn a_profile_that_named_no_kernel_runs_what_this_deployment_runs() {
+    // Layer 1 leaves it unset because it does not know which kernels exist
+    // here. If nothing settled it, the profile would store an empty selector
+    // and every session started from it would fail to find a runtime.
+    let store = Arc::new(FakeProfileStore::default());
+    let service = EnvironmentProfileService::new(
+        Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
+        Baseline::default(),
+        None,
+        None,
+        crate::environment::AgentConfiguration {
+            kernel: crate::ids::KernelId::new("fake"),
+            ..Default::default()
+        },
+    );
+    let owner = caller("subject-a");
+
+    let mut spec = profile_spec("unspecified");
+    spec.agent.kernel = crate::ids::KernelId::default();
+    let created = service.create(&owner, spec).await.expect("created");
+
+    assert_eq!(
+        created.agent.kernel,
+        crate::ids::KernelId::new("fake"),
+        "a stored profile must say what it will actually run"
+    );
+    assert_eq!(
+        service
+            .agent_for(&owner, Some(&created.id))
+            .await
+            .expect("resolves")
+            .kernel,
+        crate::ids::KernelId::new("fake")
+    );
+}
