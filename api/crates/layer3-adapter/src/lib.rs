@@ -41,6 +41,7 @@ pub use conversation::{
 pub mod claude_code;
 pub mod codex;
 pub mod hosted;
+pub mod layer4;
 pub mod sandbox;
 pub mod supervisor;
 pub mod terminal;
