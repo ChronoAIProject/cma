@@ -45,7 +45,7 @@ describe('rotating', () => {
   it('says why, in the owner terms', () => {
     // Refusing is the requirement; saying why is the design.
     const reason = planeStateFor(session('rotating')).reason ?? '';
-    expect(reason).toMatch(/updated runtime/i);
+    expect(reason).toMatch(/being moved/i);
     expect(reason).toMatch(/cannot take input/i);
   });
 
