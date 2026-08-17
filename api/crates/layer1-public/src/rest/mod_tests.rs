@@ -125,6 +125,7 @@ fn a_view_carries_geometry_as_plain_integers() {
         rotations: 0,
         rotated_at: None,
         capabilities: Default::default(),
+        granted_services: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let view: SessionView = s.into();
@@ -132,4 +133,206 @@ fn a_view_carries_geometry_as_plain_integers() {
     assert_eq!(json["cols"], 120);
     assert_eq!(json["rows"], 40);
     assert!(json.get("stop_reason").is_none(), "absent reason omitted");
+}
+
+/// What a session reports it may reach — the other half of its capabilities.
+mod reach {
+    use super::*;
+    use layer2_core::{
+        Baseline, CatalogService, EnvironmentProfile, EnvironmentProfileId,
+        EnvironmentProfileService, EnvironmentProfileStore, ServiceId, StoreError,
+    };
+
+    /// A store that holds nothing: these tests never read a profile, which is
+    /// the whole point of the projection they cover.
+    struct NoProfiles;
+
+    #[async_trait::async_trait]
+    impl EnvironmentProfileStore for NoProfiles {
+        async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
+            Ok(())
+        }
+        async fn get(
+            &self,
+            _id: &EnvironmentProfileId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
+        }
+        async fn list_for(
+            &self,
+            _owner: &layer2_core::SubjectId,
+        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
+            Ok(Vec::new())
+        }
+        async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+            Ok(())
+        }
+    }
+
+    fn session_with(granted: Option<Vec<ServiceId>>) -> Session {
+        Session {
+            id: SessionId("sesn_1".into()),
+            owner: layer2_core::SubjectId("subject-a".into()),
+            kernel: layer2_core::KernelId::new("example-runtime"),
+            status: layer2_core::SessionStatus::Ready,
+            recovery_state: layer2_core::RecoveryState::Normal,
+            stop_reason: None,
+            options: layer2_core::AgentOptions::default(),
+            environment_profile: None,
+            geometry: TerminalGeometry::new(120, 40).expect("valid"),
+            last_seq: 3,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
+            capabilities: Default::default(),
+            granted_services: granted,
+            created_at: "2026-08-12T00:00:00Z".into(),
+        }
+    }
+
+    /// A catalogue that answers, or refuses, exactly as NyxID would.
+    #[derive(Default)]
+    struct Catalogue {
+        services: Vec<CatalogService>,
+        unavailable: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl layer2_core::ServiceCatalog for Catalogue {
+        async fn available(
+            &self,
+            _subject: &layer2_core::SubjectId,
+            _credential: Option<&str>,
+        ) -> Result<Vec<CatalogService>, layer2_core::CatalogError> {
+            if self.unavailable {
+                return Err(layer2_core::CatalogError::Unavailable("down".into()));
+            }
+            Ok(self.services.clone())
+        }
+    }
+
+    fn environments(catalogue: Catalogue) -> Arc<EnvironmentProfileService> {
+        EnvironmentProfileService::new(
+            Arc::new(NoProfiles),
+            Baseline::new([], [], [ServiceId::new("nyxid")]),
+            None,
+            Some(Arc::new(catalogue)),
+            Default::default(),
+        )
+    }
+
+    fn caller() -> Caller {
+        Caller::new(
+            layer2_core::SubjectId("subject-a".into()),
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ManageOwnEnvironmentProfiles,
+            ]),
+        )
+    }
+
+    async fn rendered(session: Session, catalogue: Catalogue) -> serde_json::Value {
+        let sessions = vec![session];
+        let mut views: Vec<SessionView> = sessions.iter().cloned().map(SessionView::from).collect();
+        reached(
+            &environments(catalogue),
+            &caller(),
+            None,
+            &sessions,
+            &mut views,
+        )
+        .await;
+        serde_json::to_value(&views[0]).expect("serializes")
+    }
+
+    #[tokio::test]
+    async fn names_a_service_the_catalogue_knows() {
+        // A raw service identifier is not something an owner recognises.
+        let json = rendered(
+            session_with(Some(vec![
+                ServiceId::new("github"),
+                ServiceId::new("nyxid"),
+            ])),
+            Catalogue {
+                services: vec![CatalogService {
+                    id: ServiceId::new("github"),
+                    name: "GitHub".into(),
+                    description: Some("Repositories and pull requests".into()),
+                }],
+                unavailable: false,
+            },
+        )
+        .await;
+
+        assert_eq!(json["reach"][0]["id"], "github");
+        assert_eq!(json["reach"][0]["name"], "GitHub");
+        assert_eq!(
+            json["reach"][0]["description"],
+            "Repositories and pull requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn marks_what_the_platform_mandates() {
+        // So a client renders it as fixed rather than guessing which entries
+        // cannot be removed, exactly as the profile view already does.
+        let json = rendered(
+            session_with(Some(vec![
+                ServiceId::new("github"),
+                ServiceId::new("nyxid"),
+            ])),
+            Catalogue::default(),
+        )
+        .await;
+
+        assert_eq!(json["reach"][0]["mandated"], false);
+        assert_eq!(json["reach"][1]["mandated"], true);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_catalogue_costs_the_names_and_not_the_answer() {
+        // "We cannot ask right now" is not "you may reach nothing". Returning
+        // an error here would report a transient outage as a session with no
+        // reach, which is the confusion this whole projection exists to avoid.
+        let json = rendered(
+            session_with(Some(vec![ServiceId::new("github")])),
+            Catalogue {
+                services: Vec::new(),
+                unavailable: true,
+            },
+        )
+        .await;
+
+        assert_eq!(json["reach"][0]["id"], "github");
+        assert!(json["reach"][0].get("name").is_none());
+    }
+
+    #[tokio::test]
+    async fn carries_no_credential_material() {
+        // What a session may reach is a fact about its configuration; what it
+        // holds is not. Nothing here may be usable to fingerprint a token.
+        let json = rendered(
+            session_with(Some(vec![ServiceId::new("github")])),
+            Catalogue::default(),
+        )
+        .await;
+
+        let fields: Vec<&str> = json["reach"][0]
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(fields, ["id", "mandated"]);
+    }
+
+    #[tokio::test]
+    async fn a_session_recorded_before_the_grant_existed_reports_nothing_rather_than_guessing() {
+        // The projection reports what the session recorded. A view that fell
+        // back to the profile here would be the wrong answer dressed as the
+        // right one — the core's own fallback exists for minting a credential,
+        // where there is no other option, and not for telling somebody what a
+        // session reaches.
+        let json = rendered(session_with(None), Catalogue::default()).await;
+        assert_eq!(json["reach"].as_array().expect("an array").len(), 0);
+    }
 }
