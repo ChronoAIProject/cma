@@ -465,3 +465,306 @@ async fn a_session_whose_kernel_cannot_snapshot_is_never_offered_for_rotation() 
         "a session that was never movable must simply keep working"
     );
 }
+
+/// A runtime that serves both planes, which is what Codex actually is.
+///
+/// The default fake renders a screen and holds no conversation, which is the
+/// shape the rest of this file needs. Everything below is about moving between
+/// the two, so it needs a runtime that has both to move between.
+fn ambidextrous() -> Arc<FakeAdapter> {
+    Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    })
+}
+
+/// A live session on the terminal plane, and the service holding it.
+async fn started(
+    adapter: Arc<FakeAdapter>,
+) -> (
+    Arc<crate::service::SessionService>,
+    Arc<FakeStore>,
+    crate::authz::Caller,
+    crate::session::Session,
+) {
+    let store = Arc::new(FakeStore::default());
+    let svc = crate::test_support::service(Arc::clone(&store), adapter);
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    (svc, store, alice, created)
+}
+
+#[tokio::test]
+async fn a_session_moves_between_planes_and_stays_the_same_session() {
+    // The whole point: chat and terminal are two surfaces onto one session,
+    // and moving between them costs a rotation and nothing else.
+    let adapter = ambidextrous();
+    let (svc, store, alice, created) = started(Arc::clone(&adapter)).await;
+    let runtime = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    adapter
+        .set_conversation(&runtime, b"what the agent has done so far")
+        .await;
+
+    let moving = svc
+        .change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect("a runtime that holds a conversation can be asked for one");
+    assert_eq!(
+        moving.status,
+        SessionStatus::Rotating,
+        "the window in which input must be refused rather than lost"
+    );
+
+    let settled = await_usable(&svc, &alice, &created.id).await;
+    assert_eq!(settled.id, created.id, "it must be the same session");
+    assert!(settled.capabilities.conversation && !settled.capabilities.terminal);
+    assert_eq!(settled.rotations, 1);
+    assert!(
+        settled.rotated_at.is_some(),
+        "the owner must be told the moment their session was carried from"
+    );
+    assert_eq!(
+        adapter.handovers.lock().await.clone(),
+        vec![b"what the agent has done so far".to_vec()],
+        "the conversation must travel to the runtime on the other plane"
+    );
+
+    // And back, because a plane change is not a one-way door.
+    svc.change_plane(&alice, &created.id, crate::options::SessionMode::Terminal)
+        .await
+        .expect("moving back is the same act");
+    let back = await_usable(&svc, &alice, &created.id).await;
+    assert_eq!(back.id, created.id);
+    assert!(back.capabilities.terminal && !back.capabilities.conversation);
+    assert_eq!(back.rotations, 2);
+}
+
+#[tokio::test]
+async fn the_change_is_written_where_its_owner_reads_their_history() {
+    // A surface that changed under somebody, with nothing in the log saying
+    // so, is a session that appears to have rewritten itself.
+    let (svc, _store, alice, created) = started(ambidextrous()).await;
+
+    svc.change_plane(
+        &alice,
+        &created.id,
+        crate::options::SessionMode::Conversation,
+    )
+    .await
+    .expect("moved");
+    await_usable(&svc, &alice, &created.id).await;
+
+    let events = svc
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("readable");
+    let change = events
+        .iter()
+        .find_map(|e| match &e.kind {
+            crate::event::EventKind::PlaneChanged {
+                from,
+                to,
+                snapshot_at,
+            } => Some((*from, *to, snapshot_at.clone())),
+            _ => None,
+        })
+        .expect("the change must be a durable event");
+    assert_eq!(change.0, crate::options::SessionMode::Terminal);
+    assert_eq!(change.1, crate::options::SessionMode::Conversation);
+    assert!(
+        !change.2.is_empty(),
+        "the moment the conversation was taken is what says where history stops being continuous"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_that_does_not_serve_the_plane_refuses_by_name() {
+    // The typed refusal, before anything is torn down. The default fake
+    // renders a screen and holds no conversation, which is exactly the kernel
+    // this must refuse for.
+    let adapter = Arc::new(FakeAdapter::default());
+    let (svc, _store, alice, created) = started(Arc::clone(&adapter)).await;
+
+    let refusal = svc
+        .change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect_err("a screen-only runtime cannot hold a conversation");
+
+    assert!(
+        matches!(&refusal, crate::error::CoreError::CapabilityUnsupported(name) if name == "conversation"),
+        "got {refusal:?}"
+    );
+    let after = svc
+        .get_session(&alice, &created.id)
+        .await
+        .expect("readable");
+    assert_eq!(
+        after.status,
+        SessionStatus::Ready,
+        "a refused session keeps running exactly as it was"
+    );
+    assert_eq!(after.rotations, 0);
+    assert!(adapter.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_runtime_that_cannot_hand_its_conversation_over_refuses_rather_than_tries() {
+    // The fail-safe. Moving planes means capturing and resuming, so a kernel
+    // that cannot be captured would be trading the conversation for the
+    // surface — the §5 defect, done deliberately.
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            snapshot: false,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    });
+    let (svc, _store, alice, created) = started(Arc::clone(&adapter)).await;
+
+    let refusal = svc
+        .change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect_err("a session that cannot be carried must not be moved");
+
+    assert!(
+        matches!(&refusal, crate::error::CoreError::CapabilityUnsupported(name) if name == "snapshot"),
+        "got {refusal:?}"
+    );
+    let after = svc
+        .get_session(&alice, &created.id)
+        .await
+        .expect("readable");
+    assert_eq!(after.status, SessionStatus::Ready);
+    assert!(adapter.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_session_already_being_moved_refuses_a_second_move() {
+    // Two handovers at once would capture a sandbox being torn down and resume
+    // from whichever answered last.
+    let (svc, store, alice, created) = started(ambidextrous()).await;
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.status = SessionStatus::Rotating;
+    store.upsert(&record).await.expect("recorded");
+
+    let refusal = svc
+        .change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect_err("a session mid-handover cannot be handed over again");
+
+    assert!(
+        matches!(refusal, crate::error::CoreError::InvalidState),
+        "got {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_session_with_no_runtime_refuses() {
+    // A stopped session is started on whichever plane its profile names when
+    // it is revived. Rotating one would mean carrying a sandbox that is gone.
+    let (svc, _store, alice, created) = started(ambidextrous()).await;
+    svc.stop_session(&alice, &created.id)
+        .await
+        .expect("stopped");
+
+    let refusal = svc
+        .change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect_err("a stopped session has nothing to move");
+
+    assert!(
+        matches!(refusal, crate::error::CoreError::InvalidState),
+        "got {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn only_the_owner_may_change_a_sessions_plane() {
+    // Stopping somebody else's session is an operator's job; deciding what
+    // they are looking at is not.
+    let (svc, _store, _alice, created) = started(ambidextrous()).await;
+
+    let refusal = svc
+        .change_plane(
+            &crate::test_support::admin(),
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect_err("an operator grant does not stand in for the owner here");
+
+    assert!(
+        matches!(refusal, crate::error::CoreError::Forbidden),
+        "got {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn asking_for_the_plane_a_session_is_already_on_costs_nothing() {
+    // Not an error and not a rotation: a handover to arrive where it already
+    // is would be a cost with nothing on the other side of it.
+    let adapter = ambidextrous();
+    let (svc, _store, alice, created) = started(Arc::clone(&adapter)).await;
+
+    let unchanged = svc
+        .change_plane(&alice, &created.id, crate::options::SessionMode::Terminal)
+        .await
+        .expect("already there");
+
+    assert_eq!(unchanged.status, SessionStatus::Ready);
+    assert_eq!(unchanged.rotations, 0);
+    assert!(adapter.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_terminal_session_nobody_moves_is_untouched() {
+    // The regression this whole issue must not cause: adding the operation
+    // must not change what a session does when nobody calls it.
+    let adapter = ambidextrous();
+    let (svc, _store, alice, created) = started(Arc::clone(&adapter)).await;
+
+    let settled = svc
+        .get_session(&alice, &created.id)
+        .await
+        .expect("readable");
+
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_eq!(settled.rotations, 0);
+    assert!(settled.rotated_at.is_none());
+    assert!(settled.capabilities.terminal && !settled.capabilities.conversation);
+}
