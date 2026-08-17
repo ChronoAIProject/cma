@@ -21,6 +21,15 @@ FROM debian:trixie-slim AS runtime
 
 ARG NYXID_CLI_VERSION=v0.10.0
 ARG CODEX_VERSION=0.147.0
+# The kernel's Agent Client Protocol bridge. A conversation-mode session runs
+# this instead of the terminal application: same kernel, driven through a
+# program that speaks the contract rather than painting a screen.
+#
+# Pinned exactly, like everything else here. It declares @openai/codex ^0.147.0
+# as its own dependency, so the two move together rather than fighting; a
+# floating version could pull a bridge built against a kernel this image does
+# not carry.
+ARG CODEX_ACP_VERSION=1.4.0
 # Provided by buildx; selects the right published binary for the target.
 ARG TARGETARCH
 
@@ -51,6 +60,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
+        "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
     && npm cache clean --force
 
 # Install the platform CLI from its published release. The checksum is verified
@@ -81,10 +91,17 @@ USER 10001:10001
 # Left unset it would mean the runtime declares no snapshot support, and a
 # session on it could never be carried onto a newer image — so the default
 # matches the kernel this image is actually built with rather than being empty.
+#
+# CHRONO_RUNTIME_SNAPSHOT_NAMED says the kernel below has to be told *which*
+# conversation to continue. Asked for "the latest" it selects among
+# conversations recorded in the current working directory, and one carried from
+# another pod was recorded somewhere else — so it finds nothing, starts fresh,
+# and reports success.
 ENV HOME=/home/chrono \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     CHRONO_RUNTIME_COMMAND=codex \
     CHRONO_RUNTIME_SNAPSHOT_DIR=.codex/sessions \
+    CHRONO_RUNTIME_SNAPSHOT_NAMED=true \
     TERM=xterm-256color
 EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/layer4-runtime"]

@@ -138,7 +138,7 @@ async fn relay(
         } else {
             ["ctl", "term"]
         };
-        let ready = serde_json::to_string(&Ready::declaring(&lanes))
+        let ready = serde_json::to_string(&Ready::declaring(&lanes).resuming(state.resuming()))
             .map_err(|e| std::io::Error::other(format!("cannot render the ready frame: {e}")))?;
         if sink.send(Message::Text(ready.into())).await.is_err() {
             return Ok(());
