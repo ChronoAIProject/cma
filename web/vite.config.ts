@@ -3,6 +3,15 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  /*
+   * Which build is on screen, for the status band (Web_Style.md §6). Baked in
+   * rather than fetched: a build identifier the running page asks a server for
+   * is one that can disagree with the code answering the question. Unset — a
+   * local run, and CI's image build — leaves the honest `dev`.
+   */
+  define: {
+    __CHRONO_BUILD__: JSON.stringify(process.env.CHRONO_BUILD ?? 'dev'),
+  },
   test: {
     globals: true,
     // Components under test render real DOM: the intro prompt is a genuine

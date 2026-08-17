@@ -4,6 +4,12 @@ WORKDIR /build
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+# Which build the status band names (docs/Web_Style.md section 6). Baked into
+# the bundle here because that is the only moment the answer is knowable and
+# cannot later disagree with the code. The publisher passes the release
+# version; a plain `docker build` leaves the honest default.
+ARG CHRONO_BUILD=dev
+ENV CHRONO_BUILD=$CHRONO_BUILD
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
