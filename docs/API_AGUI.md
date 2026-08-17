@@ -18,6 +18,27 @@ Consequently AG-UI projects **seven** of the ten core operations. `resize_termin
 
 It projects **conversation sessions**. A session created in terminal mode carries no conversation capability, and a run against it is refused with the typed capability error naming `conversation` — before a stream opens, because a stream that opened and then said nothing would look like an agent thinking.
 
+### The conformance table
+
+One row per core operation, for a **conversation session**. It is the claim behind "a chat client can drive a chrono-bot session", and it is narrower than that sentence sounds: two operations are terminal facts this protocol does not carry, and three depend on what the kernel behind the session offers.
+
+| Operation | On a conversation session | If not |
+|---|---|---|
+| `create_session` | ● implicit — a run opens the thread | — |
+| `send_input` | ● the prompt turn | — |
+| `stream_events` | ● the SSE run stream, resumable from a cursor | — |
+| `resolve_approval` | ● a new run carrying `resume` (§4) | — |
+| `interrupt` | ● where the kernel offers it | `capability_unsupported: interrupt` |
+| `steer` | ● under the session's `concurrent_input` policy | `capability_unsupported: steer` |
+| `resize_terminal` | — not projected; a geometry is a terminal fact | change the session's plane |
+| `screen_snapshot` | — not projected; a screen is a terminal fact | change the session's plane |
+| `get_usage` | ● as `STATE_DELTA` on `/usage` | reported as absent, never as zero |
+| `change_plane` | ○ observed as a `/planeChanges` delta | asked for over REST |
+
+**No operation fails in any other way.** Silence, a stream that never resolves, and a generic error are each a defect of the same kind: rule 4 of `API_Overview.md` is that an error names what is missing, and a refusal a client cannot read is a refusal that did not happen. The rows above are driven by `web/src/chat/parity.test.tsx`, which fails if this table and the tests disagree.
+
+This table is the per-session view of the same fact `API_Overview.md` §1 states per interface. Where they disagree, one of them is wrong.
+
 ---
 
 ## 2. Endpoints
