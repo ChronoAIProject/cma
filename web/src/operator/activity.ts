@@ -9,7 +9,7 @@ import type { ActivityEntry } from './types';
  */
 
 /** How a value looked in the record, and how much it stands out. */
-export type Tone = 'ok' | 'warn' | 'danger' | 'neutral';
+export type Tone = 'live' | 'wait' | 'fail' | 'ended';
 
 /**
  * How much attention an outcome deserves.
@@ -21,16 +21,16 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'neutral';
 export function outcomeTone(outcome: string): Tone {
   switch (outcome) {
     case 'succeeded':
-      return 'ok';
+      return 'live';
     case 'denied':
-      return 'danger';
+      return 'fail';
     case 'failed':
-      return 'warn';
+      return 'wait';
     default:
       // Including `rejected`, and including anything a newer control plane has
       // started recording: an unfamiliar word is drawn plainly rather than
       // guessed at.
-      return 'neutral';
+      return 'ended';
   }
 }
 

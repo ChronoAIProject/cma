@@ -24,7 +24,7 @@
 .startup__track {
   width: min(28rem, 100%);
   height: 2px;
-  background: var(--surface-2);
+  background: var(--inset);
   overflow: hidden;
 }
 
@@ -43,7 +43,7 @@
   margin: 0;
   font-size: var(--text-xs);
   color: var(--ink-3);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-label);
 }
 
 @media (prefers-reduced-motion: reduce) {

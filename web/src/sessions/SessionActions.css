@@ -24,7 +24,7 @@
   color: var(--ink);
   background: transparent;
   border: 1px solid var(--rule-2);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: var(--space-2);
   cursor: pointer;
 }
@@ -64,7 +64,7 @@
 }
 
 .actions__button--primary:hover:not(:disabled) {
-  background: var(--surface-2);
+  background: var(--raised);
 }
 
 /*
@@ -72,16 +72,16 @@
  * would carry nothing to someone who cannot distinguish it.
  */
 .actions__button--danger {
-  color: var(--emphasis);
+  color: var(--fail);
   border-color: var(--rule-2);
 }
 
 .actions__button--danger:hover:not(:disabled) {
-  border-color: var(--emphasis);
+  border-color: var(--fail);
 }
 
 .actions__button--danger .actions__hint {
-  color: var(--emphasis);
+  color: var(--fail);
 }
 
 .actions__confirm {
@@ -89,8 +89,8 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-2);
-  border: 1px solid var(--emphasis);
-  border-radius: 2px;
+  border: 1px solid var(--fail);
+  border-radius: var(--radius);
 }
 
 .actions__question {

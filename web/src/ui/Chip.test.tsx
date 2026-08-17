@@ -10,19 +10,19 @@ import { Chip } from './Chip';
 
 describe('Chip', () => {
   it('always draws the state word', () => {
-    render(<Chip tone="danger">denied</Chip>);
+    render(<Chip tone="fail">denied</Chip>);
     expect(screen.getByText('denied')).toBeInTheDocument();
   });
 
   it('carries the tone as well as the word', () => {
-    render(<Chip tone="ok">ready</Chip>);
-    expect(screen.getByText('ready')).toHaveClass('chip--ok');
+    render(<Chip tone="live">ready</Chip>);
+    expect(screen.getByText('ready')).toHaveClass('chip--live');
   });
 
   it('is neutral unless told otherwise', () => {
     // An unfamiliar state must not be dressed as a healthy one.
     render(<Chip>hibernating</Chip>);
-    expect(screen.getByText('hibernating')).toHaveClass('chip--neutral');
+    expect(screen.getByText('hibernating')).toHaveClass('chip--ended');
   });
 
   it('takes leading space only when it sits in a line of prose', () => {
