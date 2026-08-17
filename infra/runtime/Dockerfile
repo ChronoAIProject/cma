@@ -27,7 +27,15 @@ ARG TARGETARCH
 # ncurses-term is required, not cosmetic: a full-screen agent interface cannot
 # address the cursor without a terminfo entry for TERM, and degrades into an
 # unreadable flat scroll.
+#
+# The upgrade is what pulls security fixes published after the base image was
+# cut, and is the counterpart of the apk upgrade in infra/api/Dockerfile. A
+# Debian tag freezes its package set, so without this the image ships whatever
+# was current when trixie-slim was built and never moves — which means the scan
+# gate starts failing on a Dockerfile nobody has touched, the first time a
+# vulnerability is published in anything the base image already carried.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
