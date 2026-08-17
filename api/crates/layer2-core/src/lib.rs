@@ -84,7 +84,7 @@ pub use environment::{
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
-pub use event::{Event, EventKind, LiveFrame};
+pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
 pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
