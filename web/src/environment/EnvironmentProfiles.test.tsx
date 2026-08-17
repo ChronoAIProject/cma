@@ -284,12 +284,17 @@ describe('EnvironmentProfiles', () => {
     await user.click(await screen.findByRole('button', { name: /^remove$/i }));
     expect(await store.list()).toHaveLength(1);
 
+    // The question is asked inline, in place of the row's own controls (§7).
+    // A second dialog over this one is what that rule exists to forbid.
+    expect(screen.getByText('Remove this profile?')).toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+
     // And the way out of the confirmation keeps it.
-    await user.click(screen.getByRole('button', { name: /keep/i }));
+    await user.click(screen.getByRole('button', { name: /keep it/i }));
     expect(await store.list()).toHaveLength(1);
 
-    await user.click(screen.getByRole('button', { name: /^remove$/i }));
-    await user.click(screen.getByRole('button', { name: /confirm remove/i }));
+    await user.click(screen.getAllByRole('button', { name: /^remove$/i })[0] as HTMLElement);
+    await user.click(screen.getAllByRole('button', { name: /^remove$/i }).at(-1) as HTMLElement);
     await waitFor(async () => {
       expect(await store.list()).toHaveLength(0);
     });

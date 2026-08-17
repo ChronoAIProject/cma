@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
-import { Dialog } from '../ui/Dialog';
+import { Dialog, InlineConfirm } from '../ui/Dialog';
 import { ProfileEditor } from './ProfileEditor';
 import type {
   EnvironmentProfile,
@@ -165,6 +165,12 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
     return (
       <Dialog
         title={mode.kind === 'new' ? 'New environment profile' : 'Edit environment profile'}
+        /*
+         * The widest of §7's three. The editor is a form with pickers beside
+         * it; at 520px its rows truncated, which is the same reason §14 took
+         * operations out of a dialog.
+         */
+        width="wide"
         onClose={onClose}
         footer={
           <>
@@ -206,6 +212,8 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
   return (
     <Dialog
       title="Environment profiles"
+      /* A list of rows with controls on each: §7's middle width. */
+      width="medium"
       onClose={onClose}
       footer={
         <Button
@@ -242,25 +250,21 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
                 <span className="profiles__meta">{summarise(profile)}</span>
               </span>
               {confirmingRemoval === profile.id ? (
-                <>
-                  <Button
-                    size="sm"
-                    tone="danger"
-                    onClick={() => {
-                      void remove(profile.id);
-                    }}
-                  >
-                    Confirm remove
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setConfirmingRemoval(null);
-                    }}
-                  >
-                    Keep
-                  </Button>
-                </>
+                /*
+                 * Inline, in place of the row's own controls (§7). A second
+                 * dialog over this one is what the rule exists to forbid, and
+                 * a confirmation is exactly the thing that reaches for one.
+                 */
+                <InlineConfirm
+                  question="Remove this profile?"
+                  confirmLabel="Remove"
+                  onConfirm={() => {
+                    void remove(profile.id);
+                  }}
+                  onCancel={() => {
+                    setConfirmingRemoval(null);
+                  }}
+                />
               ) : (
                 <>
                   <Button
