@@ -241,9 +241,11 @@ fn a_name_the_runtime_controls_cannot_be_taken_over() {
 }
 
 #[tokio::test]
-async fn software_the_image_does_not_carry_is_refused_by_name() {
-    // Nothing can be installed into a running sandbox, so accepting this would
-    // start a session that quietly lacks the tools it was described as having.
+async fn this_kernel_applies_the_rule_about_what_cannot_be_delivered() {
+    // The rule itself belongs to every hosted kernel and is covered where it
+    // lives. What is checked here is that this adapter applies it at all —
+    // before the provider is called, so an undeliverable request never starts
+    // a session that quietly lacks what it was described as having.
     let a = adapter("http://127.0.0.1:1");
     let err = a
         .provision(&spec_with(crate::RuntimeEnvironment {
@@ -260,23 +262,6 @@ async fn software_the_image_does_not_carry_is_refused_by_name() {
 }
 
 #[tokio::test]
-async fn a_skill_the_agent_cannot_load_is_refused_by_name() {
-    let a = adapter("http://127.0.0.1:1");
-    let err = a
-        .provision(&spec_with(crate::RuntimeEnvironment {
-            skills: vec!["a-skill-this-agent-lacks".into()],
-            ..Default::default()
-        }))
-        .await
-        .expect_err("an undeliverable skill must not provision");
-    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
-    assert!(
-        err.to_string().contains("a-skill-this-agent-lacks"),
-        "{err}"
-    );
-}
-
-#[tokio::test]
 async fn what_the_image_already_carries_provisions_as_before() {
     // The success path, and the one that matters most: every session carries
     // this deployment's baseline, so a blanket refusal would have refused all
@@ -284,8 +269,11 @@ async fn what_the_image_already_carries_provisions_as_before() {
     let a = CodexAdapter::new(
         SandboxClient::new("http://127.0.0.1:1", "test-key"),
         CodexSandboxSpec {
-            provided_packages: vec!["nyxid".into()],
-            provided_skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+            deployment: crate::hosted::Deployment {
+                provided_packages: vec!["nyxid".into()],
+                provided_skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+                ..CodexSandboxSpec::default().deployment
+            },
             ..CodexSandboxSpec::default()
         },
     );

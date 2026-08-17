@@ -36,8 +36,6 @@ pub struct Config {
     /// an allowance it cannot work within is not a smaller session but a
     /// session that dies partway through somebody's work.
     pub sandbox_memory: String,
-    /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
-    /// Arguments that make the agent resume rather than start fresh.
     /// What this deployment calls itself on the runtimes it creates.
     ///
     /// A sandbox provider is shared, so one key sees runtimes belonging to
@@ -80,6 +78,14 @@ pub struct Config {
     pub upstream_model: String,
     /// Request shape the upstream speaks.
     pub upstream_wire_api: String,
+    /// Where a sandbox forwards the second kernel's model calls.
+    ///
+    /// Falls back to the shared upstream when a deployment names none, which is
+    /// the ordinary case for a gateway that serves both request shapes at one
+    /// address.
+    pub claude_upstream_base_url: String,
+    /// Model the second kernel selects when a session names none.
+    pub claude_upstream_model: String,
     /// Root of the identity platform a session's CLI acts against.
     pub platform_base_url: String,
     /// Connection string for the durable session store.
@@ -168,6 +174,16 @@ impl Config {
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
+        // The second kernel's upstream. Its own keys because kernels do not
+        // share a model and need not share an endpoint: one speaks a
+        // completions-shaped API and the other a messages-shaped one, and a
+        // deployment whose gateway serves both at one address simply leaves the
+        // base URL unset and inherits the first.
+        let claude_upstream_base_url = match var_or("CHRONO_CLAUDE_UPSTREAM_BASE_URL", "") {
+            empty if empty.is_empty() => upstream_base_url.clone(),
+            named => named,
+        };
+        let claude_upstream_model = var_or("CHRONO_CLAUDE_UPSTREAM_MODEL", "claude-opus-5");
         // Defaults to the same provider this service authenticates against, so
         // a session acts on the platform as the person who signed in.
         let platform_base_url = var_or("CHRONO_PLATFORM_BASE_URL", "");
@@ -253,6 +269,8 @@ impl Config {
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
+            claude_upstream_base_url,
+            claude_upstream_model,
             platform_base_url,
             mongodb_uri,
             mongodb_database,
@@ -334,6 +352,49 @@ fn list_or(key: &str, default: &str) -> Vec<String> {
         .collect()
 }
 
+/// A resolved configuration for tests, with every field set to something
+/// plausible.
+///
+/// Here rather than in a test module because more than one module needs it,
+/// and a second copy is a second thing to update when a key is added — which
+/// is exactly when a stale copy stops compiling and gets filled in blindly.
+#[cfg(test)]
+impl Config {
+    pub fn sample() -> Self {
+        Config {
+            bind: "0.0.0.0:8080".into(),
+            public_url: "http://x".into(),
+            cors_origins: vec![],
+            sandbox_base_url: "http://r".into(),
+            sandbox_api_key: "k".into(),
+            sandbox_image: "img".into(),
+            sandbox_cpu: "1".into(),
+            sandbox_memory: "1Gi".into(),
+            default_agent: Default::default(),
+            baseline_packages: vec![],
+            baseline_skills: vec![],
+            baseline_services: vec![],
+            deployment_id: "chrono-bot".into(),
+            adopts_untagged_runtimes: true,
+            upstream_base_url: "http://u".into(),
+            upstream_model: "m".into(),
+            upstream_wire_api: "responses".into(),
+            claude_upstream_base_url: "http://u".into(),
+            claude_upstream_model: "m".into(),
+            platform_base_url: "http://p".into(),
+            mongodb_uri: "mongodb://h/db".into(),
+            mongodb_database: "db".into(),
+            activity_retention: std::time::Duration::from_secs(90 * 86_400),
+            context_bucket: "bkt".into(),
+            storage_client_id: "sa-id".into(),
+            storage_client_secret: "sa-secret".into(),
+            auth_mode: AuthMode::Trusted {
+                subject: "s".into(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,35 +444,7 @@ mod tests {
 
     #[test]
     fn auth_mode_names_match_the_variants() {
-        let c = Config {
-            bind: "0.0.0.0:8080".into(),
-            public_url: "http://x".into(),
-            cors_origins: vec![],
-            sandbox_base_url: "http://r".into(),
-            sandbox_api_key: "k".into(),
-            sandbox_image: "img".into(),
-            sandbox_cpu: "1".into(),
-            sandbox_memory: "1Gi".into(),
-            default_agent: Default::default(),
-            baseline_packages: vec![],
-            baseline_skills: vec![],
-            baseline_services: vec![],
-            deployment_id: "chrono-bot".into(),
-            adopts_untagged_runtimes: true,
-            upstream_base_url: "http://u".into(),
-            upstream_model: "m".into(),
-            upstream_wire_api: "responses".into(),
-            platform_base_url: "http://p".into(),
-            mongodb_uri: "mongodb://h/db".into(),
-            mongodb_database: "db".into(),
-            activity_retention: std::time::Duration::from_secs(90 * 86_400),
-            context_bucket: "bkt".into(),
-            storage_client_id: "sa-id".into(),
-            storage_client_secret: "sa-secret".into(),
-            auth_mode: AuthMode::Trusted {
-                subject: "s".into(),
-            },
-        };
+        let c = Config::sample();
         assert_eq!(c.auth_mode_name(), "trusted");
 
         let c = Config {
