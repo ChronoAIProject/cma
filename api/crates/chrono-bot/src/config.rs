@@ -154,6 +154,7 @@ impl Config {
         // and typed it wrong must be told, not quietly made autonomous.
         let default_agent = layer2_core::AgentConfiguration {
             kernel: layer2_core::KernelId::new(var_or("CHRONO_DEFAULT_AGENT_KERNEL", "codex")),
+            mode: parse_enum("CHRONO_DEFAULT_AGENT_MODE", "terminal")?,
             model: Some(var_or("CHRONO_DEFAULT_AGENT_MODEL", "gpt-5.6-sol"))
                 .filter(|m| !m.trim().is_empty()),
             reasoning_effort: parse_enum("CHRONO_DEFAULT_AGENT_EFFORT", "high")?,
