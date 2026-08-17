@@ -149,3 +149,36 @@ async fn an_approval_parks_the_session_where_a_client_can_see_it() {
     assert_eq!(session.stop_reason, Some(StopReason::RequiresAction));
     assert!(!session.stop_reason.expect("present").is_terminal());
 }
+
+#[tokio::test]
+async fn a_tool_calls_kind_is_recorded_as_the_protocol_spells_it() {
+    // These strings live in durable events and are read back for the life of a
+    // session. Taking them from a dependency's `Debug` output would mean a
+    // rename there quietly changing what this service recorded about work
+    // already done.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        held.as_ref()
+            .expect("open")
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::ToolCall(
+                layer3_adapter::ToolCall::new(
+                    layer3_adapter::ToolCallId::new("call-1"),
+                    "read a file".to_string(),
+                )
+                .kind(layer3_adapter::ToolKind::Read),
+            )))
+            .await
+            .expect("listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ToolCallStarted { kind, .. } if kind == "read"
+        ))
+        .await,
+        "the recorded kind must be the protocol's own spelling"
+    );
+}

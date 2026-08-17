@@ -72,7 +72,8 @@ pub enum StoredEventKind {
     Unknown {
         /// Unrecognized `type` discriminator exactly as it was stored.
         tag: String,
-        /// Remaining fields in their extended-JSON representation.
+        /// Remaining fields, in whatever shape they can be rendered for a
+        /// person diagnosing the gap. Nothing reads them.
         payload: serde_json::Value,
     },
 }
