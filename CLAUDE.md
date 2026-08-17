@@ -6,7 +6,7 @@ Managed agent service by ChronoAI. This file is the contract for anyone — huma
 
 ## 1. What chrono-bot is
 
-A cloud-hosted service that runs coding-agent kernels (Codex, Claude Code) on ChronoAI infrastructure and exposes them over public interfaces. End users install nothing.
+A cloud-hosted service that runs coding-agent kernels (Codex, Claude Code, DeepSeek Harness) on ChronoAI infrastructure and exposes them over public interfaces. End users install nothing.
 
 **Topology — two pod roles:**
 
