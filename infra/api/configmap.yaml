@@ -129,6 +129,14 @@ data:
   # inherits the gateway above. A deployment whose gateways differ sets that key
   # and the two part ways.
   CHRONO_CLAUDE_UPSTREAM_MODEL: "claude-opus-5"
+  # The third kernel's model, on the same terms and with the same caveat: not
+  # checked against the live service, and a key rather than a constant so it can
+  # be corrected without a rebuild. Its request shape is a fact about the kernel
+  # and is not configured here either.
+  #
+  # CHRONO_DSH_UPSTREAM_BASE_URL is deliberately unset, inheriting the gateway
+  # above.
+  CHRONO_DSH_UPSTREAM_MODEL: "deepseek-v4-flash"
   # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
   # never leaves the cluster, and the sandbox provider terminates no TLS of its
   # own. This mirrors how the neighbouring control plane reaches it.
