@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeOptions, RuntimePermission, RuntimeSpec,
-    TermSize, TerminalInput,
+    KernelAdapter, RuntimeHandle, RuntimeOptions, RuntimePermission, RuntimeSpec, TermSize,
+    TerminalInput,
 };
 use tokio::sync::{broadcast, Mutex};
 
@@ -23,10 +23,9 @@ use crate::capabilities::SessionCapabilities;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
+use crate::provision_failure::StartFailure;
 use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
-use crate::session::{
-    ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus, StopReason,
-};
+use crate::session::{ProvisioningStage, Session, SessionSpec, SessionStatus};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How long a runtime may take to become usable.
@@ -45,7 +44,7 @@ const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
 /// the call allowed. Someone asking for a session wants a session, and a
 /// transient failure is not an answer to give them — so the first failure is
 /// retried rather than reported.
-const PROVISION_ATTEMPTS: u32 = 4;
+pub(crate) const PROVISION_ATTEMPTS: u32 = 4;
 
 /// Wait before the first retry, doubling thereafter.
 ///
@@ -53,51 +52,6 @@ const PROVISION_ATTEMPTS: u32 = 4;
 /// session which succeeds on the second attempt still feels like it started
 /// rather than like it stalled.
 pub(crate) const DEFAULT_RETRY_BACKOFF_MS: u64 = 3_000;
-
-/// Why a bring-up attempt failed, and whether another one could go differently.
-///
-/// Most provisioning failures are nobody's decision and usually pass, which is
-/// what the retries are for. Some are answers: a runtime asked for something
-/// its kernel does not do will be told the same thing on the fourth attempt as
-/// on the first, and making its owner wait out the backoff to hear it turns a
-/// clear refusal into what looks like a slow, flaky start.
-struct StartFailure {
-    /// What to record against the session, written for whoever has to act.
-    reason: String,
-    /// Whether trying again could produce a different outcome.
-    retryable: bool,
-}
-
-impl StartFailure {
-    /// A failure that another attempt might get past.
-    fn transient(reason: String) -> Self {
-        Self {
-            reason,
-            retryable: true,
-        }
-    }
-
-    /// A failure that every attempt would meet identically.
-    fn permanent(reason: String) -> Self {
-        Self {
-            reason,
-            retryable: false,
-        }
-    }
-
-    /// Classify what the provider said about bringing a runtime up.
-    ///
-    /// An absent ability is the one answer retrying cannot change: the adapter
-    /// distinguishes it from a failure precisely so a caller need not read
-    /// error strings to tell "cannot" from "did not".
-    fn from_provisioning(error: AdapterError) -> Self {
-        let reason = format!("could not provision a runtime: {error}");
-        match error {
-            AdapterError::Unsupported(_) => Self::permanent(reason),
-            AdapterError::Unavailable(_) | AdapterError::Rejected(_) => Self::transient(reason),
-        }
-    }
-}
 
 impl SessionService {
     /// Provision a runtime for an existing session and attach its terminal.
@@ -149,97 +103,8 @@ impl SessionService {
         self.finish_start(&id).await;
     }
 
-    /// Keep trying to bring a runtime up until one does, or the attempts run out.
-    ///
-    /// Each attempt starts clean. A previous attempt may have created a runtime
-    /// before failing — an attach that timed out leaves one running — and
-    /// retrying without tearing that down would leak one sandbox per attempt.
-    async fn start_with_retries(
-        self: &Arc<Self>,
-        session: &Session,
-        spec: &SessionSpec,
-        adapter: &Arc<dyn KernelAdapter>,
-        geometry: TerminalGeometry,
-        restore: Option<&Vec<u8>>,
-    ) -> Result<(), String> {
-        let mut backoff = Duration::from_millis(
-            self.retry_backoff_ms
-                .load(std::sync::atomic::Ordering::Relaxed),
-        );
-        let mut last = String::new();
-
-        for attempt in 1..=PROVISION_ATTEMPTS {
-            match self
-                .start_runtime(session, spec, adapter, geometry, restore)
-                .await
-            {
-                Ok(()) => {
-                    if attempt > 1 {
-                        tracing::info!(
-                            session_id = %session.id,
-                            attempt,
-                            "runtime started after retrying"
-                        );
-                    }
-                    return Ok(());
-                }
-                Err(failure) if !failure.retryable => {
-                    // The answer will not change, so waiting out the backoff
-                    // only delays telling the owner something already known.
-                    tracing::warn!(
-                        session_id = %session.id,
-                        reason = %failure.reason,
-                        "this session cannot be started at all; not retrying"
-                    );
-                    self.discard_runtime(&session.id, adapter).await;
-                    return Err(failure.reason);
-                }
-                Err(failure) => {
-                    tracing::warn!(
-                        session_id = %session.id,
-                        attempt,
-                        of = PROVISION_ATTEMPTS,
-                        reason = %failure.reason,
-                        "could not start the runtime; trying again"
-                    );
-                    self.discard_runtime(&session.id, adapter).await;
-                    last = failure.reason;
-                }
-            }
-            if attempt < PROVISION_ATTEMPTS {
-                tokio::time::sleep(backoff).await;
-                backoff *= 2;
-            }
-        }
-
-        Err(format!(
-            "could not start a runtime after {PROVISION_ATTEMPTS} attempts. Last error: {last}"
-        ))
-    }
-
-    /// Tear down whatever a failed attempt left behind.
-    ///
-    /// Without this each retry strands the runtime the previous one created,
-    /// which is how a session that eventually succeeds still costs several
-    /// sandboxes.
-    async fn discard_runtime(&self, id: &SessionId, adapter: &Arc<dyn KernelAdapter>) {
-        let Ok(Some(mut record)) = self.store.get(id).await else {
-            return;
-        };
-        let Some(handle) = record.runtime_id.take().map(RuntimeHandle) else {
-            return;
-        };
-        if let Err(e) = adapter.terminate(&handle).await {
-            tracing::warn!(session_id = %id, error = %e, "could not discard a failed runtime");
-        }
-        if let Err(e) = self.store.upsert(&record).await {
-            tracing::error!(session_id = %id, error = %e, "cannot clear the discarded runtime");
-        }
-        self.entries.write().await.remove(id);
-    }
-
     /// The successful path, from nothing to an attached terminal.
-    async fn start_runtime(
+    pub(crate) async fn start_runtime(
         self: &Arc<Self>,
         session: &Session,
         spec: &SessionSpec,
@@ -276,6 +141,11 @@ impl SessionService {
             })?;
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
+        // What the runtime is told, translated once. Some kernels settle how
+        // much the agent may do unattended per conversation rather than per
+        // runtime, so this is needed twice and computing it twice would be two
+        // places for the translation to drift.
+        let options = runtime_options(&spec.options);
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
@@ -284,7 +154,7 @@ impl SessionService {
                     rows: geometry.rows(),
                 },
                 subject_credential: spec.subject_credential.clone(),
-                options: runtime_options(&spec.options),
+                options: options.clone(),
                 restore_from: restore.cloned(),
                 environment: environment.into(),
                 created_by: self.identity.clone(),
@@ -311,12 +181,17 @@ impl SessionService {
             true => None,
         };
         let conversation = match conversing {
-            true => Some(adapter.open_conversation(&handle).await.map_err(|e| {
-                // A kernel that advertised a conversation and cannot open one
-                // will not start being able to. Refused permanently so the
-                // owner is told now rather than after the backoff.
-                StartFailure::permanent(format!("could not open the conversation: {e}"))
-            })?),
+            true => Some(
+                adapter
+                    .open_conversation(&handle, &options)
+                    .await
+                    .map_err(|e| {
+                        // A kernel that advertised a conversation and cannot open one
+                        // will not start being able to. Refused permanently so the
+                        // owner is told now rather than after the backoff.
+                        StartFailure::permanent(format!("could not open the conversation: {e}"))
+                    })?,
+            ),
             false => None,
         };
 
@@ -465,60 +340,6 @@ impl SessionService {
             tracing::error!(session_id = %id, error = %e, "runtime provisioned but not recorded");
         }
     }
-
-    /// Give up on a session, saying why, and take any runtime down with it.
-    ///
-    /// The state is written even though nobody is waiting for it. That is the
-    /// whole point: the caller left long ago, and a session that fails silently
-    /// is indistinguishable from one still starting.
-    async fn abandon(&self, id: &SessionId, adapter: &Arc<dyn KernelAdapter>, reason: &str) {
-        tracing::error!(session_id = %id, reason, "session could not be started");
-
-        let runtime = match self.store.get(id).await {
-            Ok(Some(mut record)) => {
-                let handle = record.runtime_id.take().map(RuntimeHandle);
-                record.session.status = SessionStatus::Terminated;
-                record.session.stop_reason = Some(StopReason::Error);
-                record.session.recovery_state = RecoveryState::Retired;
-                record.session.last_seq += 1;
-                let seq = record.session.last_seq;
-                let session_id = record.session.id.clone();
-                if let Err(e) = self.store.upsert(&record).await {
-                    tracing::error!(session_id = %id, error = %e, "cannot record the failure");
-                }
-                if let Err(e) = self
-                    .store
-                    .append_events(&[crate::event::Event {
-                        session_id,
-                        seq,
-                        kind: EventKind::StatusChanged {
-                            status: SessionStatus::Terminated,
-                            stop_reason: Some(StopReason::Error),
-                            // The reason travels with the event so the person
-                            // watching learns what the log already knew.
-                            detail: Some(reason.to_string()),
-                        },
-                    }])
-                    .await
-                {
-                    tracing::error!(session_id = %id, error = %e, "cannot record the failure event");
-                }
-                handle
-            }
-            _ => None,
-        };
-
-        self.entries.write().await.remove(id);
-
-        // A runtime may exist even though the session failed — provisioning can
-        // succeed and attaching still fail. Leaving it running would be the
-        // leak this design exists to prevent.
-        if let Some(handle) = runtime {
-            if let Err(e) = adapter.terminate(&handle).await {
-                tracing::warn!(session_id = %id, error = %e, "could not tear down the runtime");
-            }
-        }
-    }
 }
 
 /// Translate what a person asked for into what a runtime is told.
@@ -528,6 +349,10 @@ impl SessionService {
 /// place a new option has to be taught to cross.
 fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
     RuntimeOptions {
+        mode: match options.mode {
+            crate::options::SessionMode::Terminal => layer3_adapter::RuntimeMode::Terminal,
+            crate::options::SessionMode::Conversation => layer3_adapter::RuntimeMode::Conversation,
+        },
         model: options.model.clone(),
         reasoning_effort: Some(options.reasoning_effort.as_str().to_string()),
         permission: match options.permission {

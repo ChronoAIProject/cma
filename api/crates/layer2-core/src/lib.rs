@@ -26,6 +26,7 @@ pub mod ids;
 pub mod inventory;
 mod lifecycle;
 mod provision;
+mod provision_failure;
 mod reading;
 mod readopt;
 pub mod reconcile;
@@ -35,6 +36,8 @@ mod rotate;
 #[path = "provision_tests.rs"]
 mod provision_tests;
 
+#[cfg(test)]
+mod adapter_support;
 #[cfg(test)]
 mod conversation_support;
 #[cfg(test)]

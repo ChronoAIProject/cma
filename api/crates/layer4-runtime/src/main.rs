@@ -42,13 +42,17 @@ pub(crate) struct AppState {
     /// different answer from "nothing recorded yet" and is reported as one.
     snapshot_dir: Option<String>,
     /// How this kernel is told to continue a named conversation, if it must be.
-    ///
-    /// Held because it decides whether a restored conversation that does not
-    /// name itself is a problem. A kernel resumed by name and given no name
-    /// starts a fresh conversation and reports success, which is silent loss;
-    /// a kernel that finds its own history needs no name and is fine without
-    /// one.
     resume_args: Option<String>,
+    /// Whether a conversation handed to this runtime has to name itself.
+    ///
+    /// Stated by the adapter rather than inferred from anything here. A kernel
+    /// told by name which conversation to continue, and given no name, starts
+    /// a fresh one and reports success — silent loss, discovered by its owner.
+    /// Whether that applies is a fact about the kernel, and only the layer
+    /// that owns it knows: a kernel resumed by a command verb and one resumed
+    /// by a protocol call are both told by name, and neither is distinguishable
+    /// from here.
+    snapshot_named: bool,
     /// The conversation this pod is taking over, once one has been handed to it.
     ///
     /// The agent is not started until something attaches, which is what makes
@@ -86,6 +90,14 @@ impl AppState {
         let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command())?);
         *held = Some(std::sync::Arc::clone(&bridge));
         Ok(bridge)
+    }
+
+    /// The conversation this pod was handed, if it was handed one.
+    pub(crate) fn resuming(&self) -> Option<String> {
+        match self.resuming.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// The command to start the agent with, given what this pod has been told.
@@ -142,6 +154,8 @@ async fn main() {
     // rather than per request, so a pod's behaviour cannot change under it.
     let snapshot_dir = non_empty("CHRONO_RUNTIME_SNAPSHOT_DIR");
     let resume_args = non_empty("CHRONO_RUNTIME_RESUME_ARGS");
+    let snapshot_named =
+        non_empty("CHRONO_RUNTIME_SNAPSHOT_NAMED").is_some_and(|v| v.eq_ignore_ascii_case("true"));
     match snapshot_dir.as_deref() {
         Some(dir) => tracing::info!(dir, "this runtime can hand its conversation over"),
         // Said at startup rather than discovered at rotation, when the answer
@@ -226,6 +240,7 @@ async fn main() {
         home: home.clone(),
         snapshot_dir,
         resume_args,
+        snapshot_named,
         resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
         conversation: std::sync::Arc::new(Mutex::new(None)),
     };
@@ -285,13 +300,13 @@ async fn conversation_restore(
                     Ok(mut guard) => *guard = Some(conversation),
                     Err(poisoned) => *poisoned.into_inner() = Some(conversation),
                 },
-                // Whether this matters depends on the kernel, and the kernel
-                // has already said which it is. One that must be told by name
-                // which conversation to continue, and is not told, starts a
-                // fresh one and reports success — silent loss, and the runtime
-                // this came from is about to be torn down. One that finds its
-                // own history was never going to be told anything.
-                None if state.resume_args.is_some() => {
+                // Whether this matters depends on the kernel, and the adapter
+                // that started this pod has already said which it is. One that
+                // must be told by name which conversation to continue, and is
+                // not told, starts a fresh one and reports success — silent
+                // loss, and the runtime this came from is about to be torn
+                // down. One that finds its own history was never told anything.
+                None if state.snapshot_named => {
                     tracing::error!("the conversation handed over does not name itself");
                     return (
                         axum::http::StatusCode::UNPROCESSABLE_ENTITY,
