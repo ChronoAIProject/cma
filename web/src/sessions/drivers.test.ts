@@ -8,9 +8,17 @@ import {
 } from './drivers';
 import type { Session, SessionLifecycle } from './types';
 import type { TerminalDriver } from '../terminal/types';
+import { NO_CAPABILITIES } from '../agui';
 
 function session(id: string, lifecycle: SessionLifecycle, stopReason?: 'error' | 'other'): Session {
-  return { id, kernel: 'codex', lifecycle, createdAt: 0, stopReason };
+  return {
+    id,
+    kernel: 'codex',
+    lifecycle,
+    createdAt: 0,
+    stopReason,
+    capabilities: NO_CAPABILITIES,
+  };
 }
 
 /** A factory that hands back inert drivers and records what it was asked for. */

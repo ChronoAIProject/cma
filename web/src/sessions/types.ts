@@ -5,6 +5,8 @@
  * not invent state the core does not have.
  */
 
+import type { SessionCapabilities } from '../agui';
+
 /**
  * Lifecycle: provisioning -> ready -> running <-> idle -> terminated.
  *
@@ -24,6 +26,15 @@ export type SessionLifecycle =
  * owner can find out why.
  */
 export type StopReason = 'error' | 'other';
+
+/**
+ * The two planes a session can be reached on.
+ *
+ * Exclusive by construction: `capabilities.rs` fixes the granted set at
+ * creation and a session holds one or the other. Moving between them is a
+ * rotation, not a toggle.
+ */
+export type SessionPlane = 'terminal' | 'conversation';
 
 /** The kernels the control plane can run. */
 export type Kernel = 'codex' | 'claude-code';
@@ -91,6 +102,29 @@ export interface Session {
    * somebody can act on.
    */
   readonly reach?: readonly SessionService[];
+  /**
+   * Which plane this session is drawn on — `Web_Style.md` §1 and §18.
+   *
+   * A property of the session, decided when it was created, and not a view and
+   * not a preference. The client reads it and draws what it implies; there is
+   * nothing here to toggle, because the two planes are exclusive by
+   * construction in the core.
+   *
+   * Absent when the control plane did not say. A session whose plane is not
+   * reported falls back to the terminal, which is what every session was
+   * before the conversation plane existed — the safe direction, since a
+   * terminal drawn for a conversation session shows an empty screen and a
+   * conversation drawn for a terminal session shows nothing at all.
+   */
+  readonly plane?: SessionPlane;
+  /**
+   * What this session was granted, read once at the boundary.
+   *
+   * #116: components ask "may this session steer" rather than trying and
+   * handling a refusal. Held on the session because it is a fact about the
+   * session, decided at creation and never revisited.
+   */
+  readonly capabilities: SessionCapabilities;
 }
 
 /** How the person who started a session is drawn. */

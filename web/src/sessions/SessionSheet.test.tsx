@@ -8,6 +8,7 @@ import { SessionHeader } from './SessionHeader';
 import { SessionActions } from './SessionActions';
 import { abilitiesFor } from './availability';
 import type { Session, SessionLifecycle } from './types';
+import { NO_CAPABILITIES } from '../agui';
 
 /**
  * The session header and the details sheet — docs/Web_Style.md §12 and §11.
@@ -19,6 +20,7 @@ function session(lifecycle: SessionLifecycle, extra: Partial<Session> = {}): Ses
     kernel: 'codex',
     lifecycle,
     createdAt: Date.parse('2026-08-18T08:53:00Z'),
+    capabilities: NO_CAPABILITIES,
     ...extra,
   };
 }
