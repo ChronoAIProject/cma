@@ -27,10 +27,17 @@ body,
   overflow: hidden;
 }
 
+/*
+ * The platform face is the page's default — Web_Style.md §4 gives it the
+ * headings, labels, prose and controls. Data keeps the mono stack and asks
+ * for it explicitly, because a time or an identifier is data wherever it
+ * appears and inheriting the answer is how one of them ends up in the wrong
+ * face after a parent is restyled.
+ */
 body {
   background: var(--ground);
   color: var(--ink);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--text-base);
   line-height: var(--leading-base);
   -webkit-font-smoothing: antialiased;
@@ -42,6 +49,11 @@ h2,
 h3 {
   text-wrap: balance;
   font-weight: 600;
+}
+
+/* §4: prose is set for reading; a heading is set to break evenly. */
+p {
+  text-wrap: pretty;
 }
 
 button,
@@ -101,22 +113,33 @@ button {
 }
 
 /*
- * The platform typeface, vendored under the SIL Open Font License alongside
+ * The two platform faces, vendored under the SIL Open Font License alongside
  * its licence text in src/assets/fonts/.
  *
  * Self-hosted rather than fetched from a third party: a font request to
- * someone else's host is a request that can be logged, blocked, or slow, and
- * the file is 28KB.
+ * someone else's host is a request that can be logged, blocked, or slow.
+ *
+ * The variable cut of each, rather than a file per weight. §4 asks for the
+ * regular text weight and §17 asks for 500 on the wordmark, and two more
+ * static files would cost more bytes than the whole 100-900 axis does in one.
  */
 @font-face {
-  font-family: 'Geist Pixel';
-  src: url('../assets/fonts/GeistPixel-Grid.woff2') format('woff2');
-  font-weight: 400;
+  font-family: 'Geist';
+  src: url('../assets/fonts/Geist-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
   font-style: normal;
   /*
    * Text is shown in the fallback immediately and swapped when the face
    * arrives. Nothing is ever invisible while waiting for a font.
    */
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../assets/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
   font-display: swap;
 }
 
