@@ -36,8 +36,6 @@ pub struct Config {
     /// an allowance it cannot work within is not a smaller session but a
     /// session that dies partway through somebody's work.
     pub sandbox_memory: String,
-    /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
-    /// Arguments that make the agent resume rather than start fresh.
     /// What this deployment calls itself on the runtimes it creates.
     ///
     /// A sandbox provider is shared, so one key sees runtimes belonging to
