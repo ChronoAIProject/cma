@@ -171,6 +171,11 @@ pub(crate) struct FakeAdapter {
     pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
     /// When set, the runtime cannot hand its conversation over.
     pub(crate) refuse_snapshot: bool,
+    /// Credentials this runtime was handed, in order.
+    ///
+    /// The credential no longer travels as terminal input, so the only place
+    /// its delivery is observable is the adapter that was asked to deliver it.
+    pub(crate) credentials: Mutex<Vec<String>>,
     /// What this runtime says it can do.
     ///
     /// Defaults to the shape of the only kernel that exists today — a terminal
@@ -202,6 +207,7 @@ impl Default for FakeAdapter {
             conversations: Mutex::default(),
             handovers: Mutex::default(),
             refuse_snapshot: false,
+            credentials: Mutex::default(),
             capabilities: layer3_adapter::KernelCapabilities {
                 conversation: false,
                 terminal: true,
@@ -310,6 +316,18 @@ impl KernelAdapter for FakeAdapter {
             output: out_rx,
             input: in_tx,
         })
+    }
+
+    async fn refresh_credential(
+        &self,
+        handle: &RuntimeHandle,
+        credential: &str,
+    ) -> Result<(), AdapterError> {
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        self.credentials.lock().await.push(credential.to_string());
+        Ok(())
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
