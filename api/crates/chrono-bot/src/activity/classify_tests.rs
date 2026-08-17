@@ -34,6 +34,7 @@ fn every_session_verb_is_recognised() {
         (Method::GET, "transcript", Action::SessionTranscriptRead),
         (Method::GET, "events", Action::SessionEventsRead),
         (Method::GET, "terminal", Action::SessionTerminalAttach),
+        (Method::POST, "plane", Action::SessionPlaneChange),
     ] {
         let c = classified(method.clone(), &format!("/api/v1/sessions/sesn_1/{verb}"));
         assert_eq!(c.action, action, "{method} {verb}");
@@ -378,4 +379,30 @@ fn an_operating_verb_asked_for_with_the_wrong_method_is_not_served() {
     // happened is worse than no record.
     assert!(classify(&Method::GET, "/api/v1/sessions/sesn_1/input").is_none());
     assert!(classify(&Method::POST, "/api/v1/sessions/sesn_1/usage").is_none());
+}
+
+#[test]
+fn moving_a_session_between_planes_records_which_plane_and_nothing_else() {
+    // The one session verb whose body says something worth keeping. Which
+    // surface a session is driven on is exactly what somebody reading this
+    // record needs to make sense of a handover that was asked for; everything
+    // else a caller sends to a session is their own content.
+    let c = classified(Method::POST, "/api/v1/sessions/sesn_1/plane");
+    assert_eq!(c.action, Action::SessionPlaneChange);
+    assert_eq!(
+        c.target,
+        Some(ActivityTarget::Session(SessionId("sesn_1".into())))
+    );
+    assert!(c.reads_body, "the plane is in the body");
+
+    let detail = detail_from_body(
+        Action::SessionPlaneChange,
+        br#"{"plane":"conversation","note":"something the caller added later"}"#,
+    );
+    assert_eq!(detail.get(DetailKey::Plane), Some("conversation"));
+    assert_eq!(
+        detail.iter().count(),
+        1,
+        "a field added to this request later has nowhere here to land"
+    );
 }

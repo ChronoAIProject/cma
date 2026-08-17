@@ -287,8 +287,20 @@ impl SessionService {
             }
         }
 
-        // The attachment goes with the sandbox it was made to.
-        self.entries.write().await.remove(&id);
+        /*
+         * The attachment goes with the sandbox it was made to, and its holder
+         * is told which handover took it: a terminal that ends saying nothing
+         * reads as broken, and one that ends claiming the owner opened it
+         * elsewhere sends them looking for a tab that does not exist.
+         */
+        if let Some(entry) = self.entries.write().await.remove(&id) {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached.supersede.send(match &change {
+                    Handover::Version(_) => crate::lease::Detached::RuntimeReplaced,
+                    Handover::Plane { .. } => crate::lease::Detached::PlaneChanged,
+                });
+            }
+        }
         if let Err(e) = adapter.terminate(&old).await {
             tracing::warn!(session_id = %id, error = %e, "could not release the old runtime");
         }
