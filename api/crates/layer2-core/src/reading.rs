@@ -8,7 +8,7 @@
 
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
-use crate::event::Event;
+use crate::event::{Event, StoredEvent};
 use crate::ids::SessionId;
 use crate::service::{store_failed, SessionService};
 use crate::session::Session;
@@ -70,6 +70,12 @@ impl SessionService {
     /// the one that lists their sessions. Both are privileged and an operator
     /// may well hold each, but they are issued separately and a monitoring role
     /// given only the narrower one must not arrive here.
+    ///
+    /// An event this build cannot name is skipped rather than projected. It was
+    /// written by a newer control plane during a rolling deployment, and its
+    /// sequence stays where it is in storage, so what a client sees is a gap —
+    /// which is what they already tolerate, because they resume on `seq` rather
+    /// than on how many events they have counted.
     pub async fn events_since(
         &self,
         caller: &Caller,
@@ -80,9 +86,14 @@ impl SessionService {
         if !caller.may_read_event_log_owned_by(&record.session.owner) {
             return Err(CoreError::Forbidden);
         }
-        self.store
+        let stored = self
+            .store
             .events_since(id, after.unwrap_or(0))
             .await
-            .map_err(store_failed)
+            .map_err(store_failed)?;
+        Ok(stored
+            .into_iter()
+            .filter_map(StoredEvent::into_known)
+            .collect())
     }
 }

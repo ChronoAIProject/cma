@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::authz::{Authorization, Caller, Capability};
 use crate::environment_service::EnvironmentProfileService;
-use crate::event::Event;
+use crate::event::{Event, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{ScreenFactory, SessionService};
 use crate::session::SessionSpec;
@@ -31,7 +31,7 @@ use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 #[derive(Default)]
 pub(crate) struct FakeStore {
     pub(crate) sessions: Mutex<HashMap<String, SessionRecord>>,
-    pub(crate) events: Mutex<Vec<Event>>,
+    pub(crate) events: Mutex<Vec<StoredEvent>>,
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
@@ -92,13 +92,20 @@ impl SessionStore for FakeStore {
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         self.guard().await?;
-        self.events.lock().await.extend_from_slice(events);
+        self.events
+            .lock()
+            .await
+            .extend(events.iter().cloned().map(StoredEvent::from));
         Ok(())
     }
 
-    async fn events_since(&self, id: &SessionId, after: u64) -> Result<Vec<Event>, StoreError> {
+    async fn events_since(
+        &self,
+        id: &SessionId,
+        after: u64,
+    ) -> Result<Vec<StoredEvent>, StoreError> {
         self.guard().await?;
-        let mut out: Vec<Event> = self
+        let mut out: Vec<StoredEvent> = self
             .events
             .lock()
             .await
