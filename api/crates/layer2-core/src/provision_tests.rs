@@ -291,3 +291,68 @@ async fn every_event_of_a_successful_start_is_recorded() {
     });
     assert!(announced_ready, "readiness was never recorded: {events:?}");
 }
+
+#[tokio::test]
+async fn asking_for_the_owners_own_credential_fails_the_session_and_says_why() {
+    // The defect this closes was silent: the option was accepted end to end
+    // and honoured nowhere, so a session ran on the delegated credential while
+    // its owner believed it ran on theirs. What replaces it has to be
+    // attributable, which means the reason reaching the log the owner reads.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let adapter = Arc::new(FakeAdapter::default());
+    let own_credential =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            credential: crate::options::CredentialMode::Own,
+            ..Default::default()
+        });
+    let svc = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        own_credential,
+    );
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Terminated);
+    assert_eq!(settled.stop_reason, Some(StopReason::Error));
+
+    let events = svc
+        .events_since(&caller, &created.id, None)
+        .await
+        .expect("history readable");
+    let explained = events.iter().any(|e| match &e.kind {
+        crate::event::EventKind::StatusChanged {
+            detail: Some(detail),
+            ..
+        } => detail.contains("own credential"),
+        _ => false,
+    });
+    assert!(
+        explained,
+        "the refusal must name what was refused, not a bare failure: {events:?}"
+    );
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "an absent ability is an answer; retrying it only delays telling the owner"
+    );
+}
+
+#[tokio::test]
+async fn the_delegated_credential_still_starts_a_session() {
+    // The success path, so the refusal above cannot quietly widen to every
+    // session: the default credential mode is unaffected.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    assert_eq!(
+        await_settled(&svc, &caller, &created.id).await.status,
+        SessionStatus::Ready
+    );
+}
