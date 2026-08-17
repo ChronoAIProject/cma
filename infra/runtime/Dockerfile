@@ -73,9 +73,18 @@ RUN set -eux; \
 RUN useradd --create-home --uid 10001 --shell /bin/bash chrono
 COPY --from=build /build/target/release/layer4-runtime /usr/local/bin/layer4-runtime
 USER 10001:10001
+# CHRONO_RUNTIME_SNAPSHOT_DIR is where the kernel below records its
+# conversation, relative to HOME. The supervisor is kernel-neutral and does not
+# know this; the adapter that starts a sandbox sets it explicitly, and the value
+# here is only what the image runs with when something starts it by hand.
+#
+# Left unset it would mean the runtime declares no snapshot support, and a
+# session on it could never be carried onto a newer image — so the default
+# matches the kernel this image is actually built with rather than being empty.
 ENV HOME=/home/chrono \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     CHRONO_RUNTIME_COMMAND=codex \
+    CHRONO_RUNTIME_SNAPSHOT_DIR=.codex/sessions \
     TERM=xterm-256color
 EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/layer4-runtime"]

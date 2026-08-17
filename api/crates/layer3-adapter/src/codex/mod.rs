@@ -34,6 +34,14 @@ const CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 /// Where the supervisor serves and accepts the agent's conversation.
 const CONVERSATION_PATH: &str = "/runtime/conversation";
 
+/// Where this kernel records its conversation, relative to the pod's home.
+///
+/// This kernel's own name for its own layout, which is why it is spelled in
+/// this kernel's directory. The supervisor is told it at provision; it used to
+/// be a constant there, in the one component that is supposed to host any
+/// kernel at all.
+const SESSIONS_DIR: &str = ".codex/sessions";
+
 /// Metadata key correlating a sandbox back to its session.
 ///
 /// Written at provisioning and read by reconciliation, so the two must agree;
@@ -55,9 +63,27 @@ const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// How often to re-check a sandbox that is not yet running.
 const READY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// The first thing asked for that is not on offer, if any.
+///
+/// Names one rather than all of them: a caller fixes the first and asks again,
+/// and a list of everything wrong is longer to read without being more useful.
+fn absent(wanted: &[String], provided: &[String]) -> Option<String> {
+    wanted
+        .iter()
+        .find(|w| !provided.contains(w))
+        .map(|w| w.to_string())
+}
+
 impl From<SandboxError> for AdapterError {
     fn from(e: SandboxError) -> Self {
         match e {
+            // A runtime answering "not implemented" is stating an absence, not
+            // reporting a failure. Read as a rejection it would look like
+            // something going wrong every time rotation asked a runtime that
+            // was never able to answer.
+            SandboxError::Rejected { status: 501, .. } => AdapterError::Unsupported(
+                "this runtime declares no support for what was asked".to_string(),
+            ),
             SandboxError::Rejected { status, detail } => {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }
@@ -110,6 +136,19 @@ pub struct CodexSandboxSpec {
     /// changes between its versions, and getting it wrong has to be
     /// correctable without building a new image.
     pub resume_args: String,
+    /// Software the image already carries, as a caller would name it.
+    ///
+    /// Not a permission list — a statement of fact about the image this
+    /// adapter starts. There is no channel for installing anything into a
+    /// running sandbox, so a session asking for something outside this is
+    /// asking for something it cannot be given, and is refused by name rather
+    /// than started without it.
+    pub provided_packages: Vec<String>,
+    /// Skills the agent in this image can already load, by identifier.
+    ///
+    /// Same rule and the same reason: no delivery channel exists, so anything
+    /// beyond this is a promise the session could not keep.
+    pub provided_skills: Vec<String>,
 }
 
 impl Default for CodexSandboxSpec {
@@ -127,6 +166,11 @@ impl Default for CodexSandboxSpec {
             upstream_wire_api: "responses".into(),
             platform_base_url: String::new(),
             resume_args: "resume".into(),
+            // Empty by default, which refuses everything. A deployment states
+            // what its image carries; guessing here would accept a request the
+            // image cannot honour, which is the failure this exists to stop.
+            provided_packages: Vec::new(),
+            provided_skills: Vec::new(),
         }
     }
 }
@@ -135,12 +179,24 @@ impl Default for CodexSandboxSpec {
 pub struct CodexAdapter {
     client: SandboxClient,
     spec: CodexSandboxSpec,
+    /// The open link to each runtime, by handle.
+    ///
+    /// Held because a credential has to reach a runtime that is already
+    /// running, and this image's supervisor accepts one only over an
+    /// attachment. Opening a second attachment to deliver it is not an option:
+    /// attaching declares a geometry, and a connection made without one would
+    /// resize the pty under whoever is looking at it.
+    links: tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>,
 }
 
 impl CodexAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
-        Self { client, spec }
+        Self {
+            client,
+            spec,
+            links: tokio::sync::Mutex::new(BTreeMap::new()),
+        }
     }
 
     /// Give a new sandbox the conversation it is taking over.
@@ -206,11 +262,18 @@ impl CodexAdapter {
     /// grants more than the person asked for. Worth being able to inspect
     /// without standing up a provider.
     fn environment_for(&self, spec: &RuntimeSpec) -> BTreeMap<String, String> {
-        BTreeMap::from([
+        let mut controlled = BTreeMap::from([
             ("CHRONO_RUNTIME_COMMAND".to_string(), "codex".to_string()),
             (
                 "CHRONO_RUNTIME_RESUME_ARGS".to_string(),
                 self.spec.resume_args.clone(),
+            ),
+            // Where this kernel records its conversation, told to the pod
+            // rather than known by it. The supervisor hosts any kernel; the
+            // directory belongs to this one, so its name is spelled here.
+            (
+                "CHRONO_RUNTIME_SNAPSHOT_DIR".to_string(),
+                SESSIONS_DIR.to_string(),
             ),
             ("TERM".to_string(), "xterm-256color".to_string()),
             // The supervisor forwards here and attaches the owner's credential.
@@ -284,7 +347,14 @@ impl CodexAdapter {
                 "CHRONO_RUNTIME_ROWS".to_string(),
                 spec.size.rows.to_string(),
             ),
-        ])
+        ]);
+        // The session's own variables, added last and refused where they
+        // collide. `apply_to` is what enforces that: the names above are how
+        // the runtime finds its upstream, its proxy and its credential, so a
+        // caller who could overwrite one could redirect the agent's traffic —
+        // or the credential attached to it — somewhere of their choosing.
+        spec.environment.apply_to(&mut controlled);
+        controlled
     }
 }
 
@@ -318,6 +388,23 @@ impl KernelAdapter for CodexAdapter {
             return Err(AdapterError::Unsupported(
                 "this kernel does not support the owner's own credential yet".to_string(),
             ));
+        }
+
+        // Refused for the same reason, and it is the same defect: a caller
+        // asked for something, was told nothing, and got a session without it.
+        // Variables are delivered below. Software and skills are delivered by
+        // the image and the agent in it, and nothing can be added to a running
+        // sandbox — so what the image already carries is honoured and anything
+        // else is named and refused.
+        if let Some(missing) = absent(&spec.environment.packages, &self.spec.provided_packages) {
+            return Err(AdapterError::Unsupported(format!(
+                "this runtime's image does not carry {missing}, and software cannot be installed into a running sandbox"
+            )));
+        }
+        if let Some(missing) = absent(&spec.environment.skills, &self.spec.provided_skills) {
+            return Err(AdapterError::Unsupported(format!(
+                "this runtime's agent cannot load the skill {missing}, and skills cannot be delivered into a running sandbox"
+            )));
         }
 
         // Geometry is passed as environment so the supervisor allocates its pty
@@ -458,10 +545,53 @@ impl KernelAdapter for CodexAdapter {
             tracing::info!(%sandbox, "sandbox input relay ended");
         });
 
+        // Remembered so a credential renewed later can be delivered without
+        // opening a second attachment.
+        self.links
+            .lock()
+            .await
+            .insert(handle.0.clone(), in_tx.clone());
+
         Ok(TerminalChannel {
             output: out_rx,
             input: in_tx,
         })
+    }
+
+    async fn refresh_credential(
+        &self,
+        handle: &RuntimeHandle,
+        credential: &str,
+    ) -> Result<(), AdapterError> {
+        // This image's supervisor learns of a new credential from a control
+        // frame on the terminal link — which is where the frame has always
+        // gone, and why it keeps going there: a runtime already running was
+        // built against that dialect, and §5 does not permit breaking it to
+        // tidy up a name.
+        let link = self.links.lock().await.get(&handle.0).cloned();
+        let Some(link) = link else {
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {} has no open link to carry a credential",
+                handle.0
+            )));
+        };
+        // Never logged with its value, here or anywhere below this line.
+        if link
+            .send(TerminalInput::Credential(credential.to_string()))
+            .await
+            .is_err()
+        {
+            // The link died since it was recorded. Forgotten rather than
+            // retried: the next attachment records a live one, and keeping a
+            // dead sender would make every renewal fail the same way forever.
+            self.links.lock().await.remove(&handle.0);
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link closed before the credential reached it",
+                handle.0
+            )));
+        }
+        tracing::info!(sandbox = %handle.0, "credential delivered to the runtime");
+        Ok(())
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
@@ -481,6 +611,10 @@ impl KernelAdapter for CodexAdapter {
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
+        // Dropped first: the link belongs to a sandbox that is about to stop
+        // existing, and keeping it would leave this map growing with the
+        // remains of every session this process has ever served.
+        self.links.lock().await.remove(&handle.0);
         self.client.delete(&handle.0).await?;
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
         Ok(())
