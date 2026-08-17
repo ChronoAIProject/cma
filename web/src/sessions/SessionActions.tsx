@@ -1,24 +1,30 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { Session } from './types';
 import { abilitiesFor } from './availability';
 import { Button } from '../ui/Button';
 import './SessionActions.css';
 
 /**
- * What can be done to the session being described.
+ * What can be done to the session being described — docs/Web_Style.md §12.
  *
- * Plain buttons rather than a menu. These are the only actions a session has,
- * there are at most four of them, and hiding them behind a control that has to
- * be discovered means someone reading "revive it to carry on" has nowhere
- * obvious to go.
+ * In the session header, at the head of the terminal they act on, visible
+ * without opening anything. Plain buttons rather than a menu: these are the
+ * only actions a session has, there are at most three of them at a time, and
+ * hiding them behind a control that has to be discovered means someone reading
+ * "revive it to carry on" has nowhere obvious to go.
  *
  * Every action is always shown, and disabled when the session's state does not
- * allow it. Removing a control that does not currently apply would make the
- * surface change shape as the session moves, and leave someone hunting for a
- * button that was there a moment ago. A disabled key carrying its reason
- * answers the question instead — as part of the button, because a tooltip is
- * unreachable by touch and invisible to anyone scanning (§7), which is what
- * makes each of these a stacked key holding §7's 52px minimum.
+ * allow it (§7). Removing a control that does not currently apply would make
+ * the header change shape as the session moves, and leave someone hunting for
+ * a button that was there a moment ago.
+ *
+ * **Every disabled control states why, and one sentence covers all of them.**
+ * `abilitiesFor` is the single source of enablement and it disables controls
+ * for exactly one cause at a time — the session's state — so the reason is
+ * drawn once, in the band, and each control points at it. It is on the surface
+ * rather than in a tooltip, which §7 rejects as unreachable by touch and
+ * invisible to anyone scanning, and it is the same sentence §11 requires a
+ * session that cannot be typed into to carry.
  *
  * They are ordered by how much they destroy: reviving and reconnecting change
  * nothing, ending releases the sandbox but keeps the transcript, deleting is
@@ -44,14 +50,17 @@ export function SessionActions({
   busy = false,
 }: SessionActionsProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const reasonId = useId();
   const can = abilitiesFor(session);
+  // Points every control at the one sentence explaining the state that
+  // disabled it, so the connection is announced rather than merely adjacent.
+  const describedBy = can.reason === undefined ? undefined : reasonId;
 
   if (confirmingDelete) {
     return (
       <div className="actions">
-        <p className="actions__question">Delete this session and its history?</p>
+        <span className="actions__question">Delete this session and its history?</span>
         <Button
-          size="sm"
           onClick={() => {
             setConfirmingDelete(false);
           }}
@@ -59,7 +68,6 @@ export function SessionActions({
           Keep it
         </Button>
         <Button
-          size="sm"
           tone="danger"
           disabled={busy}
           onClick={() => {
@@ -75,57 +83,44 @@ export function SessionActions({
 
   return (
     <div className="actions">
+      {can.reason === undefined ? null : (
+        <span className="band__value actions__reason" id={reasonId}>
+          {can.reason}
+        </span>
+      )}
+
       {/*
        * Revive is the primary action wherever it is offered (§11), which is
        * where this surface spends the one accent button §7 allows it.
        */}
       {can.canRevive ? (
-        <Button
-          tone="accent"
-          disabled={busy}
-          onClick={onRevive}
-          reason="Start it again and carry on where you left off"
-        >
-          Revive session
+        <Button tone="accent" disabled={busy} onClick={onRevive} aria-describedby={describedBy}>
+          Revive
         </Button>
       ) : (
         <Button
           disabled={busy || !can.canReconnect}
           onClick={onReconnect}
-          reason={
-            can.canReconnect
-              ? 'Reattach to this session’s sandbox'
-              : 'Available once the session is running'
-          }
+          aria-describedby={describedBy}
         >
           Reconnect
         </Button>
       )}
 
-      <Button
-        disabled={busy || !can.canStop}
-        onClick={onStop}
-        reason={
-          can.canStop ? 'Releases the sandbox, keeps the history' : 'This session is not running'
-        }
-      >
-        End session
+      <Button disabled={busy || !can.canStop} onClick={onStop} aria-describedby={describedBy}>
+        End
       </Button>
 
       <Button
         tone="danger"
         disabled={busy || !can.canDelete}
+        aria-describedby={describedBy}
         onClick={() => {
           // Asked twice because this is the only act that cannot be undone.
           setConfirmingDelete(true);
         }}
-        reason={
-          can.canDelete
-            ? 'Removes the session and its history'
-            : 'Not while the session is being moved'
-        }
       >
-        Delete session
+        Delete
       </Button>
     </div>
   );

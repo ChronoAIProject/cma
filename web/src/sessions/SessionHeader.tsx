@@ -13,9 +13,15 @@ import './SessionHeader.css';
  * other.
  *
  * It carries the band's subject — the session time, at `lg`, the single
- * exception §5 allows to one type size per band — and the facts that identify
- * which session the surface beneath is showing. What can be DONE to the
- * session belongs here too (§12), and arrives with the controls.
+ * exception §5 allows to one type size per band — the facts that identify
+ * which session the surface beneath is showing, and the session's lifecycle
+ * controls.
+ *
+ * The controls are here rather than in the details sheet because §12 puts them
+ * "at the head of the terminal they act on, visible without opening
+ * anything". In the sheet they were reachable only by opening a panel that is
+ * otherwise reference material, so ending a session meant first opening
+ * something nobody wanted to read.
  */
 
 interface SessionHeaderProps {
