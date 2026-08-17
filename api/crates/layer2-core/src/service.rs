@@ -13,13 +13,13 @@ use layer3_adapter::{KernelAdapter, RuntimeHandle, TerminalInput};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
 use crate::authz::{Caller, Capability};
-use crate::capabilities::SessionCapabilities;
+use crate::capabilities::{servable_modes, SessionCapabilities};
 use crate::clock::now_rfc3339;
 use crate::environment_service::EnvironmentProfileService;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
-use crate::options::AgentOptions;
+use crate::options::{AgentOptions, SessionMode};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
@@ -240,11 +240,22 @@ impl SessionService {
             .ok_or(CoreError::SessionNotFound)
     }
 
-    /// Identifiers of the runtimes this service can back a session with.
-    pub fn available_kernels(&self) -> Vec<KernelId> {
-        let mut ids: Vec<_> = self.adapters.keys().cloned().collect();
-        ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        ids
+    /// The runtimes this service can back a session with, and what each can be.
+    ///
+    /// The planes travel with the identifier because a caller choosing a
+    /// runtime is choosing what its session will be, and the two questions
+    /// answered separately can be answered inconsistently. What each runtime
+    /// can serve is read from the adapter rather than configured, so a kernel
+    /// that gains or loses an ability is advertised correctly without anything
+    /// here being edited.
+    pub fn available_kernels(&self) -> Vec<(KernelId, Vec<SessionMode>)> {
+        let mut offerings: Vec<_> = self
+            .adapters
+            .iter()
+            .map(|(id, adapter)| (id.clone(), servable_modes(adapter.capabilities())))
+            .collect();
+        offerings.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        offerings
     }
 
     /// Create a session and bring its runtime up in the background.

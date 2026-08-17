@@ -2,7 +2,7 @@
 
 use layer3_adapter::KernelCapabilities;
 
-use super::{Capability, SessionCapabilities};
+use super::{servable_modes, Capability, SessionCapabilities};
 use crate::error::CoreError;
 use crate::options::SessionMode;
 
@@ -185,4 +185,58 @@ fn a_terminal_session_is_not_granted_an_interrupt_operation() {
     // nothing behind it.
     let granted = SessionCapabilities::granted(SessionMode::Terminal, everything()).expect("ok");
     assert!(!granted.interrupt);
+}
+
+#[test]
+fn a_runtime_offers_only_the_planes_it_can_serve() {
+    let screen_only = KernelCapabilities {
+        conversation: false,
+        ..everything()
+    };
+    assert_eq!(servable_modes(screen_only), vec![SessionMode::Terminal]);
+
+    let chat_only = KernelCapabilities {
+        terminal: false,
+        ..everything()
+    };
+    assert_eq!(servable_modes(chat_only), vec![SessionMode::Conversation]);
+}
+
+#[test]
+fn a_runtime_that_serves_neither_plane_offers_nothing() {
+    // Not an error and not an empty list dressed up as one: a runtime nothing
+    // can be started on is a runtime a client should draw as unusable, and it
+    // can only do that if the answer says so.
+    let neither = KernelCapabilities {
+        conversation: false,
+        terminal: false,
+        ..everything()
+    };
+    assert!(servable_modes(neither).is_empty());
+}
+
+#[test]
+fn what_is_offered_is_exactly_what_would_be_granted() {
+    // The property the advertisement exists for. Anything offered here must
+    // survive `granted`, or the refusal has moved from before a session is
+    // created to after it.
+    for kernel in [
+        everything(),
+        KernelCapabilities {
+            conversation: false,
+            ..everything()
+        },
+        KernelCapabilities {
+            terminal: false,
+            ..everything()
+        },
+        KernelCapabilities::default(),
+    ] {
+        for mode in servable_modes(kernel) {
+            assert!(
+                SessionCapabilities::granted(mode, kernel).is_ok(),
+                "{mode:?} was offered on a runtime that would refuse it"
+            );
+        }
+    }
 }
