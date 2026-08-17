@@ -105,6 +105,37 @@ RUN set -eux; \
     node --version; \
     npm --version
 
+# The package manager the Node tarball bundles carries published advisories of
+# its own — six at the version shipped with this release, in four of its own
+# vendored dependencies. It is not this image's to choose, and it is not
+# removable either: a coding agent working in a sandbox on a Node project needs
+# one.
+#
+# So it is upgraded to a pinned newer npm, which fixes most of them, and the two
+# its bundle still carries are replaced the way any other pinned dependency is —
+# the patched release of the same major, fetched into a scratch directory and
+# moved into place so nothing else in that tree moves.
+#
+# This block is maintenance and shrinks as npm moves. The scan is what says when
+# a line in it has become redundant, and the gate is what stops it being skipped
+# instead.
+ARG NPM_VERSION=12.0.2
+ARG BRACE_EXPANSION_VERSION=5.0.9
+ARG IP_ADDRESS_VERSION=10.3.1
+RUN set -eux; \
+    npm install -g "npm@${NPM_VERSION}"; \
+    bundled=/usr/local/lib/node_modules/npm/node_modules; \
+    npm install --no-save --prefix /tmp/npmfix \
+        "brace-expansion@${BRACE_EXPANSION_VERSION}" \
+        "ip-address@${IP_ADDRESS_VERSION}"; \
+    for pkg in brace-expansion ip-address; do \
+      rm -rf "$bundled/$pkg"; \
+      mv "/tmp/npmfix/node_modules/$pkg" "$bundled/$pkg"; \
+    done; \
+    rm -rf /tmp/npmfix; \
+    npm cache clean --force; \
+    npm --version
+
 # The second bridge pins a version of minimatch with two published
 # denial-of-service advisories, and pins it exactly — so npm will not move it and
 # a newer bridge is not available that does. The patched release of the same
