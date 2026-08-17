@@ -296,7 +296,6 @@ impl SessionService {
         tracing::warn!(session_id = %id, "starting a new runtime for a session that lost one");
         let geometry = starting.session.geometry;
         let spec = SessionSpec {
-            kernel: starting.session.kernel.clone(),
             geometry: Some(geometry),
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),

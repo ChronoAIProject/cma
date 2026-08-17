@@ -39,8 +39,7 @@ use axum::{
 };
 use futures_util::stream::{self, Stream};
 use layer2_core::{
-    ApprovalDecision, CoreError, KernelId, SessionCapability, SessionId, SessionService,
-    SessionSpec,
+    ApprovalDecision, CoreError, SessionCapability, SessionId, SessionService, SessionSpec,
 };
 use serde::Deserialize;
 
@@ -106,9 +105,15 @@ struct ResumePayload {
 /// Ignored on an existing one, because these are frozen at creation: changing
 /// the kernel a session runs on is a different session, and pretending
 /// otherwise would silently ignore what a client asked for.
+///
+/// A kernel is not among them, and `kernel` is accepted only so that a client
+/// sending one is not answered with a deserialization error. Which kernel a
+/// session runs on is decided by the profile it names, or by what this
+/// deployment configured — never by an interface, and never by a caller.
 #[derive(Debug, Deserialize)]
 struct ForwardedProps {
     #[serde(default)]
+    #[allow(dead_code)]
     kernel: Option<String>,
     #[serde(rename = "environmentProfile", default)]
     environment_profile: Option<String>,
@@ -137,11 +142,6 @@ pub(super) async fn run(
                         environment_profile: props
                             .and_then(|p| p.environment_profile.clone())
                             .map(layer2_core::EnvironmentProfileId),
-                        kernel: KernelId::new(
-                            props
-                                .and_then(|p| p.kernel.clone())
-                                .unwrap_or_else(|| "codex".to_string()),
-                        ),
                         geometry: None,
                         options: layer2_core::AgentOptions {
                             mode: layer2_core::SessionMode::Conversation,

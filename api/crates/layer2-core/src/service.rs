@@ -281,7 +281,6 @@ impl SessionService {
             .agent_for(caller, spec.environment_profile.as_ref())
             .await?;
         let mut spec = spec;
-        spec.kernel = agent.kernel.clone();
         spec.options = AgentOptions {
             mode: agent.mode,
             model: agent.model.clone(),
@@ -294,8 +293,8 @@ impl SessionService {
         // deployment cannot start is refused outright rather than accepted and
         // then failed asynchronously.
         let adapter =
-            self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
-                CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
+            self.adapters.get(&agent.kernel).cloned().ok_or_else(|| {
+                CoreError::RuntimeUnavailable(format!("no runtime {}", agent.kernel))
             })?;
 
         // Settled here, while somebody is still on the line to be told. A
@@ -306,7 +305,7 @@ impl SessionService {
             .inspect_err(|refusal| {
                 tracing::info!(
                     subject = %caller.subject,
-                    kernel = %spec.kernel,
+                    kernel = %agent.kernel,
                     reason = %refusal,
                     "refused a session its runtime could not be"
                 );
@@ -317,7 +316,7 @@ impl SessionService {
         let session = Session {
             id: id.clone(),
             owner: caller.subject.clone(),
-            kernel: spec.kernel.clone(),
+            kernel: agent.kernel.clone(),
             status: SessionStatus::Provisioning,
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
