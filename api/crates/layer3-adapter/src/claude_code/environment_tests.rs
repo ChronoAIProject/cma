@@ -22,6 +22,7 @@ fn adapter(base: &str) -> ClaudeCodeAdapter {
 fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),

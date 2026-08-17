@@ -120,6 +120,20 @@ impl Deployment {
                 "NYXID_ACCESS_TOKEN".to_string(),
                 PLACEHOLDER_CREDENTIAL.to_string(),
             ),
+            /*
+             * What this session may reach, by name, so an agent can find out
+             * what it has rather than infer it from a CLI being on PATH.
+             *
+             * Always set, including when the list is empty: an empty value
+             * says "this session reaches nothing", and an absent variable says
+             * "nothing told me" — an agent acts differently on those two, so
+             * they must not render alike.
+             *
+             * Here rather than in a kernel's own directory because it is a
+             * property of a chrono-bot session, not of any agent: every kernel
+             * hosted this way gets it on the same terms.
+             */
+            ("CHRONO_SESSION_REACHES".to_string(), spec.reaches.join(",")),
             (
                 "CHRONO_RUNTIME_COLS".to_string(),
                 spec.size.cols.to_string(),

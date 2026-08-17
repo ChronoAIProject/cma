@@ -7,6 +7,7 @@ use crate::{RuntimeEnvironment, RuntimeSpec, TermSize};
 fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
@@ -134,4 +135,59 @@ fn a_session_asking_for_nothing_is_never_refused() {
     assert!(Deployment::default()
         .refuse_undeliverable(&RuntimeEnvironment::default())
         .is_ok());
+}
+
+#[test]
+fn the_agent_is_told_what_its_session_may_reach() {
+    // The gap this closes: a sandbox carried a credential broker and a CLI to
+    // call it with, and nothing that said what either was for. An agent left
+    // to infer its own scope reasons about why it cannot act, and produces a
+    // confident wrong answer.
+    let mut spec = spec_with(Default::default());
+    spec.reaches = vec!["api-github".into(), "chrono-llm".into()];
+
+    let env = deployed().base_environment(&spec);
+
+    assert_eq!(
+        env.get("CHRONO_SESSION_REACHES").map(String::as_str),
+        Some("api-github,chrono-llm")
+    );
+}
+
+#[test]
+fn reaching_nothing_is_said_rather_than_left_unsaid() {
+    // "This session reaches nothing" and "nothing told me" are different
+    // facts, and an agent acts differently on them. The variable is always
+    // present, so an absent one can only mean a control plane that predates
+    // this — never a session that was granted none.
+    let env = deployed().base_environment(&spec_with(Default::default()));
+
+    assert_eq!(
+        env.get("CHRONO_SESSION_REACHES").map(String::as_str),
+        Some(""),
+        "a session granted nothing must still be told so"
+    );
+}
+
+#[test]
+fn what_a_session_reaches_carries_names_and_never_a_credential() {
+    // Names are a fact about a session's configuration; a token is not. The
+    // whole reason the broker sits behind a loopback proxy is that anything in
+    // this map is readable by whoever holds the terminal.
+    let mut spec = spec_with(Default::default());
+    spec.reaches = vec!["api-github".into()];
+    spec.subject_credential = Some("a-real-credential-value".into());
+
+    let env = deployed().base_environment(&spec);
+
+    for (name, value) in &env {
+        assert!(
+            !value.contains("a-real-credential-value"),
+            "{name} carried the owner's credential"
+        );
+    }
+    assert_eq!(
+        env.get("CHRONO_SESSION_REACHES").map(String::as_str),
+        Some("api-github")
+    );
 }
