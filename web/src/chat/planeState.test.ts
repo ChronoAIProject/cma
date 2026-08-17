@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { isWaitingForAnswer, planeStateFor } from './planeState';
 import { abilitiesFor } from '../sessions/availability';
 import type { Session, SessionLifecycle } from '../sessions/types';
+import { NO_CAPABILITIES } from '../agui';
 
 /**
  * Session states on the conversation plane — `Web_Style.md` §11 and §18.6.
@@ -17,6 +18,7 @@ function session(lifecycle: SessionLifecycle, extra: Partial<Session> = {}): Ses
     kernel: 'codex',
     lifecycle,
     createdAt: Date.parse('2026-08-18T08:53:00Z'),
+    capabilities: NO_CAPABILITIES,
     ...extra,
   };
 }
