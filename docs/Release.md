@@ -106,7 +106,16 @@ Watch it under **Actions → Publish release**. It takes roughly as long as the 
 
 ## 3. Fetching what was released
 
-The packages are private, so authenticate first. It must be a **classic** personal access token with the `read:packages` scope: GitHub Packages does not accept fine-grained tokens, and one fails with a 403 that reads like a missing permission rather than the wrong kind of credential.
+The packages are private, so authenticate first. It must be a **classic** personal access token with the `read:packages` scope — GitHub Packages supports no other kind.
+
+A fine-grained token fails in a way worth knowing about, because nothing in it points at the token:
+
+```
+docker login ghcr.io   Login Succeeded
+docker pull ...:v0.1.0  403 Forbidden ... /v2/chronoaiproject/chrono-bot-api/manifests/v0.1.0
+```
+
+The login is accepted, so the credential looks good and the image looks like the thing that is wrong — missing, misnamed, or not visible to you. It is none of those. Check the token type before checking anything else.
 
 ```sh
 echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-username> --password-stdin
