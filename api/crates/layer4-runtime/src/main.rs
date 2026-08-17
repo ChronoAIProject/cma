@@ -4,12 +4,12 @@
 //! real pseudo-terminal and relays that terminal to the control plane over a
 //! WebSocket. This binary is never linked into the control plane.
 
-mod agent_config;
 mod bridge;
 mod carry;
 mod conversation;
 mod lanes;
 mod link;
+mod prelude;
 mod pty;
 mod upstream;
 
@@ -18,7 +18,6 @@ use std::net::SocketAddr;
 use axum::{extract::State, response::IntoResponse, routing::get, Router};
 use tokio::sync::Mutex;
 
-use crate::agent_config::AgentConfig;
 use crate::bridge::Bridge;
 use crate::pty::PtyRegistry;
 use crate::upstream::{CredentialHolder, UpstreamState};
@@ -184,37 +183,28 @@ async fn main() {
             "CHRONO_UPSTREAM_BASE_URL is unset; the agent will start but has no model endpoint"
         );
     } else {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/chrono".to_string());
-        let agent_config = AgentConfig {
-            // No version segment here. The upstream is a brokered service whose own
-            // base URL already carries one, and the broker appends whatever path
-            // arrives; adding /v1 produces .../v1/v1/responses and a 404.
-            proxy_base_url: format!("http://{proxy_bind}"),
-            model: std::env::var("CHRONO_UPSTREAM_MODEL")
-                .unwrap_or_else(|_| "gpt-5.6-sol".to_string()),
-            wire_api: std::env::var("CHRONO_UPSTREAM_WIRE_API")
-                .unwrap_or_else(|_| "responses".to_string()),
-            provider_name: "Chrono LLM".to_string(),
-            // Defaults here match the core's own: a runtime started without
-            // these must not be more permissive than one configured
-            // explicitly.
-            effort: std::env::var("CHRONO_AGENT_EFFORT").unwrap_or_else(|_| "medium".to_string()),
-            approval_policy: std::env::var("CHRONO_AGENT_APPROVAL")
-                .unwrap_or_else(|_| "on-request".to_string()),
-            sandbox_mode: std::env::var("CHRONO_AGENT_SANDBOX")
-                .unwrap_or_else(|_| "read-only".to_string()),
-        };
-        if let Err(e) = agent_config.write(std::path::Path::new(&home)) {
-            tracing::error!(error = %e, "cannot write agent configuration");
-            std::process::exit(2);
-        }
-
         spawn_credential_proxy(
             "model",
             proxy_bind,
             upstream_base.clone(),
             credential.clone(),
         );
+    }
+
+    // Whatever this kernel needs on disk before it starts, written where it
+    // was told and never read. Which kernel this is, what it needs and where
+    // it goes are the adapter's to say — a supervisor that knew any of them
+    // would be a supervisor that can host one kernel.
+    match prelude::write(&home) {
+        Ok(Some(_)) => {}
+        Ok(None) => tracing::info!("this kernel asked for no configuration file"),
+        Err(e) => {
+            // Loud rather than warned about. A kernel started without the
+            // configuration it was meant to have runs differently from the
+            // session that was ordered, and does it silently.
+            tracing::error!(error = %e, "cannot write the kernel configuration");
+            std::process::exit(2);
+        }
     }
 
     // The agent also drives a CLI that acts on the owner's behalf against the

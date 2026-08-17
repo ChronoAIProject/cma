@@ -7,6 +7,7 @@
 //! rides on it, the protocol client — is shared machinery in `hosted`, because
 //! none of it changes with the agent inside.
 
+mod config;
 mod environment;
 mod permission;
 
