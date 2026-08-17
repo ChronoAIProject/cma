@@ -183,9 +183,10 @@ impl RecoveryState {
 pub struct SessionSpec {
     /// How the agent should behave, chosen at creation and fixed for the
     /// session's life.
+    ///
+    /// Filled in from the profile the session names, like the kernel: what a
+    /// caller sent here would be discarded, which is why a caller is not asked.
     pub options: AgentOptions,
-    /// Which runtime implementation should back the session.
-    pub kernel: KernelId,
     /// Terminal geometry to start the runtime at.
     #[serde(default)]
     pub geometry: Option<TerminalGeometry>,
