@@ -101,6 +101,7 @@ pub(crate) fn conversing() -> KernelCapabilities {
         terminal: false,
         snapshot: true,
         steer: false,
+        interrupt: true,
         usage: true,
     }
 }
