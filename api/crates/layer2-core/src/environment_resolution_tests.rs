@@ -267,6 +267,14 @@ async fn browsing_the_catalogue_needs_the_same_capability_as_the_profiles() {
 #[path = "environment_session_tests.rs"]
 mod session;
 
+/// Telling the three service refusals apart.
+///
+/// A separate file for the same reason, and because what it covers is one
+/// question rather than a corner of another: only one of the three answers a
+/// service catalogue can give is an error.
+#[path = "service_refusal_tests.rs"]
+mod service_refusals;
+
 #[tokio::test]
 async fn a_profile_that_named_no_kernel_runs_what_this_deployment_runs() {
     // Layer 1 leaves it unset because it does not know which kernels exist
