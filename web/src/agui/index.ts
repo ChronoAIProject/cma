@@ -38,6 +38,7 @@ export {
 export {
   AguiOperations,
   AguiRefusal,
+  NO_CAPABILITIES,
   fetchTransport,
   toCapabilities,
   type ConcurrentInput,
