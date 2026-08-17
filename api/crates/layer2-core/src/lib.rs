@@ -12,6 +12,7 @@ pub mod activity;
 pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
+pub mod capabilities;
 mod clock;
 mod credentials;
 pub mod directory;
@@ -73,6 +74,7 @@ pub use activity::{
 pub use activity_detail::{ActivityDetail, DetailKey};
 pub use activity_service::ActivityService;
 pub use authz::{Authorization, Caller, Capability};
+pub use capabilities::{Capability as SessionCapability, SessionCapabilities};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
     MAX_DIRECTORY_LIMIT,
@@ -88,7 +90,7 @@ pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
 pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
-pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort};
+pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use reconcile::Reclaimed;
 pub use service::{AttachmentHandle, Deployment, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};

@@ -21,7 +21,7 @@ use axum::{
 use layer2_core::{
     AgentConfiguration, CatalogSkill, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
     EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentVariable, KernelId,
-    PermissionMode, ReasoningEffort, ServiceId, SkillId, SoftwarePackage,
+    PermissionMode, ReasoningEffort, ServiceId, SessionMode, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -83,6 +83,9 @@ pub struct AgentBody {
     /// Which runtime implementation backs the session.
     #[serde(default)]
     pub kernel: Option<String>,
+    /// Which plane sessions from this profile are driven on.
+    #[serde(default)]
+    pub mode: Option<SessionMode>,
     /// Model the agent selects.
     #[serde(default)]
     pub model: Option<String>,
@@ -123,6 +126,7 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 // means "whatever is ordinary here", never "empty" — and this
                 // layer is not the one that knows what ordinary is.
                 kernel: body.agent.kernel.map(KernelId::new).unwrap_or_default(),
+                mode: body.agent.mode.unwrap_or_default(),
                 model: body.agent.model,
                 reasoning_effort: body.agent.reasoning_effort.unwrap_or_default(),
                 permission: body.agent.permission.unwrap_or_default(),
@@ -147,6 +151,7 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
 #[derive(Debug, Serialize)]
 pub struct AgentView {
     kernel: String,
+    mode: SessionMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     reasoning_effort: ReasoningEffort,
@@ -217,6 +222,7 @@ impl ProfileView {
                 .collect(),
             agent: AgentView {
                 kernel: profile.agent.kernel.0,
+                mode: profile.agent.mode,
                 model: profile.agent.model,
                 reasoning_effort: profile.agent.reasoning_effort,
                 permission: profile.agent.permission,
