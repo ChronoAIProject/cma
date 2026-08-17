@@ -74,7 +74,6 @@ impl SessionService {
 
         let geometry = starting.session.geometry;
         let spec = SessionSpec {
-            kernel: starting.session.kernel.clone(),
             geometry: Some(geometry),
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),
