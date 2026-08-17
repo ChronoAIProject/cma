@@ -50,6 +50,8 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 
 A dot above means the interface projects the operation. Whether a *particular session* can be asked for it is a second question, answered by that session's capabilities: `steer`, `interrupt` and `get_usage` depend on what the kernel behind it actually offers, and `resize_terminal` and `screen_snapshot` on whether it has a terminal at all. An operation the session cannot honour is refused by name — never with a 404, and never accepted and dropped.
 
+Capabilities are one half of what a session is; **reach** is the other. Capabilities say what a session can *do*; its reach says what it can *touch* — the services its credential may call on its owner's behalf. Both are decided when the session is created and recorded on it, so neither follows a later edit to the profile it was started from, and REST projects both on the session object (`docs/API_REST.md`, `docs/Services.md`).
+
 `send_input` is one operation with two projections, decided by the session rather than by the caller: keystrokes to a terminal, a prompt turn to a conversation. On the terminal plane it is also how that kernel's own on-screen approvals are answered and how a turn is steered, which is why `resolve_approval` reads "at the TUI" for PTY and why `steer` is not a separate call there.
 
 An interface exposing a subset is expected. An interface inventing an operation absent from the core is a defect.
