@@ -95,6 +95,7 @@ impl Bridge {
         stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
         cwd: String,
         mode: Option<String>,
+        rejoin: Option<String>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -161,7 +162,12 @@ impl Bridge {
             tracing::info!("conversation link ended");
         });
 
-        bridge.handshake(resuming, cwd, mode).await?;
+        // A conversation to rejoin wins over one the pod says it was handed.
+        // They answer different questions — one is a control plane taking back
+        // over a live runtime, the other a runtime taking over a session — and
+        // when both are present the first is the more recent truth.
+        bridge.handshake(rejoin.or(resuming), cwd, mode).await?;
+        let conversation_id = bridge.session.lock().await.clone();
 
         let writer = Arc::clone(&bridge);
         let updates = updates_tx;
@@ -175,6 +181,7 @@ impl Bridge {
         Ok(ConversationChannel {
             updates: updates_rx,
             input: input_tx,
+            conversation_id,
         })
     }
 
