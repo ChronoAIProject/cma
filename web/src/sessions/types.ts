@@ -32,7 +32,8 @@ export type StopReason = 'error' | 'other';
  *
  * Exclusive by construction: `capabilities.rs` fixes the granted set at
  * creation and a session holds one or the other. Moving between them is a
- * rotation, not a toggle.
+ * rotation and never a toggle — the session is captured, its runtime is
+ * replaced, and it resumes from the capture (§18.6).
  */
 export type SessionPlane = 'terminal' | 'conversation';
 
@@ -136,7 +137,9 @@ export interface Session {
    *
    * #116: components ask "may this session steer" rather than trying and
    * handling a refusal. Held on the session because it is a fact about the
-   * session, decided at creation and never revisited.
+   * session, decided at creation and changed only by an explicit, recorded act
+   * of its owner — moving it between planes, which is a rotation and arrives
+   * as a new record rather than as an edit to this one.
    */
   readonly capabilities: SessionCapabilities;
 }
