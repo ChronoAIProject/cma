@@ -204,4 +204,4 @@ A capability is declared only where it has been demonstrated against the kernel 
 3. **Subsets are declared, not discovered.** A client can ask what an interface projects.
 4. **Errors are typed and name what is missing.** Never a bare status code.
 5. **Concurrent input has one answer.** A second turn arriving while one is in flight resolves identically on every interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
-6. **Identity is NyxID.** Every interface authenticates the same subject and scopes every operation to it. No interface has its own user model.
+6. **Identity is NyxID.** Every interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.
