@@ -61,7 +61,7 @@ describe('the session header', () => {
 
   it.each([
     ['provisioning', 'This session is still starting.'],
-    ['rotating', 'This session is moving to an updated runtime.'],
+    ['rotating', 'This session is being moved to another runtime. It will come back.'],
     ['idle', 'This session is stopped. Revive it to carry on.'],
   ] as const)('states why %s disables what it disables', (lifecycle, reason) => {
     // §7 and §11: every disabled control states why, on the surface, never
