@@ -14,8 +14,8 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, PublicIdentity, Session, SessionCapabilities, SessionId, SessionService,
-    SessionSpec, TerminalGeometry, UserDirectory,
+    Caller, CoreError, EnvironmentProfileService, PublicIdentity, Session, SessionCapabilities,
+    SessionId, SessionService, SessionSpec, TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
@@ -146,6 +146,39 @@ pub struct SessionView {
     /// this interface can project in general, so a client reads the truth about
     /// the session in front of it instead of the truth about the service.
     conforms_to: Vec<String>,
+    /// What this session's credential may reach.
+    ///
+    /// The other half of a fact whose first half is already here: capabilities
+    /// are what a session can *do*, and this is what it can *touch*. A client
+    /// shown one and not the other is describing half a session.
+    ///
+    /// The session's own answer and never its profile's. A profile can be
+    /// edited after a session started from it and the session keeps the scope
+    /// it was provisioned with, so reading the profile would give the wrong
+    /// answer exactly when somebody has changed one.
+    reach: Vec<ReachView>,
+}
+
+/// One service a session may reach, as this interface renders it.
+///
+/// Never a credential, never a token, and never an expiry. What a session may
+/// reach is a fact about its configuration; what it holds is not.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReachView {
+    /// The identifier the profile stored. Always present.
+    id: String,
+    /// What the owner recognises it by, when the catalogue offers a name.
+    ///
+    /// A raw service identifier is not something anybody recognises, and a
+    /// catalogue that could not be asked costs the names rather than the
+    /// answer: the identifiers alone are still true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    /// Whether the platform mandates it, so a client can draw it as fixed
+    /// rather than guessing which entries cannot be removed.
+    mandated: bool,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -169,7 +202,62 @@ impl From<Session> for SessionView {
             created_at: s.created_at,
             creator: None,
             conforms_to: conformance_for(&s.capabilities),
+            // Filled by `reach`, which needs the catalogue and the baseline.
+            // Empty here rather than absent: a view built without them reports
+            // nothing rather than claiming a session reaches nothing.
+            reach: Vec::new(),
         }
+    }
+}
+
+/// Describe what each session may reach, as far as this caller can be told.
+///
+/// One catalogue lookup for the whole page rather than one per row, for the
+/// same reason the directory is asked once: a list of twenty sessions is not a
+/// reason to ask NyxID twenty times.
+///
+/// A catalogue that cannot be reached costs the names and not the answer. §12
+/// of the API contract and #132's whole argument turn on that distinction:
+/// "we cannot ask right now" is not "you may reach nothing", and returning an
+/// error here would report a transient outage as a session with no reach.
+async fn reached(
+    environments: &EnvironmentProfileService,
+    caller: &Caller,
+    credential: Option<&str>,
+    sessions: &[Session],
+    views: &mut [SessionView],
+) {
+    let mandated: std::collections::HashSet<String> = environments
+        .baseline()
+        .services()
+        .iter()
+        .map(|s| s.0.clone())
+        .collect();
+
+    let named: std::collections::HashMap<String, layer2_core::CatalogService> = environments
+        .available_services(caller, credential)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|service| (service.id.0.clone(), service))
+        .collect();
+
+    for (session, view) in sessions.iter().zip(views.iter_mut()) {
+        view.reach = session
+            .granted_services
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| {
+                let known = named.get(&id.0);
+                ReachView {
+                    mandated: mandated.contains(&id.0),
+                    name: known.map(|s| s.name.clone()),
+                    description: known.and_then(|s| s.description.clone()),
+                    id: id.0,
+                }
+            })
+            .collect();
     }
 }
 
@@ -286,6 +374,12 @@ pub struct SessionsState {
     /// are minted here because this is the surface that can carry a
     /// credential, and redeemed there because that is the surface that cannot.
     pub tickets: Arc<TerminalTickets>,
+    /// The catalogue and the baseline, for naming what a session may reach.
+    ///
+    /// Here because a session reports its reach and a raw service identifier
+    /// is not something an owner recognises. The catalogue is asked as the
+    /// caller, since which services exist is a fact about their account.
+    pub environments: Arc<EnvironmentProfileService>,
 }
 
 impl FromRef<SessionsState> for Arc<SessionService> {
@@ -303,6 +397,12 @@ impl FromRef<SessionsState> for Arc<UserDirectory> {
 impl FromRef<SessionsState> for Arc<TerminalTickets> {
     fn from_ref(state: &SessionsState) -> Self {
         Arc::clone(&state.tickets)
+    }
+}
+
+impl FromRef<SessionsState> for Arc<EnvironmentProfileService> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.environments)
     }
 }
 
@@ -395,20 +495,44 @@ async fn create(
 async fn list(
     State(service): State<Arc<SessionService>>,
     State(users): State<Arc<UserDirectory>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
 ) -> Json<Vec<SessionView>> {
     let sessions = service.list_sessions(&caller).await;
-    Json(named(&users, &caller, sessions).await)
+    let mut views = named(&users, &caller, sessions.clone()).await;
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    reached(
+        &environments,
+        &caller,
+        credential.as_deref(),
+        &sessions,
+        &mut views,
+    )
+    .await;
+    Json(views)
 }
 
 async fn read(
     State(service): State<Arc<SessionService>>,
     State(users): State<Arc<UserDirectory>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionView>, Problem> {
     let session = service.get_session(&caller, &SessionId(id)).await?;
-    let mut views = named(&users, &caller, vec![session]).await;
+    let sessions = vec![session];
+    let mut views = named(&users, &caller, sessions.clone()).await;
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    reached(
+        &environments,
+        &caller,
+        credential.as_deref(),
+        &sessions,
+        &mut views,
+    )
+    .await;
     Ok(Json(views.remove(0)))
 }
 
