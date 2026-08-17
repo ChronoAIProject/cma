@@ -71,7 +71,7 @@ describe('what a session allows', () => {
     expect(can.canStop).toBe(false);
     expect(can.canDelete).toBe(false);
     expect(can.canRevive).toBe(false);
-    expect(can.reason).toMatch(/updated runtime/i);
+    expect(can.reason).toMatch(/being moved/i);
   });
 
   it('lets a session that is still starting be abandoned', () => {

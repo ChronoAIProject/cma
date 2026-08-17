@@ -71,7 +71,12 @@ export function abilitiesFor(session: Session): SessionAbilities {
         canRevive: false,
         canDelete: false,
         listed: true,
-        reason: 'This session is moving to an updated runtime.',
+        // Both handovers land here — a newer runtime, and the other plane —
+        // and the record does not say which. Saying "an updated runtime"
+        // would be a guess that is wrong half the time now, and the part
+        // an owner acts on is the same either way: it is moving, and it
+        // will be back.
+        reason: 'This session is being moved to another runtime. It will come back.',
       };
     case 'idle':
       // Stopped. Readable, revivable, and not pretending to be either less or

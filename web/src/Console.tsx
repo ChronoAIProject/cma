@@ -223,19 +223,20 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { start, endSession, reviveSessionById, removeSession } = useSessionActions({
-    sessions,
-    activeId,
-    setSessions,
-    setActiveId,
-    setOpeningForId,
-    setNotice,
-    setActing,
-    select,
-    report,
-    applyLifecycle,
-    setFocusHistory,
-  });
+  const { start, endSession, reviveSessionById, removeSession, changeSessionPlane } =
+    useSessionActions({
+      sessions,
+      activeId,
+      setSessions,
+      setActiveId,
+      setOpeningForId,
+      setNotice,
+      setActing,
+      select,
+      report,
+      applyLifecycle,
+      setFocusHistory,
+    });
 
   /*
    * Follow whichever session is still starting. The stream is the only thing
@@ -594,6 +595,8 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                     onRevive={() => void reviveSessionById(active.id)}
                     onStop={() => void endSession(active.id)}
                     onDelete={() => void removeSession(active.id)}
+                    kernels={kernels}
+                    onChangePlane={(to) => void changeSessionPlane(active.id, to)}
                   />
                 )
               }
