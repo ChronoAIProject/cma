@@ -13,6 +13,7 @@ use layer2_core::KernelId;
 use layer3_adapter::{
     claude_code::{ClaudeCodeAdapter, ClaudeCodeSandboxSpec},
     codex::{CodexAdapter, CodexSandboxSpec},
+    dsh::{DshAdapter, DshSandboxSpec},
     hosted::Deployment,
     sandbox::SandboxClient,
     KernelAdapter,
@@ -56,6 +57,23 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
                 config.sandbox_api_key.clone(),
             ),
             claude_code,
+        )),
+    );
+
+    // The request shape this one speaks is its own too, and its route is
+    // declared in a profile the image bakes rather than passed at startup.
+    let mut dsh = DshSandboxSpec::default();
+    deploy(config, &mut dsh.deployment);
+    dsh.deployment.upstream_base_url = config.dsh_upstream_base_url.clone();
+    dsh.deployment.upstream_model = config.dsh_upstream_model.clone();
+    adapters.insert(
+        KernelId::new("dsh"),
+        Arc::new(DshAdapter::new(
+            SandboxClient::new(
+                config.sandbox_base_url.clone(),
+                config.sandbox_api_key.clone(),
+            ),
+            dsh,
         )),
     );
 
@@ -122,6 +140,7 @@ mod tests {
         let kernels = [
             CodexSandboxSpec::default().deployment,
             ClaudeCodeSandboxSpec::default().deployment,
+            DshSandboxSpec::default().deployment,
         ];
         for mut deployment in kernels {
             let bridge = deployment.bridge_command.clone();
@@ -164,13 +183,18 @@ mod tests {
     }
 
     #[test]
-    fn the_two_kernels_do_not_share_a_bridge_or_a_conversation_directory() {
-        // If they did, one kernel's sandbox would run the other's program, or
-        // carry the wrong tree when a session was rotated. Both are silent.
-        assert_ne!(
+    fn no_two_kernels_share_a_bridge() {
+        // If they did, one kernel's sandbox would run the other's program, and
+        // nothing would say so until a session failed to answer.
+        let commands = [
             CodexSandboxSpec::default().deployment.bridge_command,
-            ClaudeCodeSandboxSpec::default().deployment.bridge_command
-        );
+            ClaudeCodeSandboxSpec::default().deployment.bridge_command,
+            DshSandboxSpec::default().deployment.bridge_command,
+        ];
+        let mut unique = commands.clone().to_vec();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), commands.len(), "got {commands:?}");
     }
 
     #[test]
