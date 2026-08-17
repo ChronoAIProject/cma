@@ -133,6 +133,16 @@ fn classify_session_verb(method: &Method, verb: &str) -> Option<Action> {
         (&Method::GET, "transcript") => Some(Action::SessionTranscriptRead),
         (&Method::GET, "events") => Some(Action::SessionEventsRead),
         (&Method::GET, "terminal") => Some(Action::SessionTerminalAttach),
+        // Asking for a ticket is asking to attach, recorded as the same
+        // action: what happened is that somebody set out to open this
+        // terminal, and splitting that into two entries would say twice what
+        // happened once.
+        //
+        // No body is read and no query is named. A ticket's value must never
+        // reach a record, and the way that is guaranteed is that there is no
+        // field here for one to land in — `detail_from_query` names three keys
+        // and `ticket` is not among them.
+        (&Method::POST, "terminal-ticket") => Some(Action::SessionTerminalAttach),
         _ => None,
     }
 }
@@ -255,6 +265,10 @@ pub fn detail_from_query(query: Option<&str>, detail: &mut ActivityDetail) {
             // Which subject a reader narrowed the record to. An identifier, and
             // the one thing worth knowing about a filtered read.
             "actor" if !value.is_empty() => detail.record(DetailKey::Subject, value),
+            // Everything else is ignored, and one thing in particular: the
+            // terminal upgrade carries a `ticket`, which is a credential for
+            // the seconds it lives. There is no arm for it, which is stronger
+            // than a rule saying not to add one.
             _ => {}
         }
     }
