@@ -15,6 +15,14 @@
 
 use std::sync::Arc;
 
+/// Placeholder an agent presents to this proxy.
+///
+/// The proxy replaces it outright, so it is inert and is not a secret. It
+/// exists because kernels refuse to start without some credential present, and
+/// it lives here rather than with any kernel because it is a fact about this
+/// proxy: whatever a kernel is told to send, this is what arrives.
+pub const PLACEHOLDER_KEY: &str = "local-proxy-no-credential-needed";
+
 use axum::{
     body::Body,
     extract::{Request, State},

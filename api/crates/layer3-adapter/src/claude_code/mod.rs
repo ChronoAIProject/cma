@@ -77,6 +77,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
             terminal: false,
             snapshot: false,
             steer: false,
+            interrupt: true,
             usage: false,
         }
     }
