@@ -1,0 +1,26 @@
+/*
+ * Usage — docs/Web_Style.md §18.5. In the surface's foot band beside the
+ * composer, at the one type size a band carries.
+ */
+
+.usage {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+/*
+ * A column of digits takes tabular numerals (§4), so a figure that grows does
+ * not shift the label beside it.
+ */
+.usage__tokens {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A session that cannot report usage. Quiet, and never drawn as a total: the
+ * absence is a fact and a zero would be a different one.
+ */
+.usage--absent .band__value {
+  color: var(--ink-3);
+}
