@@ -12,18 +12,21 @@ use std::sync::Arc;
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
-        Path, State, WebSocketUpgrade,
+        ws::{CloseFrame, Message, WebSocket},
+        FromRef, Path, Query, State, WebSocketUpgrade,
     },
     response::IntoResponse,
     routing::get,
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use layer2_core::{Caller, CoreError, SessionId, SessionService, TerminalGeometry};
+use layer2_core::{
+    AttachmentClaim, Caller, CoreError, SessionId, SessionService, TerminalGeometry,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthenticatedCaller;
+use crate::tickets::TerminalTickets;
 use crate::{InterfaceProfile, Operation};
 
 /// Conformance classes this interface satisfies.
@@ -57,6 +60,12 @@ impl InterfaceProfile for PtyInterface {
         ]
     }
 }
+
+/// Close code for a client whose attachment was taken over.
+///
+/// In the private range, because no registered code says this. 4000 is the
+/// first application-defined code and nothing else in this interface uses one.
+const SUPERSEDED_CLOSE_CODE: u16 = 4000;
 
 /// How often the server proves the connection is still there.
 ///
@@ -111,20 +120,94 @@ impl ServerControl {
     }
 }
 
-/// Routes this interface contributes.
-pub fn router(service: Arc<SessionService>) -> Router {
-    Router::new()
-        .route("/api/v1/sessions/{id}/terminal", get(attach))
-        .with_state(service)
+/// What the terminal route is served from.
+#[derive(Clone)]
+pub struct TerminalState {
+    /// Sessions and the runtimes serving them.
+    pub sessions: Arc<SessionService>,
+    /// Tickets minted by the REST surface, redeemed here.
+    pub tickets: Arc<TerminalTickets>,
 }
 
+impl FromRef<TerminalState> for Arc<SessionService> {
+    fn from_ref(state: &TerminalState) -> Self {
+        Arc::clone(&state.sessions)
+    }
+}
+
+impl FromRef<TerminalState> for Arc<TerminalTickets> {
+    fn from_ref(state: &TerminalState) -> Self {
+        Arc::clone(&state.tickets)
+    }
+}
+
+/// Routes this interface contributes.
+pub fn router(state: TerminalState) -> Router {
+    Router::new()
+        .route("/api/v1/sessions/{id}/terminal", get(attach))
+        .with_state(state)
+}
+
+/// How an upgrade may present itself.
+///
+/// A ticket is accepted here and nowhere else, and its value is never read
+/// back out of this struct for anything but redemption. The activity
+/// classifier's query allowlist does not name it, so it cannot reach a record;
+/// nothing below logs it either, and the temptation to log one while chasing a
+/// failing attach should be answered with the session and the subject instead.
+#[derive(Debug, Default, Deserialize)]
+struct AttachParams {
+    #[serde(default)]
+    ticket: Option<String>,
+}
+
+/// Decide who is attaching, and on what terms.
+///
+/// A ticket wins where one is presented, because a client that went to the
+/// trouble of getting one meant to use it — and a ticket carries a claim that
+/// an ambient cookie does not. Falling back to the cookie after a refused
+/// ticket would let a stale or spent ticket succeed anyway on a same-origin
+/// page, which is the opposite of what single use is for.
+async fn admit(
+    tickets: &TerminalTickets,
+    id: &SessionId,
+    ticket: Option<String>,
+    caller: Option<AuthenticatedCaller>,
+) -> Option<(Caller, AttachmentClaim)> {
+    match ticket {
+        Some(ticket) => tickets
+            .redeem(&ticket, id)
+            .await
+            .map(|r| (r.caller, r.claim)),
+        // The cookie path, unchanged: middleware verified the credential and
+        // the caller attaches as themselves, exclusively.
+        None => caller.map(|AuthenticatedCaller(c)| (c, AttachmentClaim::Exclusive)),
+    }
+}
+
+/// Attach a session's terminal.
+///
+/// Two ways in, because two kinds of client exist. A same-origin caller —
+/// our own dashboard — arrives with a cookie the browser sends itself, and the
+/// ordinary middleware has already established who they are. A cross-origin
+/// caller holding a bearer token cannot put it on a WebSocket upgrade at all,
+/// so it exchanges it for a ticket first and presents that.
 async fn attach(
     ws: WebSocketUpgrade,
     Path(id): Path<String>,
+    Query(params): Query<AttachParams>,
     State(service): State<Arc<SessionService>>,
-    AuthenticatedCaller(caller): AuthenticatedCaller,
+    State(tickets): State<Arc<TerminalTickets>>,
+    caller: Option<AuthenticatedCaller>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| serve(socket, service, SessionId(id), caller))
+    let id = SessionId(id);
+    let Some((caller, claim)) = admit(&tickets, &id, params.ticket, caller).await else {
+        // Refused before the upgrade, so the client gets an HTTP status it can
+        // act on rather than a socket that opens and immediately closes.
+        return crate::auth::NotAuthenticated.into_response();
+    };
+    ws.on_upgrade(move |socket| serve(socket, service, id, caller, claim))
+        .into_response()
 }
 
 /// Translate a core failure into this interface's error vocabulary.
@@ -149,7 +232,13 @@ fn error_code(err: &CoreError) -> &'static str {
     }
 }
 
-async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, caller: Caller) {
+async fn serve(
+    socket: WebSocket,
+    service: Arc<SessionService>,
+    id: SessionId,
+    caller: Caller,
+    claim: AttachmentClaim,
+) {
     let (mut sink, mut source) = socket.split();
 
     // The client must declare its geometry before any terminal byte is sent.
@@ -221,7 +310,7 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, c
         }
     };
 
-    let attachment = match service.attach_terminal(&caller, &id, geometry).await {
+    let attachment = match service.attach_terminal(&caller, &id, geometry, claim).await {
         Ok(a) => a,
         Err(e) => {
             let code = error_code(&e);
@@ -265,6 +354,7 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, c
     }
 
     let mut output = attachment.output.resubscribe();
+    let mut superseded = attachment.superseded.resubscribe();
     let mut pump_out = tokio::spawn(async move {
         // A terminal is mostly silent — someone reading output produces no
         // traffic at all — and an idle connection is exactly what proxies and
@@ -296,6 +386,19 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, c
                     if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                         break;
                     }
+                }
+                // The owner has handed this attachment to another client. Said
+                // rather than shown: a terminal that simply stops updating is
+                // indistinguishable from a broken one, and whoever is looking
+                // at it will reload and take it straight back.
+                _ = superseded.recv() => {
+                    let _ = sink
+                        .send(Message::Close(Some(CloseFrame {
+                            code: SUPERSEDED_CLOSE_CODE,
+                            reason: "the owner attached this terminal from somewhere else".into(),
+                        })))
+                        .await;
+                    break;
                 }
             }
         }
@@ -356,69 +459,5 @@ async fn serve(socket: WebSocket, service: Arc<SessionService>, id: SessionId, c
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn projection_matches_what_the_protocol_can_express() {
-        let ops = PtyInterface.operations();
-        assert!(ops.contains(&Operation::SendInput));
-        assert!(ops.contains(&Operation::ResizeTerminal));
-        assert!(ops.contains(&Operation::ScreenSnapshot));
-        // Sessions are created over a request/response interface first; this
-        // one only ever attaches to an existing session.
-        assert!(!ops.contains(&Operation::CreateSession));
-        assert!(!ops.contains(&Operation::GetUsage));
-        assert!(!ops.contains(&Operation::Steer));
-    }
-
-    #[test]
-    fn unauthorized_and_missing_collapse_to_one_code() {
-        assert_eq!(error_code(&CoreError::SessionNotFound), "session_not_found");
-        assert_eq!(error_code(&CoreError::Forbidden), "session_not_found");
-    }
-
-    #[test]
-    fn each_remaining_failure_has_its_own_code() {
-        assert_eq!(error_code(&CoreError::AlreadyAttached), "already_attached");
-        assert_eq!(
-            error_code(&CoreError::SessionTerminated),
-            "session_terminated"
-        );
-        assert_eq!(
-            error_code(&CoreError::RuntimeUnavailable("x".into())),
-            "runtime_unavailable"
-        );
-    }
-
-    #[test]
-    fn ready_frame_uses_the_documented_field_names() {
-        let msg = ServerControl::Ready {
-            cols: 120,
-            rows: 40,
-            snapshot: true,
-            conforms_to: CONFORMS_TO,
-            limits: Limits {
-                scrollback_lines: SCROLLBACK_LINES,
-                max_frame_bytes: MAX_FRAME_BYTES,
-            },
-        };
-        let json = serde_json::to_value(&msg).expect("serializes");
-        assert_eq!(json["t"], "ready");
-        assert_eq!(json["cols"], 120);
-        assert_eq!(json["conformsTo"][0], CONFORMS_TO[0]);
-        assert_eq!(json["limits"]["scrollbackLines"], 2000);
-        assert_eq!(json["limits"]["maxFrameBytes"], 262_144);
-    }
-
-    #[test]
-    fn control_frames_parse_from_their_tag() {
-        let r: ClientControl =
-            serde_json::from_str(r#"{"t":"resize","cols":80,"rows":24}"#).expect("resize parses");
-        assert!(matches!(r, ClientControl::Resize { cols: 80, rows: 24 }));
-        let s: ClientControl =
-            serde_json::from_str(r#"{"t":"signal","sig":"INT"}"#).expect("signal parses");
-        assert!(matches!(s, ClientControl::Signal { .. }));
-        assert!(serde_json::from_str::<ClientControl>(r#"{"t":"nope"}"#).is_err());
-    }
-}
+#[path = "tests.rs"]
+mod tests;
