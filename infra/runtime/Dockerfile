@@ -105,6 +105,22 @@ RUN set -eux; \
     node --version; \
     npm --version
 
+# The second bridge pins a version of minimatch with two published
+# denial-of-service advisories, and pins it exactly — so npm will not move it and
+# a newer bridge is not available that does. The patched release of the same
+# major is installed over it below.
+#
+# Stated rather than allowlisted, which is the point: the scan gate is what
+# noticed, the gate is never weakened, and this is the remediation the gate was
+# asking for. It comes out again the moment upstream pins a fixed version, and
+# the scan is what will say so.
+#
+# Fetched into a scratch directory and moved into place, rather than installed
+# in the bridge's own: npm reads the manifest it finds there and would pull that
+# package's development dependencies into a runtime image — which is how a test
+# runner with a critical advisory arrived in a sandbox the first time this was
+# written. Moving one directory changes one directory.
+ARG MINIMATCH_VERSION=10.2.3
 # The third kernel runs the agent's shell tools through node-pty, which
 # publishes no prebuild for this runtime and must be compiled. The toolchain is
 # installed and removed inside one layer on purpose: a compiler left in a
@@ -121,6 +137,11 @@ RUN set -eux; \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
         "@zed-industries/claude-code-acp@${CLAUDE_CODE_ACP_VERSION}" \
         "@deepseek-ai/dsh@${DSH_VERSION}"; \
+    npm install --no-save --prefix /tmp/patched "minimatch@${MINIMATCH_VERSION}"; \
+    rm -rf /usr/local/lib/node_modules/@zed-industries/claude-code-acp/node_modules/minimatch; \
+    mv /tmp/patched/node_modules/minimatch \
+        /usr/local/lib/node_modules/@zed-industries/claude-code-acp/node_modules/minimatch; \
+    rm -rf /tmp/patched; \
     npm cache clean --force; \
     apt-get purge -y --auto-remove build-essential python3; \
     rm -rf /var/lib/apt/lists/*; \
