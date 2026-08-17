@@ -49,14 +49,6 @@ impl KernelAdapter for RecordingAdapter {
         })
     }
 
-    async fn resize(
-        &self,
-        _handle: &layer3_adapter::RuntimeHandle,
-        _size: layer3_adapter::TermSize,
-    ) -> Result<(), layer3_adapter::AdapterError> {
-        Ok(())
-    }
-
     async fn terminate(
         &self,
         _handle: &layer3_adapter::RuntimeHandle,
