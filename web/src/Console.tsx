@@ -11,6 +11,8 @@ import type { Stage } from './sessions/progress';
 import { SessionActions } from './sessions/SessionActions';
 import { SessionHeader } from './sessions/SessionHeader';
 import { TerminalSurface } from './terminal/TerminalSurface';
+import { ConversationSurface } from './chat/ConversationSurface';
+import { toCapabilities } from './agui';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
 import { selectLiveWindow, unattachedNote } from './canvas/layout';
@@ -629,6 +631,16 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 message="Moving this session to an updated runtime. It will come back where it left off."
                 stage={stages[active.id] ?? null}
               />
+            ) : active.plane === 'conversation' ? (
+              /*
+               * §18 and §1: the middle column is drawn from the session's own
+               * granted set, not from a preference and not from a third view.
+               * A plane is a property of a session the way an arrangement is a
+               * property of a list — the column changes, and nothing else
+               * does. There is no toggle here; moving a session between planes
+               * is a deliberate act with a cost, and it is #128.
+               */
+              <ConversationSurface session={active} capabilities={toCapabilities(active)} />
             ) : driver === null ? (
               <p className="console__empty">Attaching…</p>
             ) : (
