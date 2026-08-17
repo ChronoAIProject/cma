@@ -260,10 +260,6 @@ impl CodexAdapter {
                 .to_string(),
             ),
             (
-                "CHRONO_AGENT_OWN_CREDENTIAL".to_string(),
-                spec.options.own_credential.to_string(),
-            ),
-            (
                 "CHRONO_UPSTREAM_WIRE_API".to_string(),
                 self.spec.upstream_wire_api.clone(),
             ),
@@ -299,6 +295,17 @@ impl KernelAdapter for CodexAdapter {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
+        // Refused rather than ignored. Nothing in the runtime authenticates the
+        // agent against the owner's own vendor account, so a session that asked
+        // for it and was accepted would run on the delegated credential — the
+        // owner's bill and the owner's entitlements — while believing otherwise.
+        // A session that cannot be what was asked for must not start at all.
+        if spec.options.own_credential {
+            return Err(AdapterError::Unsupported(
+                "this kernel does not support the owner's own credential yet".to_string(),
+            ));
+        }
+
         // Geometry is passed as environment so the supervisor allocates its pty
         // at roughly the right size before the first attach refines it.
         let env = self.environment_for(spec);
