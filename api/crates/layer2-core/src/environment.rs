@@ -174,9 +174,15 @@ impl std::fmt::Display for SkillId {
 ///
 /// Skills sit here rather than beside software because a skill is something
 /// the agent knows how to do, not something installed in the box around it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfiguration {
     /// Which runtime implementation backs the session.
+    ///
+    /// Unset by default, and deliberately: which runtimes exist, and which one
+    /// an unqualified profile should use, is a decision about a deployment.
+    /// Naming one here would put a particular runtime's name in the layer that
+    /// exists precisely so nothing depends on which runtime is running. It is
+    /// settled from configuration on the way in.
     pub kernel: KernelId,
     /// Model the agent selects, when the profile pins one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -193,22 +199,6 @@ pub struct AgentConfiguration {
     /// Skills loaded into the session.
     #[serde(default)]
     pub skills: Vec<SkillId>,
-}
-
-impl Default for AgentConfiguration {
-    fn default() -> Self {
-        Self {
-            // The only kernel this deployment can actually start. A profile
-            // that named nothing would otherwise be unstartable, which is a
-            // worse answer than the one kernel there is.
-            kernel: KernelId::new("codex"),
-            model: None,
-            reasoning_effort: ReasoningEffort::default(),
-            permission: PermissionMode::default(),
-            credential: CredentialMode::default(),
-            skills: Vec::new(),
-        }
-    }
 }
 
 /// What a caller supplies when creating or replacing a profile.
