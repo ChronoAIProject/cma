@@ -77,6 +77,26 @@ pub enum ActivityAction {
     SessionEventsRead,
     /// A client took the exclusive terminal attachment.
     SessionTerminalAttach,
+    /// Something was sent to a session — keystrokes, or a prompt turn.
+    ///
+    /// What was sent is deliberately not part of this record. It is the
+    /// owner's own words to their own agent, and the durable event log is
+    /// where a session's content belongs; this log is about who did what.
+    SessionInput,
+    /// A turn or a running command was stopped without ending the session.
+    SessionInterrupt,
+    /// A turn already in progress was redirected.
+    SessionSteer,
+    /// A session's terminal was told its geometry changed.
+    SessionResize,
+    /// Something the runtime was blocked on was answered.
+    ///
+    /// That it was answered is recorded; which way is not. The decision is in
+    /// the session's own event log, where it belongs to the conversation
+    /// rather than to the audit of who touched what.
+    SessionApprovalResolve,
+    /// A session's accumulated usage was read.
+    SessionUsageRead,
     /// A reusable environment bundle was created.
     EnvironmentProfileCreate,
     /// One bundle was read.
