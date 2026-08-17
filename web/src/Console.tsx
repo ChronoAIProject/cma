@@ -701,8 +701,16 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       <NewSessionDialog
         open={choosing}
         profiles={profiles}
+        kernels={kernels}
+        store={profileStore}
         onCancel={() => {
           setChoosing(false);
+        }}
+        onProfileCreated={(created) => {
+          // Added here rather than re-read: it is selectable for the next
+          // session immediately, and the list this console holds is the one
+          // the dialog will be given again.
+          setProfiles((previous) => [created, ...previous]);
         }}
         onStart={(environmentProfile) => {
           setChoosing(false);
