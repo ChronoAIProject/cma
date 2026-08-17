@@ -107,7 +107,11 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   const [order, setOrder] = useState<SortOrder>('newest');
   // Open by default: someone arriving wants to know what they are looking at,
   // and the panel is the only place that says.
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  /*
+   * Open by default: somebody arriving wants to know what they are looking at.
+   * Validated on read (§7), because web storage is untrusted input.
+   */
+  const [detailsOpen, setDetailsOpen] = useState(() => !loadCollapsed('sheet'));
   // Validated on read: web storage is untrusted input, and an unrecognised
   // value reaching the layout would be a rail nobody can draw (§7).
   const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
@@ -352,7 +356,35 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         />
 
         <main className="console__surface">
-          <SessionHeader session={active} />
+          <SessionHeader
+            session={active}
+            actions={
+              active === null ? undefined : (
+                <SessionActions
+                  session={active}
+                  busy={acting}
+                  onReconnect={() => {
+                    /*
+                     * A new driver for this session and no other. The surface
+                     * holding the old one releases its transport and the new
+                     * one dials again, which asks the control plane to take
+                     * the sandbox back under management.
+                     *
+                     * Scoped deliberately: this used to bump `paletteEpoch`,
+                     * which is also the canvas's key, so one session's
+                     * Reconnect rebuilt every node on the canvas — every
+                     * scrollback cleared, every socket redialled.
+                     */
+                    setNotice(null);
+                    reconnect(active.id);
+                  }}
+                  onRevive={() => void reviveSessionById(active.id)}
+                  onStop={() => void endSession(active.id)}
+                  onDelete={() => void removeSession(active.id)}
+                />
+              )
+            }
+          />
 
           {/*
            * Above the surface, never in place of it. A failure belongs to one
@@ -412,42 +444,28 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               interactive={abilitiesFor(active).interactive}
             />
           )}
-        </main>
 
-        {active !== null ? (
-          <SessionDetails
-            session={active}
-            open={detailsOpen}
-            ending={endings[active.id]}
-            onToggle={() => {
-              setDetailsOpen((v) => !v);
-            }}
-            actions={
-              <SessionActions
-                session={active}
-                busy={acting}
-                onReconnect={() => {
-                  /*
-                   * A new driver for this session and no other. The surface
-                   * holding the old one releases its transport and the new one
-                   * dials again, which asks the control plane to take the
-                   * sandbox back under management.
-                   *
-                   * Scoped deliberately: this used to bump `paletteEpoch`,
-                   * which is also the canvas's key, so one session's Reconnect
-                   * rebuilt every node on the canvas — every scrollback
-                   * cleared, every socket redialled.
-                   */
-                  setNotice(null);
-                  reconnect(active.id);
-                }}
-                onRevive={() => void reviveSessionById(active.id)}
-                onStop={() => void endSession(active.id)}
-                onDelete={() => void removeSession(active.id)}
-              />
-            }
-          />
-        ) : null}
+          {/*
+           * The sheet sits beneath the terminal, inside the same column and
+           * after it, so opening and closing it changes the terminal's height
+           * and nothing else. Rendered as a sibling rather than around it,
+           * because a component that wrapped the terminal would remount it on
+           * every toggle and take the scrollback with it.
+           */}
+          {active !== null ? (
+            <SessionDetails
+              session={active}
+              open={detailsOpen}
+              ending={endings[active.id]}
+              onToggle={() => {
+                setDetailsOpen((v) => {
+                  saveCollapsed('sheet', v);
+                  return !v;
+                });
+              }}
+            />
+          ) : null}
+        </main>
       </div>
 
       <NewSessionDialog
