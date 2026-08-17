@@ -351,3 +351,115 @@ async fn a_kernel_with_no_conversation_says_so_rather_than_failing_obscurely() {
         .expect_err("this kernel has no conversation plane yet");
     assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
 }
+
+/// A spec, with the session's own environment attached.
+fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
+    RuntimeSpec {
+        restore_from: None,
+        created_by: None,
+        environment,
+        session_id: "sesn_x".into(),
+        size: TermSize { cols: 80, rows: 24 },
+        subject_credential: None,
+        options: Default::default(),
+    }
+}
+
+#[test]
+fn a_sessions_own_variables_reach_the_sandbox() {
+    // The defect this closes: a tenant set variables on a profile, the REST
+    // surface accepted them, and nothing ever reached the pod.
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&spec_with(crate::RuntimeEnvironment {
+        variables: BTreeMap::from([("MY_TOKEN_NAME".to_string(), "a-value".to_string())]),
+        ..Default::default()
+    }));
+    assert_eq!(
+        env.get("MY_TOKEN_NAME").map(String::as_str),
+        Some("a-value")
+    );
+}
+
+#[test]
+fn a_name_the_runtime_controls_cannot_be_taken_over() {
+    // These names are how the runtime finds its upstream, its proxy and its
+    // credential. A caller who could overwrite one could redirect the agent's
+    // traffic — and the credential attached to it — somewhere of their
+    // choosing. The refusal is logged by `apply_to`.
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&spec_with(crate::RuntimeEnvironment {
+        variables: BTreeMap::from([(
+            "CHRONO_UPSTREAM_BASE_URL".to_string(),
+            "http://somewhere-else.example".to_string(),
+        )]),
+        ..Default::default()
+    }));
+    assert_ne!(
+        env.get("CHRONO_UPSTREAM_BASE_URL").map(String::as_str),
+        Some("http://somewhere-else.example"),
+        "a caller must not be able to redirect the agent's traffic"
+    );
+}
+
+#[tokio::test]
+async fn software_the_image_does_not_carry_is_refused_by_name() {
+    // Nothing can be installed into a running sandbox, so accepting this would
+    // start a session that quietly lacks the tools it was described as having.
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .provision(&spec_with(crate::RuntimeEnvironment {
+            packages: vec!["a-package-this-image-lacks".into()],
+            ..Default::default()
+        }))
+        .await
+        .expect_err("an undeliverable requirement must not provision");
+    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+    assert!(
+        err.to_string().contains("a-package-this-image-lacks"),
+        "the refusal must name what is missing, got {err}"
+    );
+}
+
+#[tokio::test]
+async fn a_skill_the_agent_cannot_load_is_refused_by_name() {
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .provision(&spec_with(crate::RuntimeEnvironment {
+            skills: vec!["a-skill-this-agent-lacks".into()],
+            ..Default::default()
+        }))
+        .await
+        .expect_err("an undeliverable skill must not provision");
+    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+    assert!(
+        err.to_string().contains("a-skill-this-agent-lacks"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn what_the_image_already_carries_provisions_as_before() {
+    // The success path, and the one that matters most: every session carries
+    // this deployment's baseline, so a blanket refusal would have refused all
+    // of them.
+    let a = CodexAdapter::new(
+        SandboxClient::new("http://127.0.0.1:1", "test-key"),
+        CodexSandboxSpec {
+            provided_packages: vec!["nyxid".into()],
+            provided_skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+            ..CodexSandboxSpec::default()
+        },
+    );
+    let err = a
+        .provision(&spec_with(crate::RuntimeEnvironment {
+            packages: vec!["nyxid".into()],
+            skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+            ..Default::default()
+        }))
+        .await
+        .expect_err("the dead provider is what fails, not the request");
+    assert!(
+        matches!(err, AdapterError::Unavailable(_)),
+        "the baseline must reach the provider, got {err:?}"
+    );
+}

@@ -55,6 +55,17 @@ const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// How often to re-check a sandbox that is not yet running.
 const READY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// The first thing asked for that is not on offer, if any.
+///
+/// Names one rather than all of them: a caller fixes the first and asks again,
+/// and a list of everything wrong is longer to read without being more useful.
+fn absent(wanted: &[String], provided: &[String]) -> Option<String> {
+    wanted
+        .iter()
+        .find(|w| !provided.contains(w))
+        .map(|w| w.to_string())
+}
+
 impl From<SandboxError> for AdapterError {
     fn from(e: SandboxError) -> Self {
         match e {
@@ -110,6 +121,19 @@ pub struct CodexSandboxSpec {
     /// changes between its versions, and getting it wrong has to be
     /// correctable without building a new image.
     pub resume_args: String,
+    /// Software the image already carries, as a caller would name it.
+    ///
+    /// Not a permission list — a statement of fact about the image this
+    /// adapter starts. There is no channel for installing anything into a
+    /// running sandbox, so a session asking for something outside this is
+    /// asking for something it cannot be given, and is refused by name rather
+    /// than started without it.
+    pub provided_packages: Vec<String>,
+    /// Skills the agent in this image can already load, by identifier.
+    ///
+    /// Same rule and the same reason: no delivery channel exists, so anything
+    /// beyond this is a promise the session could not keep.
+    pub provided_skills: Vec<String>,
 }
 
 impl Default for CodexSandboxSpec {
@@ -127,6 +151,11 @@ impl Default for CodexSandboxSpec {
             upstream_wire_api: "responses".into(),
             platform_base_url: String::new(),
             resume_args: "resume".into(),
+            // Empty by default, which refuses everything. A deployment states
+            // what its image carries; guessing here would accept a request the
+            // image cannot honour, which is the failure this exists to stop.
+            provided_packages: Vec::new(),
+            provided_skills: Vec::new(),
         }
     }
 }
@@ -218,7 +247,7 @@ impl CodexAdapter {
     /// grants more than the person asked for. Worth being able to inspect
     /// without standing up a provider.
     fn environment_for(&self, spec: &RuntimeSpec) -> BTreeMap<String, String> {
-        BTreeMap::from([
+        let mut controlled = BTreeMap::from([
             ("CHRONO_RUNTIME_COMMAND".to_string(), "codex".to_string()),
             (
                 "CHRONO_RUNTIME_RESUME_ARGS".to_string(),
@@ -296,7 +325,14 @@ impl CodexAdapter {
                 "CHRONO_RUNTIME_ROWS".to_string(),
                 spec.size.rows.to_string(),
             ),
-        ])
+        ]);
+        // The session's own variables, added last and refused where they
+        // collide. `apply_to` is what enforces that: the names above are how
+        // the runtime finds its upstream, its proxy and its credential, so a
+        // caller who could overwrite one could redirect the agent's traffic —
+        // or the credential attached to it — somewhere of their choosing.
+        spec.environment.apply_to(&mut controlled);
+        controlled
     }
 }
 
@@ -330,6 +366,23 @@ impl KernelAdapter for CodexAdapter {
             return Err(AdapterError::Unsupported(
                 "this kernel does not support the owner's own credential yet".to_string(),
             ));
+        }
+
+        // Refused for the same reason, and it is the same defect: a caller
+        // asked for something, was told nothing, and got a session without it.
+        // Variables are delivered below. Software and skills are delivered by
+        // the image and the agent in it, and nothing can be added to a running
+        // sandbox — so what the image already carries is honoured and anything
+        // else is named and refused.
+        if let Some(missing) = absent(&spec.environment.packages, &self.spec.provided_packages) {
+            return Err(AdapterError::Unsupported(format!(
+                "this runtime's image does not carry {missing}, and software cannot be installed into a running sandbox"
+            )));
+        }
+        if let Some(missing) = absent(&spec.environment.skills, &self.spec.provided_skills) {
+            return Err(AdapterError::Unsupported(format!(
+                "this runtime's agent cannot load the skill {missing}, and skills cannot be delivered into a running sandbox"
+            )));
         }
 
         // Geometry is passed as environment so the supervisor allocates its pty
