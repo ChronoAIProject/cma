@@ -25,7 +25,7 @@ fn a_proxied_endpoint_becomes_a_terminal_url() {
     let a = adapter("http://provider:80");
     assert_eq!(
         a.terminal_url("provider/v1/sandboxes/sbx-1/proxy/9090", "sbx-1"),
-        "ws://provider/v1/sandboxes/sbx-1/proxy/9090/runtime/sbx-1/terminal"
+        "ws://provider/v1/sandboxes/sbx-1/proxy/9090/runtime/sbx-1/terminal?wire=1"
     );
 }
 
@@ -42,7 +42,7 @@ fn an_endpoint_that_already_has_a_scheme_is_not_doubled() {
     let a = adapter("http://provider");
     assert_eq!(
         a.terminal_url("http://provider/proxy/9090/", "s"),
-        "ws://provider/proxy/9090/runtime/s/terminal"
+        "ws://provider/proxy/9090/runtime/s/terminal?wire=1"
     );
 }
 
@@ -350,4 +350,245 @@ async fn a_kernel_with_no_conversation_says_so_rather_than_failing_obscurely() {
         .await
         .expect_err("this kernel has no conversation plane yet");
     assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+}
+
+/// A spec, with the session's own environment attached.
+fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
+    RuntimeSpec {
+        restore_from: None,
+        created_by: None,
+        environment,
+        session_id: "sesn_x".into(),
+        size: TermSize { cols: 80, rows: 24 },
+        subject_credential: None,
+        options: Default::default(),
+    }
+}
+
+#[test]
+fn a_sessions_own_variables_reach_the_sandbox() {
+    // The defect this closes: a tenant set variables on a profile, the REST
+    // surface accepted them, and nothing ever reached the pod.
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&spec_with(crate::RuntimeEnvironment {
+        variables: BTreeMap::from([("MY_TOKEN_NAME".to_string(), "a-value".to_string())]),
+        ..Default::default()
+    }));
+    assert_eq!(
+        env.get("MY_TOKEN_NAME").map(String::as_str),
+        Some("a-value")
+    );
+}
+
+#[test]
+fn a_name_the_runtime_controls_cannot_be_taken_over() {
+    // These names are how the runtime finds its upstream, its proxy and its
+    // credential. A caller who could overwrite one could redirect the agent's
+    // traffic — and the credential attached to it — somewhere of their
+    // choosing. The refusal is logged by `apply_to`.
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&spec_with(crate::RuntimeEnvironment {
+        variables: BTreeMap::from([(
+            "CHRONO_UPSTREAM_BASE_URL".to_string(),
+            "http://somewhere-else.example".to_string(),
+        )]),
+        ..Default::default()
+    }));
+    assert_ne!(
+        env.get("CHRONO_UPSTREAM_BASE_URL").map(String::as_str),
+        Some("http://somewhere-else.example"),
+        "a caller must not be able to redirect the agent's traffic"
+    );
+}
+
+#[tokio::test]
+async fn software_the_image_does_not_carry_is_refused_by_name() {
+    // Nothing can be installed into a running sandbox, so accepting this would
+    // start a session that quietly lacks the tools it was described as having.
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .provision(&spec_with(crate::RuntimeEnvironment {
+            packages: vec!["a-package-this-image-lacks".into()],
+            ..Default::default()
+        }))
+        .await
+        .expect_err("an undeliverable requirement must not provision");
+    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+    assert!(
+        err.to_string().contains("a-package-this-image-lacks"),
+        "the refusal must name what is missing, got {err}"
+    );
+}
+
+#[tokio::test]
+async fn a_skill_the_agent_cannot_load_is_refused_by_name() {
+    let a = adapter("http://127.0.0.1:1");
+    let err = a
+        .provision(&spec_with(crate::RuntimeEnvironment {
+            skills: vec!["a-skill-this-agent-lacks".into()],
+            ..Default::default()
+        }))
+        .await
+        .expect_err("an undeliverable skill must not provision");
+    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+    assert!(
+        err.to_string().contains("a-skill-this-agent-lacks"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn what_the_image_already_carries_provisions_as_before() {
+    // The success path, and the one that matters most: every session carries
+    // this deployment's baseline, so a blanket refusal would have refused all
+    // of them.
+    let a = CodexAdapter::new(
+        SandboxClient::new("http://127.0.0.1:1", "test-key"),
+        CodexSandboxSpec {
+            provided_packages: vec!["nyxid".into()],
+            provided_skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+            ..CodexSandboxSpec::default()
+        },
+    );
+    let err = a
+        .provision(&spec_with(crate::RuntimeEnvironment {
+            packages: vec!["nyxid".into()],
+            skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+            ..Default::default()
+        }))
+        .await
+        .expect_err("the dead provider is what fails, not the request");
+    assert!(
+        matches!(err, AdapterError::Unavailable(_)),
+        "the baseline must reach the provider, got {err:?}"
+    );
+}
+
+#[test]
+fn the_runtime_is_told_where_this_kernel_keeps_its_conversation() {
+    // The supervisor hosts any kernel and must not know this. Naming it here,
+    // in the directory that owns this kernel, is what lets the same pod image
+    // supervise a different one.
+    let a = adapter("http://127.0.0.1:1");
+    let env = a.environment_for(&spec_with(Default::default()));
+    assert_eq!(
+        env.get("CHRONO_RUNTIME_SNAPSHOT_DIR").map(String::as_str),
+        Some(".codex/sessions")
+    );
+}
+
+#[test]
+fn a_terminal_link_asks_for_the_wire_it_speaks() {
+    // Asked for rather than assumed. A pod that predates lanes ignores this
+    // and keeps speaking what it always did, which is what makes a
+    // half-rolled-out fleet safe.
+    let a = adapter("http://provider:80");
+    let url = a.terminal_url("provider/v1/sandboxes/sbx-1/proxy/9090", "sbx-1");
+    assert!(
+        url.ends_with(&format!(
+            "/runtime/sbx-1/terminal?wire={}",
+            supervisor::WIRE_VERSION
+        )),
+        "got {url}"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_that_declares_its_wire_gets_the_framed_dialect() {
+    let mut said = futures_util::stream::iter(vec![Ok(Message::Text(
+        r#"{"t":"ready","wireVersion":1,"lanes":["ctl","term"]}"#.into(),
+    ))]);
+    let (framed, early) = CodexAdapter::negotiate(&mut said).await;
+    assert!(framed);
+    assert!(early.is_none());
+}
+
+#[tokio::test]
+async fn a_runtime_that_starts_relaying_is_speaking_the_older_wire() {
+    // And the bytes it sent while answering are the top of somebody's screen,
+    // so they are carried rather than dropped on the way to the answer.
+    let mut said = futures_util::stream::iter(vec![Ok(Message::Binary(
+        b"welcome to the terminal".to_vec(),
+    ))]);
+    let (framed, early) = CodexAdapter::negotiate(&mut said).await;
+    assert!(!framed, "an old pod never declares anything");
+    assert_eq!(
+        early.as_deref(),
+        Some(b"welcome to the terminal".as_slice())
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_that_says_nothing_at_all_is_the_older_wire_too() {
+    // The bounded wait, settled the only way that cannot corrupt a session.
+    let mut said = futures_util::stream::iter(Vec::<
+        Result<Message, tokio_tungstenite::tungstenite::Error>,
+    >::new());
+    let (framed, early) = CodexAdapter::negotiate(&mut said).await;
+    assert!(!framed);
+    assert!(early.is_none());
+}
+
+#[tokio::test]
+async fn an_unfamiliar_control_frame_is_not_read_as_a_declaration() {
+    let mut said = futures_util::stream::iter(vec![Ok(Message::Text(r#"{"t":"pong"}"#.into()))]);
+    let (framed, _) = CodexAdapter::negotiate(&mut said).await;
+    assert!(
+        !framed,
+        "switching the wire on anything but a declaration would corrupt a pod that never agreed"
+    );
+}
+
+#[test]
+fn a_credential_looks_the_same_on_both_wires() {
+    // What keeps §5 intact through the rollout. Control travels as text and is
+    // identical either way, so a pod that predates lanes and one that does not
+    // are told about a renewed credential in exactly the same words.
+    for framed in [false, true] {
+        let Message::Text(text) =
+            CodexAdapter::encode(TerminalInput::Credential("a-value".into()), framed)
+        else {
+            panic!("a credential is control, not data");
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(parsed["t"], "credential");
+        assert_eq!(parsed["value"], "a-value");
+    }
+}
+
+#[test]
+fn resize_and_signal_are_control_on_both_wires() {
+    for framed in [false, true] {
+        assert!(matches!(
+            CodexAdapter::encode(
+                TerminalInput::Resize(TermSize { cols: 80, rows: 24 }),
+                framed
+            ),
+            Message::Text(_)
+        ));
+        assert!(matches!(
+            CodexAdapter::encode(TerminalInput::Signal("INT".into()), framed),
+            Message::Text(_)
+        ));
+    }
+}
+
+#[test]
+fn keystrokes_are_framed_only_where_the_runtime_asked_for_it() {
+    // The one thing that must differ between the dialects, and the one thing
+    // that corrupts a session if it differs the wrong way round.
+    let Message::Binary(legacy) =
+        CodexAdapter::encode(TerminalInput::Bytes(b"ls\r".to_vec()), false)
+    else {
+        panic!("keystrokes are data");
+    };
+    assert_eq!(&legacy[..], b"ls\r", "an old pod types the byte it is sent");
+
+    let Message::Binary(lanes) = CodexAdapter::encode(TerminalInput::Bytes(b"ls\r".to_vec()), true)
+    else {
+        panic!("keystrokes are data");
+    };
+    let (lane, payload) = supervisor::unframe(&lanes).expect("carries a lane");
+    assert_eq!(lane, supervisor::LANE_TERMINAL);
+    assert_eq!(payload, b"ls\r");
 }
