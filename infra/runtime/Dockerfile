@@ -135,17 +135,51 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends build-essential python3; \
     npm install -g "@openai/codex@${CODEX_VERSION}" \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
-        "@zed-industries/claude-code-acp@${CLAUDE_CODE_ACP_VERSION}" \
-        "@deepseek-ai/dsh@${DSH_VERSION}"; \
+        "@zed-industries/claude-code-acp@${CLAUDE_CODE_ACP_VERSION}"; \
     npm install --no-save --prefix /tmp/patched "minimatch@${MINIMATCH_VERSION}"; \
     rm -rf /usr/local/lib/node_modules/@zed-industries/claude-code-acp/node_modules/minimatch; \
     mv /tmp/patched/node_modules/minimatch \
         /usr/local/lib/node_modules/@zed-industries/claude-code-acp/node_modules/minimatch; \
     rm -rf /tmp/patched; \
     npm cache clean --force; \
+    codex --version
+
+# The third kernel gets its own tree rather than a global install, because it
+# needs something a global install cannot express.
+#
+# Its closure is two hundred packages deep and carries advisories of its own —
+# seven at this pin, across four transitive dependencies. The gate is never
+# weakened, and there is no newer harness that resolves them, so each is pinned
+# forward to the patched release of the same major. `overrides` is the tool for
+# exactly that, and it only works inside a project, which is what this
+# directory is. A resolution that cannot satisfy one fails the build rather
+# than shipping around it.
+#
+# This list is maintenance, and is meant to be: it shrinks as upstream moves,
+# and the scan is what says when an entry has become redundant.
+ARG DSH_VERSION
+COPY <<JSON /opt/dsh-install/package.json
+{
+  "name": "chrono-dsh-install",
+  "private": true,
+  "dependencies": { "@deepseek-ai/dsh": "${DSH_VERSION}" },
+  "overrides": {
+    "tar": "7.5.19",
+    "undici": "6.27.0",
+    "brace-expansion": "5.0.9",
+    "ip-address": "10.3.1"
+  }
+}
+JSON
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends build-essential python3; \
+    npm install --prefix /opt/dsh-install --no-audit --no-fund; \
+    npm cache clean --force; \
     apt-get purge -y --auto-remove build-essential python3; \
     rm -rf /var/lib/apt/lists/*; \
-    codex --version
+    ln -s /opt/dsh-install/node_modules/.bin/dsh /usr/local/bin/dsh; \
+    dsh --version
 
 # Install the platform CLI from its published release. The checksum is verified
 # rather than trusted: this binary acts on the owner's behalf.
@@ -271,7 +305,7 @@ RUN set -eux; \
     for dep in "$profile"/node_modules/@deepseek-ai/*; do \
       name=$(basename "$dep"); \
       if [ "$name" != "dsh-sdk-jsonrpc-server" ] \
-         && [ -e "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/$name" ]; then \
+         && [ -e "/opt/dsh-install/node_modules/@deepseek-ai/$name" ]; then \
         rm -rf "$dep"; \
       fi; \
     done
