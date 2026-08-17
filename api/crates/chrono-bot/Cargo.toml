@@ -24,4 +24,3 @@ tracing-subscriber = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what session cookies, OAuth
 # state and PKCE verifiers are drawn from. Already a workspace dependency.
 uuid = { workspace = true }
-vt100 = { workspace = true }
