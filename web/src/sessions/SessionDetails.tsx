@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Session, SessionCreator } from './types';
+import type { Session, SessionCreator, SessionService } from './types';
+import { Chip } from '../ui/Chip';
 import { abilitiesFor } from './availability';
 import { labelFor } from './types';
 import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
@@ -134,6 +135,22 @@ export function SessionDetails({ session, open, onToggle, ending }: SessionDetai
               </dd>
             </div>
           ) : null}
+          {/*
+           * What this session can touch, beside what it can do. §11 and §12:
+           * an owner watching an agent work on their behalf has one question
+           * the interface did not answer — what does this thing have access to
+           * right now?
+           *
+           * The session's answer and never its profile's. A profile can be
+           * edited after a session started from it and the session keeps the
+           * scope it was provisioned with, so only the session knows.
+           */}
+          <div className="details__row details__row--wide">
+            <dt>Reaches</dt>
+            <dd>
+              <Reach services={session.reach} />
+            </dd>
+          </div>
           <div className="details__row">
             <dt>Identifier</dt>
             {/*
@@ -156,6 +173,50 @@ export function SessionDetails({ session, open, onToggle, ending }: SessionDetai
         {ending !== undefined && ending !== '' ? <p className="details__ending">{ending}</p> : null}
       </div>
     </aside>
+  );
+}
+
+/**
+ * What a session's credential may reach.
+ *
+ * Three answers, drawn as three things. A list is what it was granted. An
+ * empty list is a session that reaches nothing, said plainly — §135: an empty
+ * list and an absent mechanism must not look alike. And a control plane that
+ * did not report it at all says so, rather than being drawn as either.
+ *
+ * Read-only, which is what §1 permits `web/` to do: it projects what the API
+ * reports and offers no way to change it, because a session's reach is fixed
+ * at provision and there is nothing here to change.
+ */
+function Reach({ services }: { readonly services?: readonly SessionService[] }) {
+  if (services === undefined) {
+    return <span className="details__unknown">Not reported by the control plane</span>;
+  }
+  if (services.length === 0) {
+    return <span className="details__unknown">Nothing — this session reaches no services</span>;
+  }
+  return (
+    <ul className="details__reach">
+      {services.map((service) => (
+        <li className="details__service" key={service.id}>
+          {/*
+           * The name where the catalogue offered one, and the identifier
+           * always: a catalogue that could not be asked costs the name and
+           * not the answer, and an identifier alone is still true.
+           */}
+          <span className="details__servicename">{service.name ?? service.id}</span>
+          {service.name === undefined ? null : (
+            <span className="details__serviceid">{service.id}</span>
+          )}
+          {/*
+           * Mandated entries are drawn as fixed, matching the picker's
+           * existing treatment and for the same stated reason: a person
+           * deciding what a session may touch should see the whole answer.
+           */}
+          {service.mandated ? <Chip inline>always</Chip> : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 

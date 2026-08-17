@@ -86,3 +86,63 @@ describe('ApiError', () => {
     expect(new ApiError(0, 'offline').isUnauthenticated).toBe(false);
   });
 });
+
+describe('what a session reaches', () => {
+  it('tells an absent field apart from an empty one', () => {
+    // "We were not told" is not "this session reaches nothing", and a client
+    // that collapsed them would answer a question nobody asked.
+    const absent = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+    });
+    expect(absent.reach).toBeUndefined();
+
+    const empty = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [],
+    });
+    expect(empty.reach).toEqual([]);
+  });
+
+  it('keeps the identifier when the catalogue offered no name', () => {
+    const session = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [{ id: 'api-github', mandated: false }],
+    });
+    expect(session.reach).toEqual([
+      { id: 'api-github', name: undefined, description: undefined, mandated: false },
+    ]);
+  });
+
+  it('drops an entry with no usable identifier rather than drawing a blank one', () => {
+    const session = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [{ name: 'GitHub' }, null, 'api-github', { id: '', mandated: true }],
+    });
+    expect(session.reach).toEqual([]);
+  });
+
+  it('reads a missing mandated flag as not mandated', () => {
+    // The safe direction: drawing a chosen service as fixed would tell
+    // somebody they cannot remove something they can.
+    const session = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [{ id: 'api-github' }],
+    });
+    expect(session.reach?.[0]?.mandated).toBe(false);
+  });
+});
