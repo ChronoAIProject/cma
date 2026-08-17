@@ -194,3 +194,66 @@ async fn somebody_elses_session_cannot_be_taken_over() {
         "a session somebody does not own must not be reachable by taking it over"
     );
 }
+
+#[tokio::test]
+async fn the_client_holding_the_terminal_can_still_type_into_it() {
+    // The defect this guards, and it is one this file's own subject invites:
+    // a guard against writing while somebody is attached, put in the operation
+    // itself, refuses the attachment its own keystrokes. Every character a PTY
+    // client sends goes through `send_input` while it holds the terminal.
+    let (svc, alice, id) = attached_session().await;
+    let _held = svc
+        .attach_terminal(
+            &alice,
+            &id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the client attaches");
+
+    svc.send_input(&alice, &id, b"ls\n".to_vec())
+        .await
+        .expect("an attached client types into its own terminal");
+    svc.resize_terminal(&alice, &id, TerminalGeometry::new(100, 30).expect("valid"))
+        .await
+        .expect("and declares the geometry it is drawing for");
+    svc.send_signal(&alice, &id, "INT".to_string())
+        .await
+        .expect("and can stop what it started");
+}
+
+#[tokio::test]
+async fn whether_the_terminal_is_held_is_a_question_anyone_may_ask_of_their_own() {
+    // Asked by an interface about to write on behalf of somebody who is not the
+    // holder. A question rather than a refusal, because the answer differs by
+    // caller and the operation cannot tell them apart.
+    let (svc, alice, id) = attached_session().await;
+    assert!(
+        !svc.terminal_is_held(&alice, &id)
+            .await
+            .expect("readable by its owner"),
+        "nobody is attached yet"
+    );
+
+    let _held = svc
+        .attach_terminal(
+            &alice,
+            &id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the client attaches");
+
+    assert!(svc.terminal_is_held(&alice, &id).await.expect("readable"));
+}
+
+#[tokio::test]
+async fn a_stranger_may_not_ask_whether_somebody_elses_terminal_is_held() {
+    // It is a fact about someone else's session, and answering reveals that
+    // the session exists.
+    let (svc, _alice, id) = attached_session().await;
+    let mallory = user("mallory");
+    assert!(svc.terminal_is_held(&mallory, &id).await.is_err());
+}
