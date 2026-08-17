@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
+import { ToolCall } from './ToolCall';
 import type { Entry } from './conversation';
 import { fullTimestampOrNone } from '../sessions/sessionTime';
 import './MessageStream.css';
@@ -159,8 +160,16 @@ function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: bool
       );
 
     case 'tool':
-      // Drawn by the tool-call component, which lands with §18.2.
-      return null;
+      /*
+       * §18.2: structure rather than prose. It sits in the stream where it
+       * happened, between the turns it happened between, because that is
+       * where a reader is looking for what the agent did next.
+       */
+      return (
+        <div className="turn turn--tool">
+          <ToolCall call={entry} />
+        </div>
+      );
 
     default: {
       const exhaustive: never = entry;
