@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { Select } from '../ui/Select';
 import type { EnvironmentProfile } from '../environment/types';
 import '../ui/Dialog.css';
 import './NewSessionDialog.css';
@@ -44,13 +45,13 @@ export function NewSessionDialog({
   const [profile, setProfile] = useState<string>('');
   const headingId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const firstFieldRef = useRef<HTMLSelectElement>(null);
+  const profileLabelId = useId();
 
   // Focus moves into the dialog on open, or a keyboard user is left behind on
   // the control that opened it with no indication anything happened.
   useEffect(() => {
     if (open) {
-      firstFieldRef.current?.focus();
+      dialogRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
     }
   }, [open]);
 
@@ -90,35 +91,32 @@ export function NewSessionDialog({
           New session
         </h2>
 
-        <label className="dialog__field">
-          <span className="dialog__label">Environment profile</span>
-          <select
-            ref={firstFieldRef}
-            className="dialog__control"
+        <div className="dialog__field">
+          <span className="dialog__label" id={profileLabelId}>
+            Environment profile
+          </span>
+          {/*
+           * "None" is not "bare". A session that names no profile is started
+           * the way this deployment says an unqualified session should be —
+           * which agent, which model, how freely it acts — so this chooses
+           * between described sessions rather than between something and
+           * nothing.
+           */}
+          <Select
+            id={profileLabelId}
+            label="Environment profile"
             value={profile}
-            onChange={(e) => {
-              setProfile(e.target.value);
-            }}
-          >
-            {/*
-             * "None" is not "bare". A session that names no profile is started
-             * the way this deployment says an unqualified session should be —
-             * which agent, which model, how freely it acts — so this chooses
-             * between described sessions rather than between something and
-             * nothing.
-             */}
-            <option value="">This deployment's defaults</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: "This deployment's defaults" },
+              ...profiles.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            onChange={setProfile}
+          />
           <span className="dialog__hint">
             The whole description of the session: the agent and how it behaves, the software it
             carries, and the variables it is started with.
           </span>
-        </label>
+        </div>
 
         <div className="dialog__actions">
           <button type="button" className="button press--quiet" onClick={onCancel}>
