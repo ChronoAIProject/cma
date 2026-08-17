@@ -164,7 +164,7 @@ export function ProfileMenu({
       </button>
 
       {open ? (
-        <div className="profile__menu" id={menuId} role="menu">
+        <div className="menu profile__menu" id={menuId} role="menu">
           <p className="profile__handle" role="presentation">
             {user.handle}
           </p>
@@ -175,7 +175,7 @@ export function ProfileMenu({
           ) : null}
           <button
             type="button"
-            className="profile__item"
+            className="menu__item profile__item"
             role="menuitem"
             onClick={() => {
               // Cycles rather than opening a submenu: three states is few
@@ -193,7 +193,7 @@ export function ProfileMenu({
           </button>
           <button
             type="button"
-            className="profile__item"
+            className="menu__item profile__item"
             role="menuitem"
             onClick={() => {
               // Only palettes suiting the current appearance are offered, so a
@@ -218,7 +218,7 @@ export function ProfileMenu({
           {onManageEnvironments !== undefined ? (
             <button
               type="button"
-              className="profile__item"
+              className="menu__item profile__item"
               role="menuitem"
               onClick={() => {
                 setOpen(false);
@@ -237,7 +237,7 @@ export function ProfileMenu({
           <button
             type="button"
             ref={firstItemRef}
-            className="profile__item"
+            className="menu__item profile__item"
             role="menuitem"
             onClick={() => {
               setOpen(false);
