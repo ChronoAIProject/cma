@@ -439,3 +439,41 @@ async fn answering_something_nothing_is_waiting_for_is_refused() {
         Some(crate::error::CoreError::InvalidState)
     );
 }
+
+#[tokio::test]
+async fn a_conversation_session_is_started_with_the_mode_its_owner_chose() {
+    // How much the agent may do unattended is settled per conversation on some
+    // kernels, so the runtime is told the same intent it was provisioned with.
+    // Getting this wrong silently grants more than the person asked for.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: crate::conversation_support::conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            permission: crate::options::PermissionMode::Autonomous,
+            ..Default::default()
+        });
+    let svc = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+    );
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let provisioned = adapter.last_spec.lock().await.clone().expect("provisioned");
+    assert_eq!(
+        provisioned.options.mode,
+        layer3_adapter::RuntimeMode::Conversation
+    );
+    assert_eq!(
+        provisioned.options.permission,
+        layer3_adapter::RuntimePermission::Autonomous,
+        "the runtime must be told the intent its owner chose"
+    );
+}

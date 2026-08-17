@@ -38,7 +38,6 @@ pub struct Config {
     pub sandbox_memory: String,
     /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
     /// Arguments that make the agent resume rather than start fresh.
-    pub runtime_resume_args: String,
     /// What this deployment calls itself on the runtimes it creates.
     ///
     /// A sandbox provider is shared, so one key sees runtimes belonging to
@@ -135,7 +134,6 @@ impl Config {
         // How the agent is told to continue a conversation rather than start
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
-        let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume");
         let deployment_id = var_or("CHRONO_DEPLOYMENT_ID", "chrono-bot");
         let adopts_untagged_runtimes =
             var_or("CHRONO_ADOPT_UNTAGGED_RUNTIMES", "true").trim() != "false";
@@ -247,7 +245,6 @@ impl Config {
             sandbox_cpu,
             sandbox_memory,
             default_agent,
-            runtime_resume_args,
             deployment_id,
             adopts_untagged_runtimes,
             baseline_packages,
@@ -399,7 +396,6 @@ mod tests {
             baseline_packages: vec![],
             baseline_skills: vec![],
             baseline_services: vec![],
-            runtime_resume_args: "resume".into(),
             deployment_id: "chrono-bot".into(),
             adopts_untagged_runtimes: true,
             upstream_base_url: "http://u".into(),
