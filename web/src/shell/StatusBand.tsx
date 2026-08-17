@@ -37,31 +37,40 @@ interface StatusBandProps {
    */
   readonly note?: string;
   /**
-   * Whether the page has a leading column for the band to align with.
+   * The width of the page's leading column, when it has one.
    *
    * The zone sits in that cell, so the band's first vertical rule lands on the
-   * rail's, and the page reads as one surface rather than two.
+   * rail's, and the page reads as one surface rather than two. It follows the
+   * column's width, because a collapsed rail is still a column.
    */
-  readonly leadingColumn?: boolean;
+  readonly leadingColumn?: string;
 }
 
-export function StatusBand({ showing, note, leadingColumn = false }: StatusBandProps) {
+export function StatusBand({ showing, note, leadingColumn }: StatusBandProps) {
   return (
     <footer className="band band--foot statusband">
-      {leadingColumn ? (
-        <div className="statusband__cell statusband__lead">
-          <span className="band__label">Zone</span>
-          <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
-        </div>
+      {/*
+       * The leading column's share of the band. It is empty because the rail
+       * has nothing to report at its foot — what it carries is a list, and the
+       * list's own summary belongs in the list. The cell exists so the band's
+       * first vertical rule continues the rail's, which is what makes the page
+       * read as one surface rather than two.
+       *
+       * Nothing that must be read is put in it. A collapsed rail is 48px wide,
+       * and a fact that disappears when a panel collapses is a fact collapsing
+       * cost somebody — which §7 forbids.
+       */}
+      {leadingColumn !== undefined ? (
+        <div
+          className="statusband__cell statusband__lead"
+          style={{ width: leadingColumn }}
+          aria-hidden="true"
+        />
       ) : null}
 
       <div className="statusband__cell statusband__main">
-        {leadingColumn ? null : (
-          <>
-            <span className="band__label">Zone</span>
-            <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
-          </>
-        )}
+        <span className="band__label">Zone</span>
+        <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
 
         <span className="band__value statusband__showing">{showing}</span>
         {note !== undefined ? <span className="band__value statusband__note">{note}</span> : null}
