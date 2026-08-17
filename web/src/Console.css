@@ -30,19 +30,28 @@
 }
 
 /*
- * A failed action, at the head of the column and above whatever it is showing.
+ * A failed action — docs/Web_Style.md §12.
  *
- * Never in place of the surface: the failure belongs to one request about one
- * session, and the surface beneath it can hold a dozen live terminals. Nothing
- * that reports a failure may tear down work that did not fail.
+ * One 40px band at the head of the column, above whatever it is showing and
+ * never in place of it: the failure belongs to one request about one session,
+ * and the surface beneath it can hold a dozen live terminals. Nothing that
+ * reports a failure may destroy work that did not fail.
+ *
+ * A band rather than a line of prose, so a failure never changes the height of
+ * the column it appears in by more than the one measurement the page already
+ * uses. It reports the most recent attempt, and every action clears it as it
+ * starts, so a stale failure never sits above a console that has recovered.
  */
 .console__notice {
-  flex: none;
-  padding: var(--space-2) var(--space-4);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  height: var(--band-foot);
   color: var(--fail);
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--fail);
+}
+
+.console__noticetext {
+  overflow: hidden;
+  color: var(--fail);
+  text-overflow: ellipsis;
 }
 
 .console__empty {
