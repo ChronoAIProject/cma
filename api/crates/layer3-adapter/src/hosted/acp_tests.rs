@@ -110,9 +110,14 @@ async fn connect(
 async fn a_fresh_conversation_is_started_and_held_to_its_mode() {
     let (url, served) = bridging(None, None).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), Some("read-only".into()))
-        .await
-        .expect("the bridge answered everything");
+    Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        None,
+    )
+    .await
+    .expect("the bridge answered everything");
     let done = served.await.expect("the fixture finished");
     assert_eq!(
         done.asked,
@@ -128,7 +133,7 @@ async fn a_carried_conversation_is_loaded_rather_than_started_again() {
     // identifier, so its owner's history is still there after a rotation.
     let (url, served) = bridging(Some("conv-carried"), None).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), Some("agent".into()))
+    Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
         .await
         .expect("the bridge answered everything");
     let done = served.await.expect("the fixture finished");
@@ -146,7 +151,7 @@ async fn a_bridge_with_no_modes_is_not_asked_to_set_one() {
     // names none and this step is skipped rather than defaulted.
     let (url, served) = bridging(None, None).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), None)
+    Bridge::open(stream, "/home/chrono".into(), None, None)
         .await
         .expect("a bridge without modes still opens");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -160,9 +165,14 @@ async fn a_session_whose_mode_did_not_take_is_refused_rather_than_started() {
     // unattended while its owner had asked to be asked.
     let (url, served) = bridging(None, Some("session/set_mode")).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), Some("read-only".into()))
-        .await
-        .expect_err("a mode that did not take must fail the session");
+    let err = Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        None,
+    )
+    .await
+    .expect_err("a mode that did not take must fail the session");
     assert!(
         err.to_string().contains("read-only"),
         "the refusal must name the mode that was not honoured, got {err}"
@@ -176,7 +186,7 @@ async fn a_conversation_that_could_not_be_resumed_fails_loudly() {
     // here would lose somebody's history with nothing said about it.
     let (url, served) = bridging(Some("conv-carried"), Some("session/load")).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), Some("agent".into()))
+    let err = Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
         .await
         .expect_err("a conversation that did not resume must not look resumed");
     assert!(
@@ -201,7 +211,7 @@ async fn a_link_that_declares_nothing_is_not_a_conversation() {
         let _ = ws.close(None).await;
     });
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), None)
+    let err = Bridge::open(stream, "/home/chrono".into(), None, None)
         .await
         .expect_err("a silent link is not a conversation");
     assert!(
