@@ -217,9 +217,6 @@ pub trait KernelAdapter: Send + Sync {
         handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError>;
 
-    /// Inform the runtime that its terminal was resized.
-    async fn resize(&self, handle: &RuntimeHandle, size: TermSize) -> Result<(), AdapterError>;
-
     /// Tear the runtime down.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;
 
