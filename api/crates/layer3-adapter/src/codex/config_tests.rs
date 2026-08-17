@@ -7,6 +7,7 @@ use crate::{RuntimeOptions, TermSize};
 fn spec_with(permission: RuntimePermission, effort: Option<&str>) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
