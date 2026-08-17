@@ -28,6 +28,30 @@ export type StopReason = 'error' | 'other';
 /** The kernels the control plane can run. */
 export type Kernel = 'codex' | 'claude-code';
 
+/**
+ * One service a session's credential may reach.
+ *
+ * Identifiers always; a name and a description only when the caller's own
+ * service catalogue offered them. A catalogue that could not be asked costs
+ * the names and not the answer, so a service with no name is still a service
+ * this session reaches.
+ */
+export interface SessionService {
+  readonly id: string;
+  /** What the owner recognises it by, when the catalogue said. */
+  readonly name?: string;
+  readonly description?: string;
+  /**
+   * Whether the platform mandates it.
+   *
+   * Drawn as fixed rather than as something the owner chose, matching how the
+   * picker already treats the entries that cannot be unticked — for the same
+   * stated reason: a person deciding what a session may touch should see the
+   * whole answer.
+   */
+  readonly mandated: boolean;
+}
+
 export interface Session {
   readonly id: string;
   readonly kernel: Kernel;
@@ -57,6 +81,16 @@ export interface Session {
    * and reads as a rendering fault when drawn as one.
    */
   readonly creator?: SessionCreator;
+  /**
+   * What this session's credential may reach.
+   *
+   * `undefined` and `[]` are different facts and must not be drawn alike.
+   * Undefined means the control plane did not report it — an older build, or a
+   * projection this one does not carry — and the honest answer is that we do
+   * not know. Empty means this session reaches nothing, which is a real answer
+   * somebody can act on.
+   */
+  readonly reach?: readonly SessionService[];
 }
 
 /** How the person who started a session is drawn. */
