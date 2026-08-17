@@ -348,6 +348,26 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 
 `501` responses name the missing capability in `detail`, so a client learns what is unavailable rather than guessing.
 
+### The three service refusals
+
+Starting a session against a service can fail for three different reasons, and a client that cannot tell them apart retries the one that will never succeed and gives up on the one that would have worked.
+
+| `code` | Status | What it means | What to do |
+|---|---|---|---|
+| `service_not_granted` | `422` | The owner has not granted this service. `detail` names it. | Grant it in NyxID. **Retrying will not help.** |
+| `service_catalogue_unavailable` | `503` | The catalogue could not be asked. The owner's services are fine. | **Retry.** Nothing is wrong with the session or the profile. |
+| — | — | This deployment has no catalogue at all. | Nothing. It is not an error: profiles still store selections and sessions still honour them, there is simply nothing to choose from. |
+
+Told apart by `code` and by status, never by prose — a client matching on a sentence breaks when somebody rewords one.
+
+`service_catalogue_unavailable` is deliberately not `runtime_unavailable`: a caller told the runtime is unavailable goes and looks at the sandbox provider, which has nothing to do with it.
+
+**The refusal is at provision, not at profile write.** A grant can be revoked between saving a profile and starting a session from it, so the write-time answer is friendlier and the provision-time answer is the true one. A profile naming a service the catalogue does not currently grant is stored, and logged as a warning; the session started from it is what gets refused.
+
+**A catalogue that cannot be asked refuses nothing.** What a session may reach is recorded on the profile; the catalogue exists to help choose, not to authorise. Blocking session creation on NyxID being reachable would take the service down with it, and would do so for selections settled days ago.
+
+See `docs/Services.md` for the whole path.
+
 ---
 
 ## 10. Administration
