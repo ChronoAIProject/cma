@@ -46,7 +46,11 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 | `screen_snapshot` | — | ● | ● | — | — |
 | `get_usage` | ● | ● | — | — | ● |
 
-**REST is the superset facade.** It has no structural constraint and implements every operation, so it is the reference realisation of the core. Every other interface is a projection of the same model, not of REST.
+**REST is the superset facade.** It has no structural constraint and serves every operation, so it is the reference realisation of the core. Every other interface is a projection of the same model, not of REST.
+
+A dot above means the interface projects the operation. Whether a *particular session* can be asked for it is a second question, answered by that session's capabilities: `steer`, `interrupt` and `get_usage` depend on what the kernel behind it actually offers, and `resize_terminal` and `screen_snapshot` on whether it has a terminal at all. An operation the session cannot honour is refused by name — never with a 404, and never accepted and dropped.
+
+`send_input` is one operation with two projections, decided by the session rather than by the caller: keystrokes to a terminal, a prompt turn to a conversation. On the terminal plane it is also how that kernel's own on-screen approvals are answered and how a turn is steered, which is why `resolve_approval` reads "at the TUI" for PTY and why `steer` is not a separate call there.
 
 An interface exposing a subset is expected. An interface inventing an operation absent from the core is a defect.
 
