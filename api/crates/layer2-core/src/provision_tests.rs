@@ -356,3 +356,112 @@ async fn the_delegated_credential_still_starts_a_session() {
         SessionStatus::Ready
     );
 }
+
+#[tokio::test]
+async fn a_session_its_kernel_cannot_be_is_refused_while_someone_is_listening() {
+    // The point of the capability model: the refusal arrives as the answer to
+    // the request that asked for it, naming the ability that is missing.
+    // Discovering it afterwards — an empty stream, a broken screen — is the
+    // failure this replaces.
+    let store = Arc::new(FakeStore::default());
+    let terminal_only =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    let adapter = Arc::new(FakeAdapter::default());
+    let result = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        terminal_only,
+    )
+    .create_session(&user("alice"), spec())
+    .await;
+
+    assert_eq!(
+        result.expect_err("a conversation on a terminal-only kernel cannot exist"),
+        crate::error::CoreError::CapabilityUnsupported("conversation".into())
+    );
+    assert!(
+        store.list_all().await.expect("readable").is_empty(),
+        "a refused request must leave no record behind"
+    );
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "nothing may be provisioned for a session that cannot be what it asked to be"
+    );
+}
+
+#[tokio::test]
+async fn a_session_carries_the_set_it_was_granted() {
+    // Recorded, not recomputed: what a session may be asked to do has to be
+    // the same tomorrow, whatever its kernel's implementation does next.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    assert!(created.capabilities.terminal);
+    assert!(created.capabilities.snapshot);
+    assert!(!created.capabilities.conversation);
+    assert!(
+        !created.capabilities.usage && !created.capabilities.steer,
+        "a terminal session has no turns to steer and no tokens to count"
+    );
+
+    let stored = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    assert_eq!(stored.session.capabilities, created.capabilities);
+}
+
+#[tokio::test]
+async fn a_kernel_that_stops_offering_what_a_session_needs_does_not_start_it() {
+    // The case a granted set exists to catch: the session was legitimate when
+    // it was created, and its kernel has changed underneath it since. Bringing
+    // it back anyway would leave a record claiming abilities the runtime does
+    // not have, which every caller downstream trusts cannot happen.
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let adapter = Arc::new(FakeAdapter::default());
+    let before = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = before
+        .create_session(&caller, spec())
+        .await
+        .expect("created");
+    await_settled(&before, &caller, &created.id).await;
+    drop(before);
+
+    // The sandbox is gone, so the session is one the controller would restart
+    // — onto a build of its kernel that no longer renders a terminal.
+    let handle = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    adapter.lose(&handle).await;
+    let screenless = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities::default(),
+        ..FakeAdapter::default()
+    });
+    let after = service(Arc::clone(&store), Arc::clone(&screenless));
+    after.reconcile().await;
+
+    let settled = await_settled(&after, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Terminated);
+    assert_eq!(
+        screenless
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the check happens before a runtime is asked for"
+    );
+}
