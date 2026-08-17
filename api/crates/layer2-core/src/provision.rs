@@ -69,7 +69,13 @@ impl SessionService {
         // rather than being required of every caller.
         let mut spec = spec;
         if spec.subject_credential.is_none() {
-            spec.subject_credential = self.credential_for(&session.owner).await;
+            let services = self
+                .environments
+                .services_for(&session.owner, session.environment_profile.as_ref())
+                .await;
+            spec.subject_credential = self
+                .credential_for(&session.id, &session.owner, &services)
+                .await;
         }
         match tokio::time::timeout(
             PROVISION_DEADLINE,

@@ -55,9 +55,111 @@ describe('EnvironmentProfiles', () => {
     });
     const [saved] = await store.list();
     expect(saved?.variables).toEqual([{ key: 'BUILD_MODE', value: 'release' }]);
-    expect(saved?.skills).toContain('aevatar-platform-map');
+    expect(saved?.agent.skills).toContain('aevatar-platform-map');
     // Back to the list, which is where the user started.
     expect(await screen.findByText('build tools')).toBeInTheDocument();
+  });
+
+  it('splits the form into what the agent is and what surrounds it', async () => {
+    // The two questions a profile answers. Kept apart because the settings in
+    // the first half were once chosen again on every session start.
+    const user = userEvent.setup();
+    open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+
+    expect(screen.getByRole('heading', { name: /agent configuration/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /environment configuration/i })).toBeInTheDocument();
+    for (const label of [
+      /^agent$/i,
+      /^model$/i,
+      /thinking effort/i,
+      /permissions/i,
+      /model access/i,
+    ]) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    }
+  });
+
+  it('saves the agent settings the profile was given', async () => {
+    const user = userEvent.setup();
+    const { store } = open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'unattended');
+    await user.selectOptions(screen.getByLabelText(/thinking effort/i), 'minimal');
+    await user.selectOptions(screen.getByLabelText(/permissions/i), 'autonomous');
+    await user.type(screen.getByLabelText(/^model$/i), 'a-specific-model');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(async () => {
+      expect(await store.list()).toHaveLength(1);
+    });
+    const [saved] = await store.list();
+    expect(saved?.agent.reasoningEffort).toBe('minimal');
+    expect(saved?.agent.permission).toBe('autonomous');
+    expect(saved?.agent.model).toBe('a-specific-model');
+  });
+
+  it('starts a new profile where an unqualified session would', async () => {
+    // A profile someone names and saves without touching anything must behave
+    // the way this deployment already does, not arrive at no value at all.
+    const user = userEvent.setup();
+    open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+
+    expect(screen.getByLabelText(/thinking effort/i)).toHaveValue('high');
+    expect(screen.getByLabelText(/permissions/i)).toHaveValue('guarded');
+    expect(screen.getByLabelText(/model access/i)).toHaveValue('delegated');
+  });
+
+  it('lets a profile widen what a session may reach', async () => {
+    const user = userEvent.setup();
+    const { store } = open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'with storage');
+    await user.click(await screen.findByRole('checkbox', { name: /chrono-storage-service/i }));
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(async () => {
+      expect(await store.list()).toHaveLength(1);
+    });
+    const [saved] = await store.list();
+    expect(saved?.nyxid.services).toContain('chrono-storage-service');
+  });
+
+  it('will not let the session lose the services it cannot work without', async () => {
+    // One credential serves the agent's own model calls as well as everything
+    // else, so unticking the model endpoint would not narrow the session — it
+    // would stop it thinking. Shown, and fixed.
+    const user = userEvent.setup();
+    open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+
+    const required = await screen.findByRole('checkbox', { name: /chrono-llm/i });
+    expect(required).toBeChecked();
+    expect(required).toBeDisabled();
+    expect(await screen.findByRole('checkbox', { name: /ornn-api/i })).toBeDisabled();
+  });
+
+  it('saves a profile even when the services cannot be listed', async () => {
+    // The list is a convenience. Losing it must cost the choice, not the form:
+    // a session still reaches what the deployment mandates.
+    const user = userEvent.setup();
+    const store = createMockProfileStore();
+    store.services = () => Promise.reject(new Error('platform is down'));
+    open(store);
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'still saves');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(async () => {
+      expect(await store.list()).toHaveLength(1);
+    });
   });
 
   it('masks a variable value until the user reveals it', async () => {

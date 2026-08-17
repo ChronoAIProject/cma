@@ -47,11 +47,13 @@ fn an_endpoint_that_already_has_a_scheme_is_not_doubled() {
 
 #[test]
 fn the_default_spec_requests_a_real_workload_size() {
+    // A default, not a policy: the deployment sets these, because how much a
+    // session costs is decided against the quota it is drawn from.
     let s = CodexSandboxSpec::default();
-    assert_eq!(s.resource_limits.get("cpu").map(String::as_str), Some("2"));
+    assert_eq!(s.resource_limits.get("cpu").map(String::as_str), Some("1"));
     assert_eq!(
         s.resource_limits.get("memory").map(String::as_str),
-        Some("4Gi")
+        Some("1Gi")
     );
 }
 

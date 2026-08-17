@@ -19,8 +19,9 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    CatalogSkill, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-    EnvironmentProfileSpec, EnvironmentVariable, SkillId, SoftwarePackage,
+    AgentConfiguration, CatalogSkill, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentVariable, KernelId,
+    PermissionMode, ReasoningEffort, ServiceId, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,43 @@ pub struct ProfileRequest {
     /// Software the session should carry.
     #[serde(default)]
     pub packages: Vec<PackageBody>,
+    /// How the agent behaves in sessions started from this profile.
+    #[serde(default)]
+    pub agent: AgentBody,
+    /// Which of the owner's platform services the session may reach.
+    #[serde(default)]
+    pub nyxid: NyxIdBody,
+}
+
+/// The platform-access half of a profile, as a caller supplies it.
+#[derive(Debug, Default, Deserialize)]
+pub struct NyxIdBody {
+    /// Identifiers of the services to allow.
+    #[serde(default)]
+    pub services: Vec<String>,
+}
+
+/// The agent half of a profile, as a caller supplies it.
+///
+/// Every field defaults, so a client that cares about none of them sends a
+/// name and gets a profile that behaves the way the deployment says it should.
+#[derive(Debug, Default, Deserialize)]
+pub struct AgentBody {
+    /// Which runtime implementation backs the session.
+    #[serde(default)]
+    pub kernel: Option<String>,
+    /// Model the agent selects.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// How hard it thinks.
+    #[serde(default)]
+    pub reasoning_effort: Option<ReasoningEffort>,
+    /// How often it stops to ask.
+    #[serde(default)]
+    pub permission: Option<PermissionMode>,
+    /// Whose model access it spends.
+    #[serde(default)]
+    pub credential: Option<CredentialMode>,
     /// Skill identifiers to load.
     #[serde(default)]
     pub skills: Vec<String>,
@@ -79,9 +117,48 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                     version: p.version,
                 })
                 .collect(),
-            skills: body.skills.into_iter().map(SkillId::new).collect(),
+            agent: AgentConfiguration {
+                // Left unset when a client says nothing, and settled by the
+                // core from what this deployment configured. An absent field
+                // means "whatever is ordinary here", never "empty" — and this
+                // layer is not the one that knows what ordinary is.
+                kernel: body.agent.kernel.map(KernelId::new).unwrap_or_default(),
+                model: body.agent.model,
+                reasoning_effort: body.agent.reasoning_effort.unwrap_or_default(),
+                permission: body.agent.permission.unwrap_or_default(),
+                credential: body.agent.credential.unwrap_or_default(),
+                skills: body.agent.skills.into_iter().map(SkillId::new).collect(),
+            },
+            services: body
+                .nyxid
+                .services
+                .into_iter()
+                .map(ServiceId::new)
+                .collect(),
         }
     }
+}
+
+/// The agent half of a profile, as this interface renders it.
+///
+/// Every field is present rather than skipped when it matches a default: this
+/// is what a client draws its controls from, and a form cannot preselect a
+/// value it was not sent.
+#[derive(Debug, Serialize)]
+pub struct AgentView {
+    kernel: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    reasoning_effort: ReasoningEffort,
+    permission: PermissionMode,
+    credential: CredentialMode,
+    skills: Vec<String>,
+}
+
+/// The platform-access half of a profile, as this interface renders it.
+#[derive(Debug, Serialize)]
+pub struct NyxIdView {
+    services: Vec<String>,
 }
 
 /// A profile as this interface renders it.
@@ -91,7 +168,8 @@ pub struct ProfileView {
     name: String,
     variables: Vec<VariableBody>,
     packages: Vec<PackageBody>,
-    skills: Vec<String>,
+    agent: AgentView,
+    nyxid: NyxIdView,
     /// Which entries the platform mandates, so a client can render them as
     /// fixed rather than guessing — and so the rule is visible rather than
     /// only enforced when the client gets it wrong.
@@ -137,7 +215,17 @@ impl ProfileView {
                     version: p.version,
                 })
                 .collect(),
-            skills: profile.skills.into_iter().map(|s| s.0).collect(),
+            agent: AgentView {
+                kernel: profile.agent.kernel.0,
+                model: profile.agent.model,
+                reasoning_effort: profile.agent.reasoning_effort,
+                permission: profile.agent.permission,
+                credential: profile.agent.credential,
+                skills: profile.agent.skills.into_iter().map(|s| s.0).collect(),
+            },
+            nyxid: NyxIdView {
+                services: profile.services.into_iter().map(|s| s.0).collect(),
+            },
             mandatory: MandatoryView::of(service.baseline()),
             created_at: profile.created_at,
             updated_at: profile.updated_at,
@@ -187,6 +275,7 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
     Router::new()
         .route("/api/v1/environment-profiles", get(list).post(create))
         .route("/api/v1/environment-profiles/skills", get(skills))
+        .route("/api/v1/environment-profiles/services", get(services))
         .route(
             "/api/v1/environment-profiles/{id}",
             get(read).put(replace).delete(remove),
@@ -249,6 +338,56 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The services a caller may allow a session to reach.
+///
+/// Answered as the caller: which services exist is a fact about their account,
+/// and this service's own identity would answer with a different one. The
+/// mandatory entries travel alongside so a client can draw them as fixed
+/// rather than inferring which of them cannot be unticked.
+async fn services(
+    State(service): State<Arc<EnvironmentProfileService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
+) -> Result<Json<ServiceCatalogView>, Problem> {
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    let services = service
+        .available_services(&caller, credential.as_deref())
+        .await?;
+    Ok(Json(ServiceCatalogView {
+        services: services
+            .into_iter()
+            .map(|s| ServiceView {
+                id: s.id.0,
+                name: s.name,
+                description: s.description,
+            })
+            .collect(),
+        mandatory: service
+            .baseline()
+            .services()
+            .iter()
+            .map(|s| s.0.clone())
+            .collect(),
+    }))
+}
+
+/// A service as the picker renders it.
+#[derive(Debug, Serialize)]
+pub struct ServiceView {
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+/// The picker's answer.
+#[derive(Debug, Serialize)]
+pub struct ServiceCatalogView {
+    services: Vec<ServiceView>,
+    /// Which of them every session reaches whatever the profile says.
+    mandatory: Vec<String>,
+}
+
 async fn skills(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -303,8 +442,11 @@ mod tests {
             Baseline::new(
                 [SoftwarePackage::new("platform-cli")],
                 [SkillId::new("mandatory-one")],
+                [],
             ),
             None,
+            None,
+            Default::default(),
         )
     }
 
@@ -318,7 +460,11 @@ mod tests {
                 name: "ripgrep".into(),
                 version: Some("14".into()),
             }],
-            skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
+            services: Vec::new(),
+            agent: layer2_core::AgentConfiguration {
+                skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
+                ..Default::default()
+            },
             created_at: "2026-08-12T00:00:00Z".into(),
             updated_at: "2026-08-13T00:00:00Z".into(),
         }
@@ -368,17 +514,46 @@ mod tests {
     #[test]
     fn a_request_body_becomes_a_core_spec() {
         let body: ProfileRequest = serde_json::from_str(
-            r#"{"name":"mine","variables":[{"key":"A","value":"1"}],"skills":["s1"]}"#,
+            r#"{"name":"mine","variables":[{"key":"A","value":"1"}],
+                "agent":{"skills":["s1"],"model":"m","reasoning_effort":"low",
+                         "permission":"autonomous","credential":"own"}}"#,
         )
         .expect("parses");
         let spec: EnvironmentProfileSpec = body.into();
         assert_eq!(spec.name, "mine");
         assert_eq!(spec.variables.len(), 1);
         assert_eq!(spec.variables[0].key, "A");
-        assert_eq!(spec.skills, vec![SkillId::new("s1")]);
+        assert_eq!(spec.agent.skills, vec![SkillId::new("s1")]);
+        assert_eq!(spec.agent.model.as_deref(), Some("m"));
+        assert_eq!(spec.agent.reasoning_effort, ReasoningEffort::Low);
+        assert_eq!(spec.agent.permission, PermissionMode::Autonomous);
+        assert_eq!(spec.agent.credential, CredentialMode::Own);
         // Omitted lists are empty, not an error: a profile that sets only
         // variables is a legitimate thing to ask for.
         assert!(spec.packages.is_empty());
+    }
+
+    #[test]
+    fn a_body_that_says_nothing_about_the_agent_gets_this_deployments_answer() {
+        // A client that only wants to name some variables must not thereby
+        // choose a model or how freely the agent may act. Absent means
+        // "whatever is ordinary here", never "empty".
+        let body: ProfileRequest = serde_json::from_str(r#"{"name":"mine"}"#).expect("parses");
+        let spec: EnvironmentProfileSpec = body.into();
+        // The kernel is the exception, and deliberately: this layer does not
+        // know which kernels a deployment can start, so it leaves it unset and
+        // the core settles it from configuration.
+        assert!(
+            spec.agent.kernel.is_unset(),
+            "naming a kernel here would put a runtime's name in a layer that must not know one"
+        );
+        assert_eq!(spec.agent.reasoning_effort, ReasoningEffort::High);
+        assert_eq!(
+            spec.agent.permission,
+            PermissionMode::Guarded,
+            "a profile that said nothing must still stop to ask"
+        );
+        assert_eq!(spec.agent.credential, CredentialMode::Delegated);
     }
 
     #[test]
