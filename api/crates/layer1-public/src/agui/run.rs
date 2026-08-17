@@ -121,8 +121,8 @@ pub(super) async fn run(
     credential: Option<axum::Extension<DelegatedCredential>>,
     Json(body): Json<RunRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>>, Problem> {
-    let id = SessionId(body.thread_id.clone());
-    let session = match service.get_session(&caller, &id).await {
+    let requested = SessionId(body.thread_id.clone());
+    let session = match service.get_session(&caller, &requested).await {
         Ok(session) => session,
         // A thread that does not exist is created, which is how this protocol
         // projects session creation. Anything else — a session belonging to
@@ -154,6 +154,13 @@ pub(super) async fn run(
         }
         Err(e) => return Err(e.into()),
     };
+
+    // The session's own identifier from here on, which is not always the one
+    // that was asked for: a thread that did not exist is created, and the core
+    // mints the id rather than taking one from a request. Everything below —
+    // the prompt, the cursor, the events — belongs to the session that exists,
+    // and the events carry its id so a client learns what its thread is called.
+    let id = session.id.clone();
 
     // Refused before anything is sent. A terminal session has no conversation
     // to run, and a stream that opened and then said nothing would look like
