@@ -112,8 +112,8 @@ The event log is the single source of truth and the reason every interface can b
 
 - **Append-only**, with a **monotonic `seq` per session**. Not a global sequence.
 - Resumable: `?starting_after=<seq>` replays from a cursor. One integer of server state; no `Last-Event-ID` plumbing.
-- **Durable events are semantic.** Turn boundaries, tool calls, approvals, status changes, usage.
-- **Ephemeral events are deltas.** Token-level output and terminal bytes are streamed for liveness and never persisted. A client that misses them recovers from the durable event, or from a screen snapshot.
+- **Durable events are semantic.** Turn boundaries, committed messages, tool calls, approvals, status changes, usage, and the boundary where part of a conversation was lost.
+- **Ephemeral events are deltas.** Token-level message pieces and terminal bytes are streamed for liveness and never persisted. A client that misses them recovers from the committed message, or from a screen snapshot.
 
 Clients reconnect by opening the stream first, then reading history, then deduplicating on event id — never by assuming the stream replays.
 
