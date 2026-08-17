@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
-use crate::options::{CredentialMode, PermissionMode, ReasoningEffort};
+use crate::options::{CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 
 /// Longest accepted profile name.
 const MAX_NAME: usize = 120;
@@ -184,6 +184,14 @@ pub struct AgentConfiguration {
     /// exists precisely so nothing depends on which runtime is running. It is
     /// settled from configuration on the way in.
     pub kernel: KernelId,
+    /// Which plane sessions from this profile are driven on.
+    ///
+    /// Part of the profile rather than the request for the same reason
+    /// everything else here is: two sessions started from one profile must be
+    /// the same session twice, and what plane a session runs on is the largest
+    /// difference there could be between them.
+    #[serde(default)]
+    pub mode: SessionMode,
     /// Model the agent selects, when the profile pins one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
