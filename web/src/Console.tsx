@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SessionRail } from './sessions/SessionRail';
 import { SessionDetails } from './sessions/SessionDetails';
-import { TopBar } from './shell/TopBar';
+import { PageFrame } from './shell/PageFrame';
+import { ViewSwitch } from './shell/ViewSwitch';
 import type { SortOrder } from './sessions/sessionTime';
 import type { Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
@@ -253,22 +254,39 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     saveViewMode(next);
   }, []);
 
+  /*
+   * What the status band says this page is showing (§6).
+   *
+   * Counted from what is actually drawn rather than from everything the
+   * control plane returned: an ended session leaves the list, and a band
+   * naming a session nobody can see would send its owner looking for it.
+   */
+  const showing = useMemo(() => {
+    if (loading) {
+      return 'Loading sessions';
+    }
+    if (listed.length === 0) {
+      return 'No sessions';
+    }
+    const running = listed.filter((session) => abilitiesFor(session).interactive).length;
+    const count = `${String(listed.length)} session${listed.length === 1 ? '' : 's'}`;
+    return `${count} · ${String(running)} live`;
+  }, [loading, listed]);
+
   return (
-    <div className="console">
-      <TopBar>
-        {/*
-         * A display preference rather than navigation: it changes how the
-         * sessions someone already has are arranged, and adds nothing to the
-         * console's chrome. It sits at the trailing edge with the account
-         * control because it belongs to the whole console rather than to any
-         * one column.
-         *
-         * It does not stop at the browser, though. A terminal declares its own
-         * measurements to the runtime drawing into it, so putting every
-         * attached session in a 420×280 node resizes every one of them to
-         * roughly 47 columns. §15 records why that is right and what it costs.
-         */}
-        <ViewModeToggle mode={mode} onChange={changeMode} />
+    <PageFrame
+      showing={showing}
+      views={
+        <ViewSwitch
+          views={[{ name: 'sessions', label: 'Sessions' }]}
+          active="sessions"
+          onSelect={() => {
+            // One view today. The operations segment arrives with the page
+            // that serves it, drawn on the capability that view acts on.
+          }}
+        />
+      }
+      account={
         <ProfileMenu
           user={user}
           onSignOut={onSignOut}
@@ -290,8 +308,8 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               : undefined
           }
         />
-      </TopBar>
-
+      }
+    >
       <div className="console__body">
         <SessionRail
           sessions={listed}
@@ -302,6 +320,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             setChoosing(true);
           }}
           onReorder={setOrder}
+          /*
+           * The arrangement of this list, drawn with the list it rearranges
+           * rather than in the app bar. It does not stop at the browser: a
+           * terminal declares its own measurements to the runtime drawing
+           * into it, so putting every attached session in a 420×280 node
+           * resizes every one of them to roughly 47 columns. §13 records why
+           * that is right and what it costs.
+           */
+          arrangement={<ViewModeToggle mode={mode} onChange={changeMode} />}
         />
 
         <main className="console__surface">
@@ -441,6 +468,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           }}
         />
       ) : null}
-    </div>
+    </PageFrame>
   );
 }
