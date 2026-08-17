@@ -14,8 +14,8 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, KernelId, PublicIdentity, Session, SessionId, SessionService, SessionSpec,
-    TerminalGeometry, UserDirectory,
+    Caller, CoreError, KernelId, PublicIdentity, Session, SessionCapabilities, SessionId,
+    SessionService, SessionSpec, TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +32,33 @@ const CONFORMS_TO: &[&str] = &[
     "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
     "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
 ];
+
+/// Where every conformance class this service declares is rooted.
+const CONF_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/conf";
+
+/// The classes one session satisfies, given what it was granted.
+///
+/// The interface-wide list above says what REST can project for *some*
+/// session; this says what it can project for *this* one. Both are needed and
+/// they are not the same claim: a service that renders a terminal still cannot
+/// render one for a session that has none, and a client told otherwise
+/// discovers it by getting an error where it expected a screen.
+fn conformance_for(capabilities: &SessionCapabilities) -> Vec<String> {
+    // `core` unconditionally: every session has a lifecycle, a log and a
+    // status, whatever plane it is driven on.
+    let mut classes = vec![format!("{CONF_BASE}/core")];
+    for (held, class) in [
+        (capabilities.terminal, "terminal"),
+        (capabilities.conversation, "conversation"),
+        (capabilities.steer, "steering"),
+        (capabilities.usage, "usage"),
+    ] {
+        if held {
+            classes.push(format!("{CONF_BASE}/{class}"));
+        }
+    }
+    classes
+}
 
 /// The interface profile.
 pub struct RestInterface;
@@ -109,6 +136,12 @@ pub struct SessionView {
     /// identifier, which is not a name and reads as a fault when shown as one.
     #[serde(skip_serializing_if = "Option::is_none")]
     creator: Option<PublicIdentity>,
+    /// What this particular session can be asked to do.
+    ///
+    /// Derived from the set it was granted at creation rather than from what
+    /// this interface can project in general, so a client reads the truth about
+    /// the session in front of it instead of the truth about the service.
+    conforms_to: Vec<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -131,6 +164,7 @@ impl From<Session> for SessionView {
             rotated_at: s.rotated_at,
             created_at: s.created_at,
             creator: None,
+            conforms_to: conformance_for(&s.capabilities),
         }
     }
 }
@@ -188,6 +222,12 @@ impl IntoResponse for Problem {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
             }
             CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
+            // 422 rather than 404: the route exists and the request is
+            // well-formed, and this session simply cannot honour it. A 404
+            // would send the caller looking for a spelling mistake.
+            CoreError::CapabilityUnsupported(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "capability-unsupported")
+            }
         };
         (
             status,
@@ -466,6 +506,60 @@ mod tests {
     }
 
     #[test]
+    fn a_session_declares_only_the_classes_it_was_granted() {
+        // The interface-wide list says what REST can project for some session.
+        // This says what it projects for this one, and the two are different
+        // claims: a client told a screenless session conforms to the terminal
+        // class finds out by asking for a screen and getting an error.
+        let terminal = conformance_for(&SessionCapabilities {
+            terminal: true,
+            snapshot: true,
+            ..Default::default()
+        });
+        assert!(terminal.iter().any(|c| c.ends_with("/conf/core")));
+        assert!(terminal.iter().any(|c| c.ends_with("/conf/terminal")));
+        assert!(
+            !terminal.iter().any(|c| c.ends_with("/conf/conversation")),
+            "a terminal session must not claim the conversation class: {terminal:?}"
+        );
+
+        let conversation = conformance_for(&SessionCapabilities {
+            conversation: true,
+            steer: true,
+            usage: true,
+            ..Default::default()
+        });
+        assert!(conversation
+            .iter()
+            .any(|c| c.ends_with("/conf/conversation")));
+        assert!(conversation.iter().any(|c| c.ends_with("/conf/steering")));
+        assert!(conversation.iter().any(|c| c.ends_with("/conf/usage")));
+        assert!(
+            !conversation.iter().any(|c| c.ends_with("/conf/terminal")),
+            "a conversation session must not claim the terminal class: {conversation:?}"
+        );
+    }
+
+    #[test]
+    fn every_session_declares_the_core_class_whatever_it_can_do() {
+        // A session that was granted nothing still has a lifecycle, a log and
+        // a status, and a client needs to be told it can read those.
+        let none = conformance_for(&SessionCapabilities::default());
+        assert_eq!(none.len(), 1);
+        assert!(none[0].ends_with("/conf/core"));
+    }
+
+    #[test]
+    fn a_missing_ability_is_unprocessable_rather_than_missing() {
+        // 404 would send the caller looking for a spelling mistake. The route
+        // exists, the request is well formed, and this session cannot honour
+        // it — which is a different thing and has to read as one.
+        let response =
+            Problem(CoreError::CapabilityUnsupported("conversation".into())).into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
     fn a_view_carries_geometry_as_plain_integers() {
         let s = Session {
             id: SessionId("sesn_1".into()),
@@ -481,6 +575,7 @@ mod tests {
             runtime_version: None,
             rotations: 0,
             rotated_at: None,
+            capabilities: Default::default(),
             created_at: "2026-08-12T00:00:00Z".into(),
         };
         let view: SessionView = s.into();

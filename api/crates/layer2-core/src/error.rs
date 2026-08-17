@@ -48,6 +48,15 @@ pub enum CoreError {
     #[error("invalid state for operation")]
     InvalidState,
 
+    /// The session's runtime does not provide something the request needs.
+    ///
+    /// Carries the ability's own name, because "not supported" without saying
+    /// what is the answer a caller cannot act on. Distinct from
+    /// `InvalidRequest`: the request is perfectly sensible, and would be
+    /// honoured by a session placed on a runtime that offers this.
+    #[error("capability not supported: {0}")]
+    CapabilityUnsupported(String),
+
     /// The request was well-formed but describes something unusable.
     ///
     /// Distinct from `InvalidState`: nothing about the system prevents this,
@@ -73,6 +82,7 @@ impl CoreError {
             Self::InvalidGeometry(_) => "invalid_geometry",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::InvalidState => "invalid_state",
+            Self::CapabilityUnsupported(_) => "capability_unsupported",
             Self::InvalidRequest(_) => "invalid_request",
         }
     }
@@ -95,6 +105,7 @@ mod tests {
                 .code(),
             CoreError::RuntimeUnavailable("x".into()).code(),
             CoreError::InvalidState.code(),
+            CoreError::CapabilityUnsupported("terminal".into()).code(),
             CoreError::InvalidRequest("x".into()).code(),
         ];
         let mut sorted = codes.to_vec();
