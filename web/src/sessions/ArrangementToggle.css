@@ -7,9 +7,11 @@
 
 .arrangement {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
   gap: var(--space-1);
   align-items: center;
+  /* So the reason truncates inside the band rather than pushing past it. */
+  min-width: 0;
 }
 
 .arrangement__option {
@@ -26,7 +28,25 @@
   border-radius: var(--radius);
 }
 
-.arrangement__option:hover {
+.arrangement__option:disabled {
+  color: var(--ink-3);
+  cursor: not-allowed;
+  background: var(--inset);
+  border-color: var(--rule);
+  box-shadow: var(--press-none);
+}
+
+/*
+ * Why the canvas is not on offer. §7 and §11 both put a disabled control's
+ * reason on the surface, never only in a tooltip.
+ */
+.arrangement__reason {
+  overflow: hidden;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+}
+
+.arrangement__option:not(:disabled):hover {
   color: var(--ink-2);
   border-color: var(--rule-2);
 }
