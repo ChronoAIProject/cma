@@ -110,37 +110,63 @@ Five interface types, in priority order. Each exposes semantic operations expres
 
 Each interface is a **projection** of the same underlying core session model. Interfaces may expose a *subset* of core operations where the protocol cannot express one — but they must never invent an operation that does not exist in Layer 2, and they must never carry business logic.
 
-### Layer 2 — core session model and events (control plane pod)
+### Layer 2 — the session core: models and events (control plane pod)
 
 The single tunnel. Every Layer 1 interface talks to this and only this. It owns:
 
 - the session model and its lifecycle states
 - the durable, append-only event log with a per-session monotonic sequence
+- what a session was granted, and what it was refused
 - approval and permission state
 - usage and metering state
 
-Layer 2 is protocol-agnostic and kernel-agnostic. **No protocol name and no kernel name may appear in Layer 2 identifiers, types, or comments.** If you find yourself writing `agui_` or `codex_` in Layer 2, the abstraction is wrong.
+Layer 2 is protocol-agnostic, kernel-agnostic and terminal-agnostic. **No protocol name and no kernel name may appear in Layer 2 identifiers, types, or comments**, and no machinery belonging to a domain a layer below owns. If you find yourself writing `agui_` or `codex_` here, the abstraction is wrong; if you find yourself parsing an escape sequence here, the code is in the wrong crate.
 
 Layer 2 is the superset: it models the union of what all interfaces and all kernels need, never the intersection.
 
-### Layer 3 — ACP-shaped kernel adapters (control plane pod)
+#### Capabilities: what a session can do is decided once and never revisited
+
+Two facts have to be told apart everywhere in this service: **"this session can never do that"** and **"that just failed"**. Only the second is worth retrying; only the first is worth telling somebody at creation; a caller who cannot distinguish them does neither well.
+
+So:
+
+- A kernel **advertises** what it can do — hold a conversation, render a terminal, be carried onto a replacement runtime, accept input mid-turn, be interrupted, report usage. Statically, because these describe the kernel rather than the moment.
+- A session carries a **granted set**, decided when it is created and recorded rather than recomputed. It is the intersection of what its kernel can do with what its mode needs.
+- A request outside that set fails **typed and named** — the ability it lacks, in words a caller can act on — before anything is provisioned, and never as a 404 and never by silently doing nothing.
+
+**A capability is claimed only after it has been demonstrated against the pinned kernel version.** Every one currently advertised was established by driving the real thing; "the documentation says so" is not evidence. A capability claimed and absent is discovered by whoever tried to use it, which is the failure this whole model exists to remove.
+
+### Layer 3 — the Agent Client Protocol (control plane pod)
 
 Abstracts the agent runtime kernel so Layer 2 does not know or care which kernel is running.
 
+**The contract is the Agent Client Protocol**, not a shape resembling it. Its types are ACP's own, re-exported under this project's names, so a conversation crossing this boundary is already in a vendor-neutral vocabulary rather than translated into one. What the protocol does not define, this layer adds beside it and keeps separate: the runtime lifecycle a hosted sandbox needs, and the terminal plane ACP has no word for.
+
 ```
 layer3-adapter/src/
-  lib.rs            the trait and shared types — the abstraction
-  codex/            Codex implementation
-  claude_code/      Claude Code implementation
+  lib.rs            the contract — the trait and its errors
+  conversation.rs   ACP's own vocabulary, re-exported
+  runtime.rs        what ACP does not define: provisioning, geometry, handles
+  hosted/           running any kernel in a provider-managed sandbox
+  terminal.rs       folding a runtime's bytes into a screen
+  codex/            Codex
+  claude_code/      Claude Code
+  dsh/              DeepSeek Harness
 ```
 
 **The abstraction and its implementations are separate.** The trait file must contain no kernel-specific type, constant, or conditional. Adding a kernel means adding a directory, never editing the trait to accommodate it.
 
-Vocabulary is modelled on the Agent Client Protocol (session, prompt turn, streaming update, tool call, permission request, terminal) so the internal model converges with a vendor-neutral shape rather than any one vendor's.
+**A kernel's directory holds what is true of that kernel and nothing else** — the program its pod runs, where it keeps its conversation, its private words for how much its agent may do unattended, and what it can be relied on to do. Everything about *being hosted* — bringing a sandbox up, the link back, the wire the two ends settle on, the credential that rides on it — is shared, because none of it changes with the agent inside.
 
-### Layer 4 — sandboxed agent runtime (bot pod)
+A kernel need not speak ACP itself. One does not, and translating its wire is its own directory's work; nothing above Layer 3 knows a third protocol exists.
 
-The actual agent process — Codex, Claude Code — plus the ChronoAI-authored agent that supervises it and relays its terminal.
+### Layer 4 — the agent runtimes (bot pod)
+
+The actual agent process plus the ChronoAI-authored supervisor that hosts it, relays its terminal, carries its conversation, and stands between it and every credential it would otherwise hold.
+
+Three kernels run here, each behind its own bridge: **Codex**, **Claude Code**, and the **DeepSeek Harness**.
+
+**The supervisor is kernel-neutral and must stay that way.** It is told what to run, where that program keeps its conversation, and what to write before starting it. It knows none of those things itself, and it reads none of what it carries: a conversation crosses as opaque bytes, deliberately, so a kernel changing its format cannot break the pod hosting it.
 
 Layer 4 runs in the bot pod and is a **separate binary**. It is not linked into the control plane.
 
@@ -296,7 +322,9 @@ The document carries a changelog at the end recording every change. **The change
 ## 9. Working rules for agents
 
 - Read this file before making structural changes. It governs.
+- **Each layer explicitly owns its scope.** Code that is semantically foreign to the layer it sits in is moved to where it belongs — not tolerated, not wrapped, not left with a comment explaining itself. A kernel's name in the supervisor, a protocol's vocabulary in the core, an escape sequence anywhere above Layer 3: each is a defect of the same kind, and each is fixed by moving the code rather than by justifying it. This is checked deliberately, not assumed.
 - Never place a source file outside its layer's directory to make an import easier — fix the design instead.
+- **Never claim an ability that has not been demonstrated.** A capability, a resume path, a wire method: run it against the pinned version before advertising it. Where something cannot be done, declare the absence — a session refused by name at creation is a session somebody can plan around, and one that accepts a request and silently drops it is not.
 - Never add a root-level file to satisfy a tool; move the tool's config into `api/` or `web/`.
 - Never weaken a CI gate to make a build pass. If a gate is wrong, change the gate deliberately in its own PR with a stated reason.
 - Never add a gitleaks allowlist entry. Change the offending string.
