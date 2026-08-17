@@ -27,7 +27,7 @@ import { useSessionActions } from './sessions/useSessionActions';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
 import { createRestProfileStore } from './environment/rest';
 import type { EnvironmentProfile, EnvironmentProfileStore } from './environment/types';
-import { OperatorPanel } from './operator/OperatorPanel';
+import { OperatorPage } from './operator/OperatorPage';
 import { canOperate } from './operator/access';
 import { createRestOperatorStore } from './operator/rest';
 import type { OperatorStore } from './operator/types';
@@ -36,11 +36,19 @@ import './Console.css';
 /**
  * The authenticated surface. Same page, now driven live.
  *
- * Chrome is deliberately limited to the session rail, the view-mode toggle and
- * the profile menu; the product is one page and this must not grow navigation.
+ * Two views inside one page frame, per docs/Web_Style.md §1: sessions and
+ * operations. There is no router and no URL — the app bar's switch chooses
+ * between them and nothing is pushed onto history, which is what keeps the
+ * frame from becoming navigation.
  *
- * The two view modes are two arrangements of one state. `activeId` means the
- * session the keyboard is talking to in both of them — in tabs mode that is the
+ * **The view does not persist; the arrangement does.** A view is where
+ * somebody is right now, and reloading into a surface nobody asked for is how
+ * a page frame starts behaving like a route. An arrangement is a setting about
+ * how a list is drawn, which is exactly the kind of thing a browser should
+ * remember.
+ *
+ * The two arrangements are two arrangements of one state. `activeId` means the
+ * session the keyboard is talking to in both of them — in tabs that is the
  * one visible terminal, on the canvas it is the focused node — so switching
  * arrangement never asks anyone where they were.
  */
@@ -49,6 +57,9 @@ interface ConsoleProps {
   readonly user: User;
   readonly onSignOut: () => void;
 }
+
+/** The two views §1 admits. Not a route, and never a third. */
+type ConsoleView = 'sessions' | 'operations';
 
 /**
  * Geometry the first frame is requested at.
@@ -91,7 +102,11 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   const [managingProfiles, setManagingProfiles] = useState(false);
   // Built once, for the same reason the profile store is.
   const [operatorStore] = useState<OperatorStore>(() => createRestOperatorStore());
-  const [operating, setOperating] = useState(false);
+  /*
+   * Which of §1's two views is showing. State rather than a route: the app
+   * carries no router, and this is deliberately not persisted — see above.
+   */
+  const [view, setView] = useState<ConsoleView>('sessions');
 
   useEffect(() => {
     void profileStore
@@ -281,12 +296,12 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * cannot be panned out of sight.
    */
   const note = useMemo(() => {
-    if (arrangement !== 'canvas') {
+    if (view !== 'sessions' || arrangement !== 'canvas') {
       return undefined;
     }
     const connectable = canvasNodes.filter((node) => node.driver !== null).map((n) => n.session.id);
     return unattachedNote(connectable.length, selectLiveWindow(connectable, focusHistory).size);
-  }, [arrangement, canvasNodes, focusHistory]);
+  }, [view, arrangement, canvasNodes, focusHistory]);
 
   /*
    * What the status band says this page is showing (§6).
@@ -296,6 +311,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * naming a session nobody can see would send its owner looking for it.
    */
   const showing = useMemo(() => {
+    if (view === 'operations') {
+      return 'Operations';
+    }
     if (loading) {
       return 'Loading sessions';
     }
@@ -305,21 +323,44 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     const running = listed.filter((session) => abilitiesFor(session).interactive).length;
     const count = `${String(listed.length)} session${listed.length === 1 ? '' : 's'}`;
     return `${count} · ${String(running)} live`;
-  }, [loading, listed]);
+  }, [view, loading, listed]);
 
   return (
     <PageFrame
       showing={showing}
       note={note}
-      leadingColumn={railCollapsed ? 'var(--rail-collapsed)' : 'var(--rail-width)'}
+      /*
+       * Operations has no rail, so the band has no leading column to align its
+       * first rule with. Passing the sessions view's width there would draw a
+       * vertical line under nothing.
+       */
+      leadingColumn={
+        view === 'operations'
+          ? undefined
+          : railCollapsed
+            ? 'var(--rail-collapsed)'
+            : 'var(--rail-width)'
+      }
       views={
         <ViewSwitch
-          views={[{ name: 'sessions', label: 'Sessions' }]}
-          active="sessions"
-          onSelect={() => {
-            // One view today. The operations segment arrives with the page
-            // that serves it, drawn on the capability that view acts on.
-          }}
+          /*
+           * The operations segment is drawn only for a caller the control
+           * plane says holds a capability that page can act on. This is
+           * presentation and never protection: the API refuses on its own and
+           * would refuse a hand-written request just the same. Both halves are
+           * required — a control nobody can use should not be drawn, and a
+           * drawn control is not what makes it safe.
+           */
+          views={
+            canOperate(user.capabilities)
+              ? [
+                  { name: 'sessions' as const, label: 'Sessions' },
+                  { name: 'operations' as const, label: 'Operations' },
+                ]
+              : [{ name: 'sessions' as const, label: 'Sessions' }]
+          }
+          active={view}
+          onSelect={setView}
         />
       }
       account={
@@ -332,162 +373,157 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           onManageEnvironments={() => {
             setManagingProfiles(true);
           }}
-          // Absent unless the control plane reported a capability the panel
-          // can act on, so the item is not drawn rather than drawn and
-          // refused. It is not what makes the surface safe: every view and
-          // control behind it is checked again server-side.
-          onOperate={
-            canOperate(user.capabilities)
-              ? () => {
-                  setOperating(true);
-                }
-              : undefined
-          }
         />
       }
     >
-      <div className="console__body">
-        <SessionRail
-          sessions={listed}
-          activeId={activeId}
-          order={order}
-          onSelect={select}
-          onCreate={() => {
-            setChoosing(true);
-          }}
-          onReorder={setOrder}
-          /*
-           * The arrangement of this list, drawn with the list it rearranges
-           * rather than in the app bar. It does not stop at the browser: a
-           * terminal declares its own measurements to the runtime drawing
-           * into it, so putting every attached session in a 420×280 node
-           * resizes every one of them to roughly 47 columns. §13 records why
-           * that is right and what it costs.
-           */
-          arrangement={<ArrangementToggle arrangement={arrangement} onChange={changeArrangement} />}
-          collapsed={railCollapsed}
-          onToggleCollapsed={toggleRail}
-          stages={stages}
-        />
-
-        <main className="console__surface">
-          <SessionHeader
-            session={active}
-            actions={
-              active === null ? undefined : (
-                <SessionActions
-                  session={active}
-                  busy={acting}
-                  onReconnect={() => {
-                    /*
-                     * A new driver for this session and no other. The surface
-                     * holding the old one releases its transport and the new
-                     * one dials again, which asks the control plane to take
-                     * the sandbox back under management.
-                     *
-                     * Scoped deliberately: this used to bump `paletteEpoch`,
-                     * which is also the canvas's key, so one session's
-                     * Reconnect rebuilt every node on the canvas — every
-                     * scrollback cleared, every socket redialled.
-                     */
-                    setNotice(null);
-                    reconnect(active.id);
-                  }}
-                  onRevive={() => void reviveSessionById(active.id)}
-                  onStop={() => void endSession(active.id)}
-                  onDelete={() => void removeSession(active.id)}
-                />
-              )
+      {view === 'operations' ? (
+        <OperatorPage store={operatorStore} capabilities={user.capabilities} />
+      ) : (
+        <div className="console__body">
+          <SessionRail
+            sessions={listed}
+            activeId={activeId}
+            order={order}
+            onSelect={select}
+            onCreate={() => {
+              setChoosing(true);
+            }}
+            onReorder={setOrder}
+            /*
+             * The arrangement of this list, drawn with the list it rearranges
+             * rather than in the app bar. It does not stop at the browser: a
+             * terminal declares its own measurements to the runtime drawing
+             * into it, so putting every attached session in a 420×280 node
+             * resizes every one of them to roughly 47 columns. §13 records why
+             * that is right and what it costs.
+             */
+            arrangement={
+              <ArrangementToggle arrangement={arrangement} onChange={changeArrangement} />
             }
+            collapsed={railCollapsed}
+            onToggleCollapsed={toggleRail}
+            stages={stages}
           />
 
-          {/*
-           * Above the surface, never in place of it (§12). A failure belongs
-           * to one request about one session, and the surface below may hold a
-           * dozen live terminals: rendering the sentence instead of it
-           * unmounted every one of them, so a stop that came back 409 cost
-           * eleven other sessions their connection and their scrollback.
-           *
-           * Beneath the session header rather than above it. §12 puts the band
-           * "at the head of the column"; put literally first it would push the
-           * header down and break the one line the three column headers share,
-           * which §5 exists to hold. The surface it must stay out of the way of
-           * is the terminal, and it does.
-           */}
-          {notice !== null ? (
-            <div className="band console__notice" role="alert">
-              <span className="band__value console__noticetext">{notice}</span>
-            </div>
-          ) : null}
-
-          {loading ? (
-            <p className="console__empty">Loading your sessions…</p>
-          ) : arrangement === 'canvas' && canvasNodes.length > 0 ? (
-            <SessionCanvas
-              /*
-               * Remounted when the palette changes, for the same reason the
-               * single terminal is: xterm reads its theme once, at
-               * construction. Doing it on an explicit choice rather than
-               * continuously is what keeps a live session from being torn down
-               * underneath somebody.
-               */
-              key={`canvas:${String(paletteEpoch)}`}
-              nodes={canvasNodes}
-              focusedId={activeId}
-              focusHistory={focusHistory}
-              onFocus={select}
-            />
-          ) : active === null ? (
-            <p className="console__empty">No session open. Start one from the left.</p>
-          ) : active.lifecycle === 'provisioning' ? (
-            <StartupProgress
-              message="Starting a sandbox for this session. This can take a minute the first time."
-              stage={stages[active.id] ?? null}
-            />
-          ) : active.lifecycle === 'rotating' ? (
-            <StartupProgress
-              message="Moving this session to an updated runtime. It will come back where it left off."
-              stage={stages[active.id] ?? null}
-            />
-          ) : driver === null ? (
-            <p className="console__empty">Attaching…</p>
-          ) : (
-            <TerminalSurface
-              key={`${active.id}:${String(paletteEpoch)}`}
-              driver={driver}
-              label={`Session ${active.id} on ${active.kernel}`}
-              /*
-               * §14: whether a terminal takes typing is the session's state
-               * saying so, never the fact that it is the one on screen. The
-               * driver for a stopped session drops input too — this is the
-               * layer that stops xterm raising the event at all.
-               */
-              interactive={abilitiesFor(active).interactive}
-            />
-          )}
-
-          {/*
-           * The sheet sits beneath the terminal, inside the same column and
-           * after it, so opening and closing it changes the terminal's height
-           * and nothing else. Rendered as a sibling rather than around it,
-           * because a component that wrapped the terminal would remount it on
-           * every toggle and take the scrollback with it.
-           */}
-          {active !== null ? (
-            <SessionDetails
+          <main className="console__surface">
+            <SessionHeader
               session={active}
-              open={detailsOpen}
-              ending={endings[active.id]}
-              onToggle={() => {
-                setDetailsOpen((v) => {
-                  saveCollapsed('sheet', v);
-                  return !v;
-                });
-              }}
+              actions={
+                active === null ? undefined : (
+                  <SessionActions
+                    session={active}
+                    busy={acting}
+                    onReconnect={() => {
+                      /*
+                       * A new driver for this session and no other. The surface
+                       * holding the old one releases its transport and the new
+                       * one dials again, which asks the control plane to take
+                       * the sandbox back under management.
+                       *
+                       * Scoped deliberately: this used to bump `paletteEpoch`,
+                       * which is also the canvas's key, so one session's
+                       * Reconnect rebuilt every node on the canvas — every
+                       * scrollback cleared, every socket redialled.
+                       */
+                      setNotice(null);
+                      reconnect(active.id);
+                    }}
+                    onRevive={() => void reviveSessionById(active.id)}
+                    onStop={() => void endSession(active.id)}
+                    onDelete={() => void removeSession(active.id)}
+                  />
+                )
+              }
             />
-          ) : null}
-        </main>
-      </div>
+
+            {/*
+             * Above the surface, never in place of it (§12). A failure belongs
+             * to one request about one session, and the surface below may hold a
+             * dozen live terminals: rendering the sentence instead of it
+             * unmounted every one of them, so a stop that came back 409 cost
+             * eleven other sessions their connection and their scrollback.
+             *
+             * Beneath the session header rather than above it. §12 puts the band
+             * "at the head of the column"; put literally first it would push the
+             * header down and break the one line the three column headers share,
+             * which §5 exists to hold. The surface it must stay out of the way of
+             * is the terminal, and it does.
+             */}
+            {notice !== null ? (
+              <div className="band console__notice" role="alert">
+                <span className="band__value console__noticetext">{notice}</span>
+              </div>
+            ) : null}
+
+            {loading ? (
+              <p className="console__empty">Loading your sessions…</p>
+            ) : arrangement === 'canvas' && canvasNodes.length > 0 ? (
+              <SessionCanvas
+                /*
+                 * Remounted when the palette changes, for the same reason the
+                 * single terminal is: xterm reads its theme once, at
+                 * construction. Doing it on an explicit choice rather than
+                 * continuously is what keeps a live session from being torn down
+                 * underneath somebody.
+                 */
+                key={`canvas:${String(paletteEpoch)}`}
+                nodes={canvasNodes}
+                focusedId={activeId}
+                focusHistory={focusHistory}
+                onFocus={select}
+              />
+            ) : active === null ? (
+              <p className="console__empty">No session open. Start one from the left.</p>
+            ) : active.lifecycle === 'provisioning' ? (
+              <StartupProgress
+                message="Starting a sandbox for this session. This can take a minute the first time."
+                stage={stages[active.id] ?? null}
+              />
+            ) : active.lifecycle === 'rotating' ? (
+              <StartupProgress
+                message="Moving this session to an updated runtime. It will come back where it left off."
+                stage={stages[active.id] ?? null}
+              />
+            ) : driver === null ? (
+              <p className="console__empty">Attaching…</p>
+            ) : (
+              <TerminalSurface
+                key={`${active.id}:${String(paletteEpoch)}`}
+                driver={driver}
+                label={`Session ${active.id} on ${active.kernel}`}
+                /*
+                 * §14: whether a terminal takes typing is the session's state
+                 * saying so, never the fact that it is the one on screen. The
+                 * driver for a stopped session drops input too — this is the
+                 * layer that stops xterm raising the event at all.
+                 */
+                interactive={abilitiesFor(active).interactive}
+              />
+            )}
+
+            {/*
+             * The sheet sits beneath the terminal, inside the same column and
+             * after it, so opening and closing it changes the terminal's height
+             * and nothing else. Rendered as a sibling rather than around it,
+             * because a component that wrapped the terminal would remount it on
+             * every toggle and take the scrollback with it.
+             */}
+            {active !== null ? (
+              <SessionDetails
+                session={active}
+                open={detailsOpen}
+                ending={endings[active.id]}
+                onToggle={() => {
+                  setDetailsOpen((v) => {
+                    saveCollapsed('sheet', v);
+                    return !v;
+                  });
+                }}
+              />
+            ) : null}
+          </main>
+        </div>
+      )}
 
       <NewSessionDialog
         open={choosing}
@@ -516,16 +552,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 // Already reported inside the manager; failing to refresh the
                 // selector is not worth a second message about the same thing.
               });
-          }}
-        />
-      ) : null}
-
-      {operating ? (
-        <OperatorPanel
-          store={operatorStore}
-          capabilities={user.capabilities}
-          onClose={() => {
-            setOperating(false);
           }}
         />
       ) : null}
