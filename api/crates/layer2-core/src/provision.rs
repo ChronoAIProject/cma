@@ -381,7 +381,7 @@ impl SessionService {
             spawn_relay(id.clone(), output, screen, live);
         }
         if let Some(channel) = conversation {
-            crate::conversation::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
+            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
         }
 
         // Handed over before the agent can need it, so the first turn is
