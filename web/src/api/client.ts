@@ -17,9 +17,11 @@ import type {
   Session,
   SessionCreator,
   SessionLifecycle,
+  SessionPlane,
   SessionService,
 } from '../sessions/types';
 import { isStage, type Stage } from '../sessions/progress';
+import { toCapabilities } from '../agui';
 
 /** A request that failed, carrying enough to tell the user why. */
 export class ApiError extends Error {
@@ -60,6 +62,7 @@ interface SessionPayload {
   rotated_at?: unknown;
   creator?: unknown;
   reach?: unknown;
+  conforms_to?: unknown;
 }
 
 /**
@@ -99,7 +102,32 @@ export function toSession(raw: unknown): Session {
     rotatedAt: rotatedAt(p.rotated_at),
     creator: creator(p.creator),
     reach: reach(p.reach),
+    plane: plane(p.conforms_to),
+    // Read once at the boundary, so components ask what a session may do
+    // rather than trying and handling a refusal.
+    capabilities: toCapabilities(raw),
   };
+}
+
+/**
+ * Which plane a session is drawn on, read from what it conforms to.
+ *
+ * The control plane reports a session's granted classes as URIs ending
+ * `/conf/<name>`; `conversation` and `terminal` are two of them and are
+ * exclusive by construction. Read from the session rather than assumed,
+ * because it is the session's own answer and no interface chooses one.
+ *
+ * A session that declares neither falls back to the terminal — what every
+ * session was before the conversation plane existed. That is the safe
+ * direction: a terminal drawn for a conversation session shows an empty
+ * screen, and a conversation drawn for a terminal session shows nothing.
+ */
+function plane(raw: unknown): SessionPlane | undefined {
+  const granted = toCapabilities({ conforms_to: raw });
+  if (granted.conversation) {
+    return 'conversation';
+  }
+  return granted.terminal ? 'terminal' : undefined;
 }
 
 /**

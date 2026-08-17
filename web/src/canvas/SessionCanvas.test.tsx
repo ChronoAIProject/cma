@@ -8,6 +8,7 @@ import type { LiveSession } from '../sessions/live';
 import type { Session, SessionLifecycle } from '../sessions/types';
 import type { TerminalDriver } from '../terminal/types';
 import { unattachedNote } from './layout';
+import { NO_CAPABILITIES } from '../agui';
 
 /**
  * Recording drivers rather than a real one: what these tests assert is where
@@ -43,6 +44,7 @@ function session(id: string, lifecycle: SessionLifecycle, index: number): Sessio
     kernel: 'codex',
     lifecycle,
     createdAt: Date.UTC(2026, 7, 14, 3, index),
+    capabilities: NO_CAPABILITIES,
   };
 }
 
