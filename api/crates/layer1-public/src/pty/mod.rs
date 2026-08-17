@@ -145,6 +145,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::InvalidGeometry(_) => "invalid_geometry",
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
         CoreError::InvalidState => "invalid_state",
+        CoreError::CapabilityUnsupported(_) => "capability_unsupported",
     }
 }
 

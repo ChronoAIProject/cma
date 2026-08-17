@@ -192,6 +192,12 @@ data:
   # recognise it. A deployment that meant "ask first" and mistyped it must be
   # told at startup, not discovered later by an agent that never asked.
   CHRONO_DEFAULT_AGENT_KERNEL: "codex"
+  # Which plane an unqualified session is driven on. "terminal" is a screen
+  # someone types at; "conversation" is a structured exchange of messages, tool
+  # calls and approvals. A session is checked against its kernel's abilities
+  # before it exists, so a mode no kernel here can serve is refused at creation
+  # rather than discovered by whoever tries to use the session.
+  CHRONO_DEFAULT_AGENT_MODE: "terminal"
   CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"
   CHRONO_DEFAULT_AGENT_EFFORT: "high"
   # "guarded" is ask-first. The cautious answer is the default answer, because
