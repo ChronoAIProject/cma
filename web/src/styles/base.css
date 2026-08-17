@@ -142,23 +142,3 @@ button {
   font-style: normal;
   font-display: swap;
 }
-
-/*
- * The page frame, per docs/Web_Style.md §5 and §6.
- *
- * The 10% page inset is gone: it cost the terminal roughly 290px on a 1440px
- * window and made the bar look detached from a page it was already aligned to.
- * Page content runs to a 20px gutter, and alignment comes from the band grid.
- */
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  height: 100dvh;
-  overflow: hidden;
-}
-
-.app-shell > :not(.topbar) {
-  padding-inline: var(--page-gutter);
-  flex: 1 1 auto;
-  min-height: 0;
-}

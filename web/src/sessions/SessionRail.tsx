@@ -1,12 +1,7 @@
+import type { ReactNode } from 'react';
 import type { Session } from './types';
 import { toneFor } from './types';
-import {
-  DISPLAY_ZONE_LABEL,
-  fullTimestamp,
-  sortSessions,
-  tabLabel,
-  type SortOrder,
-} from './sessionTime';
+import { fullTimestamp, sortSessions, tabLabel, type SortOrder } from './sessionTime';
 import './SessionRail.css';
 
 /**
@@ -28,6 +23,15 @@ interface SessionRailProps {
   readonly onSelect: (id: string) => void;
   readonly onCreate: () => void;
   readonly onReorder: (order: SortOrder) => void;
+  /**
+   * How the list is arranged, drawn in the rail's own header.
+   *
+   * §1: the control for an arrangement lives with the list it rearranges. It
+   * used to sit in the app bar, which made the bar differ between a page that
+   * has a list and one that does not — and §6 requires one bar that never
+   * changes shape as somebody switches view.
+   */
+  readonly arrangement?: ReactNode;
 }
 
 export function SessionRail({
@@ -37,12 +41,14 @@ export function SessionRail({
   onSelect,
   onCreate,
   onReorder,
+  arrangement,
 }: SessionRailProps) {
   const ordered = sortSessions(sessions, order);
 
   return (
     <div className="rail">
       <div className="rail__head">
+        {arrangement}
         <button type="button" className="rail__new" onClick={onCreate}>
           <span aria-hidden="true">+</span> New session
         </button>
@@ -90,11 +96,12 @@ export function SessionRail({
         })}
       </ul>
 
-      {sessions.length === 0 ? (
-        <p className="rail__empty">No sessions yet.</p>
-      ) : (
-        <p className="rail__zone">Times in {DISPLAY_ZONE_LABEL}</p>
-      )}
+      {/*
+       * The zone is not restated here. §12 puts it in the status band, which
+       * is on every page, so a rail that also carried it would be the second
+       * place a reader had to reconcile.
+       */}
+      {sessions.length === 0 ? <p className="rail__empty">No sessions yet.</p> : null}
     </div>
   );
 }
