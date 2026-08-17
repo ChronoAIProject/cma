@@ -1,6 +1,6 @@
 # chrono-bot
 
-Managed agent service by ChronoAI. Runs coding-agent kernels (Codex, Claude Code) on ChronoAI
+Managed agent service by ChronoAI. Runs coding-agent kernels (Codex, Claude Code, DeepSeek Harness) on ChronoAI
 infrastructure and exposes them over public interfaces, so end users install nothing locally.
 
 **Read [CLAUDE.md](./CLAUDE.md) before contributing.** It defines the repository layout, the
@@ -22,10 +22,10 @@ Two pod roles. The control plane never executes agent code; bot pods never serve
 ```
 control plane pod
   layer1-public    AG-UI · REST · PTY · MCP · A2A
-  layer2-core      core session model and events
-  layer3-adapter   ACP-shaped kernel adapters
+  layer2-core      the session core: models, events, capabilities
+  layer3-adapter   the Agent Client Protocol, and the kernels behind it
 bot pod
-  layer4-runtime   sandboxed agent runtime
+  layer4-runtime   kernel-neutral supervisor, and the agent it hosts
 ```
 
 ## Local development
