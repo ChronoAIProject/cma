@@ -32,6 +32,11 @@ pub(crate) struct FakeAdapter {
     /// provisioned for. This is the provider's own view, which is the thing
     /// reconciliation compares the record against.
     pub(crate) running: Mutex<HashMap<String, Option<String>>>,
+    /// What each `open_conversation` was asked to rejoin, in order.
+    ///
+    /// `None` for a conversation being started; a name for one being taken
+    /// back over.
+    pub(crate) rejoined: Mutex<Vec<Option<String>>>,
     /// When set, enumeration fails. Models a provider that cannot be asked,
     /// which must never be read as a provider running nothing.
     pub(crate) refuse_list: bool,
@@ -103,6 +108,7 @@ impl Default for FakeAdapter {
             handovers: Mutex::default(),
             refuse_snapshot: false,
             conversation: Mutex::default(),
+            rejoined: Mutex::default(),
             credentials: Mutex::default(),
             capabilities: layer3_adapter::KernelCapabilities {
                 conversation: false,
@@ -217,13 +223,20 @@ impl KernelAdapter for FakeAdapter {
     async fn open_conversation(
         &self,
         _handle: &RuntimeHandle,
-        _options: &layer3_adapter::RuntimeOptions,
+        options: &layer3_adapter::RuntimeOptions,
     ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
         if !self.capabilities.conversation {
             return Err(AdapterError::Unsupported(
                 "this kernel does not hold a conversation".into(),
             ));
         }
+        // Recorded so a test can ask what the core said, which is the whole
+        // question when a control plane takes a live runtime back over:
+        // rejoining what is running, or opening a second one beside it.
+        self.rejoined
+            .lock()
+            .await
+            .push(options.resume_conversation.clone());
         let (channel, held) = crate::conversation_support::FakeConversation::open();
         *self.conversation.lock().await = Some(held);
         Ok(channel)
