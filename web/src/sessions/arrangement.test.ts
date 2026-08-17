@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_VIEW_MODE, loadViewMode, saveViewMode } from './mode';
+import { DEFAULT_ARRANGEMENT, loadArrangement, saveArrangement } from './arrangement';
 
 const KEY = 'chrono-bot:view-mode';
 
@@ -8,18 +8,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('view mode preference', () => {
+describe('arrangement preference', () => {
   it('defaults to tabs when nothing is stored', () => {
-    expect(loadViewMode()).toBe('tabs');
-    expect(DEFAULT_VIEW_MODE).toBe('tabs');
+    expect(loadArrangement()).toBe('tabs');
+    expect(DEFAULT_ARRANGEMENT).toBe('tabs');
   });
 
   it('round-trips a stored choice', () => {
-    saveViewMode('canvas');
-    expect(loadViewMode()).toBe('canvas');
+    saveArrangement('canvas');
+    expect(loadArrangement()).toBe('canvas');
 
-    saveViewMode('tabs');
-    expect(loadViewMode()).toBe('tabs');
+    saveArrangement('tabs');
+    expect(loadArrangement()).toBe('tabs');
   });
 
   it('ignores a value it does not recognise', () => {
@@ -27,7 +27,7 @@ describe('view mode preference', () => {
     // written this. It must not become the mode.
     window.localStorage.setItem(KEY, 'split-screen');
 
-    expect(loadViewMode()).toBe(DEFAULT_VIEW_MODE);
+    expect(loadArrangement()).toBe(DEFAULT_ARRANGEMENT);
   });
 
   it('falls back to the default when reading throws', () => {
@@ -38,7 +38,7 @@ describe('view mode preference', () => {
       throw new DOMException('denied', 'SecurityError');
     });
 
-    expect(loadViewMode()).toBe(DEFAULT_VIEW_MODE);
+    expect(loadArrangement()).toBe(DEFAULT_ARRANGEMENT);
   });
 
   it('does not throw when writing fails', () => {
@@ -47,7 +47,7 @@ describe('view mode preference', () => {
     });
 
     expect(() => {
-      saveViewMode('canvas');
+      saveArrangement('canvas');
     }).not.toThrow();
   });
 });

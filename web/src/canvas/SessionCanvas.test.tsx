@@ -7,6 +7,7 @@ import { MAX_LIVE_NODES } from './layout';
 import type { LiveSession } from '../sessions/live';
 import type { Session, SessionLifecycle } from '../sessions/types';
 import type { TerminalDriver } from '../terminal/types';
+import { unattachedNote } from './layout';
 
 /**
  * Recording drivers rather than a real one: what these tests assert is where
@@ -322,14 +323,24 @@ describe('SessionCanvas and what a session allows', () => {
 describe('SessionCanvas attachment budget', () => {
   const OVER = MAX_LIVE_NODES + 1;
 
-  it('leaves the sessions past the budget detached, and says how many', () => {
+  it('leaves the sessions past the budget detached, and says so on the node', () => {
     const { nodes, attached } = makeFleet(OVER);
     render(<Harness nodes={nodes} initialFocus="s-0" />);
 
     expect(attached.size).toBe(MAX_LIVE_NODES);
     expect(screen.getAllByText(/^Not attached\./)).toHaveLength(1);
-    // Silent truncation is the thing this view must not do.
-    expect(screen.getByRole('status')).toHaveTextContent(`1 of ${OVER} sessions are not attached`);
+  });
+
+  it('states what the budget cost, for the status band to carry', () => {
+    // §13: truncation is never silent. The count belongs in the status band,
+    // which is the one part of the page that cannot be panned out of sight —
+    // so the canvas reports it rather than drawing its own line beneath a
+    // viewport somebody can scroll away from.
+    expect(unattachedNote(OVER, MAX_LIVE_NODES)).toBe(
+      `1 of ${OVER} sessions not attached, to bound what this page costs — select one to attach it`,
+    );
+    expect(unattachedNote(MAX_LIVE_NODES, MAX_LIVE_NODES)).toBeUndefined();
+    expect(unattachedNote(3, 3)).toBeUndefined();
   });
 
   it('attaches a detached node when it is focused', async () => {

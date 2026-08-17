@@ -67,6 +67,12 @@
   --press-card-rest: 5px 5px 0 0 var(--press-ink), inset 0 0 0 1px var(--rule);
   --press-card-hover: 2px 2px 0 0 var(--press-ink), inset 0 0 0 1px var(--rule-2);
   --press-none: inset 0 0 0 1px var(--rule);
+  /*
+   * §13's focused canvas node: "the impression in accent". The card impression
+   * with the accent taking both its offset and its inset edge, so focus
+   * changes hue where hover changed only weight.
+   */
+  --press-card-accent: 5px 5px 0 0 var(--accent-edge), inset 0 0 0 1px var(--accent);
   --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
 
   /*
