@@ -107,6 +107,19 @@ pub enum EventKind {
         /// the moment an explanation is worth most.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// The ability this session lacked, when that is what stopped it.
+        ///
+        /// Named, beside the prose rather than inside it. A refusal is
+        /// arrived at typed — the core knows *which* ability was missing —
+        /// and flattening it into a sentence throws away the only part a
+        /// caller could act on. `API_Overview.md` rule 4 asks errors to name
+        /// what is missing, and a sentence containing the word does not
+        /// satisfy that: nothing downstream can read a sentence.
+        ///
+        /// Absent for every failure that was not a refusal, which is most of
+        /// them. A provider that was merely unreachable lacks nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability: Option<String>,
     },
     /// A turn began.
     TurnStarted,
@@ -299,6 +312,7 @@ mod tests {
             status: SessionStatus::Ready,
             stop_reason: None,
             detail: None,
+            capability: None,
         };
         let json = serde_json::to_value(&e).expect("serializes");
         assert_eq!(json["type"], "status_changed");
@@ -315,6 +329,7 @@ mod tests {
             status: SessionStatus::Idle,
             stop_reason: Some(StopReason::RequiresAction),
             detail: None,
+            capability: None,
         };
         let json = serde_json::to_value(&e).expect("serializes");
         assert_eq!(json["stop_reason"], "requires_action");
@@ -335,6 +350,7 @@ mod tests {
                 status: SessionStatus::Ready,
                 stop_reason: None,
                 detail: None,
+                capability: None,
             },
             EventKind::TurnStarted,
             EventKind::TurnCompleted,
