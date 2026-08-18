@@ -15,7 +15,7 @@ import type { AguiEvent, Interrupt } from '../agui';
  */
 
 /** One thing in the stream, in the order it happened. */
-export type Entry = MessageEntry | ToolCallEntry | GapEntry | UnknownEntry;
+export type Entry = MessageEntry | ToolCallEntry | GapEntry | FailureEntry | UnknownEntry;
 
 export interface MessageEntry {
   readonly kind: 'message';
@@ -60,6 +60,36 @@ export interface GapEntry {
    * a second thing that went wrong.
    */
   readonly movedTo?: string;
+  readonly seq: number;
+}
+
+/**
+ * A run that stopped badly — §18.9.
+ *
+ * In the stream rather than in a band above it, because a failure has a
+ * position: it happened after the last tool call and before nothing. §18.6
+ * already settles this for the other kind of boundary, and a failure hoisted
+ * out of the stream loses the one thing that says what the agent was doing
+ * when it stopped.
+ *
+ * A rotation never becomes one of these. It ends the run and reaches this
+ * client on the same frame, but nothing has gone wrong and §11 forbids it
+ * taking the failure ink.
+ */
+export interface FailureEntry {
+  readonly kind: 'failure';
+  readonly id: string;
+  /** What failed, in the kernel's own words. */
+  readonly message: string;
+  /**
+   * The ability the session lacked, when the failure was a refusal.
+   *
+   * Named rather than described. An interface that renders this as "something
+   * went wrong" has thrown away the only part a person could act on.
+   */
+  readonly capability?: string;
+  /** The stop reason, as the API spells it. */
+  readonly code?: string;
   readonly seq: number;
 }
 
@@ -124,12 +154,35 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
       };
     }
 
-    case 'RUN_ERROR':
+    case 'RUN_ERROR': {
+      /*
+       * A session being carried onto a replacement runtime, or onto the other
+       * plane, ends the run on this same frame: its runtime is being torn
+       * down, and a client left holding a stream that simply stops cannot
+       * tell that from an agent taking its time. Nothing has gone wrong, so
+       * it is neither drawn nor recorded as a failure — §11 forbids a
+       * rotating session taking the failure ink, and §18.6 already says how
+       * the boundary itself is drawn. The turn really has ended either way.
+       */
+      if (event.returns) {
+        return { ...state, turnInFlight: false };
+      }
       return {
         ...state,
         turnInFlight: false,
         error: { message: event.message, capability: event.capability },
+        // Also an entry, so it is drawn where it happened. `error` alone is
+        // what this client had, and nothing read it.
+        entries: appendOnce(state.entries, {
+          kind: 'failure',
+          id: `failure-${String(event.seq)}`,
+          message: event.message,
+          capability: event.capability,
+          code: event.code,
+          seq: event.seq,
+        }),
       };
+    }
 
     case 'TEXT_MESSAGE_START':
       return upsertMessage(state, {
@@ -216,10 +269,21 @@ export function fold(events: Iterable<AguiEvent>, from: Conversation = EMPTY): C
 }
 
 function append(state: Conversation, entry: Entry): Conversation {
-  if (state.entries.some((existing) => existing.kind === entry.kind && existing.id === entry.id)) {
-    return state;
+  return { ...state, entries: appendOnce(state.entries, entry) };
+}
+
+/**
+ * Add an entry unless one of that kind and id is already there.
+ *
+ * The idempotence the whole reducer turns on: an event folded twice — which
+ * the deduplication above cannot rule out across a reconnect — must not
+ * produce two entries.
+ */
+function appendOnce(entries: readonly Entry[], entry: Entry): readonly Entry[] {
+  if (entries.some((existing) => existing.kind === entry.kind && existing.id === entry.id)) {
+    return entries;
   }
-  return { ...state, entries: [...state.entries, entry] };
+  return [...entries, entry];
 }
 
 function upsertMessage(state: Conversation, message: MessageEntry): Conversation {
