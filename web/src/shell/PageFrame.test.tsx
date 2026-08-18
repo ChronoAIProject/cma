@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PageFrame } from './PageFrame';
 import { ViewSwitch } from './ViewSwitch';
 
@@ -54,26 +54,12 @@ describe('the page frame', () => {
     expect(text).toEqual(['Zone', 'SGT', '4 sessions · 1 live', 'Build', 'dev']);
   });
 
-  it('divides the band to match the page columns', () => {
-    // §6: in a multi-column view the band's 40px is shared by the columns'
-    // own footers, and the rule still runs across. One band divided rather
-    // than a footer per column, so two footers cannot drift apart.
-    const single = renderFrame().container.querySelector('.statusband__lead');
-    expect(single).toBeNull();
-
-    const { container } = renderFrame({ leadingColumn: 'var(--rail-width)' });
-    const lead = container.querySelector('.statusband__lead');
-    // The cell exists so the band's first vertical rule continues the rail's,
-    // and holds nothing that must be read: a collapsed rail is 48px wide, and
-    // a fact that disappears when a panel collapses is a fact collapsing cost
-    // somebody, which §7 forbids.
-    expect(lead?.textContent).toBe('');
-    expect(lead).toHaveAttribute('aria-hidden', 'true');
-    // The band still reads in §6's order: the zone leads, the build is last.
-    const text = [
-      ...container.querySelectorAll('.statusband .band__label, .statusband .band__value'),
-    ].map((node) => node.textContent);
-    expect(text).toEqual(['Zone', 'SGT', '4 sessions · 1 live', 'Build', 'dev']);
+  it('draws the band undivided, whatever columns the page has', () => {
+    // §6: one band across the whole window. It no longer divides into
+    // per-column cells, because the columns no longer draw their own footers.
+    const { container } = renderFrame();
+    expect(container.querySelector('.statusband__lead')).toBeNull();
+    expect(container.querySelector('.statusband__cell')).toBeNull();
   });
 
   it('states what it is not showing when the page says so', () => {
@@ -83,14 +69,26 @@ describe('the page frame', () => {
     expect(screen.getByText('3 sessions unattached')).toBeInTheDocument();
   });
 
-  it('carries the command field disabled, saying why', () => {
-    // §6 names the field; nothing in the document says what it does. §7:
-    // controls are disabled, never removed, and every disabled control states
-    // why. Accepting text it would silently drop is the worse answer.
-    renderFrame();
-    const command = screen.getByLabelText('Command');
-    expect(command).toBeDisabled();
-    expect(command).toHaveAttribute('placeholder', expect.stringContaining('not yet available'));
+  it('draws the command trigger as a real control, never disabled', () => {
+    // §6: the trigger is a working control with its key hint. A page with no
+    // command bar to open draws no trigger — absent, never a dead field.
+    expect(renderFrame().container.querySelector('.topbar__trigger')).toBeNull();
+
+    const onCommand = vi.fn();
+    renderFrame({ onCommand });
+    const trigger = screen.getByRole('button', {
+      name: /find a session, or type a command/i,
+    });
+    expect(trigger).toBeEnabled();
+    expect(trigger.textContent).toContain('⌘K');
+  });
+
+  it('carries the live count beside the account control', () => {
+    // §6's bar order ends: … the live count, the account control. The count
+    // is data — absent when the page has no sessions to count.
+    expect(renderFrame().container.querySelector('.topbar__live')).toBeNull();
+    const { container } = renderFrame({ live: 2 });
+    expect(container.querySelector('.topbar__live')?.textContent).toContain('2 live');
   });
 
   it('gives the page its own surface in the body', () => {
