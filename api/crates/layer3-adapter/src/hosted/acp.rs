@@ -310,10 +310,7 @@ impl Bridge {
                     Ok(waiting) => {
                         tokio::spawn(async move {
                             let ended = match waiting.await {
-                                Ok(result) => serde_json::from_value::<PromptResponse>(result)
-                                    .unwrap_or_else(|_| {
-                                        PromptResponse::new(crate::TurnStopReason::EndTurn)
-                                    }),
+                                Ok(frame) => turn_outcome(frame),
                                 // The bridge went away mid-turn. Reported as a
                                 // cancellation rather than as an ending: the
                                 // turn did not finish, and the core closes it
@@ -435,6 +432,45 @@ impl Bridge {
             .send(Message::Binary(framed))
             .await
             .map_err(|e| AdapterError::Unavailable(format!("conversation write failed: {e}")))
+    }
+}
+
+/// Read how a turn ended out of the bridge's answer.
+///
+/// The answer is the whole JSON-RPC frame — `inbound` hands the receiver what
+/// it read, and `call` is what usually unwraps `result`. This path did not, and
+/// deserialized the envelope itself into a `PromptResponse`. That could only
+/// fail, so every turn was reported as having ended normally: a refusal, a
+/// context limit and a cancellation all arrived as `end_turn`, and so did an
+/// error. A turn that failed looked exactly like a turn that finished.
+///
+/// Three cases, and each is said rather than flattened:
+///
+/// * an error — the turn did not finish, and reporting an ending would tell
+///   the owner their agent had answered when it had not;
+/// * a result that reads — the kernel's own stop reason, which is the whole
+///   point of the field;
+/// * a result that does not — recorded loudly and ended, because a turn that
+///   is over must be closed either way or the session sits `running` forever.
+fn turn_outcome(frame: serde_json::Value) -> PromptResponse {
+    if let Some(error) = frame.get("error") {
+        tracing::warn!(%error, "the bridge refused a prompt");
+        return PromptResponse::new(crate::TurnStopReason::Refusal);
+    }
+    let Some(result) = frame.get("result") else {
+        tracing::warn!(answer = %frame, "a prompt was answered with neither a result nor an error");
+        return PromptResponse::new(crate::TurnStopReason::EndTurn);
+    };
+    match serde_json::from_value::<PromptResponse>(result.clone()) {
+        Ok(ended) => ended,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                answer = %result,
+                "a turn ended in a way this build cannot read; treating it as finished"
+            );
+            PromptResponse::new(crate::TurnStopReason::EndTurn)
+        }
     }
 }
 

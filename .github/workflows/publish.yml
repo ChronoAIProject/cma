@@ -314,3 +314,68 @@ jobs:
             --title "$VERSION" \
             --notes-file "$RUNNER_TEMP/release.md" \
             --verify-tag
+
+  # ── Carry the release merge back to develop ──────────────────────────────
+  #
+  # Merging develop into main creates a merge commit *on main* that develop
+  # never receives, so main ends every release one commit ahead. The next
+  # release PR then reads BEHIND and cannot merge until somebody notices and
+  # back-merges by hand.
+  #
+  # That happened after v0.1.0 (#196), after v0.2.0 (#221) and after v0.3.0
+  # (#239) — three releases, three identical manual fixes, each one clearing
+  # the instance and none of them the cause. This is the cause.
+  #
+  # A pull request rather than a push: develop is protected, and §"Never force
+  # push" is not negotiable for a convenience. A conflicting back-merge is left
+  # open rather than resolved, because a conflict means develop moved during
+  # the release and guessing at it is how a release silently reverts something.
+  back-merge:
+    name: Back-merge into develop
+    needs: [plan, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Open or update the back-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Nothing to do when develop already contains this commit, which is
+          # the case for a release cut from a develop that nothing has moved.
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/develop; then
+            echo "develop already contains $VERSION; nothing to carry back"
+            exit 0
+          fi
+
+          branch="chore/back-merge-$VERSION"
+          git checkout -B "$branch" origin/develop
+          if ! git merge --no-edit "$GITHUB_SHA"; then
+            # Left for a person. develop moved during the release, and a
+            # resolution chosen here could revert something silently.
+            git merge --abort
+            echo "::error::$VERSION conflicts with develop; back-merge by hand"
+            exit 1
+          fi
+          git push origin "$branch"
+
+          gh pr create --base develop --head "$branch" \
+            --title "chore: take $VERSION's release merge back into develop" \
+            --body "Opened by the publish workflow.
+
+          Merging \`develop\` into \`main\` leaves a merge commit on \`main\` that
+          \`develop\` never receives, so every release ends with \`main\` one commit
+          ahead and the next release PR reading \`BEHIND\`.
+
+          Carries no content — only the merge commit." \
+            || echo "a back-merge pull request is already open"

@@ -148,6 +148,14 @@ pub(super) async fn run(
                             mode: layer2_core::SessionMode::Conversation,
                             ..Default::default()
                         },
+                        // Said explicitly, because `options` is filled in from
+                        // the profile or the deployment and what is set above
+                        // is discarded. This interface holds conversations and
+                        // nothing else, so a thread it creates has to be one —
+                        // and without this it created a terminal session on a
+                        // deployment defaulting to terminal, then refused it
+                        // for lacking the ability it had just asked for.
+                        requested_mode: Some(layer2_core::SessionMode::Conversation),
                         subject_credential: credential.map(|axum::Extension(c)| c.0),
                     },
                 )
