@@ -367,16 +367,19 @@ impl SessionService {
             tracing::warn!(session_id = %id, error = %e, "cannot record progress");
             return;
         }
-        if let Err(e) = self
-            .store
-            .append_events(&[Event {
-                session_id: id.clone(),
-                seq,
-                kind: EventKind::Progress { stage },
-            }])
+        if self
+            .append_durably(
+                id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind: EventKind::Progress { stage },
+                }],
+            )
             .await
+            .is_err()
         {
-            tracing::warn!(session_id = %id, error = %e, "cannot append progress");
+            tracing::warn!(session_id = %id, "cannot append progress");
         }
     }
 
