@@ -166,17 +166,13 @@ export function SessionRail({
        * rule still runs straight across every column.
        */}
       <div className="band rail__chrome">
-        <button
-          type="button"
-          className="button button--block press--quiet rail__new"
-          onClick={onCreate}
-        >
+        <button type="button" className="button button--block rail__new" onClick={onCreate}>
           <span aria-hidden="true">+</span> New session
         </button>
         <div className="rail__filters">
           <button
             type="button"
-            className="button button--sm press--quiet"
+            className="button button--sm"
             onClick={() => {
               onReorder(order === 'newest' ? 'oldest' : 'newest');
             }}

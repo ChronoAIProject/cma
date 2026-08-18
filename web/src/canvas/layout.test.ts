@@ -142,12 +142,12 @@ describe('the node geometry', () => {
   });
 
   it('draws focus in accent and hover in weight, so the two cannot be confused', () => {
-    // §13's table: hover changes weight within the neutral ramp; focus changes
-    // hue and takes the impression in accent.
+    // §13's table: hover changes weight within the neutral ramp; focus
+    // changes hue and takes the --focus-node halo.
     const css = readFileSync(resolve(process.cwd(), 'src/canvas/SessionCanvas.css'), 'utf8');
     expect(css).toMatch(/\.node:hover\s*\{\s*border-color: var\(--rule-2\);\s*\}/);
     expect(css).toMatch(
-      /\.node\[data-focused='true'\]\s*\{[^}]*border-color: var\(--accent\)[^}]*box-shadow: var\(--press-card-accent\)/,
+      /\.node\[data-focused='true'\]\s*\{[^}]*border-color: var\(--accent\)[^}]*box-shadow: var\(--focus-node\)/,
     );
   });
 });
