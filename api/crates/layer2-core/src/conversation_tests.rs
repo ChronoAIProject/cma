@@ -182,3 +182,107 @@ async fn a_tool_calls_kind_is_recorded_as_the_protocol_spells_it() {
         "the recorded kind must be the protocol's own spelling"
     );
 }
+
+#[tokio::test]
+async fn the_first_turn_after_a_session_settles_reaches_the_log() {
+    // The production failure, in the shape a client actually meets it: create
+    // a session, wait for it to say it is ready, send the first thing. The
+    // turn ran and the log held nothing, so the client watched a stream that
+    // never carried a message and never ended.
+    //
+    // Two writers had numbered it. Provisioning's closing `ready` was written
+    // against the record after the last flush, and the entry's copy of the
+    // position had not moved, so the very next thing the conversation logged
+    // claimed a sequence the session already had. The index refused the batch
+    // and every event in it was lost — not delayed, lost, and the durable log
+    // is what `API_Overview.md` makes the thing a client recovers from.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(chunk("hi back"))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::MessageCommitted { content } if content == "hi back"
+        ))
+        .await,
+        "the first thing said after a session settles must be in its log"
+    );
+
+    // And the log is still a sequence: one event per number, in order, with
+    // nothing standing in two places. A duplicate here would mean a resuming
+    // client silently skipped or repeated part of its own history.
+    let logged = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("the log is readable");
+    let mut seqs: Vec<u64> = logged.iter().map(|e| e.seq).collect();
+    let numbered = seqs.len();
+    seqs.dedup();
+    assert_eq!(seqs.len(), numbered, "no two events may share a sequence");
+    assert!(seqs.windows(2).all(|w| w[0] < w[1]), "and they must ascend");
+}
+
+#[tokio::test]
+async fn what_a_session_records_as_its_position_is_never_behind_its_log() {
+    // How the collision was reachable at all. Both writers took their next
+    // number from the position on the record, so a record left behind the log
+    // handed the same number out twice — and after a restart it would do it
+    // again, to a process with no memory of what it had already issued.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::ToolCall(
+                layer3_adapter::ToolCall::new(
+                    layer3_adapter::ToolCallId::new("call-1"),
+                    "read a file".to_string(),
+                ),
+            )))
+            .await
+            .expect("the core is listening");
+    }
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ToolCallStarted { .. }
+        ))
+        .await
+    );
+
+    let highest = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("the log is readable")
+        .iter()
+        .map(|e| e.seq)
+        .max()
+        .expect("a settled session has a log");
+    let recorded = svc
+        .get_session(&alice, &id)
+        .await
+        .expect("the session is readable")
+        .last_seq;
+
+    assert!(
+        recorded >= highest,
+        "the record says {recorded} and the log reaches {highest}; a process starting \
+         from that record would hand out numbers the log already has"
+    );
+}
