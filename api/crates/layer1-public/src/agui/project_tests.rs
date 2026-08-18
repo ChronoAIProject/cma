@@ -183,11 +183,77 @@ fn a_session_that_stops_working_says_so_rather_than_going_quiet() {
             status: SessionStatus::Idle,
             stop_reason: Some(reason),
             detail: Some("the model endpoint refused".into()),
+            capability: None,
         });
         assert_eq!(kinds(&p), vec!["RUN_ERROR"], "for {reason:?}");
         assert_eq!(p.ending, Some(Ending::Failed), "for {reason:?}");
         assert_eq!(p.events[0].body["message"], "the model endpoint refused");
     }
+}
+
+#[test]
+fn a_refusal_names_the_ability_the_session_lacked() {
+    // `API_Overview.md` rule 4: errors name what is missing. The core arrives
+    // at a refusal typed and knows which ability it was; a client handed only
+    // "something went wrong" has been given the one part it cannot act on.
+    let p = projected(EventKind::StatusChanged {
+        status: SessionStatus::Terminated,
+        stop_reason: Some(StopReason::Error),
+        detail: Some("this session's runtime can no longer be what it is".into()),
+        capability: Some("conversation".into()),
+    });
+
+    assert_eq!(kinds(&p), vec!["RUN_ERROR"]);
+    assert_eq!(p.events[0].body["capability"], "conversation");
+}
+
+#[test]
+fn a_failure_that_was_not_a_refusal_names_nothing() {
+    // Most failures lack nothing — a provider that could not be reached is
+    // not a session missing an ability. A name invented for those would be
+    // read as one, and acted on.
+    let p = projected(EventKind::StatusChanged {
+        status: SessionStatus::Terminated,
+        stop_reason: Some(StopReason::Error),
+        detail: Some("could not provision a runtime".into()),
+        capability: None,
+    });
+
+    assert!(
+        p.events[0].body["capability"].is_null(),
+        "got {}",
+        p.events[0].body
+    );
+}
+
+#[test]
+fn a_session_being_moved_says_it_is_coming_back_and_a_failure_does_not() {
+    // Both end the run, and the protocol has one event for that. `Web_Style`
+    // §11 forbids a rotating session taking the failure ink, so a client has
+    // to be able to tell them apart — and until this it could not.
+    let moving = projected(EventKind::StatusChanged {
+        status: SessionStatus::Rotating,
+        stop_reason: None,
+        detail: Some("moving this session to the other plane".into()),
+        capability: None,
+    });
+    assert_eq!(
+        moving.events[0].body["chrono:returns"], true,
+        "a handover is not a failure: {}",
+        moving.events[0].body
+    );
+
+    let failed = projected(EventKind::StatusChanged {
+        status: SessionStatus::Terminated,
+        stop_reason: Some(StopReason::Error),
+        detail: Some("the runtime went away".into()),
+        capability: None,
+    });
+    assert_eq!(
+        failed.events[0].body["chrono:returns"], false,
+        "and a failure is not a handover: {}",
+        failed.events[0].body
+    );
 }
 
 #[test]
@@ -199,6 +265,7 @@ fn going_idle_to_wait_for_a_person_does_not_end_the_run_twice() {
         status: SessionStatus::Idle,
         stop_reason: Some(StopReason::RequiresAction),
         detail: None,
+        capability: None,
     });
     assert!(p.events.is_empty(), "got {:?}", kinds(&p));
     assert!(p.ending.is_none());
@@ -280,6 +347,7 @@ fn a_session_being_moved_ends_the_run_rather_than_going_silent() {
         detail: Some(
             "moving this session to the other plane; it will come back where it left off".into(),
         ),
+        capability: None,
     });
 
     assert_eq!(kinds(&p), vec!["RUN_ERROR"]);

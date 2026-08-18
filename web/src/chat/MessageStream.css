@@ -146,6 +146,57 @@
   font-size: var(--text-sm);
 }
 
+/* ── A run that stopped badly, §18.9 ─────────────────────────────────────
+ *
+ * In the stream, where it happened. The label carries `--fail` *and* says the
+ * word: §2 forbids colour as the only carrier, and a reader who cannot
+ * distinguish the ink must still be able to read what happened.
+ */
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--fail);
+  border-radius: var(--radius);
+}
+
+.failure__label {
+  color: var(--fail);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.failure__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.failure__message {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-base);
+}
+
+/* The named ability. Ink-1 like the message: it is the actionable half, not a
+ * footnote. */
+.failure__named {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-base);
+}
+
+/* The API's own spelling, for somebody reading a report rather than a screen. */
+.failure__code {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
 /* ── Agent-emitted content, §1 and §18.1 ─────────────────────────────────
  *
  * The frame is styled and the content is not. No colour is applied here — not

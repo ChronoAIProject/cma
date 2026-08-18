@@ -147,6 +147,33 @@ function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: bool
         </div>
       );
 
+    case 'failure':
+      /*
+       * §18.9. Drawn in the stream at the point it stopped, never in place of
+       * the surface: what the agent had already done stays readable, and a
+       * failure hoisted into a band loses the one thing that says what it was
+       * doing when it stopped.
+       *
+       * The word carries the meaning and the ink only reinforces it — §2
+       * forbids colour alone. The capability is named where there is a name,
+       * because "something went wrong" is the one part of a refusal nobody
+       * can act on.
+       */
+      return (
+        <div className="failure" role="status">
+          <span className="failure__label">Run failed</span>
+          <div className="failure__body">
+            <p className="failure__message">{entry.message}</p>
+            {entry.capability === undefined ? null : (
+              <p className="failure__named">
+                This session cannot <b>{entry.capability}</b>.
+              </p>
+            )}
+            {entry.code === undefined ? null : <span className="failure__code">{entry.code}</span>}
+          </div>
+        </div>
+      );
+
     case 'unknown':
       /*
        * Shown rather than dropped. The emitted set grows additively, and a

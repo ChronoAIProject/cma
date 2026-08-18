@@ -403,6 +403,7 @@ impl SessionService {
                         status: SessionStatus::Provisioning,
                         stop_reason: None,
                         detail: None,
+                        capability: None,
                     },
                 },
                 Event {
