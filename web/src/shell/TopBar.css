@@ -30,9 +30,9 @@
 }
 
 /*
- * The wordmark — §17: Geist 500, lowercase, at the display tracking. Set
- * beside the mark rather than in place of it, so the product is legible when
- * the geometry alone would not be.
+ * The wordmark — §17: the interface face, 500, lowercase, at the display
+ * tracking. Set beside the mark rather than in place of it, so the product is
+ * legible when the geometry alone would not be.
  */
 .topbar__name {
   font-size: var(--text-md);
