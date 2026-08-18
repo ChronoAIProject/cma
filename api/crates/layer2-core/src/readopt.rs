@@ -180,11 +180,20 @@ impl SessionService {
             )));
         };
 
+        /*
+         * Settled before anything is attached, for the same reason
+         * provisioning settles it: a session recorded before this model
+         * existed holds nothing, and a session that holds nothing is refused
+         * at every gate that asks — including the one behind every keystroke.
+         * Copying the record verbatim here is what left it that way.
+         */
+        let capabilities = self.settle_capabilities(&record.session, &adapter).await?;
+
         // Whichever plane this session was granted, and only that one — the
         // same rule provisioning follows, and for the same reason: the two are
         // exclusive, and a conversation session picked back up as a terminal
         // one is a session that is listed, intact, and unusable.
-        let conversing = record.session.capabilities.conversation;
+        let conversing = capabilities.conversation;
         let unreachable = |e: layer3_adapter::AdapterError| {
             // The sandbox is genuinely gone. Say so in terms of what the person
             // can do rather than repeating the provider's wording.
@@ -248,8 +257,10 @@ impl SessionService {
         let screen: Arc<Mutex<Box<dyn ScreenModel>>> = Arc::new(Mutex::new(model));
         let captured_len = screen.lock().await.repaint_bytes().len();
 
+        let mut adopted = record.session.clone();
+        adopted.capabilities = capabilities;
         let entry = SessionEntry {
-            session: record.session.clone(),
+            session: adopted,
             subject_credential: None,
             events: Vec::new(),
             screen: Arc::clone(&screen),
