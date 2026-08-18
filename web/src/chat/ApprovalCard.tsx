@@ -51,26 +51,29 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
 
   return (
     <section className="approval" aria-label="Approval requested">
+      {/* The eyebrow — §18.3: approval, then the kernel's own reason. */}
+      <p className="approval__eyebrow">approval · {interrupt.reason}</p>
+
       {/*
-       * What the kernel wants, in the kernel's own words. Verbatim: a kernel
-       * that says "Run `rm -rf build/`?" is asking about that command, and
-       * rewording it into a category loses the one detail the decision turns
-       * on.
+       * What the kernel wants, in the kernel's own words, as the largest type
+       * on the surface — it is the sentence the decision turns on. Verbatim:
+       * a kernel that says "Run `rm -rf build/`?" is asking about that
+       * command, and rewording it into a category loses the one detail the
+       * decision turns on.
        */}
       <p className="approval__question">{interrupt.message}</p>
-
-      {/* Why, when the kernel said — its own name for the kind of thing. */}
-      <p className="approval__reason">{interrupt.reason}</p>
 
       {/*
        * The answers the kernel offered, rendered from what arrived. A kernel
        * offering three renders three; this component has no opinion about how
-       * many there are or what they are called.
+       * many there are or what they are called. Beside them, the fact that
+       * makes it safe to take a moment: nothing else is waiting on this.
        */}
       <div className="approval__answers">
         {answers.map((answer) => (
           <Button
             key={answer.decision}
+            size="md"
             tone={answer.affirmative === true ? 'accent' : 'quiet'}
             disabled={busy}
             onClick={() => {
@@ -80,6 +83,7 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
             {answer.label ?? answer.decision}
           </Button>
         ))}
+        <span className="approval__aside">Your other sessions keep working.</span>
       </div>
     </section>
   );

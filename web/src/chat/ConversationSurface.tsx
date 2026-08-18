@@ -117,13 +117,14 @@ export function ConversationSurface({
   return (
     <section className="conversation" aria-label="Conversation">
       {refusal === undefined ? null : (
-        <div className="band conversation__refusal" role="alert">
-          <span className="band__value">{refusal}</span>
+        <div className="notice notice--fail conversation__refusal" role="alert">
+          <span className="notice__detail">{refusal}</span>
         </div>
       )}
 
       <MessageStream
         entries={conversation.entries}
+        kernel={session.kernel}
         turnInFlight={conversation.turnInFlight}
         live={conversation.live}
         reasoning={conversation.reasoning}
@@ -140,21 +141,27 @@ export function ConversationSurface({
         }
       />
 
-      <Composer
-        capabilities={capabilities}
-        turnInFlight={conversation.turnInFlight}
-        refusedReason={state.interactive ? undefined : reason}
-        busy={busy}
-        onSend={(text) => {
-          void attempt(() => client.prompt(text, runId()));
-        }}
-        onInterrupt={() => {
-          void attempt(() => client.interrupt());
-        }}
-      />
-
-      <div className="band band--foot conversation__foot">
-        <Usage granted={capabilities.usage} usage={conversation.usage} />
+      {/*
+       * The composer card at the foot of the reading column, and usage
+       * beneath it, outside its card — §18.4 and §18.5. The same centred
+       * column as the stream, so the card sits under the turns it answers.
+       */}
+      <div className="conversation__foot">
+        <div className="conversation__footcolumn">
+          <Composer
+            capabilities={capabilities}
+            turnInFlight={conversation.turnInFlight}
+            refusedReason={state.interactive ? undefined : reason}
+            busy={busy}
+            onSend={(text) => {
+              void attempt(() => client.prompt(text, runId()));
+            }}
+            onInterrupt={() => {
+              void attempt(() => client.interrupt());
+            }}
+          />
+          <Usage granted={capabilities.usage} usage={conversation.usage} />
+        </div>
       </div>
     </section>
   );

@@ -66,28 +66,32 @@ export function Composer({
   const heldByTurn = turnInFlight && policy === 'reject';
   const canSend = !refused && !heldByTurn && !busy && text.trim().length > 0;
 
-  const note = refused ? refusedReason : turnInFlight ? POLICY_SAYS[policy] : undefined;
+  /*
+   * §18.4: a composer on a session that cannot take input refuses, and says
+   * why — a dashed-border card carrying the reason and what to do instead.
+   * It is never merely inert.
+   */
+  if (refused) {
+    return (
+      <div className="composer composer--refused">
+        <p className="composer__refusal" role="status">
+          {refusedReason}
+        </p>
+      </div>
+    );
+  }
+
+  const note = turnInFlight ? POLICY_SAYS[policy] : undefined;
 
   return (
-    <div className="composer">
-      {/*
-       * The reason on the surface, beside the key, and never in a tooltip
-       * (§7) — unreachable by touch and invisible to anyone scanning.
-       */}
-      {note === undefined ? null : (
-        <p className="composer__note" role="status">
-          {note}
-        </p>
-      )}
-
-      <div className="composer__row">
+    <div className="composer-block">
+      <div className="composer">
         <textarea
-          className="field__control composer__field"
+          className="composer__field"
           aria-label="Message"
           rows={1}
           value={text}
-          disabled={refused}
-          placeholder={refused ? 'This session cannot take input' : 'Say what you want done'}
+          placeholder="Say what you want done"
           onChange={(event) => {
             setText(event.target.value);
           }}
@@ -104,37 +108,56 @@ export function Composer({
         />
 
         {/*
-         * Interrupt is offered only while a turn is in flight, and only on a
-         * session granted it — a kernel that cannot withdraw a prompt is
-         * refused by name rather than left waiting for something that will
-         * not happen.
+         * The card's control row: what the session's own policy means, then
+         * interrupt while a turn is in flight, then the primary send. The
+         * sentence is on the surface beside the key, never in a tooltip (§7).
          */}
-        {turnInFlight && capabilities.interrupt ? (
-          <Button disabled={busy} onClick={onInterrupt}>
-            Interrupt
-          </Button>
-        ) : null}
+        <div className="composer__row">
+          {note === undefined ? null : (
+            <span className="composer__note" role="status">
+              {note}
+            </span>
+          )}
+          {/*
+           * §18.4: a session without `steer` shows no steering affordance at
+           * all. Where it was granted, it is stated as a tag on the
+           * composer's own row.
+           */}
+          {capabilities.steer && turnInFlight ? (
+            <span className="tag composer__steer">steerable</span>
+          ) : null}
+          <span className="composer__spacer" />
 
-        <Button
-          tone="accent"
-          disabled={!canSend}
-          onClick={() => {
-            onSend(text.trim());
-            setText('');
-          }}
-        >
-          Send
-        </Button>
+          {/*
+           * Interrupt is offered only while a turn is in flight, and only on
+           * a session granted it — a kernel that cannot withdraw a prompt is
+           * refused by name rather than left waiting for something that will
+           * not happen.
+           */}
+          {turnInFlight && capabilities.interrupt ? (
+            <Button disabled={busy} onClick={onInterrupt}>
+              Interrupt
+            </Button>
+          ) : null}
+
+          <Button
+            tone="accent"
+            disabled={!canSend}
+            onClick={() => {
+              onSend(text.trim());
+              setText('');
+            }}
+          >
+            Send
+            <kbd className="composer__hint" aria-hidden="true">
+              ↵
+            </kbd>
+          </Button>
+        </div>
       </div>
 
-      {/*
-       * §18.4: a session without `steer` shows no steering affordance at all.
-       * Not a disabled one — there is nothing about the session's state to
-       * explain, and nothing that would ever enable it.
-       */}
-      {capabilities.steer && turnInFlight ? (
-        <p className="composer__steer">This session can be steered mid-turn.</p>
-      ) : null}
+      {/* Stated once, beneath the card — §18.4. */}
+      <p className="composer__keys">Enter sends; Shift+Enter opens a line.</p>
     </div>
   );
 }
