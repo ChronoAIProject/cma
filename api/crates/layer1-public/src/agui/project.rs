@@ -83,6 +83,36 @@ where
     out.serialize_bool(true)
 }
 
+/// Render one event as the frame that goes on the wire.
+///
+/// One function, used by the run stream and by the replay, so the two cannot
+/// come to disagree about the shape a client has to read.
+///
+/// **The frame is deliberately unnamed.** An `EventSource` has no wildcard
+/// listener: a frame carrying an `event:` name is delivered only to a listener
+/// registered for that exact name, so naming them makes a kind the client has
+/// never heard of unreceivable. This service's event set grows additively and
+/// `docs/API_AGUI.md` requires an unrecognised kind to arrive anyway, so it can
+/// be shown rather than dropped — which named frames make impossible.
+///
+/// Nothing is lost by it: the kind travels in the body as `type`, which is what
+/// every client dispatches on and always has.
+pub(super) fn sse_frame(event: &AguiEvent) -> axum::response::sse::Event {
+    let frame = axum::response::sse::Event::default()
+        .json_data(event)
+        // Serialising cannot fail for a shape this crate builds, but a panic
+        // here would take a live stream down; a client reading a run error it
+        // did not expect is survivable and says something went wrong.
+        .unwrap_or_else(|_| axum::response::sse::Event::default().data(r#"{"type":"RUN_ERROR"}"#));
+    // Only where there is one. A liveness frame carries no cursor, and
+    // stamping it with an id would make a client reconnect from a position the
+    // log has never held.
+    match event.cursor() {
+        Some(id) => frame.id(id),
+        None => frame,
+    }
+}
+
 impl AguiEvent {
     /// The SSE id this frame travels under, if it may travel under one.
     ///

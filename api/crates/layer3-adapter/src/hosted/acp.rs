@@ -302,14 +302,15 @@ impl Bridge {
                 // blocking here would stop the caller cancelling it.
                 let params = serde_json::json!({ "sessionId": session, "prompt": content });
                 let updates = updates.clone();
-                match self.begin(params) {
+                // Not through `call`, which is otherwise the way to ask this
+                // bridge something: that one waits under a deadline meant for a
+                // question with a quick answer, and a prompt takes as long as
+                // the model takes.
+                match self.begin("session/prompt", params) {
                     Ok(waiting) => {
                         tokio::spawn(async move {
                             let ended = match waiting.await {
-                                Ok(result) => serde_json::from_value::<PromptResponse>(result)
-                                    .unwrap_or_else(|_| {
-                                        PromptResponse::new(crate::TurnStopReason::EndTurn)
-                                    }),
+                                Ok(frame) => turn_outcome(frame),
                                 // The bridge went away mid-turn. Reported as a
                                 // cancellation rather than as an ending: the
                                 // turn did not finish, and the core closes it
@@ -360,7 +361,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, AdapterError> {
-        let waiting = self.begin(serde_json::json!({ "method": method, "params": params }))?;
+        let waiting = self.begin(method, params)?;
         let frame = tokio::time::timeout(CALL_DEADLINE, waiting)
             .await
             .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
@@ -376,17 +377,28 @@ impl Bridge {
 
     /// Send a request and hand back what will hold its answer.
     ///
+    /// Takes the method rather than accepting a pre-built object, so a request
+    /// without one cannot be constructed. It could before, and one was: the
+    /// prompt passed its parameters straight in, and what went on the wire was
+    /// a JSON-RPC request carrying an id and no method — undispatchable, so
+    /// the agent was never asked anything and every conversation turn opened
+    /// and hung.
+    ///
     /// Registered before it is sent, because the answer can arrive on the read
     /// loop before this function returns.
     fn begin(
         &self,
-        request: serde_json::Value,
+        method: &str,
+        params: serde_json::Value,
     ) -> Result<tokio::sync::oneshot::Receiver<serde_json::Value>, AdapterError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (answer, waiting) = tokio::sync::oneshot::channel();
-        let mut framed = request;
-        framed["jsonrpc"] = serde_json::Value::String("2.0".to_string());
-        framed["id"] = serde_json::Value::from(id);
+        let framed = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
 
         let pending = Arc::clone(&self.pending);
         let sink = Arc::clone(&self.sink);
@@ -420,6 +432,45 @@ impl Bridge {
             .send(Message::Binary(framed))
             .await
             .map_err(|e| AdapterError::Unavailable(format!("conversation write failed: {e}")))
+    }
+}
+
+/// Read how a turn ended out of the bridge's answer.
+///
+/// The answer is the whole JSON-RPC frame — `inbound` hands the receiver what
+/// it read, and `call` is what usually unwraps `result`. This path did not, and
+/// deserialized the envelope itself into a `PromptResponse`. That could only
+/// fail, so every turn was reported as having ended normally: a refusal, a
+/// context limit and a cancellation all arrived as `end_turn`, and so did an
+/// error. A turn that failed looked exactly like a turn that finished.
+///
+/// Three cases, and each is said rather than flattened:
+///
+/// * an error — the turn did not finish, and reporting an ending would tell
+///   the owner their agent had answered when it had not;
+/// * a result that reads — the kernel's own stop reason, which is the whole
+///   point of the field;
+/// * a result that does not — recorded loudly and ended, because a turn that
+///   is over must be closed either way or the session sits `running` forever.
+fn turn_outcome(frame: serde_json::Value) -> PromptResponse {
+    if let Some(error) = frame.get("error") {
+        tracing::warn!(%error, "the bridge refused a prompt");
+        return PromptResponse::new(crate::TurnStopReason::Refusal);
+    }
+    let Some(result) = frame.get("result") else {
+        tracing::warn!(answer = %frame, "a prompt was answered with neither a result nor an error");
+        return PromptResponse::new(crate::TurnStopReason::EndTurn);
+    };
+    match serde_json::from_value::<PromptResponse>(result.clone()) {
+        Ok(ended) => ended,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                answer = %result,
+                "a turn ended in a way this build cannot read; treating it as finished"
+            );
+            PromptResponse::new(crate::TurnStopReason::EndTurn)
+        }
     }
 }
 
