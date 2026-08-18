@@ -137,3 +137,18 @@ export function nextNodeIndex(
     }
   }
 }
+
+/**
+ * How many sessions the budget left unattached — docs/Web_Style.md §13.
+ *
+ * Reported so the status band can state it. Truncation is never silent: a
+ * framed node with no terminal and no account of why reads as a session having
+ * broken rather than as a limit being enforced.
+ */
+export function unattachedNote(connectable: number, attached: number): string | undefined {
+  const dropped = connectable - attached;
+  if (dropped <= 0) {
+    return undefined;
+  }
+  return `${String(dropped)} of ${String(connectable)} sessions not attached, to bound what this page costs — select one to attach it`;
+}

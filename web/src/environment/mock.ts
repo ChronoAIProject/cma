@@ -28,6 +28,17 @@ import type {
 const MANDATORY_PACKAGES = ['nyxid'] as const;
 const MANDATORY_SKILLS = ['nyxid', 'ornn-agent-manual-cli'] as const;
 
+/// Services every session reaches whatever a profile says.
+const MANDATORY_SERVICES = ['chrono-llm', 'ornn-api'] as const;
+
+/// What the picker offers, standing in for the owner's own account.
+const SERVICES = [
+  { id: 'chrono-llm', name: 'chrono-llm', description: 'The model endpoint' },
+  { id: 'ornn-api', name: 'ornn-api', description: 'The skill registry' },
+  { id: 'chrono-storage-service', name: 'chrono-storage-service', description: 'Object storage' },
+  { id: 'api-github', name: 'api-github', description: 'GitHub' },
+] as const;
+
 const MANDATORY: MandatoryEntries = {
   packages: [...MANDATORY_PACKAGES],
   skills: [...MANDATORY_SKILLS],
@@ -80,7 +91,7 @@ function applyBaseline(draft: ProfileDraft): {
     ),
     ...chosenPackages,
   ];
-  const chosenSkills = draft.skills.filter((s) => s.trim().length > 0);
+  const chosenSkills = draft.agent.skills.filter((s) => s.trim().length > 0);
   const skills = [...MANDATORY_SKILLS.filter((id) => !chosenSkills.includes(id)), ...chosenSkills];
   return { packages, skills };
 }
@@ -92,7 +103,8 @@ function materialise(id: string, draft: ProfileDraft, createdAt: string): Enviro
     name: draft.name.trim(),
     variables: [...draft.variables],
     packages,
-    skills,
+    agent: { ...draft.agent, skills },
+    nyxid: { services: [...draft.nyxid.services] },
     mandatory: MANDATORY,
     createdAt,
     updatedAt: new Date().toISOString(),
@@ -106,6 +118,14 @@ export interface MockProfileOptions {
   readonly failWith?: string;
   /** Force the skill registry alone to fail, which is a recoverable state. */
   readonly failSkillsWith?: string;
+  /**
+   * Force the service catalogue alone to fail.
+   *
+   * Its own switch because it is its own case: the catalogue is answered as
+   * the caller, so a deployment that cannot answer must still author profiles
+   * and start sessions.
+   */
+  readonly failServicesWith?: string;
 }
 
 export function createMockProfileStore(options: MockProfileOptions = {}): EnvironmentProfileStore {
@@ -153,6 +173,14 @@ export function createMockProfileStore(options: MockProfileOptions = {}): Enviro
         throw new Error('That profile no longer exists.');
       }
       stored.splice(index, 1);
+    },
+
+    async services() {
+      guard();
+      if (options.failServicesWith !== undefined) {
+        throw new Error(options.failServicesWith);
+      }
+      return { services: SERVICES, mandatory: MANDATORY_SERVICES };
     },
 
     async catalogue() {

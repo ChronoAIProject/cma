@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
 import { TerminalSurface } from '../terminal/TerminalSurface';
 import type { TerminalHandle } from '../terminal/TerminalSurface';
+import { ConversationSurface } from '../chat/ConversationSurface';
+import { toCapabilities } from '../agui';
 import type { TerminalDriver } from '../terminal/types';
 import type { Session } from '../sessions/types';
 import { labelFor } from '../sessions/types';
@@ -189,6 +191,20 @@ export function CanvasNode({
             Not attached. The canvas keeps at most {MAX_LIVE_NODES} terminals connected and holds
             the ones most recently worked in. Select this node to attach it.
           </p>
+        ) : session.plane === 'conversation' ? (
+          /*
+           * §13's sharp edge: every listed session is a framed node with its
+           * own surface, so a canvas of mixed sessions draws chats and
+           * terminals side by side. The node must not assume a terminal — this
+           * component and the input gate below it were both written when it
+           * could.
+           *
+           * The gate is not wrapped around this one. It exists to stop a
+           * keystroke reaching an unfocused terminal, and a conversation has
+           * no keystroke path: what it sends is a turn, from a composer, on a
+           * surface somebody has to be looking at to type into.
+           */
+          <ConversationSurface session={session} capabilities={toCapabilities(session)} />
         ) : (
           <TerminalSurface
             ref={terminalRef}

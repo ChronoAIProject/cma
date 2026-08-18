@@ -8,6 +8,7 @@ pub mod activity;
 pub mod context;
 pub mod directory;
 pub mod environment;
+mod event_doc;
 pub mod mongo;
 pub mod token;
 

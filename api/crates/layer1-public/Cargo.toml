@@ -5,6 +5,9 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+# For the terminal plane's raw input, which arrives base64-encoded because a
+# JSON string cannot carry an arbitrary control sequence.
+base64 = { workspace = true }
 axum = { workspace = true }
 futures-util = { workspace = true }
 layer2-core = { workspace = true }
@@ -12,6 +15,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+# For its CSPRNG-backed v4 generator, which is what an attach ticket is drawn
+# from. Already a workspace dependency.
+uuid = { workspace = true }
 
 [dev-dependencies]
 # Only the tests implement a core port, and every port in this project is an

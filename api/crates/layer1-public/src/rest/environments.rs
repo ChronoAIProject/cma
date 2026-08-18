@@ -18,165 +18,14 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use layer2_core::{
-    CatalogSkill, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-    EnvironmentProfileSpec, EnvironmentVariable, SkillId, SoftwarePackage,
-};
-use serde::{Deserialize, Serialize};
+use layer2_core::{EnvironmentProfileId, EnvironmentProfileService};
+use serde::Serialize;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
+use crate::rest::environments_shapes::{
+    MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
+};
 use crate::rest::Problem;
-
-/// A variable as this interface reads and writes it.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct VariableBody {
-    /// Variable name.
-    pub key: String,
-    /// Value. Opaque to every layer that carries it.
-    pub value: String,
-}
-
-/// A package as this interface reads and writes it.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct PackageBody {
-    /// Package name.
-    pub name: String,
-    /// Version to pin, when the caller cares which one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
-
-/// Request body for creating or replacing a profile.
-#[derive(Debug, Deserialize)]
-pub struct ProfileRequest {
-    /// Name the owner recognises it by.
-    pub name: String,
-    /// Variables to set in the session.
-    #[serde(default)]
-    pub variables: Vec<VariableBody>,
-    /// Software the session should carry.
-    #[serde(default)]
-    pub packages: Vec<PackageBody>,
-    /// Skill identifiers to load.
-    #[serde(default)]
-    pub skills: Vec<String>,
-}
-
-impl From<ProfileRequest> for EnvironmentProfileSpec {
-    fn from(body: ProfileRequest) -> Self {
-        Self {
-            name: body.name,
-            variables: body
-                .variables
-                .into_iter()
-                .map(|v| EnvironmentVariable::new(v.key, v.value))
-                .collect(),
-            packages: body
-                .packages
-                .into_iter()
-                .map(|p| SoftwarePackage {
-                    name: p.name,
-                    version: p.version,
-                })
-                .collect(),
-            skills: body.skills.into_iter().map(SkillId::new).collect(),
-        }
-    }
-}
-
-/// A profile as this interface renders it.
-#[derive(Debug, Serialize)]
-pub struct ProfileView {
-    id: String,
-    name: String,
-    variables: Vec<VariableBody>,
-    packages: Vec<PackageBody>,
-    skills: Vec<String>,
-    /// Which entries the platform mandates, so a client can render them as
-    /// fixed rather than guessing — and so the rule is visible rather than
-    /// only enforced when the client gets it wrong.
-    mandatory: MandatoryView,
-    created_at: String,
-    updated_at: String,
-}
-
-/// The parts of a profile a caller may not remove.
-#[derive(Debug, Default, Serialize)]
-pub struct MandatoryView {
-    packages: Vec<String>,
-    skills: Vec<String>,
-}
-
-impl MandatoryView {
-    fn of(baseline: &layer2_core::Baseline) -> Self {
-        Self {
-            packages: baseline.packages().iter().map(|p| p.name.clone()).collect(),
-            skills: baseline.skills().iter().map(|s| s.0.clone()).collect(),
-        }
-    }
-}
-
-impl ProfileView {
-    fn render(profile: EnvironmentProfile, service: &EnvironmentProfileService) -> Self {
-        Self {
-            id: profile.id.0,
-            name: profile.name,
-            variables: profile
-                .variables
-                .into_iter()
-                .map(|v| VariableBody {
-                    key: v.key,
-                    value: v.value,
-                })
-                .collect(),
-            packages: profile
-                .packages
-                .into_iter()
-                .map(|p| PackageBody {
-                    name: p.name,
-                    version: p.version,
-                })
-                .collect(),
-            skills: profile.skills.into_iter().map(|s| s.0).collect(),
-            mandatory: MandatoryView::of(service.baseline()),
-            created_at: profile.created_at,
-            updated_at: profile.updated_at,
-        }
-    }
-}
-
-/// What a client needs to render the profile editor before it has a profile.
-///
-/// The mandated entries ride along with the catalogue rather than only with a
-/// stored profile: a client authoring its *first* profile has no profile to
-/// read them from, and would otherwise offer a form that quietly acquires
-/// entries the moment it is saved.
-#[derive(Debug, Serialize)]
-pub struct SkillCatalogView {
-    skills: Vec<SkillView>,
-    mandatory: MandatoryView,
-}
-
-/// A selectable skill as this interface renders it.
-#[derive(Debug, Serialize)]
-pub struct SkillView {
-    id: String,
-    name: String,
-    description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    access: Option<String>,
-}
-
-impl From<CatalogSkill> for SkillView {
-    fn from(s: CatalogSkill) -> Self {
-        Self {
-            id: s.id.0,
-            name: s.name,
-            description: s.description,
-            access: s.access,
-        }
-    }
-}
 
 /// Routes this resource contributes.
 ///
@@ -187,6 +36,7 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
     Router::new()
         .route("/api/v1/environment-profiles", get(list).post(create))
         .route("/api/v1/environment-profiles/skills", get(skills))
+        .route("/api/v1/environment-profiles/services", get(services))
         .route(
             "/api/v1/environment-profiles/{id}",
             get(read).put(replace).delete(remove),
@@ -249,6 +99,56 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The services a caller may allow a session to reach.
+///
+/// Answered as the caller: which services exist is a fact about their account,
+/// and this service's own identity would answer with a different one. The
+/// mandatory entries travel alongside so a client can draw them as fixed
+/// rather than inferring which of them cannot be unticked.
+async fn services(
+    State(service): State<Arc<EnvironmentProfileService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
+) -> Result<Json<ServiceCatalogView>, Problem> {
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    let services = service
+        .available_services(&caller, credential.as_deref())
+        .await?;
+    Ok(Json(ServiceCatalogView {
+        services: services
+            .into_iter()
+            .map(|s| ServiceView {
+                id: s.id.0,
+                name: s.name,
+                description: s.description,
+            })
+            .collect(),
+        mandatory: service
+            .baseline()
+            .services()
+            .iter()
+            .map(|s| s.0.clone())
+            .collect(),
+    }))
+}
+
+/// A service as the picker renders it.
+#[derive(Debug, Serialize)]
+pub struct ServiceView {
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+/// The picker's answer.
+#[derive(Debug, Serialize)]
+pub struct ServiceCatalogView {
+    services: Vec<ServiceView>,
+    /// Which of them every session reaches whatever the profile says.
+    mandatory: Vec<String>,
+}
+
 async fn skills(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -268,6 +168,11 @@ async fn skills(
 
 #[cfg(test)]
 mod tests {
+    use layer2_core::{
+        CredentialMode, EnvironmentProfile, EnvironmentProfileSpec, EnvironmentVariable,
+        PermissionMode, ReasoningEffort, SkillId, SoftwarePackage,
+    };
+
     use super::*;
     use axum::response::IntoResponse;
     use layer2_core::{Baseline, CoreError, EnvironmentProfileStore, StoreError, SubjectId};
@@ -303,8 +208,11 @@ mod tests {
             Baseline::new(
                 [SoftwarePackage::new("platform-cli")],
                 [SkillId::new("mandatory-one")],
+                [],
             ),
             None,
+            None,
+            Default::default(),
         )
     }
 
@@ -318,7 +226,11 @@ mod tests {
                 name: "ripgrep".into(),
                 version: Some("14".into()),
             }],
-            skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
+            services: Vec::new(),
+            agent: layer2_core::AgentConfiguration {
+                skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
+                ..Default::default()
+            },
             created_at: "2026-08-12T00:00:00Z".into(),
             updated_at: "2026-08-13T00:00:00Z".into(),
         }
@@ -368,17 +280,46 @@ mod tests {
     #[test]
     fn a_request_body_becomes_a_core_spec() {
         let body: ProfileRequest = serde_json::from_str(
-            r#"{"name":"mine","variables":[{"key":"A","value":"1"}],"skills":["s1"]}"#,
+            r#"{"name":"mine","variables":[{"key":"A","value":"1"}],
+                "agent":{"skills":["s1"],"model":"m","reasoning_effort":"low",
+                         "permission":"autonomous","credential":"own"}}"#,
         )
         .expect("parses");
         let spec: EnvironmentProfileSpec = body.into();
         assert_eq!(spec.name, "mine");
         assert_eq!(spec.variables.len(), 1);
         assert_eq!(spec.variables[0].key, "A");
-        assert_eq!(spec.skills, vec![SkillId::new("s1")]);
+        assert_eq!(spec.agent.skills, vec![SkillId::new("s1")]);
+        assert_eq!(spec.agent.model.as_deref(), Some("m"));
+        assert_eq!(spec.agent.reasoning_effort, ReasoningEffort::Low);
+        assert_eq!(spec.agent.permission, PermissionMode::Autonomous);
+        assert_eq!(spec.agent.credential, CredentialMode::Own);
         // Omitted lists are empty, not an error: a profile that sets only
         // variables is a legitimate thing to ask for.
         assert!(spec.packages.is_empty());
+    }
+
+    #[test]
+    fn a_body_that_says_nothing_about_the_agent_gets_this_deployments_answer() {
+        // A client that only wants to name some variables must not thereby
+        // choose a model or how freely the agent may act. Absent means
+        // "whatever is ordinary here", never "empty".
+        let body: ProfileRequest = serde_json::from_str(r#"{"name":"mine"}"#).expect("parses");
+        let spec: EnvironmentProfileSpec = body.into();
+        // The kernel is the exception, and deliberately: this layer does not
+        // know which kernels a deployment can start, so it leaves it unset and
+        // the core settles it from configuration.
+        assert!(
+            spec.agent.kernel.is_unset(),
+            "naming a kernel here would put a runtime's name in a layer that must not know one"
+        );
+        assert_eq!(spec.agent.reasoning_effort, ReasoningEffort::High);
+        assert_eq!(
+            spec.agent.permission,
+            PermissionMode::Guarded,
+            "a profile that said nothing must still stop to ask"
+        );
+        assert_eq!(spec.agent.credential, CredentialMode::Delegated);
     }
 
     #[test]

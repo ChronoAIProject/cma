@@ -1,5 +1,13 @@
 import { ApiError } from '../api/client';
+import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
+import type { CredentialMode, PermissionMode, ReasoningEffort } from '../sessions/options';
+import { DEFAULT_AGENT } from './types';
+import type { SessionPlane } from '../sessions/types';
 import type {
+  AgentConfiguration,
+  NyxIdAccess,
+  PlatformService,
+  ServiceCatalogue,
   CatalogSkill,
   EnvironmentProfile,
   EnvironmentProfileStore,
@@ -28,6 +36,8 @@ interface ProfilePayload {
   readonly variables?: unknown;
   readonly packages?: unknown;
   readonly skills?: unknown;
+  readonly agent?: unknown;
+  readonly nyxid?: unknown;
   readonly mandatory?: unknown;
   readonly created_at?: unknown;
   readonly updated_at?: unknown;
@@ -104,11 +114,56 @@ export function toProfile(raw: unknown): EnvironmentProfile {
         version: typeof entry.version === 'string' ? entry.version : undefined,
       };
     }),
-    skills: Array.isArray(p.skills) ? p.skills.map(String) : [],
+    agent: readAgent(p.agent),
+    nyxid: readNyxId(p.nyxid),
     mandatory: readMandatory(p.mandatory),
     createdAt: typeof p.created_at === 'string' ? p.created_at : '',
     updatedAt: typeof p.updated_at === 'string' ? p.updated_at : '',
   };
+}
+
+/**
+ * The agent half of a profile as the wire carries it.
+ *
+ * Every field falls back to what the console considers ordinary rather than to
+ * nothing: a form cannot preselect a value it was not sent, and a control
+ * rendered blank would read as "no answer" when the server has one.
+ */
+function readAgent(raw: unknown): AgentConfiguration {
+  const a = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  return {
+    kernel: typeof a.kernel === 'string' ? a.kernel : DEFAULT_AGENT.kernel,
+    mode: isPlane(a.mode) ? a.mode : DEFAULT_AGENT.mode,
+    model: typeof a.model === 'string' ? a.model : undefined,
+    reasoningEffort: isEffort(a.reasoning_effort)
+      ? a.reasoning_effort
+      : DEFAULT_AGENT.reasoningEffort,
+    permission: isPermission(a.permission) ? a.permission : DEFAULT_AGENT.permission,
+    credential: isCredential(a.credential) ? a.credential : DEFAULT_AGENT.credential,
+    skills: Array.isArray(a.skills) ? a.skills.map(String) : [],
+  };
+}
+
+/** The platform-access half of a profile as the wire carries it. */
+function readNyxId(raw: unknown): NyxIdAccess {
+  const n = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  return { services: Array.isArray(n.services) ? n.services.map(String) : [] };
+}
+
+function isPlane(v: unknown): v is SessionPlane {
+  return v === 'terminal' || v === 'conversation';
+}
+
+function isEffort(v: unknown): v is ReasoningEffort {
+  return EFFORTS.some((e) => e.id === v);
+}
+
+function isPermission(v: unknown): v is PermissionMode {
+  return PERMISSIONS.some((e) => e.id === v);
+}
+
+function isCredential(v: unknown): v is CredentialMode {
+  return CREDENTIALS.some((e) => e.id === v);
 }
 
 function body(draft: ProfileDraft): string {
@@ -116,7 +171,16 @@ function body(draft: ProfileDraft): string {
     name: draft.name,
     variables: draft.variables.map((v) => ({ key: v.key, value: v.value })),
     packages: draft.packages.map((p) => ({ name: p.name, version: p.version })),
-    skills: [...draft.skills],
+    agent: {
+      kernel: draft.agent.kernel,
+      mode: draft.agent.mode,
+      model: draft.agent.model,
+      reasoning_effort: draft.agent.reasoningEffort,
+      permission: draft.agent.permission,
+      credential: draft.agent.credential,
+      skills: [...draft.agent.skills],
+    },
+    nyxid: { services: [...draft.nyxid.services] },
   });
 }
 
@@ -143,6 +207,30 @@ export function createRestProfileStore(): EnvironmentProfileStore {
 
     async remove(id: string): Promise<void> {
       await call(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    async services(): Promise<ServiceCatalogue> {
+      const payload = (await call(`${BASE}/services`)) as {
+        services?: unknown;
+        mandatory?: unknown;
+      };
+      const services: PlatformService[] = Array.isArray(payload?.services)
+        ? payload.services.map((s) => {
+            const entry = s as { id?: unknown; name?: unknown; description?: unknown };
+            const id = String(entry.id ?? '');
+            return {
+              id,
+              // Falls back to the identifier rather than rendering blank: a row
+              // with no label is one nobody can decide about.
+              name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : id,
+              description: typeof entry.description === 'string' ? entry.description : undefined,
+            };
+          })
+        : [];
+      return {
+        services,
+        mandatory: Array.isArray(payload?.mandatory) ? payload.mandatory.map(String) : [],
+      };
     },
 
     async catalogue(): Promise<SkillCatalogue> {

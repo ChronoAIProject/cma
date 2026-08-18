@@ -12,17 +12,24 @@ pub mod activity;
 pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
-mod clock;
+pub mod capabilities;
+pub mod clock;
+pub mod conversation;
+mod conversation_log;
 mod credentials;
 pub mod directory;
 pub mod environment;
+mod environment_catalog;
 pub mod environment_service;
+mod environment_values;
 pub mod error;
 pub mod event;
 pub mod ids;
 pub mod inventory;
+mod lease;
 mod lifecycle;
 mod provision;
+mod provision_failure;
 mod reading;
 mod readopt;
 pub mod reconcile;
@@ -32,6 +39,10 @@ mod rotate;
 #[path = "provision_tests.rs"]
 mod provision_tests;
 
+#[cfg(test)]
+mod adapter_support;
+#[cfg(test)]
+mod conversation_support;
 #[cfg(test)]
 mod environment_support;
 #[cfg(test)]
@@ -45,7 +56,10 @@ mod test_support;
 #[path = "persistence_tests.rs"]
 mod persistence_tests;
 
-mod attach;
+pub mod attach;
+#[cfg(test)]
+#[path = "attach_tests.rs"]
+mod attach_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
@@ -72,23 +86,29 @@ pub use activity::{
 };
 pub use activity_detail::{ActivityDetail, DetailKey};
 pub use activity_service::ActivityService;
+pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
+pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
+pub use clock::rfc3339_at;
+pub use conversation::{ApprovalDecision, Usage};
 pub use directory::{
-    DirectoryQuery, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT, MAX_DIRECTORY_LIMIT,
+    DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
+    MAX_DIRECTORY_LIMIT,
 };
 pub use environment::{
-    Baseline, CatalogError, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
-    EnvironmentVariable, ResolvedEnvironment, SkillCatalog, SkillId, SoftwarePackage,
+    AgentConfiguration, Baseline, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
+    EnvironmentProfileSpec, EnvironmentVariable, ResolvedEnvironment, ServiceAvailability,
+    ServiceCatalog, ServiceId, SkillCatalog, SkillId, SoftwarePackage,
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
-pub use event::{Event, EventKind, LiveFrame};
+pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
 pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
-pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort};
+pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use reconcile::Reclaimed;
-pub use service::{AttachmentHandle, Deployment, ScreenFactory, SessionService};
+pub use service::{AttachmentHandle, Deployment, Detached, ScreenFactory, SessionService};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,

@@ -1,19 +1,27 @@
-import type { ReactNode } from 'react';
-import type { Session } from './types';
+import { useState } from 'react';
+import type { Session, SessionCreator, SessionService } from './types';
+import { Chip } from '../ui/Chip';
 import { abilitiesFor } from './availability';
 import { labelFor } from './types';
 import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
 import './SessionDetails.css';
 
 /**
- * What is known about the open session.
+ * What is known about the open session — docs/Web_Style.md §12.
  *
- * Collapsible because it is reference material: someone reads it when they
- * want to know which model is answering or why a session stopped, and the rest
- * of the time it is width the terminal should have.
+ * A sheet under the terminal, not a column beside it. It is reference
+ * material: read when somebody wants to know which agent is answering or why a
+ * session stopped, and the rest of the time it is width the terminal should
+ * have. Open it is 412px and its facts sit wide rather than tall; closed it is
+ * a 40px band carrying a one-line summary, because a collapsed panel is a
+ * handle and never nothing (§7).
  *
- * Collapsed to a rail rather than removed entirely, so the way back is where
- * the panel was.
+ * Its columns scroll inside it. The page does not scroll, and neither does the
+ * terminal above it: a sheet that grew with its contents would take the height
+ * from the surface it is describing.
+ *
+ * It carries no lifecycle controls. §12 puts those in the session header, at
+ * the head of the terminal they act on, visible without opening anything.
  */
 
 interface SessionDetailsProps {
@@ -22,104 +30,220 @@ interface SessionDetailsProps {
   readonly onToggle: () => void;
   /** Why the session ended, when it ended badly. */
   readonly ending?: string;
-  /**
-   * What can be done to this session.
-   *
-   * Here rather than in the top bar: these act on the session being described,
-   * and a control that ends something belongs beside the thing it ends, not in
-   * chrome that looks the same whichever session is open.
-   */
-  readonly actions?: ReactNode;
 }
 
-export function SessionDetails({ session, open, onToggle, ending, actions }: SessionDetailsProps) {
+export function SessionDetails({ session, open, onToggle, ending }: SessionDetailsProps) {
   const reason = abilitiesFor(session).reason;
+
+  const handle = (
+    <button
+      type="button"
+      className="collapse-handle details__handle"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-label={open ? 'Hide session details' : 'Show session details'}
+    >
+      {/*
+       * The glyph points where the sheet will go and reverses when collapsed,
+       * so the control describes its outcome rather than its state (§7).
+       */}
+      <span aria-hidden="true">{open ? '⌄' : '⌃'}</span>
+    </button>
+  );
+
   if (!open) {
     return (
-      <button
-        type="button"
-        className="details__handle"
-        onClick={onToggle}
-        aria-expanded={false}
-        aria-label="Show session details"
-      >
-        <span aria-hidden="true">‹</span>
-      </button>
+      <aside className="band band--foot details details--closed" aria-label="Session details">
+        {/*
+         * The one-line summary of what the sheet hides. Collapsing gives up
+         * detail, not awareness, so the facts that decide what a person can do
+         * with this session — which agent, what state, and why it cannot be
+         * typed into — are the ones that stay.
+         */}
+        <span className="band__label">Session</span>
+        <span className="band__value">{session.kernel}</span>
+        <span className="band__value">{labelFor(session.lifecycle)}</span>
+        {reason === undefined ? null : (
+          <span className="band__value details__summaryreason">{reason}</span>
+        )}
+        <span className="band__spacer" />
+        {handle}
+      </aside>
     );
   }
 
   return (
     <aside className="details" aria-label="Session details">
-      <div className="details__head">
-        <h2 className="details__title">Session</h2>
-        <button
-          type="button"
-          className="details__collapse"
-          onClick={onToggle}
-          aria-expanded
-          aria-label="Hide session details"
-        >
-          <span aria-hidden="true">›</span>
-        </button>
+      <div className="band band--foot details__head">
+        <span className="band__label">Session</span>
+        <span className="band__spacer" />
+        {handle}
       </div>
 
-      <dl className="details__list">
-        <div className="details__row">
-          <dt>Started</dt>
-          <dd>{fullTimestamp(session.createdAt)}</dd>
-        </div>
-        <div className="details__row">
-          <dt>Agent</dt>
-          <dd>{session.kernel}</dd>
-        </div>
-        <div className="details__row">
-          <dt>State</dt>
-          <dd>{labelFor(session.lifecycle)}</dd>
-        </div>
-        {/*
-         * Only present once a session has been moved between runtimes. Shown
-         * because the alternative is someone noticing a gap in their terminal
-         * and having no way to find out what caused it.
-         */}
-        {session.runtimeVersion !== undefined ? (
+      {/*
+       * The facts sit wide rather than tall — §12. A 412px sheet running one
+       * column deep would scroll for something that fits across.
+       */}
+      <div className="details__body">
+        <dl className="details__list">
+          {/*
+           * First, because it answers "whose is this" — the question somebody
+           * reading another person's session opens this sheet to ask. Omitted
+           * entirely when the control plane did not name them, rather than
+           * drawn as a row with nothing in it.
+           */}
+          {session.creator === undefined ? null : (
+            <div className="details__row">
+              <dt>Creator</dt>
+              <dd className="details__creator">
+                <CreatorFace creator={session.creator} />
+                <span>{session.creator.displayName ?? 'Not named'}</span>
+              </dd>
+            </div>
+          )}
           <div className="details__row">
-            <dt>Runtime</dt>
-            <dd>{session.runtimeVersion}</dd>
+            <dt>Started</dt>
+            <dd>{fullTimestamp(session.createdAt)}</dd>
           </div>
-        ) : null}
-        {session.rotations !== undefined && session.rotations > 0 ? (
           <div className="details__row">
-            <dt>Moved</dt>
+            <dt>Agent</dt>
+            <dd>{session.kernel}</dd>
+          </div>
+          <div className="details__row">
+            <dt>State</dt>
+            <dd>{labelFor(session.lifecycle)}</dd>
+          </div>
+          {/*
+           * Only present once a session has been moved between runtimes. Shown
+           * because the alternative is someone noticing a gap in their terminal
+           * and having no way to find out what caused it.
+           */}
+          {session.runtimeVersion !== undefined ? (
+            <div className="details__row">
+              <dt>Runtime</dt>
+              <dd>{session.runtimeVersion}</dd>
+            </div>
+          ) : null}
+          {session.rotations !== undefined && session.rotations > 0 ? (
+            <div className="details__row">
+              <dt>Moved</dt>
+              <dd>
+                {session.rotations === 1 ? 'once' : `${String(session.rotations)} times`}
+                {session.rotatedAt !== undefined
+                  ? `, last on ${fullTimestampOrNone(session.rotatedAt)}`
+                  : ''}
+              </dd>
+            </div>
+          ) : null}
+          {/*
+           * What this session can touch, beside what it can do. §11 and §12:
+           * an owner watching an agent work on their behalf has one question
+           * the interface did not answer — what does this thing have access to
+           * right now?
+           *
+           * The session's answer and never its profile's. A profile can be
+           * edited after a session started from it and the session keeps the
+           * scope it was provisioned with, so only the session knows.
+           */}
+          <div className="details__row details__row--wide">
+            <dt>Reaches</dt>
             <dd>
-              {session.rotations === 1 ? 'once' : `${session.rotations} times`}
-              {session.rotatedAt !== undefined
-                ? `, last on ${fullTimestampOrNone(session.rotatedAt)}`
-                : ''}
+              <Reach services={session.reach} />
             </dd>
           </div>
-        ) : null}
-        <div className="details__row">
-          <dt>Identifier</dt>
-          {/*
-           * Shown because it is what support and logs refer to, and wrapped
-           * rather than truncated: a partial identifier is not one anyone can
-           * use.
-           */}
-          <dd className="details__id">{session.id}</dd>
-        </div>
-      </dl>
+          <div className="details__row">
+            <dt>Identifier</dt>
+            {/*
+             * Shown because it is what support and logs refer to, and wrapped
+             * rather than truncated: a partial identifier is not one anyone can
+             * use.
+             */}
+            <dd className="details__id">{session.id}</dd>
+          </div>
+        </dl>
 
-      {/*
-       * The reason the session cannot be typed into, stated wherever it is
-       * true rather than only when something has gone wrong. A terminal that
-       * ignores keystrokes without saying why is the thing people report as
-       * broken.
-       */}
-      {reason !== undefined ? <p className="details__state">{reason}</p> : null}
+        {/*
+         * The reason the session cannot be typed into, stated wherever it is
+         * true rather than only when something has gone wrong. A terminal that
+         * ignores keystrokes without saying why is the thing people report as
+         * broken.
+         */}
+        {reason !== undefined ? <p className="details__state">{reason}</p> : null}
 
-      {ending !== undefined && ending !== '' ? <p className="details__ending">{ending}</p> : null}
-
-      {actions !== undefined ? <div className="details__actions">{actions}</div> : null}
+        {ending !== undefined && ending !== '' ? <p className="details__ending">{ending}</p> : null}
+      </div>
     </aside>
+  );
+}
+
+/**
+ * What a session's credential may reach.
+ *
+ * Three answers, drawn as three things. A list is what it was granted. An
+ * empty list is a session that reaches nothing, said plainly — §135: an empty
+ * list and an absent mechanism must not look alike. And a control plane that
+ * did not report it at all says so, rather than being drawn as either.
+ *
+ * Read-only, which is what §1 permits `web/` to do: it projects what the API
+ * reports and offers no way to change it, because a session's reach is fixed
+ * at provision and there is nothing here to change.
+ */
+function Reach({ services }: { readonly services?: readonly SessionService[] }) {
+  if (services === undefined) {
+    return <span className="details__unknown">Not reported by the control plane</span>;
+  }
+  if (services.length === 0) {
+    return <span className="details__unknown">Nothing — this session reaches no services</span>;
+  }
+  return (
+    <ul className="details__reach">
+      {services.map((service) => (
+        <li className="details__service" key={service.id}>
+          {/*
+           * The name where the catalogue offered one, and the identifier
+           * always: a catalogue that could not be asked costs the name and
+           * not the answer, and an identifier alone is still true.
+           */}
+          <span className="details__servicename">{service.name ?? service.id}</span>
+          {service.name === undefined ? null : (
+            <span className="details__serviceid">{service.id}</span>
+          )}
+          {/*
+           * Mandated entries are drawn as fixed, matching the picker's
+           * existing treatment and for the same stated reason: a person
+           * deciding what a session may touch should see the whole answer.
+           */}
+          {service.mandated ? <Chip inline>always</Chip> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The creator's picture, or their initial when there is none.
+ *
+ * A picture that fails to load falls back the same way rather than leaving a
+ * broken image in a sheet somebody is reading to identify a session.
+ */
+function CreatorFace({ creator }: { readonly creator: SessionCreator }) {
+  const [broken, setBroken] = useState(false);
+  const initial = creator.displayName?.trim().charAt(0).toUpperCase();
+  if (creator.avatarUrl === undefined || broken) {
+    return (
+      <span className="details__face" aria-hidden="true">
+        {initial === undefined || initial === '' ? '?' : initial}
+      </span>
+    );
+  }
+  return (
+    <img
+      className="details__face"
+      src={creator.avatarUrl}
+      alt=""
+      onError={() => {
+        setBroken(true);
+      }}
+    />
   );
 }

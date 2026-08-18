@@ -102,9 +102,36 @@ pub enum CredentialMode {
     Own,
 }
 
+/// Which plane a session is driven on.
+///
+/// Not a preference: it decides what the session *is*. A terminal session is a
+/// screen someone types at, and a conversation session is a structured
+/// exchange of messages, tool calls and approvals. The two need different
+/// abilities from the runtime behind them, and a session that asked for one
+/// and got the other would be broken in a way no error message could rescue,
+/// so this is fixed at creation and checked against the runtime before a
+/// session exists at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionMode {
+    /// A human-facing terminal, driven by keystrokes and read as a screen.
+    ///
+    /// The default, and deliberately so: it is what every session created
+    /// before this existed was, and reading those records back must not
+    /// silently turn them into something else.
+    #[default]
+    Terminal,
+    /// A structured conversation: prompts in, messages, tool calls and
+    /// approvals out.
+    Conversation,
+}
+
 /// The full set of choices a session is created with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AgentOptions {
+    /// Which plane the session is driven on.
+    #[serde(default)]
+    pub mode: SessionMode,
     /// Model to select, or `None` to accept the deployment's default.
     ///
     /// Opaque here. The core neither validates nor interprets it: the set of
@@ -170,6 +197,7 @@ mod tests {
     #[test]
     fn options_round_trip_through_their_wire_form() {
         let o = AgentOptions {
+            mode: SessionMode::Conversation,
             model: Some("some-model".into()),
             reasoning_effort: ReasoningEffort::High,
             permission: PermissionMode::Unrestricted,

@@ -1,0 +1,39 @@
+/*
+ * The conversation surface — docs/Web_Style.md §18.
+ *
+ * The counterpart of the terminal surface: it fills the middle column and owns
+ * its own overflow, because the page never scrolls (§5).
+ */
+
+.conversation {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+
+/*
+ * A refusal, at the head of the surface. It names the capability the session
+ * lacks, on screen and not only in a console: an API that names what is
+ * missing is worth nothing if the interface renders it as "something went
+ * wrong" (§18.7).
+ */
+.conversation__refusal {
+  flex: none;
+  height: var(--band-foot);
+  color: var(--fail);
+  border-bottom: 1px solid var(--fail);
+}
+
+.conversation__refusal .band__value {
+  overflow: hidden;
+  color: var(--fail);
+  text-overflow: ellipsis;
+}
+
+/* Where usage sits (§18.5), in the surface's own foot band. */
+.conversation__foot {
+  justify-content: flex-end;
+}

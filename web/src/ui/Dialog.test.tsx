@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -104,5 +106,46 @@ describe('Dialog', () => {
     );
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+});
+
+describe('the dialog shell', () => {
+  it('offers three widths and no others', () => {
+    // §7. A width chosen per surface is how two dialogs that ask the same kind
+    // of question end up different sizes.
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/Dialog.css'), 'utf8');
+    const widths = [...css.matchAll(/\.dialog--(\w+)\s*\{\s*max-width: (\d+)px/g)].map((match) => [
+      match[1],
+      match[2],
+    ]);
+    expect(widths).toEqual([
+      ['narrow', '520'],
+      ['medium', '700'],
+      ['wide', '1000'],
+    ]);
+    // And no other rule sets a dialog's width.
+    expect(css.match(/max-width: \d+px/g)).toHaveLength(3);
+  });
+
+  it('is a plate: it takes the card impression and never moves', () => {
+    // §3 lists a plate among the things that carry the 5px impression and
+    // among the things that do not press in on hover.
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/Dialog.css'), 'utf8');
+    expect(css).toMatch(/\.dialog\s*\{[^}]*box-shadow: var\(--press-card-rest\)/);
+    expect(css).not.toMatch(/\.dialog[^_{]*:hover/);
+    expect(css).not.toMatch(/\.dialog[\s\S]*?transform:/);
+  });
+
+  it('is the only shell in the tree', () => {
+    // The parts that are easy to get wrong — the focus trap, the return of
+    // focus, Escape, the scrim click — are the parts nobody notices are
+    // missing. There were two implementations and one trapped nothing, so
+    // this asserts that only one declares the shell.
+    const shells = readdirSync(resolve(process.cwd(), 'src'), { recursive: true })
+      .filter((name) => typeof name === 'string' && name.endsWith('.css'))
+      .map((name) => [name, readFileSync(resolve(process.cwd(), 'src', name as string), 'utf8')])
+      .filter(([, css]) => (css as string).includes('.dialog__scrim'))
+      .map(([name]) => name);
+    expect(shells).toEqual(['ui/Dialog.css']);
   });
 });

@@ -1,5 +1,5 @@
 /*
- * The session rail, per docs/Web_Style.md.
+ * The session rail — docs/Web_Style.md §5 and §12.
  *
  * Owns its own scrolling. The page never scrolls, so a long list has to be
  * contained here rather than pushing the terminal down the document.
@@ -7,87 +7,76 @@
 
 .rail {
   display: flex;
-  flex-direction: column;
-  width: 15rem;
   flex: 0 0 auto;
+  flex-direction: column;
+  width: var(--rail-width);
   min-height: 0;
+  background: var(--surface);
   border-right: 1px solid var(--rule);
-  background: var(--ground);
 }
 
+/*
+ * The head band. Its height comes from .band--head, so it lands on the session
+ * header's rule to the pixel; nothing here may add padding to the block axis,
+ * because accumulated padding is exactly what lets two aligned columns drift
+ * apart when one gains a longer label.
+ */
 .rail__head {
-  display: flex;
+  gap: var(--space-2);
+}
+
+/*
+ * The second band — the one documented exception to the row shape (§5). It
+ * stacks rather than laying out in a row, and sits below the head band so the
+ * head rule still runs straight across every column.
+ */
+.rail__chrome {
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2);
+  gap: var(--space-2);
+  align-items: stretch;
+  padding-block: var(--space-2);
   border-bottom: 1px solid var(--rule);
 }
 
-.rail__new,
-.rail__sort {
-  font-family: var(--font-ui);
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 2px;
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-}
-
 .rail__new {
-  font-size: var(--text-sm);
   color: var(--accent);
-  border-color: var(--rule-2);
+  justify-content: flex-start;
 }
 
-.rail__new:hover {
-  border-color: var(--accent);
-}
-
-.rail__sort {
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-}
-
-.rail__sort:hover {
-  color: var(--ink);
-}
-
-.rail__new:focus-visible,
-.rail__sort:focus-visible,
-.rail__tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+.rail__filters {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
 }
 
 .rail__list {
-  list-style: none;
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  flex: 1 1 auto;
-  min-height: 0;
+  list-style: none;
 }
 
 .rail__tab {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr auto;
   grid-template-areas:
-    'dot time'
-    '. meta';
+    'dot time meta'
+    '. activity activity';
   gap: 0 var(--space-2);
   width: 100%;
+  padding: var(--space-2);
+  font-family: var(--font-ui);
   text-align: left;
+  cursor: pointer;
   background: transparent;
   border: 0;
   border-left: 2px solid transparent;
-  padding: var(--space-2) var(--space-2);
-  cursor: pointer;
-  font-family: var(--font-ui);
 }
 
 .rail__tab:hover {
-  background: var(--surface-2);
+  background: var(--raised);
 }
 
 /*
@@ -95,36 +84,105 @@
  * background, matching how the terminal prompt marks focus.
  */
 .rail__tab--active {
+  background: var(--raised);
   border-left-color: var(--accent);
-  background: var(--surface);
+}
+
+.rail__tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .rail__dot {
   grid-area: dot;
+  align-self: center;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  align-self: center;
 }
 
 .rail__time {
   grid-area: time;
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
-  color: var(--ink);
   font-variant-numeric: tabular-nums;
+  color: var(--ink);
 }
 
 .rail__meta {
   grid-area: meta;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--ink-3);
 }
 
-.rail__empty,
-.rail__zone {
+/*
+ * What the session last did. It never wraps (§12): a row that grows with its
+ * longest sentence makes the list a different height every time it reloads,
+ * and a list whose rows move is a list nobody can point at.
+ */
+.rail__activity {
+  grid-area: activity;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Collapsed, §7 ───────────────────────────────────────────────────────
+ *
+ * A handle, never nothing: 48px of strip keeping both bands, so the way back
+ * is exactly where the panel was and the page's rules still line up.
+ */
+
+.rail--collapsed {
+  width: var(--rail-collapsed);
+  align-items: center;
+}
+
+.rail--collapsed .rail__head,
+.rail__chrome--collapsed {
+  justify-content: center;
+  width: 100%;
+  padding-inline: 0;
+}
+
+/*
+ * The summary of what the strip hides: the dots in state order and a count.
+ * Collapsing gives up detail, not awareness.
+ */
+.rail__summary {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 0;
   margin: 0;
-  padding: var(--space-2);
+  padding: var(--space-3) 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.rail__summaryitem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.rail__summarycount {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
+.rail__empty {
+  margin: 0;
+  padding: var(--space-3);
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--ink-3);
-  border-top: 1px solid var(--rule);
 }
