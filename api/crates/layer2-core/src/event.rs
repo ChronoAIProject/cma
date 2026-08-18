@@ -293,6 +293,19 @@ pub enum LiveFrame {
     /// finished message is committed durably, and a client that missed the
     /// pieces finds the whole thing waiting when it reconnects.
     MessageDelta(String),
+    /// A piece of the agent's reasoning, as it reasons.
+    ///
+    /// Liveness, and more emphatically so than a message delta: a message is
+    /// eventually committed and a thought never is. Nothing here is recorded,
+    /// nothing is numbered, and a client that reloads sees none of it.
+    ///
+    /// That is not a limitation to be worked around. `Web_Style.md` §18.1
+    /// requires a turn drawn from history and a turn watched arriving to
+    /// produce the same result, so a durable thought is a thought that gets
+    /// replayed — somebody reloading to check what the agent decided would
+    /// watch it think a second time. The turn's own boundaries already say
+    /// when the thinking happened.
+    ThoughtDelta(String),
     /// The runtime process ended.
     Exited {
         /// Process exit code, when one was reported.
