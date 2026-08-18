@@ -87,12 +87,32 @@ impl SessionStore for FakeStore {
         Ok(())
     }
 
+    /// Append, refusing a sequence the session already has.
+    ///
+    /// The refusal is the point. This double accepted duplicates, so a race
+    /// that the database rejects outright looked perfectly healthy here — the
+    /// suite could not see the defect that dropped a turn's events in
+    /// production, because the only thing that would have caught it was the
+    /// unique index this stands in for. A double that is more permissive than
+    /// the thing it doubles is a test that passes for the wrong reason.
+    ///
+    /// Ordered, like the real one, so the count reported is genuinely what was
+    /// written before the collision.
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         self.guard().await?;
-        self.events
-            .lock()
-            .await
-            .extend(events.iter().cloned().map(StoredEvent::from));
+        let mut held = self.events.lock().await;
+        for (written, event) in events.iter().enumerate() {
+            if held
+                .iter()
+                .any(|e| e.session_id == event.session_id && e.seq == event.seq)
+            {
+                return Err(StoreError::SequenceTaken {
+                    written,
+                    total: events.len(),
+                });
+            }
+            held.push(StoredEvent::from(event.clone()));
+        }
         Ok(())
     }
 

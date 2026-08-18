@@ -34,6 +34,7 @@ mod reading;
 mod readopt;
 pub mod reconcile;
 mod rotate;
+mod sequence;
 
 #[cfg(test)]
 #[path = "provision_tests.rs"]
