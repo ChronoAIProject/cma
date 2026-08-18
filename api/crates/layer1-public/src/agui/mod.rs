@@ -32,6 +32,7 @@ use crate::{InterfaceProfile, Operation};
 
 mod capabilities;
 mod project;
+mod replay;
 mod run;
 
 /// Routes this interface contributes.
@@ -42,6 +43,12 @@ pub fn router(state: SessionsState) -> Router {
         // that does not exist is made — because this protocol has no separate
         // call for it and inventing one would add an operation the core lacks.
         .route("/api/v1/agui/run", post(run::run))
+        // History, and following it, in this protocol's own vocabulary.
+        // §7 tells a client to recover a dropped stream by reading the log
+        // rather than re-posting the run; until this existed it sent them to
+        // a route that answers in the core's vocabulary instead, and a client
+        // that followed the instruction could read none of what came back.
+        .route("/api/v1/agui/events", get(replay::replay))
         .route("/api/v1/agui/capabilities", get(capabilities::declare))
         .with_state(state)
 }
