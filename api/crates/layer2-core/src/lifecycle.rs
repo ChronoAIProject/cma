@@ -161,8 +161,9 @@ impl SessionService {
         // it or a later sweep would try to reclaim a sandbox that is gone.
         retired.runtime_id = None;
         self.store.upsert(&retired).await.map_err(store_failed)?;
-        self.store
-            .append_events(&[Event {
+        self.append_durably(
+            &retired.session.id,
+            vec![Event {
                 session_id: retired.session.id.clone(),
                 seq: retired.session.last_seq,
                 kind: EventKind::StatusChanged {
@@ -170,9 +171,10 @@ impl SessionService {
                     stop_reason: Some(StopReason::UserTerminated),
                     detail: None,
                 },
-            }])
-            .await
-            .map_err(store_failed)?;
+            }],
+        )
+        .await
+        .map_err(store_failed)?;
         Ok(())
     }
 
@@ -274,8 +276,9 @@ impl SessionService {
         // Nothing is running for it any more, so nothing should claim to be.
         resting.runtime_id = None;
         self.store.upsert(&resting).await.map_err(store_failed)?;
-        self.store
-            .append_events(&[Event {
+        self.append_durably(
+            &resting.session.id,
+            vec![Event {
                 session_id: resting.session.id.clone(),
                 seq: resting.session.last_seq,
                 kind: EventKind::StatusChanged {
@@ -283,9 +286,10 @@ impl SessionService {
                     stop_reason: Some(StopReason::UserTerminated),
                     detail: None,
                 },
-            }])
-            .await
-            .map_err(store_failed)?;
+            }],
+        )
+        .await
+        .map_err(store_failed)?;
         Ok(())
     }
 
