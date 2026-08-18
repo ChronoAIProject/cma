@@ -20,6 +20,9 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+# Parses a query string the way axum's Query extractor does, so a test can
+# assert what a client actually sends rather than what a struct looks like.
+serde_urlencoded = "0.7"
 # Only the tests implement a core port, and every port in this project is an
 # async trait. The interface layer itself defines none.
 async-trait = { workspace = true }
