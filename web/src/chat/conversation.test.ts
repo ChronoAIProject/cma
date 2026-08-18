@@ -255,3 +255,93 @@ describe('a message being typed', () => {
     expect(state.live).toBeUndefined();
   });
 });
+
+/** A piece of the agent's reasoning, as the live lane sends one. */
+function reasoning(delta: string): AguiEvent {
+  return {
+    type: 'REASONING_MESSAGE_CONTENT',
+    seq: 0,
+    threadId: 'sesn_1',
+    runId: 'run_1',
+    messageId: 'reasoning_live',
+    delta,
+    ephemeral: true,
+  };
+}
+
+describe('the agent reasoning, §18.8', () => {
+  it('accumulates outside the stream and never becomes an entry', () => {
+    const state = stream([
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      reasoning('the file is '),
+      reasoning('probably under src/'),
+    ]);
+
+    expect(state.reasoning?.text).toBe('the file is probably under src/');
+    expect(state.entries).toHaveLength(0);
+  });
+
+  it('is not folded into the message the agent commits', () => {
+    // The way this could go quietly and permanently wrong. The committed
+    // message *is* durable and is what a reload shows, so reasoning leaking
+    // into it would publish something the agent never said, for good.
+    const state = stream([
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      reasoning('I should not say this part'),
+      typing('Found '),
+      typing('it.'),
+    ]);
+
+    expect(state.live?.text).toBe('Found it.');
+    expect(state.reasoning?.text).toBe('I should not say this part');
+  });
+
+  it('is gone when the turn ends', () => {
+    const state = stream([
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      reasoning('working it out'),
+      { type: 'RUN_FINISHED', seq: 2, threadId: 'sesn_1', runId: 'run_1' },
+    ]);
+
+    expect(state.reasoning).toBeUndefined();
+  });
+
+  it('is gone when the run fails, too', () => {
+    const state = stream([reasoning('working it out'), failed(2, { message: 'gone' })]);
+
+    expect(state.reasoning).toBeUndefined();
+  });
+
+  it('leaves the settled conversation identical to a reload', () => {
+    // §18.1, and the reason none of this may be durable: somebody reloading
+    // to check what the agent decided must not watch it think again.
+    const committed: readonly AguiEvent[] = [
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      {
+        type: 'TEXT_MESSAGE_START',
+        seq: 2,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_2',
+        role: 'assistant',
+      },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        seq: 2,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_2',
+        delta: 'Found it.',
+      },
+      { type: 'RUN_FINISHED', seq: 3, threadId: 'sesn_1', runId: 'run_1' },
+    ];
+    const watched = stream([
+      committed[0]!,
+      reasoning('thinking hard'),
+      typing('Found it.'),
+      ...committed.slice(1),
+    ]);
+
+    expect(watched).toEqual(stream(committed));
+  });
+});

@@ -335,3 +335,40 @@ describe('a turn in flight, §18.1', () => {
     expect(screen.queryByText('Working')).toBeNull();
   });
 });
+
+describe('what the agent is working through, §18.8', () => {
+  it('shows the reasoning, and says it is not kept', () => {
+    // A reader who saw this and reloaded to find it gone would otherwise
+    // report data loss, so the surface says so rather than only the document.
+    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'checking src/' }} />);
+
+    expect(screen.getByText('checking src/')).toBeTruthy();
+    expect(screen.getByText(/gone when the turn ends/)).toBeTruthy();
+  });
+
+  it('draws nothing at all when there is no reasoning', () => {
+    // Not an empty band. §18.4's rule: a thing that can never appear is not
+    // one that is currently unavailable, and an empty box would suggest the
+    // agent was thinking silently.
+    const { container } = render(<MessageStream entries={[]} turnInFlight />);
+
+    expect(container.querySelector('.thinking')).toBeNull();
+  });
+
+  it('carries no colour', () => {
+    // §2: the semantic inks describe session and system state and describe
+    // nothing the agent thought.
+    const { container } = render(<MessageStream entries={[]} reasoning={{ text: 'hmm' }} />);
+    const classes = [...container.querySelectorAll('.thinking, .thinking *')]
+      .flatMap((node) => [...node.classList])
+      .join(' ');
+
+    expect(classes).not.toMatch(/live|wait|fail|ended|accent/);
+  });
+
+  it('replaces the waiting wave once reasoning starts arriving', () => {
+    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'hmm' }} />);
+
+    expect(screen.queryByText('Working')).toBeNull();
+  });
+});
