@@ -291,3 +291,56 @@ describe('the live stream, not just the history read', () => {
     }
   });
 });
+
+describe('the history read finishes', () => {
+  it('asks the route to stop at the end of the log', async () => {
+    // The whole defect in one assertion. Without this the route holds the
+    // stream open across turns, `text()` never settles, and the connection —
+    // which awaits this before it delivers anything — queues every live frame
+    // behind a promise that never resolves. The surface stays empty however
+    // well the rest of the path works.
+    const asked: string[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = ((url: string) => {
+      asked.push(String(url));
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve('id: 4\nevent: RUN_STARTED\ndata: {"type":"RUN_STARTED"}\n'),
+      } as unknown as Response);
+    }) as typeof fetch;
+
+    try {
+      const frames = await wireTransport.history('sesn_1', 3);
+
+      expect(asked[0]).toContain('follow=false');
+      expect(asked[0]).toContain('starting_after=3');
+      expect(frames).toHaveLength(1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('resolves rather than hanging, which is the property that was missing', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(''),
+      } as unknown as Response)) as typeof fetch;
+
+    try {
+      // An empty log is still an answer. A test that only checked the frames
+      // would pass against a promise that never settles, so this races the
+      // read against a timer and fails if the read loses.
+      const read = wireTransport.history('sesn_1', 0);
+      const outcome = await Promise.race([
+        read.then(() => 'resolved'),
+        new Promise((r) => setTimeout(() => r('hung'), 250)),
+      ]);
+
+      expect(outcome).toBe('resolved');
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
