@@ -595,3 +595,89 @@ async fn taking_a_conversation_back_over_rejoins_it_rather_than_opening_another(
         "the replacement must rejoin what the runtime is already running"
     );
 }
+
+#[tokio::test]
+async fn a_provider_that_answers_nothing_defers_rather_than_replaces() {
+    // The failure that already happened in production: the provider could not
+    // be enumerated *and* could not be attached to, because it was not
+    // answering at all. Reading that as "the sandbox is gone" replaces a
+    // session that is very probably still running, and the replacement carries
+    // no conversation.
+    let store = Arc::new(FakeStore::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let original = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    drop(first);
+
+    // A provider that answers neither question. Both failures have one cause,
+    // which is exactly why one must not be read as evidence about the other.
+    let silent = Arc::new(FakeAdapter {
+        refuse_list: true,
+        refuse_attach: true,
+        ..FakeAdapter::default()
+    });
+    let restarted = service(Arc::clone(&store), Arc::clone(&silent));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(
+        recovered.reprovisioned_sessions, 0,
+        "a session must not be replaced on evidence nobody has"
+    );
+    assert_eq!(
+        recovered.deferred_sessions, 1,
+        "it is deferred, and counted"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readable")
+            .expect("present")
+            .runtime_id,
+        Some(original),
+        "the record must still name the sandbox that is still running"
+    );
+    assert!(
+        silent.terminated.lock().await.is_empty(),
+        "and nothing may be torn down on the same non-evidence"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_the_provider_says_is_gone_is_still_replaced() {
+    // The other half. Deferring is for uncertainty, not for a positive answer:
+    // a session whose sandbox the provider says does not exist is one nobody
+    // can use until it is given another.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let handle = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    drop(first);
+
+    // The provider answers, and says this one is gone.
+    adapter.lose(&handle).await;
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    assert_eq!(recovered.deferred_sessions, 0);
+}
