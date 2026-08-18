@@ -295,3 +295,50 @@ impl HostedKernel {
 #[cfg(test)]
 #[path = "hosted_tests.rs"]
 mod hosted_tests;
+
+/// The socket a conversation rides, exposed for control frames alone.
+///
+/// A credential travels to a runtime as a control frame on a link the adapter
+/// has recorded. Recording one used to happen in exactly one place — attaching
+/// a terminal — so a conversation session had no recorded link, and every
+/// attempt to give it a credential failed with "has no open link to carry a
+/// credential". Two of the three kernels serve only conversations, so for
+/// those there was no path to a credential at all.
+///
+/// Only a credential is written here. Anything else arriving on this sender is
+/// dropped loudly rather than framed onto a lane it does not belong to: the
+/// conversation itself has its own typed channel, and terminal bytes have no
+/// meaning on a socket nobody is painting.
+pub(crate) fn control_lane<S>(
+    sink: std::sync::Arc<tokio::sync::Mutex<S>>,
+) -> mpsc::Sender<TerminalInput>
+where
+    S: futures_util::SinkExt<tokio_tungstenite::tungstenite::Message> + Unpin + Send + 'static,
+{
+    let (tx, mut rx) = mpsc::channel::<TerminalInput>(CONTROL_BUFFER);
+    tokio::spawn(async move {
+        while let Some(input) = rx.recv().await {
+            let TerminalInput::Credential(value) = input else {
+                tracing::warn!(
+                    "a conversation's control lane carries credentials and nothing else"
+                );
+                continue;
+            };
+            let message = tokio_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "t": "credential", "value": value }).to_string(),
+            );
+            // Never logged with its value, here or anywhere below this line.
+            if sink.lock().await.send(message).await.is_err() {
+                tracing::warn!("a conversation's control lane closed");
+                break;
+            }
+        }
+    });
+    tx
+}
+
+/// How many control frames may queue for one runtime.
+///
+/// Small on purpose: the only thing that travels here is a credential, and a
+/// backlog of them means the newest is the only one worth sending.
+const CONTROL_BUFFER: usize = 4;
