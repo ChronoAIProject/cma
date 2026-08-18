@@ -174,18 +174,17 @@ export function NewSessionDialog({
       onClose={onCancel}
       footer={
         <>
+          {/*
+           * Short here and named in full beside the control that caused it:
+           * §7 states a disabled key's reason once per row, as a sibling of
+           * the keys it explains, and the same sentence in both places reads
+           * as two problems.
+           */}
+          {refusal === undefined ? null : (
+            <span className="control-reason">The agent cannot serve this plane</span>
+          )}
           <Button onClick={onCancel}>Cancel</Button>
-          <Button
-            tone="accent"
-            disabled={saving || refusal !== undefined}
-            /*
-             * Short here and named in full beside the control that caused it:
-             * §7 draws a disabled key's reason as part of the key, and the
-             * same sentence in both places reads as two problems.
-             */
-            reason={refusal === undefined ? undefined : 'The agent cannot serve this plane'}
-            onClick={start}
-          >
+          <Button tone="accent" disabled={saving || refusal !== undefined} onClick={start}>
             {saving ? 'Starting' : 'Start session'}
           </Button>
         </>
