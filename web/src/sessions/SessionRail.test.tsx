@@ -77,6 +77,16 @@ describe('the rail row', () => {
     );
   });
 
+  it('says a session waiting on an answer is waiting, not stopped', () => {
+    // §18.3: the --wait dot and "waiting for your answer" in the rail. The
+    // dot is already the wait tone for idle; the line is what changes.
+    const idle = { ...SESSIONS[0], id: 'ses_waiting', lifecycle: 'idle' as const };
+    const { container } = renderRail({ sessions: [idle], waitingId: 'ses_waiting' });
+    expect(container.textContent).toContain('Waiting for your answer');
+    // The idle line — "Stopped — its sandbox was released" — is not drawn.
+    expect(container.textContent).not.toContain('Stopped —');
+  });
+
   it('never lets the activity line wrap', () => {
     // A row that grows with its longest sentence makes the list a different
     // height every time it reloads.
