@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use axum::{
     extract::{Query, State},
-    response::sse::{Event as SseEvent, Sse},
+    response::sse::{Event as SseEvent, KeepAlive, Sse},
 };
 use futures_util::stream::{self, Stream};
 use layer2_core::SessionId;
@@ -142,17 +142,7 @@ pub(super) async fn replay(
     Ok(Sse::new(stream::unfold(opening, |mut open| async move {
         loop {
             if let Some(event) = open.pending.pop_front() {
-                let frame = SseEvent::default()
-                    .event(event.kind)
-                    .json_data(&event)
-                    .unwrap_or_else(|_| SseEvent::default().event("RUN_ERROR"));
-                // Everything replayed comes from the log, so every frame here
-                // has one. Read through the same accessor as the run stream so
-                // the two cannot come to differ about it.
-                let frame = match event.cursor() {
-                    Some(id) => frame.id(id),
-                    None => frame,
-                };
+                let frame = super::project::sse_frame(&event);
                 return Some((Ok(frame), open));
             }
             // Whichever lane speaks first. Sleeping the poll interval
@@ -216,7 +206,12 @@ pub(super) async fn replay(
                 open.pending.extend(project(&event, &id, &id).events);
             }
         }
-    })))
+    }))
+    // The run stream has always carried one and this did not, so an idle
+    // session's stream was torn down by an intermediary after roughly two
+    // minutes and the surface silently stopped updating. This is the stream a
+    // client holds open across turns, so idle is its normal state.
+    .keep_alive(KeepAlive::default()))
 }
 
 #[cfg(test)]
