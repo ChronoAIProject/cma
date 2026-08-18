@@ -80,6 +80,19 @@ export interface RunError extends EventBase {
    * wrong" has thrown away the only part a person could act on.
    */
   readonly capability?: string;
+  /** The stop reason, as the API spells it. */
+  readonly code?: string;
+  /**
+   * Whether the session is coming back.
+   *
+   * A handover — onto a replacement runtime or onto the other plane — ends
+   * the run, because the runtime behind it is being torn down and a client
+   * left on a stream that simply stops cannot tell that from a slow agent.
+   * Nothing has gone wrong, though, and `Web_Style.md` §11 forbids a rotating
+   * session taking the failure ink. The protocol has one event for a run
+   * ending badly, so this is what a client distinguishes on.
+   */
+  readonly returns?: boolean;
 }
 
 /**
@@ -250,6 +263,13 @@ export function toEvent(raw: unknown): AguiEvent {
         type: 'RUN_ERROR',
         message: str(frame.message, 'the run failed'),
         capability: typeof frame.capability === 'string' ? frame.capability : undefined,
+        code: typeof frame.code === 'string' ? frame.code : undefined,
+        // Read under the extension prefix the document reserves. Absent on a
+        // control plane that predates it, which reads as `false` — a failure,
+        // which is the safer of the two to be wrong about: a handover drawn
+        // as a failure is confusing, and a failure drawn as a handover tells
+        // somebody their session is coming back when it is not.
+        returns: frame['chrono:returns'] === true,
       };
     case 'TEXT_MESSAGE_START':
       return {

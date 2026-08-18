@@ -235,6 +235,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             status,
             stop_reason,
             detail,
+            capability,
         } => match ends_the_run(*status, *stop_reason) {
             true => Projected {
                 events: vec![make(
@@ -242,6 +243,23 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                     serde_json::json!({
                         "message": detail.clone().unwrap_or_else(|| "the session stopped".into()),
                         "code": stop_reason.map(wire_stop_reason),
+                        // The ability the session lacked, when that is what
+                        // stopped it. The core arrives at a refusal typed and
+                        // knows the name; a client shown "something went
+                        // wrong" has been handed the one part it could not
+                        // act on. Absent for every failure that was not a
+                        // refusal, which is most of them.
+                        "capability": capability,
+                        // Whether the session is coming back. A rotation ends
+                        // the run — its runtime is being torn down — but
+                        // nothing has gone wrong, and a client that cannot
+                        // tell the two apart draws a handover as a failure.
+                        // The protocol has no third lifecycle event, so this
+                        // rides as an extension rather than as an invented
+                        // one; `Web_Style.md` §11 forbids a rotating session
+                        // taking the failure ink, and this is what a client
+                        // distinguishes on.
+                        "chrono:returns": *status == SessionStatus::Rotating,
                     }),
                 )],
                 ending: Some(Ending::Failed),
