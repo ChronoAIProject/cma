@@ -102,13 +102,18 @@ impl KernelAdapter for CodexAdapter {
     ) -> Result<ConversationChannel, AdapterError> {
         let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
-        acp::Bridge::open(
+        let (conversation, control) = acp::Bridge::open(
             stream,
             self.hosted.workspace().to_string(),
             Some(permission::mode_for(options.permission).to_string()),
             options.resume_conversation.clone(),
         )
-        .await
+        .await?;
+        // Recorded here so a credential can reach a session that never attaches
+        // a terminal — which is every conversation session, and every session
+        // at all on a kernel that serves only conversations.
+        self.hosted.remember_link(&handle.0, control).await;
+        Ok(conversation)
     }
 
     async fn refresh_credential(
