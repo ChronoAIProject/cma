@@ -396,6 +396,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * control plane returned: an ended session leaves the list, and a band
    * naming a session nobody can see would send its owner looking for it.
    */
+  /*
+   * Counted from what is actually drawn rather than from everything the
+   * control plane returned, for the same reason as `showing` below.
+   */
+  const liveCount = useMemo(
+    () => listed.filter((session) => abilitiesFor(session).interactive).length,
+    [listed],
+  );
+
   const showing = useMemo(() => {
     if (view === 'operations') {
       return 'Operations';
@@ -406,27 +415,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     if (listed.length === 0) {
       return 'No sessions';
     }
-    const running = listed.filter((session) => abilitiesFor(session).interactive).length;
     const count = `${String(listed.length)} session${listed.length === 1 ? '' : 's'}`;
-    return `${count} · ${String(running)} live`;
-  }, [view, loading, listed]);
+    return `${count} · ${String(liveCount)} live`;
+  }, [view, loading, listed, liveCount]);
 
   return (
     <PageFrame
       showing={showing}
       note={note}
-      /*
-       * Operations has no rail, so the band has no leading column to align its
-       * first rule with. Passing the sessions view's width there would draw a
-       * vertical line under nothing.
-       */
-      leadingColumn={
-        view === 'operations'
-          ? undefined
-          : railCollapsed
-            ? 'var(--rail-collapsed)'
-            : 'var(--rail-width)'
-      }
+      live={loading ? undefined : liveCount}
       views={compact ? undefined : viewSwitch}
       account={
         <ProfileMenu
