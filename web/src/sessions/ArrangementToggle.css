@@ -1,8 +1,7 @@
 /*
- * The arrangement toggle — docs/Web_Style.md §7.
- *
- * Quiet keys: §7 spends the one accent button a view is allowed on an action,
- * never on how a list is arranged.
+ * The arrangement toggle — docs/Web_Style.md §12: a List/Canvas segmented
+ * control in the rail header, matching the view switch's shape — a 10px
+ * container on the inset, segments raised when selected, no impression.
  */
 
 .arrangement {
@@ -12,20 +11,23 @@
   align-items: center;
   /* So the reason truncates inside the band rather than pushing past it. */
   min-width: 0;
+  padding: 2px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
 }
 
 .arrangement__option {
-  height: var(--control-h-sm);
+  height: calc(var(--control-h-sm) - 6px);
   padding-inline: var(--space-2);
   color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  font-size: var(--text-note);
+  font-weight: 500;
   white-space: nowrap;
   background: none;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
 }
 
 .arrangement__option:disabled {
@@ -53,9 +55,8 @@
 
 .arrangement__option[aria-pressed='true'] {
   color: var(--ink);
-  background: var(--surface);
-  border-color: var(--accent);
-  box-shadow: var(--lift-rest);
+  background: var(--raised);
+  border-color: var(--rule-2);
 }
 
 .arrangement__option:focus-visible {
