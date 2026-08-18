@@ -151,3 +151,107 @@ describe('a session being carried onto another runtime is not a failure', () => 
     expect(state.entries.filter((entry) => entry.kind === 'failure')).toHaveLength(1);
   });
 });
+
+/** A piece of a message being typed, as the live lane sends one. */
+function typing(delta: string): AguiEvent {
+  return {
+    type: 'TEXT_MESSAGE_CONTENT',
+    seq: 0,
+    threadId: 'sesn_1',
+    runId: 'run_1',
+    messageId: 'msg_live',
+    delta,
+    ephemeral: true,
+  };
+}
+
+describe('a message being typed', () => {
+  it('accumulates outside the stream, so it is never an entry', () => {
+    // §18.1: history has no in-flight message, so if this were an entry a
+    // reload would draw a different conversation from the one somebody
+    // watched — and the one they reload into is the one they will believe.
+    const state = stream([
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      typing('Hel'),
+      typing('lo '),
+      typing('there'),
+    ]);
+
+    expect(state.live?.text).toBe('Hello there');
+    expect(state.entries).toHaveLength(0);
+  });
+
+  it('is replaced by the committed message rather than sitting beside it', () => {
+    const state = stream([
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      typing('Hello th'),
+      {
+        type: 'TEXT_MESSAGE_START',
+        seq: 4,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_4',
+        role: 'assistant',
+      },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        seq: 4,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_4',
+        delta: 'Hello there',
+      },
+    ]);
+
+    expect(state.live).toBeUndefined();
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]).toMatchObject({ kind: 'message', text: 'Hello there' });
+  });
+
+  it('folds to the same conversation watched and replayed', () => {
+    // The equivalence rule, stated as a test rather than as a promise. The
+    // live frames are exactly what a reload would not receive, and dropping
+    // them must change nothing about the settled conversation.
+    const committed: readonly AguiEvent[] = [
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      {
+        type: 'TEXT_MESSAGE_START',
+        seq: 2,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_2',
+        role: 'assistant',
+      },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        seq: 2,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_2',
+        delta: 'Hello there',
+      },
+      { type: 'RUN_FINISHED', seq: 3, threadId: 'sesn_1', runId: 'run_1' },
+    ];
+    const watched = stream([
+      committed[0]!,
+      typing('Hel'),
+      typing('lo there'),
+      ...committed.slice(1),
+    ]);
+    const replayed = stream(committed);
+
+    expect(watched).toEqual(replayed);
+  });
+
+  it('is dropped when the turn ends without committing anything', () => {
+    // A runtime that went away mid-message leaves nothing in the log either,
+    // so leaving it drawn would show something a reload cannot reproduce.
+    const state = stream([
+      { type: 'RUN_STARTED', seq: 1, threadId: 'sesn_1', runId: 'run_1' },
+      typing('half a th'),
+      failed(2, { message: 'the runtime went away' }),
+    ]);
+
+    expect(state.live).toBeUndefined();
+  });
+});
