@@ -75,11 +75,11 @@ describe('the card', () => {
     expect(screen.getByText('chrono:command_execution')).toBeInTheDocument();
   });
 
-  it('spends the surface accent key on the affirmative answer', () => {
+  it('spends the surface primary key on the affirmative answer', () => {
     const { container } = render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
-    const accent = container.querySelectorAll('.button--accent');
-    expect(accent).toHaveLength(1);
-    expect(accent[0]?.textContent).toContain('Allow');
+    const primary = container.querySelectorAll('.button--primary');
+    expect(primary).toHaveLength(1);
+    expect(primary[0]?.textContent).toContain('Allow');
   });
 
   it('falls back to the protocol answers, never to a set it invented', () => {
@@ -134,11 +134,12 @@ describe('it is not a modal', () => {
   });
 
   it('is a card rather than a plate', () => {
-    // §3: a plate floats over the page. This sits in the stream where the turn
-    // stopped, so it takes the card impression and no fixed position.
+    // §3 and §18.3: a plate floats over the page. This sits in the stream
+    // where the turn stopped, so it rests — --lift-rest — with no fixed
+    // position.
     const css = readFileSync(resolve(process.cwd(), 'src/chat/ApprovalCard.css'), 'utf8');
     const rule = /\.approval\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(rule).toContain('box-shadow: var(--press-card-rest)');
+    expect(rule).toContain('box-shadow: var(--lift-rest)');
     expect(rule).not.toContain('position: fixed');
     expect(rule).not.toContain('z-index');
   });

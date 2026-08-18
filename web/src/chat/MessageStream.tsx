@@ -152,7 +152,7 @@ export function MessageStream({
       {behind > 0 ? (
         <button
           type="button"
-          className="button button--sm press--quiet stream__behind"
+          className="button button--sm stream__behind"
           onClick={() => {
             setPinned(true);
           }}

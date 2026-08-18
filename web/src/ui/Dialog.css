@@ -28,7 +28,7 @@
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  box-shadow: var(--press-card-rest);
+  box-shadow: var(--lift-plate);
 }
 
 /*
@@ -57,8 +57,8 @@
 }
 
 .dialog__title {
-  font-size: var(--text-xl);
-  line-height: var(--leading-lg);
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
 }
 
 .dialog__body {
@@ -88,5 +88,5 @@
 
 .confirm__question {
   color: var(--fail);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
