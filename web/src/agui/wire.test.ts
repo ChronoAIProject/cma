@@ -69,6 +69,39 @@ describe('what the interface serves is what this client reads', () => {
     expect(events.some((e) => e.type === 'UNKNOWN')).toBe(false);
   });
 
+  it('reads the field the projection actually sends for a tool call', () => {
+    // The defect this was written for. The projection sends `toolCallName` —
+    // which is what AG-UI's `TOOL_CALL_START` calls it — and this client read
+    // `target`, a name nothing sends. So every tool call arrived without the
+    // one thing that identifies it, and §18.2's collapsed row could say only a
+    // kind and a status: "scrollback with extra steps", in the document's own
+    // words, which is exactly what the plane exists not to be.
+    //
+    // Transcribed from `layer1-public/src/agui/project.rs`. A rename there
+    // fails here, which is the whole point of testing at this seam rather than
+    // against a mock that was written to match the client.
+    const body = sse([
+      {
+        id: 6,
+        event: 'TOOL_CALL_START',
+        data: {
+          type: 'TOOL_CALL_START',
+          runId: 'r',
+          threadId: 's',
+          toolCallId: 'call-1',
+          toolCallName: 'Read file src/main.rs',
+          'chrono:toolKind': 'read',
+        },
+      },
+    ]);
+
+    const [event] = parseEventStream(body).map(toEvent);
+
+    expect(event?.type).toBe('TOOL_CALL_START');
+    expect(event?.type === 'TOOL_CALL_START' && event.target).toBe('Read file src/main.rs');
+    expect(event?.type === 'TOOL_CALL_START' && event.toolKind).toBe('read');
+  });
+
   it('takes the sequence from the SSE id, because the body deliberately has none', () => {
     // `AguiEvent.seq` is `#[serde(skip)]` in the projection, so a client is
     // never handed a field that looks like protocol and is not. Everything

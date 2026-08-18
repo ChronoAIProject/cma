@@ -21,6 +21,7 @@ export const KNOWN_EVENTS = [
   'TEXT_MESSAGE_END',
   'TOOL_CALL_START',
   'TOOL_CALL_END',
+  'REASONING_MESSAGE_CONTENT',
   'STATE_DELTA',
 ] as const;
 
@@ -67,6 +68,19 @@ export interface RunStarted extends EventBase {
 export interface RunFinished extends EventBase {
   readonly type: 'RUN_FINISHED';
   readonly outcome?: RunOutcome;
+}
+
+/**
+ * A piece of the agent's reasoning, as it reasons.
+ *
+ * Always liveness — this never appears in the durable log, so a reload shows
+ * none of it. `REASONING_*` is AG-UI's current family; `THINKING_*` is the
+ * deprecated spelling of the same thing and is not emitted.
+ */
+export interface ReasoningContent extends EventBase {
+  readonly type: 'REASONING_MESSAGE_CONTENT';
+  readonly messageId: string;
+  readonly delta: string;
 }
 
 export interface RunError extends EventBase {
@@ -171,7 +185,15 @@ export interface ToolCallStart extends EventBase {
   readonly toolCallId: string;
   /** The kernel's own word for what kind of tool this is. Never mapped. */
   readonly toolKind: string;
-  /** What it is acting on, when the kernel said. */
+  /**
+   * What it is acting on, when the kernel said.
+   *
+   * Read from `toolCallName`, which is the protocol's field. This client read
+   * `target` — a name nothing sends — so every tool call arrived without the
+   * one thing that identifies it, and §18.2's collapsed row could only ever
+   * say a kind and a status. `target` is still accepted, so a client of an
+   * older build is not broken by the correction.
+   */
   readonly target?: string;
 }
 
@@ -223,8 +245,14 @@ export type AguiEvent =
   | TextMessageEnd
   | ToolCallStart
   | ToolCallEnd
+  | ReasoningContent
   | StateDelta
   | UnknownEvent;
+
+/** The first of these that is a string, if any is. */
+function firstString(...values: readonly unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string');
+}
 
 function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
@@ -295,7 +323,7 @@ export function toEvent(raw: unknown): AguiEvent {
         // The kernel's own word, verbatim (§3). A vocabulary this build has
         // not heard of is rendered as it arrived rather than mapped.
         toolKind: str(frame['chrono:toolKind'] ?? frame.toolKind, 'tool'),
-        target: typeof frame.target === 'string' ? frame.target : undefined,
+        target: firstString(frame.toolCallName, frame.target),
       };
     case 'TOOL_CALL_END':
       return {
@@ -304,6 +332,13 @@ export function toEvent(raw: unknown): AguiEvent {
         toolCallId: str(frame.toolCallId),
         status: str(frame['chrono:status'] ?? frame.status, 'finished'),
         output: typeof frame.output === 'string' ? frame.output : undefined,
+      };
+    case 'REASONING_MESSAGE_CONTENT':
+      return {
+        ...base,
+        type: 'REASONING_MESSAGE_CONTENT',
+        messageId: str(frame.messageId),
+        delta: str(frame.delta),
       };
     case 'STATE_DELTA':
       return { ...base, type: 'STATE_DELTA', patch: patches(frame.patch) };
