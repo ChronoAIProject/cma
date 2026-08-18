@@ -27,7 +27,8 @@ use tokio::sync::mpsc;
 
 use crate::event::{EventKind, LiveFrame};
 use crate::ids::SessionId;
-use crate::service::{append, SessionService};
+use crate::log::append;
+use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 
 impl SessionService {
