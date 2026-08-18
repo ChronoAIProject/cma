@@ -350,14 +350,14 @@ describe('App', () => {
 
   it('ignores a stored arrangement this build does not have', async () => {
     // Untrusted input: an older build, or another script on the origin, may
-    // have written it. Falling through to tabs is what keeps the console from
-    // rendering a mode that does not exist.
+    // have written it. Falling through to the list is what keeps the console
+    // from rendering a mode that does not exist.
     window.localStorage.setItem('chrono-bot:view-mode', 'split-screen');
 
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    expect(screen.getByRole('button', { name: 'Tabs' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('reconnects one session without redialling the rest of the canvas', async () => {

@@ -38,96 +38,40 @@
   border-bottom: 1px solid var(--rule);
 }
 
-.rail__new {
-  color: var(--accent);
-  justify-content: flex-start;
-}
-
+/*
+ * The filter pills and the sort control share one row. The pills are the
+ * shared .tag vocabulary with counts; the row scrolls nothing and wraps
+ * nothing — a filter row that re-wraps as counts change is a row that moves.
+ */
 .rail__filters {
   display: flex;
   gap: var(--space-2);
   align-items: center;
+  min-width: 0;
 }
 
+.rail__filter {
+  cursor: pointer;
+}
+
+/*
+ * Rows are the shared .row-item vocabulary — 12px-padded, 12px-radius targets
+ * (§12). The list carries the side padding that lets each row's radius show.
+ */
 .rail__list {
   flex: 1 1 auto;
   min-height: 0;
   margin: 0;
-  padding: 0;
+  padding: var(--space-2);
   overflow-y: auto;
   list-style: none;
 }
 
-.rail__tab {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  grid-template-areas:
-    'dot time meta'
-    '. activity activity';
-  gap: 0 var(--space-2);
-  width: 100%;
-  padding: var(--space-2);
-  font-family: var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-  background: transparent;
-  border: 0;
-  border-left: 2px solid transparent;
-}
-
-.rail__tab:hover {
-  background: var(--raised);
-}
-
-/*
- * The active session is marked on its leading edge rather than by a filled
- * background, matching how the terminal prompt marks focus.
- */
-.rail__tab--active {
-  background: var(--raised);
-  border-left-color: var(--accent);
-}
-
-.rail__tab:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
+/* The collapsed strip's dots keep their own geometry. */
 .rail__dot {
-  grid-area: dot;
-  align-self: center;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-}
-
-.rail__time {
-  grid-area: time;
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-}
-
-.rail__meta {
-  grid-area: meta;
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  color: var(--ink-3);
-}
-
-/*
- * What the session last did. It never wraps (§12): a row that grows with its
- * longest sentence makes the list a different height every time it reloads,
- * and a list whose rows move is a list nobody can point at.
- */
-.rail__activity {
-  grid-area: activity;
-  overflow: hidden;
-  font-size: var(--text-meta);
-  color: var(--ink-2);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ── Collapsed, §7 ───────────────────────────────────────────────────────
