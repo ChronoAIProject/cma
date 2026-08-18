@@ -51,6 +51,13 @@ pub(crate) struct Attachment {
 /// rebuilt when a client attaches.
 pub(crate) struct SessionEntry {
     pub(crate) session: Session,
+    /// Where this session's event sequence is handed out.
+    ///
+    /// Service-wide rather than per-entry, and held here so that numbering an
+    /// event needs nothing but the entry already in hand. The alternative —
+    /// numbering off `session.last_seq` — is what let a live session and a
+    /// provisioning path each advance their own copy and land on one number.
+    pub(crate) sequences: Arc<crate::sequence::Sequences>,
     /// Owner-delegated credential last handed to the runtime. Held so a refresh
     /// can be pushed without the caller tracking which sessions exist.
     pub(crate) subject_credential: Option<String>,
@@ -123,6 +130,12 @@ pub struct Deployment {
 pub struct SessionService {
     /// Live sessions, keyed by id. Only those with a running runtime appear.
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
+    /// The single writer of every session's event sequence.
+    ///
+    /// Shared with each entry, so the conversation fold and the provisioning,
+    /// revival, retirement and rotation paths all number from one place. Two
+    /// of them numbering independently is what dropped a turn's events.
+    pub(crate) sequences: Arc<crate::sequence::Sequences>,
     pub(crate) adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
     pub(crate) screen_factory: ScreenFactory,
     /// The durable record. Source of truth for anything that outlives a process.
@@ -192,6 +205,7 @@ impl SessionService {
     ) -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            sequences: Arc::new(crate::sequence::Sequences::default()),
             starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
             adapters,
@@ -367,34 +381,42 @@ impl SessionService {
         };
 
         let mut record = SessionRecord::new(session.clone());
-        record.session.last_seq = 3;
+        // Through the allocator like every other producer, even though nothing
+        // can yet be racing a session that did not exist a moment ago: a
+        // second place that decides what a sequence is, however safe today, is
+        // the shape of the defect this all exists to remove.
+        let first = self.sequences.take(&id, 0, 3);
+        record.session.last_seq = first + 2;
         self.store.upsert(&record).await.map_err(store_failed)?;
-        self.store
-            .append_events(&[
+        self.append_durably(
+            &id,
+            vec![
                 Event {
                     session_id: id.clone(),
-                    seq: 1,
+                    seq: first,
                     kind: EventKind::SessionCreated,
                 },
                 Event {
                     session_id: id.clone(),
-                    seq: 2,
+                    seq: first + 1,
                     kind: EventKind::StatusChanged {
                         status: SessionStatus::Provisioning,
                         stop_reason: None,
                         detail: None,
+                        capability: None,
                     },
                 },
                 Event {
                     session_id: id.clone(),
-                    seq: 3,
+                    seq: first + 2,
                     kind: EventKind::Progress {
                         stage: crate::session::ProvisioningStage::Accepted,
                     },
                 },
-            ])
-            .await
-            .map_err(store_failed)?;
+            ],
+        )
+        .await
+        .map_err(store_failed)?;
 
         // Detached deliberately. The caller's connection may end at any moment
         // and must not take the runtime with it.
@@ -409,32 +431,6 @@ impl SessionService {
 
         tracing::info!(session_id = %id, kernel = %record.session.kernel, "session created, runtime starting");
         Ok(record.session)
-    }
-
-    /// Persist a session's current state and any events buffered against it.
-    ///
-    /// Called after every state change. Failures are logged rather than
-    /// propagated where the caller has already acted: the runtime really did
-    /// change, and losing the record is a storage problem to surface, not a
-    /// reason to tell the caller their action failed.
-    pub(crate) async fn flush(&self, id: &SessionId) {
-        let (record, events) = {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return;
-            };
-            let events = std::mem::take(&mut entry.events);
-            let mut record = SessionRecord::new(entry.session.clone());
-            record.runtime_id = entry.runtime.as_ref().map(|h| h.0.clone());
-            record.context_ref = entry.context_ref.clone();
-            (record, events)
-        };
-        if let Err(e) = self.store.upsert(&record).await {
-            tracing::error!(session_id = %id, error = %e, "cannot persist session");
-        }
-        if let Err(e) = self.store.append_events(&events).await {
-            tracing::error!(session_id = %id, error = %e, "cannot persist events");
-        }
     }
 
     /// Fail unless the caller owns this live session and it is still running.
@@ -474,19 +470,6 @@ impl SessionService {
 /// tell a client their work was gone when it is merely unreachable.
 pub(crate) fn store_failed(e: StoreError) -> CoreError {
     CoreError::RuntimeUnavailable(format!("session store: {e}"))
-}
-
-/// Append a durable event, allocating the next per-session sequence.
-///
-/// Buffers on the entry; `flush` is what makes it durable. Split so a caller
-/// holding the entries lock does not perform I/O while holding it.
-pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
-    entry.session.last_seq += 1;
-    entry.events.push(Event {
-        session_id: entry.session.id.clone(),
-        seq: entry.session.last_seq,
-        kind,
-    });
 }
 
 /// Pump runtime output into the screen model and out to any live subscriber.

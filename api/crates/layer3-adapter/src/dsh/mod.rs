@@ -145,13 +145,18 @@ impl KernelAdapter for DshAdapter {
         // The permission mode is not sent: this harness reads it from its
         // environment at boot, and the one mode it could be asked to change to
         // is the one this kernel refuses to provision at all.
-        translate::Harness::open(
+        let (conversation, control) = translate::Harness::open(
             stream,
             self.hosted.workspace().to_string(),
             &self.spec,
             options.resume_conversation.clone(),
         )
-        .await
+        .await?;
+        // Recorded here so a credential can reach a session that never attaches
+        // a terminal — which is every conversation session, and every session
+        // at all on a kernel that serves only conversations.
+        self.hosted.remember_link(&handle.0, control).await;
+        Ok(conversation)
     }
 
     async fn refresh_credential(
