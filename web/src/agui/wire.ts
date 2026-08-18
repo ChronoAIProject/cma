@@ -1,3 +1,4 @@
+import { KNOWN_EVENTS } from './events';
 import type { AguiTransport } from './connection';
 
 /**
@@ -31,7 +32,7 @@ export const wireTransport: AguiTransport = {
   open(session, onFrame, onDrop) {
     const source = new EventSource(streamUrl(session), { withCredentials: true });
 
-    source.onmessage = (message: MessageEvent) => {
+    const deliver = (message: MessageEvent) => {
       try {
         const frame = JSON.parse(String(message.data)) as Record<string, unknown>;
         // Put the sequence back where everything above expects to find it.
@@ -44,6 +45,33 @@ export const wireTransport: AguiTransport = {
         // it — which is the whole point of resuming on a cursor.
       }
     };
+
+    /*
+     * Unnamed frames, which is what the service sends. `onmessage` fires only
+     * for these — a frame carrying an `event:` name is delivered to a listener
+     * registered for that exact name and to nothing else, which is why this
+     * handler alone received nothing at all when the service was naming them.
+     */
+    source.onmessage = deliver;
+
+    /*
+     * And named ones, for as long as any control plane still sends them.
+     * A rolling deploy runs both builds at once and §5 of `CLAUDE.md` does not
+     * allow that to interrupt a session, so this client reads either shape.
+     *
+     * A frame has one name or none, so the two paths are mutually exclusive
+     * and nothing arrives twice — which matters, because a liveness frame
+     * deliberately bypasses the deduplication upstream and would otherwise be
+     * appended to the message being typed a second time.
+     *
+     * This is bounded by what this build knows, and that is the whole reason
+     * the service stopped naming them: an `EventSource` cannot listen for a
+     * name it has not heard of, so a kind added by a newer control plane can
+     * only reach a client through the unnamed path above.
+     */
+    for (const kind of KNOWN_EVENTS) {
+      source.addEventListener(kind, deliver as EventListener);
+    }
 
     source.onerror = () => {
       onDrop('the event stream closed');
