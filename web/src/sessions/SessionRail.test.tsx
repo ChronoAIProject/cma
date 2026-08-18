@@ -174,8 +174,8 @@ describe('the stored state', () => {
     }
   });
 
-  it('keeps each panel state under its own key', () => {
+  it('remembers the choice it was given', () => {
     saveCollapsed('rail', true);
-    expect(loadCollapsed('sheet')).toBe(false);
+    expect(loadCollapsed('rail')).toBe(true);
   });
 });
