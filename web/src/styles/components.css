@@ -710,28 +710,6 @@
  */
 
 /*
- * The stacked key — retired by #253, which moves the reason to a sibling
- * .control-reason drawn once per row. The 52px minimum keeps a column of
- * stacked keys even while one reason wraps.
- */
-.button--stacked {
-  flex-direction: column;
-  gap: 2px;
-  align-items: flex-start;
-  height: auto;
-  min-height: calc(var(--control-h) + var(--space-5));
-  padding-block: var(--space-2);
-  text-align: left;
-  white-space: normal;
-}
-
-.button__reason {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
-}
-
-/*
  * The collapse handle — restyled by #254 (rail) and #261 (dialogs). The glyph
  * points where the panel will go and reverses when collapsed.
  */
