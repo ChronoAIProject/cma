@@ -373,3 +373,58 @@ async fn every_request_this_bridge_sends_is_dispatchable() {
         assert_eq!(frame["jsonrpc"], "2.0", "{frame}");
     }
 }
+
+#[test]
+fn a_turn_reports_the_reason_the_kernel_gave() {
+    // The answer arriving here is the whole JSON-RPC frame — `inbound` hands
+    // the receiver what it read. This path deserialized the envelope itself
+    // into a stop reason, which could only ever fail, so every turn was
+    // reported as `end_turn`: a refusal, a context limit and a cancellation
+    // all looked like an agent that had finished normally.
+    let ended = super::turn_outcome(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": { "stopReason": "max_tokens" },
+    }));
+
+    assert!(
+        matches!(ended.stop_reason, crate::TurnStopReason::MaxTokens),
+        "got {:?}",
+        ended.stop_reason
+    );
+}
+
+#[test]
+fn a_refused_prompt_is_not_reported_as_a_finished_turn() {
+    // The worst of the flattened cases. Telling an owner their agent answered
+    // when the bridge refused outright leaves them reading an empty turn and
+    // wondering what they did wrong.
+    let ended = super::turn_outcome(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "error": { "code": -32000, "message": "no" },
+    }));
+
+    assert!(
+        matches!(ended.stop_reason, crate::TurnStopReason::Refusal),
+        "got {:?}",
+        ended.stop_reason
+    );
+}
+
+#[test]
+fn an_answer_this_build_cannot_read_still_closes_the_turn() {
+    // A turn left open sits `running` forever and is indistinguishable from an
+    // agent taking its time. Ending it is right even when the reason is not
+    // legible; what must not happen is silence.
+    let ended = super::turn_outcome(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": { "stopReason": "something-added-later" },
+    }));
+
+    assert!(matches!(ended.stop_reason, crate::TurnStopReason::EndTurn));
+
+    let empty = super::turn_outcome(serde_json::json!({ "jsonrpc": "2.0", "id": 4 }));
+    assert!(matches!(empty.stop_reason, crate::TurnStopReason::EndTurn));
+}
