@@ -14,6 +14,7 @@ use tokio_tungstenite::tungstenite::Message;
 use super::*;
 use crate::supervisor;
 use crate::{RuntimeSpec, TermSize};
+use std::sync::Arc;
 
 /// A hosted kernel talking to a provider at `base`.
 fn hosted(base: &str) -> HostedKernel {
@@ -277,4 +278,91 @@ fn a_runtime_that_answers_not_implemented_is_stating_an_absence() {
     }
     .into();
     assert!(matches!(refused, AdapterError::Rejected(_)), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_conversations_control_lane_carries_a_credential() {
+    // The defect this exists for: a credential reaches a runtime as a control
+    // frame on a recorded link, and the only place that recorded one was
+    // attaching a terminal. A conversation session attaches none — and two of
+    // the three kernels serve nothing else — so such a session could never be
+    // given its owner's credential and refused every call the agent made.
+    let sent: Arc<tokio::sync::Mutex<Vec<Message>>> = Arc::default();
+    let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
+
+    let control = super::control_lane(sink);
+    control
+        .send(TerminalInput::Credential("a-real-credential-value".into()))
+        .await
+        .expect("the lane accepts a credential");
+    for _ in 0..50 {
+        if !sent.lock().await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    let frames = sent.lock().await.clone();
+    assert_eq!(frames.len(), 1, "the credential must reach the socket");
+    let Message::Text(body) = &frames[0] else {
+        panic!("a credential travels as a control frame, not as bytes: {frames:?}");
+    };
+    let parsed: serde_json::Value = serde_json::from_str(body).expect("json");
+    assert_eq!(parsed["t"], "credential");
+    assert_eq!(parsed["value"], "a-real-credential-value");
+}
+
+#[tokio::test]
+async fn a_conversations_control_lane_carries_nothing_else() {
+    // Terminal bytes have no meaning on a socket nobody is painting, and the
+    // conversation has its own typed channel. Anything else arriving here is
+    // dropped rather than framed onto a lane it does not belong to.
+    let sent: Arc<tokio::sync::Mutex<Vec<Message>>> = Arc::default();
+    let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
+
+    let control = super::control_lane(sink);
+    control
+        .send(TerminalInput::Bytes(b"ls -la".to_vec()))
+        .await
+        .expect("accepted by the channel");
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+    assert!(
+        sent.lock().await.is_empty(),
+        "only a credential may travel this lane"
+    );
+}
+
+/// A sink that keeps what was written, so a test can read the wire.
+struct Recorder(Arc<tokio::sync::Mutex<Vec<Message>>>);
+
+impl futures_util::Sink<Message> for Recorder {
+    type Error = std::io::Error;
+
+    fn poll_ready(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: std::pin::Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        let kept = Arc::clone(&self.0);
+        tokio::spawn(async move { kept.lock().await.push(item) });
+        Ok(())
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
 }
