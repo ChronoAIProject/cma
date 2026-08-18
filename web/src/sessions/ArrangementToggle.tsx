@@ -18,9 +18,10 @@ import './ArrangementToggle.css';
  * records that as a real cost of this arrangement, and it may not be described
  * as a display preference that reaches nothing.
  *
- * Two quiet buttons rather than a switch: a switch implies on and off, and
- * neither arrangement is the absence of the other. `aria-pressed` carries the
- * state, so the accent is reinforcement rather than the only signal.
+ * A List/Canvas segmented control in the rail header (§12). Two segments
+ * rather than a switch: a switch implies on and off, and neither arrangement
+ * is the absence of the other. `aria-pressed` carries the state, so the
+ * treatment is reinforcement rather than the only signal.
  *
  * Pressing the arrangement already showing is deliberately not a toggle.
  * Someone who cannot tell which one they are in reaches for the label of the
@@ -42,7 +43,7 @@ interface ArrangementToggleProps {
 }
 
 const ARRANGEMENTS: readonly { readonly value: Arrangement; readonly label: string }[] = [
-  { value: 'tabs', label: 'Tabs' },
+  { value: 'list', label: 'List' },
   { value: 'canvas', label: 'Canvas' },
 ];
 

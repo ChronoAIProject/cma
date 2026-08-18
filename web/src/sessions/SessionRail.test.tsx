@@ -81,7 +81,7 @@ describe('the rail row', () => {
     // A row that grows with its longest sentence makes the list a different
     // height every time it reloads.
     const { container } = renderRail();
-    expect(container.querySelector('.rail__activity')).not.toBeNull();
+    expect(container.querySelector('.row-item__activity')).not.toBeNull();
   });
 });
 

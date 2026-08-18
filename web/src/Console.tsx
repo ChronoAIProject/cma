@@ -345,7 +345,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * on the canvas when the window narrows goes back to tabs rather than being
    * drawn at a size it cannot be read at.
    */
-  const arrangementShown: Arrangement = canvasFits(width) ? arrangement : 'tabs';
+  const arrangementShown: Arrangement = canvasFits(width) ? arrangement : 'list';
   const compact = width === 'compact';
 
   /*
