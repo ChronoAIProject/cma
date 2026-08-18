@@ -282,3 +282,56 @@ describe('a run that failed, §18.9', () => {
     expect(screen.queryByText('Run failed')).toBeNull();
   });
 });
+
+describe('a turn in flight, §18.1', () => {
+  it('says something is happening before anything has arrived', () => {
+    // A turn that has started and produced nothing is otherwise
+    // indistinguishable from a dead stream, and a turn takes as long as the
+    // agent takes.
+    render(<MessageStream entries={[]} turnInFlight />);
+
+    expect(screen.getByText('Working')).toBeTruthy();
+  });
+
+  it('stops saying it the moment there is something to read', () => {
+    render(<MessageStream entries={[]} turnInFlight live={{ text: 'Hel' }} />);
+
+    expect(screen.queryByText('Working')).toBeNull();
+    expect(screen.getByText('Hel')).toBeTruthy();
+  });
+
+  it('draws the message being typed after the last entry, not as one', () => {
+    const state = fold([
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 1, messageId: 'm1', role: 'user' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 1, messageId: 'm1', delta: 'do the thing' }),
+    ]);
+    const { container } = render(
+      <MessageStream entries={state.entries} turnInFlight live={{ text: 'on it' }} />,
+    );
+
+    const turns = [...container.querySelectorAll('.turn')];
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.textContent).toContain('on it');
+  });
+
+  it('gives the caret to the message being typed and to nothing else', () => {
+    const settled = fold([
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 1, messageId: 'm1', role: 'assistant' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 1, messageId: 'm1', delta: 'committed' }),
+      toEvent({ type: 'RUN_FINISHED', seq: 2 }),
+    ]);
+    const { container } = render(
+      <MessageStream entries={settled.entries} turnInFlight live={{ text: 'still going' }} />,
+    );
+
+    const carets = [...container.querySelectorAll('.turn__caret')];
+    expect(carets).toHaveLength(1);
+    expect(carets[0]?.closest('.turn')?.textContent).toContain('still going');
+  });
+
+  it('draws nothing extra when a turn is not in flight', () => {
+    render(<MessageStream entries={[]} />);
+
+    expect(screen.queryByText('Working')).toBeNull();
+  });
+});
