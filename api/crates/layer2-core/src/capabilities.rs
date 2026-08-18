@@ -101,6 +101,19 @@ impl SessionCapabilities {
         }
     }
 
+    /// Whether this set was never written down.
+    ///
+    /// `granted` never produces an empty set: it always grants the plane it
+    /// was asked for, or it fails. So a session holding nothing at all is not
+    /// a session that was granted nothing — it is a record written before this
+    /// existed, and the difference decides whether it is settled or believed.
+    ///
+    /// The same distinction `granted_services` draws with `Option`, drawn here
+    /// without one because the type already carries an impossible value.
+    pub fn unrecorded(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// Refuse unless this session holds `capability`, naming it if it does not.
     ///
     /// The single place a missing ability turns into an error, so every
