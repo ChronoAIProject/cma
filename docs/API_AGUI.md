@@ -102,6 +102,19 @@ Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, 
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
 
+### Reading history is a different request from watching
+
+`GET /api/v1/agui/events` **holds the stream open across turns** — it is the session's stream, not one turn's, so it does not end on its own. That is what you want to watch a session, and it is a deadlock if you want history as a value: awaiting the response body settles only when the stream ends, so it never settles.
+
+Send **`follow=false`** for a bounded read. It drains the log from your cursor and closes.
+
+```
+GET /api/v1/agui/events?thread_id=…&starting_after=41&follow=false   # history, ends
+GET /api/v1/agui/events?thread_id=…                                  # watch, stays open
+```
+
+Absent means follow, so nothing written against the earlier behaviour changes.
+
 ### Frames are unnamed; the kind is in the body
 
 Every frame on both streams arrives as the default SSE `message` type, with **no `event:` name**. The kind is `type` in the body, and that is what to dispatch on.
