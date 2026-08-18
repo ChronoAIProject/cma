@@ -101,6 +101,14 @@ Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `THINKING_START`, `
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
 
+### The session stream carries the live lane too
+
+Both `GET /api/v1/agui/events` and the run stream carry it, and a client needs only one of them. **The session stream is the one to use**: it is held open across turns, so a client that posts a run and does not consume its response — which is the ordinary shape of a chat client — still sees everything happening.
+
+Holding both would mean deciding for yourself how to interleave the durable frames and the live ones, and they describe one turn. Pick the session stream and there is nothing to interleave.
+
+Liveness attaches when the session is running. A stream opened before that — which is what a client does the moment it has a session — attaches on its own once the runtime is up; nothing needs reopening.
+
 ### The run stream has two lanes, and one of them is not history
 
 Everything above is the **durable** lane: projected from the log, carrying an SSE `id`, and what a client resumes from.
