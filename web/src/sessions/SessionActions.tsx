@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { KernelOffer, Session } from './types';
 import { abilitiesFor } from './availability';
 import { switchFor, unavailableBecause } from './planeSwitch';
@@ -8,29 +8,23 @@ import './SessionActions.css';
 /**
  * What can be done to the session being described — docs/Web_Style.md §12.
  *
- * In the session header, at the head of the terminal they act on, visible
- * without opening anything. Plain buttons rather than a menu: these are the
- * only actions a session has, there are at most three of them at a time, and
- * hiding them behind a control that has to be discovered means someone reading
- * "revive it to carry on" has nowhere obvious to go.
- *
- * Every action is always shown, and disabled when the session's state does not
- * allow it (§7). Removing a control that does not currently apply would make
- * the header change shape as the session moves, and leave someone hunting for
- * a button that was there a moment ago.
+ * One primary, one secondary, and the overflow menu (§7): a header carrying
+ * four equally weighted keys makes the reader choose before they can read,
+ * which is what this header used to do. The primary is Revive where §11
+ * offers it — revive is the primary action wherever it is offered — and
+ * Reconnect otherwise. The secondary is Details, which opens the drawer.
+ * Everything else — moving the session's plane, ending it — lives behind the
+ * `···` key. Delete lives at the drawer's foot, away from everything
+ * reversible.
  *
  * **Every disabled control states why, and one sentence covers all of them.**
  * `abilitiesFor` is the single source of enablement and it disables controls
  * for exactly one cause at a time — the session's state — so the reason is
- * drawn once, in the band, and each control points at it. It is on the surface
- * rather than in a tooltip, which §7 rejects as unreachable by touch and
- * invisible to anyone scanning, and it is the same sentence §11 requires a
- * session that cannot be typed into to carry.
+ * drawn once per row, as a `.control-reason`, and each control points at it.
  *
- * They are ordered by how much they destroy: reviving and reconnecting change
- * nothing, ending releases the sandbox but keeps the transcript, deleting is
- * final. Only the last asks twice, and it asks inline, in place of the row's
- * own controls — §7 forbids a second dialog over a dialog.
+ * The plane move confirms inline, in place of the row's own controls
+ * (§18.6), stating the two costs that are not obvious. §7 forbids a second
+ * dialog over a dialog, and the same rule holds for a header.
  */
 
 interface SessionActionsProps {
@@ -38,7 +32,9 @@ interface SessionActionsProps {
   readonly onReconnect: () => void;
   readonly onRevive: () => void;
   readonly onStop: () => void;
-  readonly onDelete: () => void;
+  /** Opens and closes the details drawer. */
+  readonly onDetails: () => void;
+  readonly detailsOpen?: boolean;
   /**
    * What this deployment runs, and what each runtime can be.
    *
@@ -57,33 +53,56 @@ export function SessionActions({
   onReconnect,
   onRevive,
   onStop,
-  onDelete,
+  onDetails,
+  detailsOpen = false,
   kernels = [],
   onChangePlane,
   busy = false,
 }: SessionActionsProps) {
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [confirmingSwitch, setConfirmingSwitch] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const reasonId = useId();
   const can = abilitiesFor(session);
   // Absent rather than disabled where the kernel does not advertise the other
   // plane (§18.6): a control that can never work is not one that is currently
   // unavailable.
   const move = onChangePlane === undefined ? undefined : switchFor(session, kernels);
-  // Points every control at the one sentence explaining the state that
-  // disabled it, so the connection is announced rather than merely adjacent.
-  const describedBy = can.reason === undefined ? undefined : reasonId;
+
+  // The menu closes on Escape and on a press anywhere outside it, because a
+  // plate that only its own key can dismiss traps the pointer.
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+    const onPress = (event: MouseEvent) => {
+      if (menuRef.current !== null && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPress);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPress);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
 
   if (confirmingSwitch && move !== undefined) {
     /*
      * §18.6: it confirms inline, in place of the header's own controls, and
      * states the two things that are true and not obvious. Neither is
-     * recoverable by pressing the key again, which is why they are said before
-     * rather than reported after.
+     * recoverable by pressing the key again, which is why they are said
+     * before rather than reported after.
      */
     return (
       <div className="actions">
-        <span className="actions__question actions__question--cost">
+        <span className="control-reason actions__question">
           Move to {move.label.toLowerCase()}? The turn in flight is lost, and this session is not
           interactive while it moves.
         </span>
@@ -109,74 +128,24 @@ export function SessionActions({
     );
   }
 
-  if (confirmingDelete) {
-    return (
-      <div className="actions">
-        <span className="actions__question">Delete this session and its history?</span>
-        <Button
-          onClick={() => {
-            setConfirmingDelete(false);
-          }}
-        >
-          Keep it
-        </Button>
-        <Button
-          tone="danger"
-          disabled={busy}
-          onClick={() => {
-            setConfirmingDelete(false);
-            onDelete();
-          }}
-        >
-          Delete permanently
-        </Button>
-      </div>
-    );
-  }
-
   /*
    * §7: one reason per row, beside the controls it explains. The session's
-   * state disables the lifecycle keys for one cause at a time, and the plane
-   * key can be unavailable for its own; when both hold, the two sentences
-   * share the row's one reason line rather than each key growing its own.
+   * state disables for one cause at a time, so one sentence covers the
+   * primary and the menu's items alike.
    */
-  const rowReason = [
-    can.reason,
-    move !== undefined && !move.available ? unavailableBecause(session) : undefined,
-  ]
-    .filter((sentence): sentence is string => sentence !== undefined)
-    .join(' ');
+  const describedBy = can.reason === undefined ? undefined : reasonId;
 
   return (
     <div className="actions">
-      {rowReason === '' ? null : (
+      {can.reason === undefined ? null : (
         <span className="control-reason actions__reason" id={reasonId}>
-          {rowReason}
+          {can.reason}
         </span>
       )}
 
       {/*
-       * §18.6: a quiet small key naming the plane it moves to, beside the
-       * lifecycle controls. Quiet because the accent this surface is allowed
-       * belongs to revive, and because moving planes is a considered act
-       * rather than the thing this header exists for.
-       */}
-      {move === undefined ? null : (
-        <Button
-          size="sm"
-          disabled={busy || !move.available}
-          aria-describedby={move.available ? undefined : reasonId}
-          onClick={() => {
-            setConfirmingSwitch(true);
-          }}
-        >
-          {move.label}
-        </Button>
-      )}
-
-      {/*
        * Revive is the primary action wherever it is offered (§11), which is
-       * where this surface spends the one accent button §7 allows it.
+       * where this surface spends the one primary key §7 allows it.
        */}
       {can.canRevive ? (
         <Button tone="accent" disabled={busy} onClick={onRevive} aria-describedby={describedBy}>
@@ -192,21 +161,68 @@ export function SessionActions({
         </Button>
       )}
 
-      <Button disabled={busy || !can.canStop} onClick={onStop} aria-describedby={describedBy}>
-        End
+      <Button onClick={onDetails} aria-expanded={detailsOpen}>
+        Details
       </Button>
 
-      <Button
-        tone="danger"
-        disabled={busy || !can.canDelete}
-        aria-describedby={describedBy}
-        onClick={() => {
-          // Asked twice because this is the only act that cannot be undone.
-          setConfirmingDelete(true);
-        }}
-      >
-        Delete
-      </Button>
+      <div className="actions__overflow" ref={menuRef}>
+        <Button
+          placement="button--icon"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="More actions"
+          onClick={() => {
+            setMenuOpen((open) => !open);
+          }}
+        >
+          ···
+        </Button>
+        {menuOpen ? (
+          <div className="menu actions__menu" role="menu" aria-label="More actions">
+            {/*
+             * §18.6: a small key naming the plane it moves to, absent — not
+             * disabled — when the kernel does not advertise the other plane,
+             * and disabled with its reason when the state refuses it.
+             */}
+            {move === undefined ? null : (
+              <button
+                type="button"
+                role="menuitem"
+                className="menu__item"
+                aria-disabled={busy || !move.available}
+                onClick={() => {
+                  if (busy || !move.available) {
+                    return;
+                  }
+                  setMenuOpen(false);
+                  setConfirmingSwitch(true);
+                }}
+              >
+                {move.label}
+                {move.available ? null : (
+                  <span className="menu__kind">{unavailableBecause(session)}</span>
+                )}
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              className="menu__item"
+              aria-disabled={busy || !can.canStop}
+              aria-describedby={describedBy}
+              onClick={() => {
+                if (busy || !can.canStop) {
+                  return;
+                }
+                setMenuOpen(false);
+                onStop();
+              }}
+            >
+              End session
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

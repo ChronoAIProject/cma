@@ -316,9 +316,11 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Canvas' }));
 
     // The session is a framed node now, and it is still the same session: the
-    // rail still lists it and the details panel still describes it.
+    // rail still lists it and the details drawer still describes it when
+    // opened from the header's Details key (§12: closed by default).
     expect(await screen.findByRole('region', { name: /on codex/i })).toBeInTheDocument();
     expect(screen.getAllByRole('tab')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: /^details$/i }));
     expect(screen.getByRole('complementary', { name: /session details/i })).toBeInTheDocument();
   });
 
@@ -382,12 +384,12 @@ describe('App', () => {
     });
   });
 
-  it('keeps the terminal attached when the details sheet opens and closes', async () => {
-    // §12 puts the sheet under the terminal rather than beside it, so opening
-    // it changes the terminal's height and nothing else. Rendered around the
-    // terminal instead of beside it, a toggle would remount xterm and take the
-    // scrollback with it — which is the whole cost of getting this wrong, and
-    // is invisible until somebody scrolls up and finds nothing.
+  it('keeps the terminal attached when the details drawer opens and closes', async () => {
+    // §12 puts the drawer beside the surface, so opening it changes the
+    // surface's width and nothing else. Rendered around the terminal instead
+    // of beside it, a toggle would remount xterm and take the scrollback with
+    // it — which is the whole cost of getting this wrong, and is invisible
+    // until somebody scrolls up and finds nothing.
     seedSessions(1);
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
@@ -396,8 +398,8 @@ describe('App', () => {
       expect(sockets).toHaveLength(1);
     });
 
-    await user.click(screen.getByRole('button', { name: /hide session details/i }));
-    await user.click(screen.getByRole('button', { name: /show session details/i }));
+    await user.click(screen.getByRole('button', { name: /^details$/i }));
+    await user.click(screen.getByRole('button', { name: /close session details/i }));
 
     // One socket still, not three. A remounted terminal redials.
     expect(sockets).toHaveLength(1);
@@ -417,8 +419,10 @@ describe('App', () => {
     });
 
     // Nothing stubs the stop endpoint, so the request comes back 404 — the
-    // same shape as a 409, an expired token or a network blip.
-    await user.click(screen.getByRole('button', { name: /^end$/i }));
+    // same shape as a 409, an expired token or a network blip. End lives in
+    // the header's overflow menu now (§7).
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    await user.click(screen.getByRole('menuitem', { name: /end session/i }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toBeInTheDocument();
@@ -447,7 +451,8 @@ describe('App', () => {
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    await user.click(screen.getByRole('button', { name: /^end$/i }));
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    await user.click(screen.getByRole('menuitem', { name: /end session/i }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /^reconnect$/i }));
@@ -476,6 +481,8 @@ describe('App', () => {
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
       await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
+    // Delete sits at the drawer's foot now (§12), so the drawer opens first.
+    await user.click(screen.getByRole('button', { name: /^details$/i }));
     await user.click(screen.getByRole('button', { name: /^delete$/i }));
     await user.click(screen.getByRole('button', { name: /delete permanently/i }));
 

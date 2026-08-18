@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SessionRail } from './sessions/SessionRail';
-import { SessionDetails } from './sessions/SessionDetails';
+import { SessionDrawer } from './sessions/SessionDrawer';
 import { PageFrame } from './shell/PageFrame';
 import { ViewSwitch } from './shell/ViewSwitch';
 import type { SortOrder } from './sessions/sessionTime';
@@ -51,8 +51,8 @@ import './Console.css';
  * remember.
  *
  * The two arrangements are two arrangements of one state. `activeId` means the
- * session the keyboard is talking to in both of them — in tabs that is the
- * one visible terminal, on the canvas it is the focused node — so switching
+ * session the keyboard is talking to in both of them — in the list that is
+ * the one visible terminal, on the canvas it is the focused node — so switching
  * arrangement never asks anyone where they were.
  */
 
@@ -140,13 +140,12 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // tabs shows that session's progress rather than another's.
   const [stages, setStages] = useState<Record<string, Stage>>({});
   const [order, setOrder] = useState<SortOrder>('newest');
-  // Open by default: someone arriving wants to know what they are looking at,
-  // and the panel is the only place that says.
   /*
-   * Open by default: somebody arriving wants to know what they are looking at.
-   * Validated on read (§7), because web storage is untrusted input.
+   * The details drawer — §12: closed by default, opened from the header's
+   * Details key. Not persisted: it is reference material opened on demand,
+   * not a layout choice to carry across visits.
    */
-  const [detailsOpen, setDetailsOpen] = useState(() => !loadCollapsed('sheet'));
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // Validated on read: web storage is untrusted input, and an unrecognised
   // value reaching the layout would be a rail nobody can draw (§7).
   const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
@@ -489,22 +488,13 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               <div className="console__drawer">
                 {/*
                  * §16: below 30rem the app bar gives the switch and the
-                 * command field to the drawer. They are placed here rather
-                 * than dropped, because a view somebody can no longer reach is
-                 * worse than one they have to open a drawer for.
+                 * command trigger to the drawer — a view somebody can no
+                 * longer reach is worse than one they have to open a drawer
+                 * for. The trigger arrives with the command bar itself; until
+                 * then the drawer carries the switch, and never a dead field
+                 * (§6).
                  */}
-                {compact ? (
-                  <div className="band console__drawerchrome">
-                    {viewSwitch}
-                    <input
-                      className="field__control"
-                      type="text"
-                      disabled
-                      aria-label="Command"
-                      placeholder="Command — not yet available"
-                    />
-                  </div>
-                ) : null}
+                {compact ? <div className="band console__drawerchrome">{viewSwitch}</div> : null}
                 <SessionRail
                   sessions={listed}
                   activeId={activeId}
@@ -591,7 +581,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                     }}
                     onRevive={() => void reviveSessionById(active.id)}
                     onStop={() => void endSession(active.id)}
-                    onDelete={() => void removeSession(active.id)}
+                    onDetails={() => {
+                      setDetailsOpen((open) => !open);
+                    }}
+                    detailsOpen={detailsOpen}
                     kernels={kernels}
                     onChangePlane={(to) => void changeSessionPlane(active.id, to)}
                   />
@@ -673,28 +666,28 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 interactive={abilitiesFor(active).interactive}
               />
             )}
-
-            {/*
-             * The sheet sits beneath the terminal, inside the same column and
-             * after it, so opening and closing it changes the terminal's height
-             * and nothing else. Rendered as a sibling rather than around it,
-             * because a component that wrapped the terminal would remount it on
-             * every toggle and take the scrollback with it.
-             */}
-            {active !== null ? (
-              <SessionDetails
-                session={active}
-                open={detailsOpen}
-                ending={endings[active.id]}
-                onToggle={() => {
-                  setDetailsOpen((v) => {
-                    saveCollapsed('sheet', v);
-                    return !v;
-                  });
-                }}
-              />
-            ) : null}
           </main>
+
+          {/*
+           * The details drawer — §12: 360px on the right, closed by default,
+           * opened from the header's Details key. A sibling of the surface
+           * rather than a wrapper around it, because a component that wrapped
+           * the terminal would remount it on every toggle and take the
+           * scrollback with it; opening the drawer changes the surface's
+           * width and nothing else.
+           */}
+          {active !== null && detailsOpen ? (
+            <SessionDrawer
+              session={active}
+              ending={endings[active.id]}
+              busy={acting}
+              onClose={() => {
+                setDetailsOpen(false);
+              }}
+              onStop={() => void endSession(active.id)}
+              onDelete={() => void removeSession(active.id)}
+            />
+          ) : null}
         </div>
       )}
 

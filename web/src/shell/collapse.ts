@@ -13,12 +13,16 @@
  * rather than reaching the layout as a state it cannot draw.
  */
 
-/** Panels whose collapsed state is remembered. One key each, namespaced. */
-export type Panel = 'rail' | 'sheet';
+/**
+ * Panels whose collapsed state is remembered. One key each, namespaced. The
+ * details drawer is deliberately not here: §12 has it closed by default,
+ * opened on demand, and a remembered layout would reopen reference material
+ * nobody asked for.
+ */
+export type Panel = 'rail';
 
 const KEY: Record<Panel, string> = {
   rail: 'chrono-bot:rail-collapsed',
-  sheet: 'chrono-bot:sheet-collapsed',
 };
 
 function storage(): Storage | null {
