@@ -21,6 +21,7 @@ export const KNOWN_EVENTS = [
   'TEXT_MESSAGE_END',
   'TOOL_CALL_START',
   'TOOL_CALL_END',
+  'REASONING_MESSAGE_CONTENT',
   'STATE_DELTA',
 ] as const;
 
@@ -43,6 +44,20 @@ interface EventBase {
    * exactly the window nobody tests.
    */
   readonly seq: number;
+  /**
+   * Whether this frame is what is happening rather than what happened.
+   *
+   * A liveness frame — a piece of a message the agent is still typing — is not
+   * in the durable log and carries no cursor. It **must not** touch the
+   * resumption state: `seq` is meaningless on one, and treating it as a
+   * position would send the next reconnect somewhere the log has never been.
+   *
+   * Stated by the server rather than inferred. `EventSource` reports
+   * `lastEventId` as the last id it was *given*, so a frame sent without one
+   * is indistinguishable here from a frame repeating the previous id — and
+   * deduplicating on that would drop every liveness frame in silence.
+   */
+  readonly ephemeral?: boolean;
 }
 
 export interface RunStarted extends EventBase {
@@ -53,6 +68,19 @@ export interface RunStarted extends EventBase {
 export interface RunFinished extends EventBase {
   readonly type: 'RUN_FINISHED';
   readonly outcome?: RunOutcome;
+}
+
+/**
+ * A piece of the agent's reasoning, as it reasons.
+ *
+ * Always liveness — this never appears in the durable log, so a reload shows
+ * none of it. `REASONING_*` is AG-UI's current family; `THINKING_*` is the
+ * deprecated spelling of the same thing and is not emitted.
+ */
+export interface ReasoningContent extends EventBase {
+  readonly type: 'REASONING_MESSAGE_CONTENT';
+  readonly messageId: string;
+  readonly delta: string;
 }
 
 export interface RunError extends EventBase {
@@ -66,6 +94,19 @@ export interface RunError extends EventBase {
    * wrong" has thrown away the only part a person could act on.
    */
   readonly capability?: string;
+  /** The stop reason, as the API spells it. */
+  readonly code?: string;
+  /**
+   * Whether the session is coming back.
+   *
+   * A handover — onto a replacement runtime or onto the other plane — ends
+   * the run, because the runtime behind it is being torn down and a client
+   * left on a stream that simply stops cannot tell that from a slow agent.
+   * Nothing has gone wrong, though, and `Web_Style.md` §11 forbids a rotating
+   * session taking the failure ink. The protocol has one event for a run
+   * ending badly, so this is what a client distinguishes on.
+   */
+  readonly returns?: boolean;
 }
 
 /**
@@ -144,7 +185,15 @@ export interface ToolCallStart extends EventBase {
   readonly toolCallId: string;
   /** The kernel's own word for what kind of tool this is. Never mapped. */
   readonly toolKind: string;
-  /** What it is acting on, when the kernel said. */
+  /**
+   * What it is acting on, when the kernel said.
+   *
+   * Read from `toolCallName`, which is the protocol's field. This client read
+   * `target` — a name nothing sends — so every tool call arrived without the
+   * one thing that identifies it, and §18.2's collapsed row could only ever
+   * say a kind and a status. `target` is still accepted, so a client of an
+   * older build is not broken by the correction.
+   */
   readonly target?: string;
 }
 
@@ -196,8 +245,14 @@ export type AguiEvent =
   | TextMessageEnd
   | ToolCallStart
   | ToolCallEnd
+  | ReasoningContent
   | StateDelta
   | UnknownEvent;
+
+/** The first of these that is a string, if any is. */
+function firstString(...values: readonly unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string');
+}
 
 function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
@@ -221,6 +276,7 @@ export function toEvent(raw: unknown): AguiEvent {
     threadId: str(frame.threadId),
     runId: str(frame.runId),
     seq: num(frame.seq),
+    ephemeral: frame['chrono:live'] === true,
   };
   const kind = str(frame.type);
 
@@ -235,6 +291,13 @@ export function toEvent(raw: unknown): AguiEvent {
         type: 'RUN_ERROR',
         message: str(frame.message, 'the run failed'),
         capability: typeof frame.capability === 'string' ? frame.capability : undefined,
+        code: typeof frame.code === 'string' ? frame.code : undefined,
+        // Read under the extension prefix the document reserves. Absent on a
+        // control plane that predates it, which reads as `false` — a failure,
+        // which is the safer of the two to be wrong about: a handover drawn
+        // as a failure is confusing, and a failure drawn as a handover tells
+        // somebody their session is coming back when it is not.
+        returns: frame['chrono:returns'] === true,
       };
     case 'TEXT_MESSAGE_START':
       return {
@@ -260,7 +323,7 @@ export function toEvent(raw: unknown): AguiEvent {
         // The kernel's own word, verbatim (§3). A vocabulary this build has
         // not heard of is rendered as it arrived rather than mapped.
         toolKind: str(frame['chrono:toolKind'] ?? frame.toolKind, 'tool'),
-        target: typeof frame.target === 'string' ? frame.target : undefined,
+        target: firstString(frame.toolCallName, frame.target),
       };
     case 'TOOL_CALL_END':
       return {
@@ -269,6 +332,13 @@ export function toEvent(raw: unknown): AguiEvent {
         toolCallId: str(frame.toolCallId),
         status: str(frame['chrono:status'] ?? frame.status, 'finished'),
         output: typeof frame.output === 'string' ? frame.output : undefined,
+      };
+    case 'REASONING_MESSAGE_CONTENT':
+      return {
+        ...base,
+        type: 'REASONING_MESSAGE_CONTENT',
+        messageId: str(frame.messageId),
+        delta: str(frame.delta),
       };
     case 'STATE_DELTA':
       return { ...base, type: 'STATE_DELTA', patch: patches(frame.patch) };

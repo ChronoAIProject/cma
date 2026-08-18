@@ -34,6 +34,12 @@ pub(crate) struct StartFailure {
     pub(crate) reason: String,
     /// Whether trying again could produce a different outcome.
     pub(crate) retryable: bool,
+    /// The ability that was missing, when the failure was a refusal.
+    ///
+    /// Kept beside the sentence rather than only inside it. The refusal is
+    /// arrived at typed, and a caller downstream can act on a name where it
+    /// can do nothing with a sentence that happens to contain one.
+    pub(crate) capability: Option<String>,
 }
 
 impl StartFailure {
@@ -42,6 +48,7 @@ impl StartFailure {
         Self {
             reason,
             retryable: true,
+            capability: None,
         }
     }
 
@@ -50,7 +57,14 @@ impl StartFailure {
         Self {
             reason,
             retryable: false,
+            capability: None,
         }
+    }
+
+    /// Name the ability this failure was about.
+    pub(crate) fn lacking(mut self, capability: impl Into<String>) -> Self {
+        self.capability = Some(capability.into());
+        self
     }
 
     /// Classify what the provider said about bringing a runtime up.
@@ -58,6 +72,13 @@ impl StartFailure {
     /// An absent ability is the one answer retrying cannot change: the adapter
     /// distinguishes it from a failure precisely so a caller need not read
     /// error strings to tell "cannot" from "did not".
+    ///
+    /// **Nothing is named here, deliberately.** `AdapterError::Unsupported`
+    /// carries a sentence written for a person — "this kernel does not render
+    /// a terminal", "this runtime's image does not carry ..." — and a
+    /// sentence is not a name. Putting one in `capability` would promise a
+    /// caller something it could act on and hand it prose to parse, which is
+    /// worse than admitting there is no name to give.
     pub(crate) fn from_provisioning(error: AdapterError) -> Self {
         let reason = format!("could not provision a runtime: {error}");
         match error {
@@ -80,12 +101,15 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
         restore: Option<&Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), StartFailure> {
         let mut backoff = Duration::from_millis(
             self.retry_backoff_ms
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
-        let mut last = String::new();
+        // The last thing that went wrong, kept whole. Reduced to a sentence
+        // it would lose the name of whatever was missing, which is the part
+        // the owner can act on.
+        let mut last = StartFailure::transient(String::new());
 
         for attempt in 1..=PROVISION_ATTEMPTS {
             match self
@@ -111,7 +135,7 @@ impl SessionService {
                         "this session cannot be started at all; not retrying"
                     );
                     self.discard_runtime(&session.id, adapter).await;
-                    return Err(failure.reason);
+                    return Err(failure);
                 }
                 Err(failure) => {
                     tracing::warn!(
@@ -122,7 +146,7 @@ impl SessionService {
                         "could not start the runtime; trying again"
                     );
                     self.discard_runtime(&session.id, adapter).await;
-                    last = failure.reason;
+                    last = failure;
                 }
             }
             if attempt < PROVISION_ATTEMPTS {
@@ -131,9 +155,14 @@ impl SessionService {
             }
         }
 
-        Err(format!(
-            "could not start a runtime after {PROVISION_ATTEMPTS} attempts. Last error: {last}"
-        ))
+        let exhausted = format!(
+            "could not start a runtime after {PROVISION_ATTEMPTS} attempts. Last error: {}",
+            last.reason
+        );
+        Err(StartFailure {
+            reason: exhausted,
+            ..last
+        })
     }
 
     /// Tear down whatever a failed attempt left behind.
@@ -166,9 +195,15 @@ impl SessionService {
         &self,
         id: &SessionId,
         adapter: &Arc<dyn KernelAdapter>,
-        reason: &str,
+        failure: &StartFailure,
     ) {
-        tracing::error!(session_id = %id, reason, "session could not be started");
+        let reason = failure.reason.as_str();
+        tracing::error!(
+            session_id = %id,
+            reason,
+            capability = failure.capability.as_deref().unwrap_or("-"),
+            "session could not be started"
+        );
 
         let runtime = match self.store.get(id).await {
             Ok(Some(mut record)) => {
@@ -176,25 +211,32 @@ impl SessionService {
                 record.session.status = SessionStatus::Terminated;
                 record.session.stop_reason = Some(StopReason::Error);
                 record.session.recovery_state = RecoveryState::Retired;
-                record.session.last_seq += 1;
-                let seq = record.session.last_seq;
+                let seq = self.sequences.take(id, record.session.last_seq, 1);
+                record.session.last_seq = seq;
                 let session_id = record.session.id.clone();
                 if let Err(e) = self.store.upsert(&record).await {
                     tracing::error!(session_id = %id, error = %e, "cannot record the failure");
                 }
                 if let Err(e) = self
-                    .store
-                    .append_events(&[crate::event::Event {
-                        session_id,
-                        seq,
-                        kind: EventKind::StatusChanged {
-                            status: SessionStatus::Terminated,
-                            stop_reason: Some(StopReason::Error),
-                            // The reason travels with the event so the person
-                            // watching learns what the log already knew.
-                            detail: Some(reason.to_string()),
-                        },
-                    }])
+                    .append_durably(
+                        id,
+                        vec![crate::event::Event {
+                            session_id,
+                            seq,
+                            kind: EventKind::StatusChanged {
+                                status: SessionStatus::Terminated,
+                                stop_reason: Some(StopReason::Error),
+                                // The reason travels with the event so the person
+                                // watching learns what the log already knew.
+                                detail: Some(reason.to_string()),
+                                // Named where there is a name. This is the
+                                // whole point of carrying it this far: a
+                                // client can say *which* ability the session
+                                // lacked rather than "something went wrong".
+                                capability: failure.capability.clone(),
+                            },
+                        }],
+                    )
                     .await
                 {
                     tracing::error!(session_id = %id, error = %e, "cannot record the failure event");

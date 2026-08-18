@@ -107,6 +107,19 @@ pub enum EventKind {
         /// the moment an explanation is worth most.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// The ability this session lacked, when that is what stopped it.
+        ///
+        /// Named, beside the prose rather than inside it. A refusal is
+        /// arrived at typed — the core knows *which* ability was missing —
+        /// and flattening it into a sentence throws away the only part a
+        /// caller could act on. `API_Overview.md` rule 4 asks errors to name
+        /// what is missing, and a sentence containing the word does not
+        /// satisfy that: nothing downstream can read a sentence.
+        ///
+        /// Absent for every failure that was not a refusal, which is most of
+        /// them. A provider that was merely unreachable lacks nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability: Option<String>,
     },
     /// A turn began.
     TurnStarted,
@@ -280,6 +293,19 @@ pub enum LiveFrame {
     /// finished message is committed durably, and a client that missed the
     /// pieces finds the whole thing waiting when it reconnects.
     MessageDelta(String),
+    /// A piece of the agent's reasoning, as it reasons.
+    ///
+    /// Liveness, and more emphatically so than a message delta: a message is
+    /// eventually committed and a thought never is. Nothing here is recorded,
+    /// nothing is numbered, and a client that reloads sees none of it.
+    ///
+    /// That is not a limitation to be worked around. `Web_Style.md` §18.1
+    /// requires a turn drawn from history and a turn watched arriving to
+    /// produce the same result, so a durable thought is a thought that gets
+    /// replayed — somebody reloading to check what the agent decided would
+    /// watch it think a second time. The turn's own boundaries already say
+    /// when the thinking happened.
+    ThoughtDelta(String),
     /// The runtime process ended.
     Exited {
         /// Process exit code, when one was reported.
@@ -299,6 +325,7 @@ mod tests {
             status: SessionStatus::Ready,
             stop_reason: None,
             detail: None,
+            capability: None,
         };
         let json = serde_json::to_value(&e).expect("serializes");
         assert_eq!(json["type"], "status_changed");
@@ -315,6 +342,7 @@ mod tests {
             status: SessionStatus::Idle,
             stop_reason: Some(StopReason::RequiresAction),
             detail: None,
+            capability: None,
         };
         let json = serde_json::to_value(&e).expect("serializes");
         assert_eq!(json["stop_reason"], "requires_action");
@@ -335,6 +363,7 @@ mod tests {
                 status: SessionStatus::Ready,
                 stop_reason: None,
                 detail: None,
+                capability: None,
             },
             EventKind::TurnStarted,
             EventKind::TurnCompleted,

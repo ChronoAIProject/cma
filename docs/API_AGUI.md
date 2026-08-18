@@ -45,10 +45,15 @@ This table is the per-session view of the same fact `API_Overview.md` §1 states
 
 ```http
 POST /api/v1/agui/run          → text/event-stream
+GET  /api/v1/agui/events       → text/event-stream
 GET  /api/v1/agui/capabilities → application/json
 ```
 
 A run is one request. The response is an SSE stream of AG-UI events that ends when the turn ends.
+
+`GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>` is the same events, read rather than driven: a session's whole history and then everything after it, projected identically and never ending on its own. It is what §7 means by recovering a dropped stream, and it exists because §7 used to send clients to `/api/v1/sessions/{id}/events` — a REST route, which answers in the core's vocabulary and not this one. A client that followed that advice received frames it could not read.
+
+**The sequence rides as the SSE `id`, not in the body.** A client resumes by handing back the last id it saw, and deduplicates on it. It is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
 ### Running a turn
 
@@ -89,18 +94,65 @@ chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative l
 |---|---|---|
 | Run lifecycle | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | turn boundaries and outcome |
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
+| Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
 | State | `STATE_DELTA` | usage, boundaries where conversation was lost, and plane changes |
 
-Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `THINKING_START`, `THINKING_END`, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
+Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
 
-### Text arrives whole, not as tokens
+### The session stream carries the live lane too
 
-`TEXT_MESSAGE_CONTENT` carries the finished message rather than a stream of deltas. The token-level pieces exist — they travel as liveness on the interfaces that hold a live connection — but they are deliberately not part of the durable log: numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time.
+Both `GET /api/v1/agui/events` and the run stream carry it, and a client needs only one of them. **The session stream is the one to use**: it is held open across turns, so a client that posts a run and does not consume its response — which is the ordinary shape of a chat client — still sees everything happening.
 
-The consequence for a chat UI is worth stating plainly: this stream gives you the message when the agent commits to it, not while it is being written.
+Holding both would mean deciding for yourself how to interleave the durable frames and the live ones, and they describe one turn. Pick the session stream and there is nothing to interleave.
+
+Liveness attaches when the session is running. A stream opened before that — which is what a client does the moment it has a session — attaches on its own once the runtime is up; nothing needs reopening.
+
+### The run stream has two lanes, and one of them is not history
+
+Everything above is the **durable** lane: projected from the log, carrying an SSE `id`, and what a client resumes from.
+
+The run stream also carries a **live** lane — what is happening right now. Those frames are marked and carry **no `id` at all**:
+
+```json
+{
+  "type":         "TEXT_MESSAGE_CONTENT",
+  "messageId":    "msg_live",
+  "delta":        "Hel",
+  "chrono:live":  true
+}
+```
+
+**Never resume from one.** It has no place in the log, so a cursor taken from it points at a position the log has never held, and everything between there and the real position is skipped on the next reconnect.
+
+The marker is sent because you cannot otherwise see the absence. `EventSource` reports `lastEventId` as the last id it was *given*, so a frame sent without one is indistinguishable from a frame repeating the previous id — and a client deduplicating on that drops every live frame in silence. **A client must exclude `chrono:live` frames from whatever it deduplicates and cursors on**, and only from that.
+
+The lane also carries the agent's reasoning:
+
+```json
+{
+  "type":         "REASONING_MESSAGE_CONTENT",
+  "messageId":    "reasoning_live",
+  "delta":        "the file is probably under src/",
+  "chrono:live":  true
+}
+```
+
+**`REASONING_START` and `REASONING_END` are not emitted, and their absence is deliberate.** This service sees a stream of thoughts and has no view of where one begins or ends, so a bracket sent from here would be a guess. Bracket on the run's own lifecycle events instead — they are exact — and clear reasoning when the run ends. Nothing of it survives, which is the point: reasoning is never committed, so a reload shows none of it and must not.
+
+`THINKING_START`, `THINKING_END` and `THINKING_TEXT_MESSAGE_*` are AG-UI's deprecated spelling of this family. They are declared `false` in the capability document rather than omitted, so a client written against the older names is told they are not coming rather than left waiting on them.
+
+`msg_live` is the in-flight message's identity, and it is deliberately not the committed message's. The committed one arrives under `msg_<seq>`, and a client **replaces** the in-flight message with it rather than appending — otherwise the turn is drawn twice, once as it was typed and once as it was recorded.
+
+Declared as `chrono:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
+
+### Committed text arrives whole, not as tokens
+
+On the durable lane, `TEXT_MESSAGE_CONTENT` carries the finished message rather than a stream of deltas. The token-level pieces are the live lane above, and they are deliberately not part of the durable log: numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time.
+
+The consequence for a chat UI is worth stating plainly: **the log** gives you the message when the agent commits to it. If you want it while it is being written, read the live lane and expect nothing from it to survive a reload.
 
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
@@ -116,7 +168,30 @@ The consequence for a chat UI is worth stating plainly: this stream gives you th
 
 `snapshotAt` is the moment the conversation was captured, and it is where history stops being continuous: anything the agent did after it did not travel. Draw the boundary — a client that skips it silently leaves its reader to conclude the agent forgot something.
 
-**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted carrying the reason and the fact that the session returns. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
+**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
+
+### `RUN_ERROR` covers two different things, and says which
+
+The protocol has one event for a run ending badly, and two things end one: the agent's work failed, and the session is being carried onto another runtime. **Do not draw them the same way.**
+
+```json
+{
+  "type":            "RUN_ERROR",
+  "message":         "this session's runtime can no longer be what it is",
+  "code":            "error",
+  "capability":      "conversation",
+  "chrono:returns":  false
+}
+```
+
+| Field | |
+|---|---|
+| `message` | what happened, in the kernel's own words. Always present. |
+| `code` | the stop reason as this API spells it. Absent where the session did not stop for a reason it names. |
+| `capability` | **the ability the session lacked**, present only when the failure was a refusal. Named rather than described: rule 4 of `API_Overview.md` asks errors to name what is missing, and a sentence that happens to contain the word does not satisfy that, because nothing downstream can read a sentence. Most failures lack nothing and carry no `capability` — a provider that was unreachable is not a session missing an ability. |
+| `chrono:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
+
+A client that ignores `chrono:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
 
 ### Tool kinds are the runtime's own word
 
@@ -228,7 +303,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Tolerate unknown events.** The emitted set grows additively; a client that throws on an unrecognised type will break on a routine release.
 - **Do not treat `RUN_FINISHED` as "session over."** Check `outcome`. An interrupt outcome means the session is alive and waiting for you.
 - **A dropped stream is not a cancellation.** The turn keeps running. Recover by reading the log, not by re-posting the run — and if you meant to stop it, say so with the interrupt route (§5).
-- **Reconnect through REST, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/sessions/{id}/events?starting_after=<seq>`, not by POSTing the run again — which would start a second turn.
+- **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the SSE `id`; it is not in the body.
 - **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
 
 ---

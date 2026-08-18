@@ -324,7 +324,7 @@ impl SessionService {
         }
         moved.session.rotations = moved.session.rotations.saturating_add(1);
         moved.session.rotated_at = Some(taken_at.clone());
-        moved.session.last_seq += 1;
+        moved.session.last_seq = self.sequences.take(&id, moved.session.last_seq, 1);
         if let Err(e) = self.store.upsert(&moved).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
             self.finish_start(&id).await;
@@ -340,20 +340,23 @@ impl SessionService {
              * so somebody reading back knows what moved and what did not come
              * with it.
              */
-            if let Err(e) = self
-                .store
-                .append_events(&[Event {
-                    session_id: id.clone(),
-                    seq: moved.session.last_seq,
-                    kind: EventKind::PlaneChanged {
-                        from: record.session.options.mode,
-                        to: *mode,
-                        snapshot_at: taken_at.clone(),
-                    },
-                }])
+            if self
+                .append_durably(
+                    &id,
+                    vec![Event {
+                        session_id: id.clone(),
+                        seq: moved.session.last_seq,
+                        kind: EventKind::PlaneChanged {
+                            from: record.session.options.mode,
+                            to: *mode,
+                            snapshot_at: taken_at.clone(),
+                        },
+                    }],
+                )
                 .await
+                .is_err()
             {
-                tracing::warn!(session_id = %id, error = %e, "cannot record the plane change");
+                tracing::warn!(session_id = %id, "cannot record the plane change");
             }
         }
 
@@ -383,28 +386,32 @@ impl SessionService {
         let mut rotating = record.clone();
         rotating.session.status = SessionStatus::Rotating;
         rotating.session.stop_reason = None;
-        rotating.session.last_seq += 1;
-        let seq = rotating.session.last_seq;
         let id = rotating.session.id.clone();
+        let seq = self.sequences.take(&id, rotating.session.last_seq, 1);
+        rotating.session.last_seq = seq;
 
         if let Err(e) = self.store.upsert(&rotating).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the handover");
             return None;
         }
-        if let Err(e) = self
-            .store
-            .append_events(&[Event {
-                session_id: id.clone(),
-                seq,
-                kind: EventKind::StatusChanged {
-                    status: SessionStatus::Rotating,
-                    stop_reason: None,
-                    detail: Some(change.detail().to_string()),
-                },
-            }])
+        if self
+            .append_durably(
+                &id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind: EventKind::StatusChanged {
+                        status: SessionStatus::Rotating,
+                        stop_reason: None,
+                        detail: Some(change.detail().to_string()),
+                        capability: None,
+                    },
+                }],
+            )
             .await
+            .is_err()
         {
-            tracing::warn!(session_id = %id, error = %e, "cannot announce the handover");
+            tracing::warn!(session_id = %id, "cannot announce the handover");
         }
         self.mark_entry(&id, SessionStatus::Rotating, seq).await;
         Some(rotating)

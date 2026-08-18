@@ -53,6 +53,24 @@ pub enum StoreError {
     /// The stored data did not match what the core expects.
     #[error("stored data not usable: {0}")]
     Malformed(String),
+    /// A batch claimed a sequence the session already has.
+    ///
+    /// Named rather than folded into `Unavailable` because the two call for
+    /// opposite responses: a store that is down is retried unchanged, and a
+    /// sequence already taken can only ever be retried under a different one.
+    /// A caller that cannot tell them apart does neither, which is how a turn's
+    /// events came to be dropped with nothing but a log line to say so.
+    ///
+    /// `written` is how many of the batch the store accepted before the
+    /// collision. A caller re-numbering the remainder must skip those, or it
+    /// writes them a second time under a sequence nothing rejects.
+    #[error("sequence already taken: {written} of {total} events written")]
+    SequenceTaken {
+        /// Events accepted before the collision.
+        written: usize,
+        /// Events in the batch.
+        total: usize,
+    },
 }
 
 /// Durable session records and their event history.
@@ -80,6 +98,13 @@ pub trait SessionStore: Send + Sync {
     ///
     /// Sequence numbers are allocated by the caller and are monotonic per
     /// session, so a store must preserve them rather than assign its own.
+    ///
+    /// **A sequence a session already has must be refused**, and refused as
+    /// `SequenceTaken` rather than as a general failure. The core allocates,
+    /// but more than one process may be allocating for the same session, so
+    /// the store is the only place the clash is visible. A store that accepts
+    /// a duplicate leaves two events answering to one cursor, and the client
+    /// reading history sees one of them.
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError>;
 
     /// Events after a cursor, in sequence order.

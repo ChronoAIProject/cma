@@ -96,4 +96,52 @@ impl SessionService {
             .filter_map(StoredEvent::into_known)
             .collect())
     }
+
+    /// Watch what is happening on a session, as it happens.
+    ///
+    /// The counterpart to `events_since` and deliberately not the same thing.
+    /// That reads the record; this watches the moment. A turn takes as long as
+    /// the agent takes, and between it starting and its message being
+    /// committed the record says nothing at all — so a working agent and a
+    /// dead one are drawn identically by anything that has only the log.
+    ///
+    /// **Nothing here is durable and nothing here has a sequence.** A frame is
+    /// what is happening rather than what happened: numbering these would
+    /// punch permanent holes in the sequence a resuming client cursors on, and
+    /// replaying them would show somebody their conversation being typed a
+    /// second time. A client that missed them finds the finished message
+    /// waiting for it in the log, which is the whole reason the split exists.
+    ///
+    /// Scoped like every other read here, and additionally to the ability: a
+    /// session with no conversation has no live frames to give, and refusing
+    /// by name is what tells a caller that rather than handing them a receiver
+    /// that stays silent forever.
+    ///
+    /// Frames are dropped rather than buffered when a receiver falls behind —
+    /// `broadcast` says so with `Lagged`, and a caller that missed some has
+    /// missed liveness, not history.
+    pub async fn subscribe_live(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<tokio::sync::broadcast::Receiver<crate::event::LiveFrame>, CoreError> {
+        let record = self.record(id).await?;
+        if !caller.may_read_event_log_owned_by(&record.session.owner) {
+            return Err(CoreError::Forbidden);
+        }
+        record
+            .session
+            .capabilities
+            .require(crate::capabilities::Capability::Conversation)?;
+        // Taken from the live entry, because that is where the runtime's
+        // output arrives. A session with no entry is one nothing is running
+        // for; there is no liveness to watch and saying so is better than a
+        // receiver that never yields.
+        self.entries
+            .read()
+            .await
+            .get(id)
+            .map(|entry| entry.live_frames.subscribe())
+            .ok_or(CoreError::SessionNotFound)
+    }
 }

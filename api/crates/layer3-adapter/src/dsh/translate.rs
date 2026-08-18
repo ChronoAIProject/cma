@@ -92,7 +92,7 @@ impl Harness {
         cwd: String,
         spec: &DshSandboxSpec,
         rejoin: Option<String>,
-    ) -> Result<ConversationChannel, AdapterError> {
+    ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
         // The pod's declaration, read before anything else. A pod that
@@ -165,11 +165,16 @@ impl Harness {
         });
 
         let conversation_id = harness.session.clone();
-        Ok(ConversationChannel {
-            updates: updates_rx,
-            input: input_tx,
-            conversation_id: Some(conversation_id),
-        })
+        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
+
+        Ok((
+            ConversationChannel {
+                updates: updates_rx,
+                input: input_tx,
+                conversation_id: Some(conversation_id),
+            },
+            control,
+        ))
     }
 
     /// Tell the harness which route and model this session runs on.
