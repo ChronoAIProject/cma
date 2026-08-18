@@ -88,6 +88,29 @@ impl StartFailure {
     }
 }
 
+/// What becomes of a session whose runtime could not be brought up.
+///
+/// Stated by whoever asked for the bring-up rather than inferred here, because
+/// the two cases are not distinguishable from inside and getting it wrong
+/// costs somebody their work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Abandonment {
+    /// Nothing existed yet. Terminating is right and says so.
+    ///
+    /// A session that never started has no history, no place in a list and
+    /// nothing to carry; leaving it half-alive would be worse than ending it.
+    Retire,
+    /// The session already existed, and must survive this.
+    ///
+    /// A rotation or a revival: it has an identifier, a history, a place in its
+    /// owner's list, and — for a rotation — a snapshot taken precisely so it
+    /// could be carried. `CLAUDE.md` §5 makes losing that as severe as losing
+    /// the data, and a rotation is something a *deployment* caused rather than
+    /// anything its owner asked for. So it goes back to resting, keeps
+    /// everything, and is left for the next sweep to try again.
+    Keep,
+}
+
 impl SessionService {
     /// Keep trying to bring a runtime up until one does, or the attempts run out.
     ///
@@ -196,21 +219,51 @@ impl SessionService {
         id: &SessionId,
         adapter: &Arc<dyn KernelAdapter>,
         failure: &StartFailure,
+        outcome: Abandonment,
     ) {
         let reason = failure.reason.as_str();
+        // A session that already existed survives this. Its runtime could not
+        // be replaced, which is a fact about a provider at a moment, and
+        // retiring it would discard an identifier, a history, a place in its
+        // owner's list and the snapshot taken so it could be carried —
+        // because something was busy. §5 makes that as severe as losing the
+        // data, and a rotation is something a deployment caused rather than
+        // anything its owner asked for.
+        //
+        // Keeping only makes sense while another attempt could go differently.
+        // A refusal is an answer — a kernel that no longer offers what this
+        // session is will not start offering it — so a session kept against
+        // one would rest forever, be retried forever by the sweep, and tell
+        // its owner it was coming back when it was not. `retryable` is the
+        // adapter's own word for which of the two this is, and it is already
+        // carried this far.
+        let keep = matches!(outcome, Abandonment::Keep) && failure.retryable;
+
         tracing::error!(
             session_id = %id,
             reason,
             capability = failure.capability.as_deref().unwrap_or("-"),
-            "session could not be started"
+            keeping = keep,
+            "a runtime could not be brought up"
         );
+        let (status, stop_reason, recovery) = match keep {
+            false => (
+                SessionStatus::Terminated,
+                StopReason::Error,
+                RecoveryState::Retired,
+            ),
+            // Reclaimed and revivable, which is exactly what it is: the
+            // attempt has ended, so `Recovering` would claim one is still in
+            // flight and nothing would ever correct it.
+            true => (SessionStatus::Idle, StopReason::Error, RecoveryState::Idle),
+        };
 
         let runtime = match self.store.get(id).await {
             Ok(Some(mut record)) => {
                 let handle = record.runtime_id.take().map(RuntimeHandle);
-                record.session.status = SessionStatus::Terminated;
-                record.session.stop_reason = Some(StopReason::Error);
-                record.session.recovery_state = RecoveryState::Retired;
+                record.session.status = status;
+                record.session.stop_reason = Some(stop_reason);
+                record.session.recovery_state = recovery;
                 let seq = self.sequences.take(id, record.session.last_seq, 1);
                 record.session.last_seq = seq;
                 let session_id = record.session.id.clone();
@@ -224,11 +277,19 @@ impl SessionService {
                             session_id,
                             seq,
                             kind: EventKind::StatusChanged {
-                                status: SessionStatus::Terminated,
-                                stop_reason: Some(StopReason::Error),
+                                status,
+                                stop_reason: Some(stop_reason),
                                 // The reason travels with the event so the person
-                                // watching learns what the log already knew.
-                                detail: Some(reason.to_string()),
+                                // watching learns what the log already knew —
+                                // and, where the session survives, that it
+                                // survived, because a stop reason of `error`
+                                // otherwise reads as the end of it.
+                                detail: Some(match keep {
+                                    false => reason.to_string(),
+                                    true => format!(
+                                        "{reason}. This session was not lost: it is                                          resting and will be tried again."
+                                    ),
+                                }),
                                 // Named where there is a name. This is the
                                 // whole point of carrying it this far: a
                                 // client can say *which* ability the session
