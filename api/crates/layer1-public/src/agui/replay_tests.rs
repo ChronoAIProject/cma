@@ -107,3 +107,32 @@ fn history_and_the_live_stream_are_the_same_frames() {
         "and carry the same cursor, which is what a client resumes on"
     );
 }
+
+#[test]
+fn the_session_stream_is_where_a_client_watches_a_turn() {
+    // Not an assertion about this function's body but about where the lane
+    // has to live, recorded here because getting it wrong is invisible.
+    //
+    // A client posts a run and holds *this* stream — the session's, across
+    // turns. It does not consume the run POST's response. So a live lane
+    // offered only on the run stream reaches nothing: the transport would be
+    // built, tested, and dead.
+    //
+    // The other reason is the one already written into this module: two
+    // streams would make a client decide for itself how to interleave the
+    // durable and the live, which is exactly the ordering question §18.1 of
+    // `Web_Style.md` says must have one answer.
+    let projected = super::super::live::project_live(
+        &layer2_core::LiveFrame::MessageDelta("in flight".into()),
+        "sesn_1",
+        "sesn_1",
+    )
+    .expect("a message being typed has a shape");
+
+    assert!(
+        projected.cursor().is_none(),
+        "and it must still carry no cursor here: this stream is the one a \
+         client resumes on, so a live frame given an id would send the next \
+         reconnect to a position the log has never held"
+    );
+}
