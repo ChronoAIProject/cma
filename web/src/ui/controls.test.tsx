@@ -30,8 +30,6 @@ const PERMITTED_HEIGHTS = new Set([
   'var(--band-foot)',
   'var(--bar-height)',
   'var(--canvas-node-h)',
-  // The stacked key's floor, carried until #253 retires the stacked form.
-  'calc(var(--control-h) + var(--space-5))',
   '100%',
   'auto',
   '1em',
@@ -95,22 +93,25 @@ describe('the button', () => {
     expect(container.firstElementChild).toHaveClass('button', 'button--primary');
   });
 
-  it('takes the disabled treatment and says why', () => {
-    // §7: disabled, never removed, and the reason is stated. The stacked form
-    // is carried until #253 moves the reason to a sibling .control-reason.
+  it('takes the disabled treatment, and the reason lives beside it', () => {
+    // §7: disabled, never removed — and the reason is a sibling
+    // .control-reason drawn once per row, never stacked into the key, which
+    // made every disabled control taller than its enabled neighbour.
     render(
-      <Button disabled reason="This session is not running">
-        End session
-      </Button>,
+      <div>
+        <Button disabled>End session</Button>
+        <span className="control-reason">This session is not running</span>
+      </div>,
     );
     const button = screen.getByRole('button', { name: /end session/i });
     expect(button).toBeDisabled();
-    expect(button).toHaveClass('button--stacked');
-    expect(button.textContent).toContain('This session is not running');
+    expect(button.textContent).not.toContain('This session is not running');
 
     const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
     // §3: disabled takes the inset fill with an --ink-3 label.
     expect(components).toMatch(/\.button:disabled,[\s\S]*?background: var\(--inset\)/);
+    // The reason class is part of the shared vocabulary, at note size in ink-3.
+    expect(components).toMatch(/\.control-reason\s*\{[^}]*font-size: var\(--text-note\)/);
   });
 
   it('is quiet unless something is spent on it', () => {

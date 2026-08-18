@@ -25,17 +25,6 @@ interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'cla
   readonly children: ReactNode;
   readonly tone?: ButtonTone;
   readonly size?: ButtonSize;
-  /**
-   * Why this control cannot be used, stated as part of the button.
-   *
-   * §7: controls are disabled, never removed, and every disabled control says
-   * why. A tooltip is unreachable by touch and invisible to anyone scanning,
-   * so the reason is drawn — which is what turns the key into a stacked one,
-   * holding a 52px minimum so a column of them stays even when a reason wraps.
-   *
-   * Given on an enabled control it describes what pressing it will do.
-   */
-  readonly reason?: string;
   /** Extra classes for placement only. Never for colour, depth or size. */
   readonly placement?: string;
 }
@@ -60,26 +49,22 @@ export function Button({
   children,
   tone = 'quiet',
   size = 'default',
-  reason,
   placement,
   type = 'button',
   disabled = false,
   ...rest
 }: ButtonProps) {
-  const classes = [
-    'button',
-    TONE[tone],
-    SIZE[size],
-    reason === undefined ? '' : 'button--stacked',
-    placement ?? '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  /*
+   * No reason prop, deliberately. §7: why a control cannot be used is stated
+   * once per row, beside the controls it explains, as a sibling
+   * `.control-reason` drawn by the row — never stacked into each key, which
+   * made every disabled control taller than its enabled neighbour.
+   */
+  const classes = ['button', TONE[tone], SIZE[size], placement ?? ''].filter(Boolean).join(' ');
 
   return (
     <button type={type} className={classes} disabled={disabled} {...rest}>
-      <span>{children}</span>
-      {reason === undefined ? null : <span className="button__reason">{reason}</span>}
+      {children}
     </button>
   );
 }
