@@ -134,11 +134,24 @@ export function SessionActions({
     );
   }
 
+  /*
+   * §7: one reason per row, beside the controls it explains. The session's
+   * state disables the lifecycle keys for one cause at a time, and the plane
+   * key can be unavailable for its own; when both hold, the two sentences
+   * share the row's one reason line rather than each key growing its own.
+   */
+  const rowReason = [
+    can.reason,
+    move !== undefined && !move.available ? unavailableBecause(session) : undefined,
+  ]
+    .filter((sentence): sentence is string => sentence !== undefined)
+    .join(' ');
+
   return (
     <div className="actions">
-      {can.reason === undefined ? null : (
-        <span className="band__value actions__reason" id={reasonId}>
-          {can.reason}
+      {rowReason === '' ? null : (
+        <span className="control-reason actions__reason" id={reasonId}>
+          {rowReason}
         </span>
       )}
 
@@ -152,7 +165,7 @@ export function SessionActions({
         <Button
           size="sm"
           disabled={busy || !move.available}
-          reason={move.available ? undefined : unavailableBecause(session)}
+          aria-describedby={move.available ? undefined : reasonId}
           onClick={() => {
             setConfirmingSwitch(true);
           }}
