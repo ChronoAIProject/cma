@@ -91,12 +91,19 @@ impl Bridge {
     /// Everything the handshake needs happens before the channel is handed
     /// back, so a caller that receives one has a conversation that is ready to
     /// be prompted rather than one that may yet fail to start.
+    /// Returns the conversation and the control sender for the same socket.
+    ///
+    /// The second half is not optional bookkeeping. A credential reaches a
+    /// runtime as a control frame on a link the adapter has recorded, and
+    /// until now the only recorded links were terminal attachments — so a
+    /// conversation session could never be given its owner's credential, and
+    /// on a conversation-only kernel there was no other path at all.
     pub async fn open(
         stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
         cwd: String,
         mode: Option<String>,
         rejoin: Option<String>,
-    ) -> Result<ConversationChannel, AdapterError> {
+    ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
         // The pod's own declaration, read before anything else, because it
@@ -178,11 +185,16 @@ impl Bridge {
             tracing::info!("conversation input ended");
         });
 
-        Ok(ConversationChannel {
-            updates: updates_rx,
-            input: input_tx,
-            conversation_id,
-        })
+        let control = super::control_lane(Arc::clone(&bridge.sink));
+
+        Ok((
+            ConversationChannel {
+                updates: updates_rx,
+                input: input_tx,
+                conversation_id,
+            },
+            control,
+        ))
     }
 
     /// Initialize, get hold of a session, and settle its mode.
