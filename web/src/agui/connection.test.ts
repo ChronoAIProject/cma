@@ -265,3 +265,83 @@ describe('closing', () => {
     expect(vi.isMockFunction(() => {})).toBe(false);
   });
 });
+
+describe('liveness is not history', () => {
+  /**
+   * A piece of a message being typed, exactly as the wire delivers one.
+   *
+   * `seq` is what `EventSource` reported as `lastEventId` — which, for a frame
+   * the server sent without an id, is the id of the *last* frame that had one.
+   * That is precisely why the server states the absence rather than leaving a
+   * client to notice it.
+   */
+  const typing = (inheritedSeq: number, body: string) => ({
+    ...text(inheritedSeq, body),
+    messageId: 'msg_live',
+    'chrono:live': true,
+  });
+
+  it('delivers every piece, even though they all carry the same sequence', async () => {
+    // The failure this guards. Deduplicating liveness on `seq` drops the
+    // second piece of every message and every piece after it, silently, and
+    // the message appears to stop three characters in.
+    const fake = new Fake();
+    const { seen, stop } = connect(fake);
+    await tick();
+
+    fake.frames?.(text(4, 'settled'));
+    fake.frames?.(typing(4, 'Hel'));
+    fake.frames?.(typing(4, 'lo '));
+    fake.frames?.(typing(4, 'there'));
+    await tick();
+    stop();
+
+    const live = seen.filter((event) => event.ephemeral === true);
+    expect(live).toHaveLength(3);
+    expect(
+      live.map((event) => (event.type === 'TEXT_MESSAGE_CONTENT' ? event.delta : '')).join(''),
+    ).toBe('Hello there');
+  });
+
+  it('never moves the cursor, so a reconnect resumes where the log is', async () => {
+    // A liveness frame's sequence is meaningless. Treating it as a position
+    // would send the next history read past events the log does hold, and
+    // everything between there and the real position would be skipped.
+    const fake = new Fake();
+    const { connection, stop } = connect(fake);
+    await tick();
+
+    fake.frames?.(text(7, 'settled'));
+    fake.frames?.(typing(99, 'a piece'));
+    await tick();
+
+    expect(connection.cursor).toBe(7);
+
+    fake.drop?.('the stream closed');
+    await tick();
+    stop();
+
+    expect(fake.historyReads.at(-1)).toBe(7);
+  });
+
+  it('does not let liveness mark a durable event as already seen', async () => {
+    // The other half of the same mistake. If a live frame recorded its
+    // inherited sequence, the durable event carrying that sequence would be
+    // dropped when it arrived — losing the committed message rather than a
+    // piece of it.
+    const fake = new Fake();
+    const { seen, stop } = connect(fake);
+    await tick();
+
+    fake.frames?.(typing(5, 'in flight'));
+    fake.frames?.(text(5, 'the committed message'));
+    await tick();
+    stop();
+
+    const durable = seen.filter((event) => event.ephemeral !== true);
+    expect(durable).toHaveLength(1);
+    expect(durable[0]?.type === 'TEXT_MESSAGE_CONTENT' && durable[0].delta).toBe(
+      'the committed message',
+    );
+  });
+});
