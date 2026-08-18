@@ -169,9 +169,7 @@ function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: bool
                 This session cannot <b>{entry.capability}</b>.
               </p>
             )}
-            {entry.code === undefined ? null : (
-              <span className="failure__code">{entry.code}</span>
-            )}
+            {entry.code === undefined ? null : <span className="failure__code">{entry.code}</span>}
           </div>
         </div>
       );
