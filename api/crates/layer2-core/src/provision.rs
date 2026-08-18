@@ -84,15 +84,15 @@ impl SessionService {
         .await
         {
             Ok(Ok(())) => {}
-            Ok(Err(reason)) => self.abandon(&id, &adapter, &reason).await,
+            Ok(Err(failure)) => self.abandon(&id, &adapter, &failure).await,
             Err(_) => {
                 self.abandon(
                     &id,
                     &adapter,
-                    &format!(
+                    &crate::provision_failure::StartFailure::transient(format!(
                         "the runtime did not become usable within {}s",
                         PROVISION_DEADLINE.as_secs()
-                    ),
+                    )),
                 )
                 .await
             }
@@ -127,9 +127,19 @@ impl SessionService {
         self.settle_capabilities(session, adapter)
             .await
             .map_err(|refusal| {
-                StartFailure::permanent(format!(
+                let named = match &refusal {
+                    crate::error::CoreError::CapabilityUnsupported(what) => Some(what.clone()),
+                    _ => None,
+                };
+                let failure = StartFailure::permanent(format!(
                     "this session's runtime can no longer be what it is: {refusal}"
-                ))
+                ));
+                // The refusal arrived typed and knew which ability was
+                // missing. Keeping only the sentence is where that was lost.
+                match named {
+                    Some(what) => failure.lacking(what),
+                    None => failure,
+                }
             })?;
         // Resolved from the session rather than the request, so a runtime
         // replaced long afterwards is built the same way. A profile that has
@@ -291,6 +301,7 @@ impl SessionService {
                 status: SessionStatus::Ready,
                 stop_reason: None,
                 detail: None,
+                capability: None,
             },
         );
         self.entries.write().await.insert(id.clone(), entry);

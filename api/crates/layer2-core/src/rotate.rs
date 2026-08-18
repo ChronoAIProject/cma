@@ -404,6 +404,7 @@ impl SessionService {
                         status: SessionStatus::Rotating,
                         stop_reason: None,
                         detail: Some(change.detail().to_string()),
+                        capability: None,
                     },
                 }],
             )
