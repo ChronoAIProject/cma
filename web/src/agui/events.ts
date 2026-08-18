@@ -185,7 +185,15 @@ export interface ToolCallStart extends EventBase {
   readonly toolCallId: string;
   /** The kernel's own word for what kind of tool this is. Never mapped. */
   readonly toolKind: string;
-  /** What it is acting on, when the kernel said. */
+  /**
+   * What it is acting on, when the kernel said.
+   *
+   * Read from `toolCallName`, which is the protocol's field. This client read
+   * `target` — a name nothing sends — so every tool call arrived without the
+   * one thing that identifies it, and §18.2's collapsed row could only ever
+   * say a kind and a status. `target` is still accepted, so a client of an
+   * older build is not broken by the correction.
+   */
   readonly target?: string;
 }
 
@@ -240,6 +248,11 @@ export type AguiEvent =
   | ReasoningContent
   | StateDelta
   | UnknownEvent;
+
+/** The first of these that is a string, if any is. */
+function firstString(...values: readonly unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string');
+}
 
 function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
@@ -310,7 +323,7 @@ export function toEvent(raw: unknown): AguiEvent {
         // The kernel's own word, verbatim (§3). A vocabulary this build has
         // not heard of is rendered as it arrived rather than mapped.
         toolKind: str(frame['chrono:toolKind'] ?? frame.toolKind, 'tool'),
-        target: typeof frame.target === 'string' ? frame.target : undefined,
+        target: firstString(frame.toolCallName, frame.target),
       };
     case 'TOOL_CALL_END':
       return {
