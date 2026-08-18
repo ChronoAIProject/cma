@@ -68,6 +68,7 @@ impl SessionService {
                     status: SessionStatus::Provisioning,
                     stop_reason: None,
                     detail: None,
+                    capability: None,
                 },
             }],
         )
@@ -120,6 +121,7 @@ impl SessionService {
                         status: SessionStatus::Ready,
                         stop_reason: None,
                         detail: None,
+                        capability: None,
                     },
                 }],
             )

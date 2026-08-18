@@ -149,6 +149,7 @@ impl SessionService {
                     status: SessionStatus::Idle,
                     stop_reason: Some(StopReason::RequiresAction),
                     detail: None,
+                    capability: None,
                 },
             );
         }
@@ -198,6 +199,7 @@ impl SessionService {
                     status: SessionStatus::Ready,
                     stop_reason: Some(reason),
                     detail: None,
+                    capability: None,
                 },
             );
         }
@@ -235,6 +237,7 @@ impl SessionService {
                         status: SessionStatus::Idle,
                         stop_reason: Some(StopReason::Error),
                         detail: Some("the runtime's conversation ended mid-turn".to_string()),
+                        capability: None,
                     },
                 );
             }

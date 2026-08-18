@@ -153,6 +153,7 @@ mod tests {
                 status: SessionStatus::Ready,
                 stop_reason: None,
                 detail: None,
+                capability: None,
             },
         };
         let payload = serde_json::json!({
