@@ -66,7 +66,7 @@ describe('the band grid', () => {
     for (const [name, selector] of [
       ['sessions/SessionRail.css', '.rail__head'],
       ['sessions/SessionHeader.css', '.sessionheader'],
-      ['sessions/SessionDetails.css', '.details__head'],
+      ['sessions/SessionDrawer.css', '.drawer__head'],
     ] as const) {
       expect(rule(sheet(name), selector), selector).not.toMatch(
         /padding(-block|-top|-bottom)?:|height:/,

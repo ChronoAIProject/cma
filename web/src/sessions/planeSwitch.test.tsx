@@ -48,7 +48,7 @@ function renderActions(
       onReconnect={vi.fn()}
       onRevive={vi.fn()}
       onStop={vi.fn()}
-      onDelete={vi.fn()}
+      onDetails={vi.fn()}
     />,
   );
   return { onChangePlane };
@@ -88,14 +88,19 @@ describe('what a session offers', () => {
 });
 
 describe('the affordance in the session header', () => {
-  it('names the plane it moves to', () => {
+  it('names the plane it moves to, in the overflow menu', async () => {
+    // §18.6: a key in the overflow menu naming the plane it moves to.
+    const user = userEvent.setup();
     renderActions();
-    expect(screen.getByRole('button', { name: /conversation/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    expect(screen.getByRole('menuitem', { name: /conversation/i })).toBeInTheDocument();
   });
 
-  it('is not drawn at all where the kernel cannot serve the other plane', () => {
+  it('is not drawn at all where the kernel cannot serve the other plane', async () => {
+    const user = userEvent.setup();
     renderActions(session('running', 'conversation', 'claude-code'));
-    expect(screen.queryByRole('button', { name: /terminal/i })).toBeNull();
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    expect(screen.queryByRole('menuitem', { name: /terminal/i })).toBeNull();
   });
 
   it('states both costs before it moves anything', () => {
@@ -109,13 +114,14 @@ describe('the affordance in the session header', () => {
     const user = userEvent.setup();
     const { onChangePlane } = renderActions();
 
-    await user.click(screen.getByRole('button', { name: /conversation/i }));
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    await user.click(screen.getByRole('menuitem', { name: /conversation/i }));
 
     expect(screen.getByText(/turn in flight is lost/i)).toBeInTheDocument();
     expect(screen.getByText(/not interactive while it moves/i)).toBeInTheDocument();
     // In place of, not beside: §7 forbids a second dialog over a dialog, and
-    // leaving End and Delete reachable mid-question invites the wrong one.
-    expect(screen.queryByRole('button', { name: /^delete$/i })).toBeNull();
+    // leaving the other keys reachable mid-question invites the wrong one.
+    expect(screen.queryByRole('button', { name: /^details$/i })).toBeNull();
     expect(onChangePlane).not.toHaveBeenCalled();
   });
 
@@ -123,7 +129,8 @@ describe('the affordance in the session header', () => {
     const user = userEvent.setup();
     const { onChangePlane } = renderActions();
 
-    await user.click(screen.getByRole('button', { name: /conversation/i }));
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    await user.click(screen.getByRole('menuitem', { name: /conversation/i }));
     await user.click(screen.getByRole('button', { name: /move to conversation/i }));
 
     expect(onChangePlane).toHaveBeenCalledWith('conversation');
@@ -133,25 +140,28 @@ describe('the affordance in the session header', () => {
     const user = userEvent.setup();
     const { onChangePlane } = renderActions();
 
-    await user.click(screen.getByRole('button', { name: /conversation/i }));
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    await user.click(screen.getByRole('menuitem', { name: /conversation/i }));
     await user.click(screen.getByRole('button', { name: /stay here/i }));
 
     expect(onChangePlane).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^details$/i })).toBeInTheDocument();
   });
 
   it('says why it cannot be asked for right now, rather than vanishing', async () => {
     // The opposite case to a kernel that will never serve it: this one works
     // again, and a control that disappears and returns is one somebody hunts
     // for.
+    const user = userEvent.setup();
     renderActions(session('rotating'));
 
-    const key = screen.getByRole('button', { name: /conversation/i });
-    expect(key).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    const key = screen.getByRole('menuitem', { name: /conversation/i });
+    expect(key).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByText(/already being moved/i)).toBeInTheDocument();
   });
 
-  it('offers nothing when the console cannot act on it', () => {
+  it('offers nothing when the console cannot act on it', async () => {
     // No handler, no control. A key that reports a choice nothing acts on is
     // the worst kind of affordance.
     render(
@@ -161,9 +171,10 @@ describe('the affordance in the session header', () => {
         onReconnect={vi.fn()}
         onRevive={vi.fn()}
         onStop={vi.fn()}
-        onDelete={vi.fn()}
+        onDetails={vi.fn()}
       />,
     );
-    expect(screen.queryByRole('button', { name: /conversation/i })).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: /more actions/i }));
+    expect(screen.queryByRole('menuitem', { name: /conversation/i })).toBeNull();
   });
 });
