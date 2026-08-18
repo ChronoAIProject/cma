@@ -186,3 +186,78 @@ async fn a_runtime_is_advertised_as_what_it_says_it_can_be() {
         )],
     );
 }
+
+#[tokio::test]
+async fn an_interface_that_only_holds_conversations_can_create_one() {
+    // The plane a caller asked for was discarded along with everything else in
+    // `options`, which is filled in from the profile or the deployment. On a
+    // deployment defaulting to terminal that meant AG-UI created a terminal
+    // session and then refused it for lacking the conversation ability it had
+    // just asked for — so the priority-1 interface could not create a session
+    // it could use, unless the caller had hand-made a profile first.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: crate::conversation_support::conversing(),
+        ..FakeAdapter::default()
+    });
+    let svc = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Terminal,
+            ..Default::default()
+        }),
+    );
+    let alice = user("alice");
+
+    let created = svc
+        .create_session(
+            &alice,
+            SessionSpec {
+                requested_mode: Some(crate::options::SessionMode::Conversation),
+                ..spec()
+            },
+        )
+        .await
+        .expect("created");
+
+    assert_eq!(
+        created.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert!(
+        created.capabilities.conversation,
+        "and it is granted the ability, or the very next call refuses it"
+    );
+}
+
+#[tokio::test]
+async fn a_caller_who_says_nothing_still_gets_the_deployments_default() {
+    // The narrowness matters. An interface with no way to express a plane must
+    // keep getting what it always got.
+    let store = Arc::new(FakeStore::default());
+    let svc = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::new(FakeAdapter::default()),
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Terminal,
+            ..Default::default()
+        }),
+    );
+    let alice = user("alice");
+
+    let created = svc
+        .create_session(
+            &alice,
+            SessionSpec {
+                requested_mode: None,
+                ..spec()
+            },
+        )
+        .await
+        .expect("created");
+
+    assert_eq!(created.options.mode, crate::options::SessionMode::Terminal);
+}
