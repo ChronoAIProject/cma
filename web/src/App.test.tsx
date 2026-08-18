@@ -426,8 +426,13 @@ describe('App', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toBeInTheDocument();
-    // A band at the head of the column, not a sentence in place of the surface.
-    expect(alert).toHaveClass('band');
+    // A dismissible card at the head of the column, not a sentence in place
+    // of the surface (§12). It names what was not changed and the API's code.
+    expect(alert).toHaveClass('notice--fail');
+    expect(alert.textContent).toContain('Ending the session failed.');
+    expect(alert.textContent).toContain('The session keeps running.');
+    expect(alert.textContent).toContain('HTTP 404');
+    expect(within(alert).getByRole('button', { name: /dismiss/i })).toBeInTheDocument();
 
     /*
      * Twelve sessions attached, one request failed. Rendering the notice in
