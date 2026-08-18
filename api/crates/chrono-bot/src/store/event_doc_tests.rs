@@ -49,6 +49,7 @@ fn every_current_variant_survives_the_round_trip() {
             status: layer2_core::SessionStatus::Ready,
             stop_reason: None,
             detail: None,
+            capability: None,
         },
         EventKind::TurnStarted,
         EventKind::TurnCompleted,

@@ -464,4 +464,35 @@ async fn a_kernel_that_stops_offering_what_a_session_needs_does_not_start_it() {
         0,
         "the check happens before a runtime is asked for"
     );
+
+    // And the refusal is in the log by name. It was arrived at typed — the
+    // core knew it was the terminal that was missing — and until this it was
+    // flattened into a sentence on the way out, which left every interface
+    // above able to say only that something had gone wrong.
+    let logged = after
+        .events_since(&caller, &created.id, None)
+        .await
+        .expect("the log is readable");
+    let named = logged
+        .iter()
+        .filter_map(|e| match &e.kind {
+            crate::event::EventKind::StatusChanged {
+                status: SessionStatus::Terminated,
+                capability,
+                detail,
+                ..
+            } => Some((capability.clone(), detail.clone())),
+            _ => None,
+        })
+        .next()
+        .expect("the session was terminated, so the log says so");
+    assert_eq!(
+        named.0.as_deref(),
+        Some("terminal"),
+        "the ability that was missing is named, not described: {named:?}"
+    );
+    assert!(
+        named.1.is_some(),
+        "and the sentence for a person is still there: {named:?}"
+    );
 }
