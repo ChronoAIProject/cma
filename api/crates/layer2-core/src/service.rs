@@ -381,18 +381,24 @@ impl SessionService {
         };
 
         let mut record = SessionRecord::new(session.clone());
-        record.session.last_seq = 3;
+        // Through the allocator like every other producer, even though nothing
+        // can yet be racing a session that did not exist a moment ago: a
+        // second place that decides what a sequence is, however safe today, is
+        // the shape of the defect this all exists to remove.
+        let first = self.sequences.take(&id, 0, 3);
+        record.session.last_seq = first + 2;
         self.store.upsert(&record).await.map_err(store_failed)?;
-        self.store
-            .append_events(&[
+        self.append_durably(
+            &id,
+            vec![
                 Event {
                     session_id: id.clone(),
-                    seq: 1,
+                    seq: first,
                     kind: EventKind::SessionCreated,
                 },
                 Event {
                     session_id: id.clone(),
-                    seq: 2,
+                    seq: first + 1,
                     kind: EventKind::StatusChanged {
                         status: SessionStatus::Provisioning,
                         stop_reason: None,
@@ -401,14 +407,15 @@ impl SessionService {
                 },
                 Event {
                     session_id: id.clone(),
-                    seq: 3,
+                    seq: first + 2,
                     kind: EventKind::Progress {
                         stage: crate::session::ProvisioningStage::Accepted,
                     },
                 },
-            ])
-            .await
-            .map_err(store_failed)?;
+            ],
+        )
+        .await
+        .map_err(store_failed)?;
 
         // Detached deliberately. The caller's connection may end at any moment
         // and must not take the runtime with it.

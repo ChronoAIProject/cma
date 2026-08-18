@@ -173,6 +173,18 @@ pub(crate) fn kernel() -> KernelId {
 /// Calling this twice with the same store is the restart: the second instance
 /// shares the durable record and nothing else.
 pub(crate) fn service(store: Arc<FakeStore>, adapter: Arc<FakeAdapter>) -> Arc<SessionService> {
+    service_over(store, adapter)
+}
+
+/// The same, over any store at all.
+///
+/// Taken as the trait rather than the double so a test can stand a badly
+/// behaved implementation in front of the service — a store is a port, and how
+/// the core survives one that misbehaves is worth being able to say.
+pub(crate) fn service_over(
+    store: Arc<dyn SessionStore>,
+    adapter: Arc<FakeAdapter>,
+) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);

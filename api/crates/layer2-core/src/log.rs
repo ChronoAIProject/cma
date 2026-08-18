@@ -13,9 +13,132 @@
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::{SessionEntry, SessionService};
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, StoreError};
+
+/// How many times a refused batch is re-numbered before it is given up on.
+///
+/// Two, because the first retry reads where the log has actually reached and
+/// allocates above it; a second collision means another writer moved again in
+/// that window, and a third would be a loop rather than a recovery. Giving up
+/// is loud — the alternative is retrying forever against a log we are
+/// evidently not the only writer of.
+const APPEND_ATTEMPTS: usize = 3;
 
 impl SessionService {
+    /// Write events durably, re-numbering anything the store refuses.
+    ///
+    /// A sequence already taken is the only failure here worth another
+    /// attempt, and it is the one that needs a *different* attempt: the batch
+    /// cannot be retried as it stands, because the number it claims belongs to
+    /// something else. Retried unchanged it fails identically forever;
+    /// discarded — which is what used to happen — a turn that had already run
+    /// leaves nothing in the log for any interface to report.
+    ///
+    /// Only the refused remainder is re-numbered. The store reports how many
+    /// of the batch it accepted before it stopped, and writing those again
+    /// under fresh sequences would put the same event in the log twice, under
+    /// two numbers, with nothing to reject it.
+    ///
+    /// The new numbers are allocated above where the log has actually reached
+    /// rather than above what this process last issued, because a collision is
+    /// evidence that something else is writing and our position is behind.
+    pub(crate) async fn append_durably(
+        &self,
+        id: &SessionId,
+        mut events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        for attempt in 1..=APPEND_ATTEMPTS {
+            match self.store.append_events(&events).await {
+                Ok(()) => return Ok(()),
+                Err(StoreError::SequenceTaken { written, total }) => {
+                    // A duplicate is refused at a position inside the batch,
+                    // so a store reporting that it wrote all of one it also
+                    // refused is contradicting itself. Believing it would
+                    // leave nothing to re-number and report success over a
+                    // batch that is not in the log — which is the silence this
+                    // whole path exists to end.
+                    if written >= events.len() {
+                        tracing::error!(
+                            session_id = %id,
+                            written,
+                            total,
+                            held = events.len(),
+                            "the store refused a batch it says it wrote in full; \
+                             these events are not in the log"
+                        );
+                        return Err(StoreError::SequenceTaken { written, total });
+                    }
+                    events.drain(..written);
+                    let reached = self.log_reaches(id).await;
+                    let first = self.sequences.take(id, reached, events.len() as u64);
+                    for (n, event) in events.iter_mut().enumerate() {
+                        event.seq = first + n as u64;
+                    }
+                    tracing::warn!(
+                        session_id = %id,
+                        attempt,
+                        accepted = written,
+                        of = total,
+                        renumbered_from = first,
+                        "a sequence this session already had; re-numbering the rest"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        session_id = %id,
+                        error = %e,
+                        lost = events.len(),
+                        from_seq = events.first().map(|e| e.seq),
+                        to_seq = events.last().map(|e| e.seq),
+                        "cannot persist events"
+                    );
+                    return Err(e);
+                }
+            }
+        }
+        tracing::error!(
+            session_id = %id,
+            attempts = APPEND_ATTEMPTS,
+            lost = events.len(),
+            from_seq = events.first().map(|e| e.seq),
+            to_seq = events.last().map(|e| e.seq),
+            "gave up numbering these events; they are not in the log and cannot be recovered"
+        );
+        Err(StoreError::SequenceTaken {
+            written: 0,
+            total: events.len(),
+        })
+    }
+
+    /// The highest sequence the durable log actually holds for a session.
+    ///
+    /// Read from the events themselves rather than from the session record:
+    /// the record is written whole by several paths, so it can be left behind
+    /// the log, and it is exactly that staleness a collision has just proved.
+    ///
+    /// Only events above what this process has issued are read, so the usual
+    /// answer costs one bounded query returning nothing. A store that cannot
+    /// be read falls back to our own position — no worse than not asking, and
+    /// the next attempt is what covers it.
+    async fn log_reaches(&self, id: &SessionId) -> u64 {
+        let issued = self.sequences.issued(id, 0);
+        match self.store.events_since(id, issued).await {
+            Ok(found) => found.iter().map(|e| e.seq).max().unwrap_or(issued),
+            Err(e) => {
+                tracing::warn!(
+                    session_id = %id,
+                    error = %e,
+                    "cannot read where this session's log reached; numbering from what this \
+                     process has issued"
+                );
+                issued
+            }
+        }
+    }
+
     /// Persist a session's current state and any events buffered against it.
     ///
     /// Called after every state change. Failures are logged rather than
@@ -43,9 +166,10 @@ impl SessionService {
         if let Err(e) = self.store.upsert(&record).await {
             tracing::error!(session_id = %id, error = %e, "cannot persist session");
         }
-        if let Err(e) = self.store.append_events(&events).await {
-            tracing::error!(session_id = %id, error = %e, "cannot persist events");
-        }
+        // Already logged in detail by the writer, including what was lost if
+        // anything was. Nothing above this has acted on the events, so there
+        // is nothing here to undo.
+        let _ = self.append_durably(id, events).await;
     }
 }
 
@@ -64,3 +188,7 @@ pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
         kind,
     });
 }
+
+#[cfg(test)]
+#[path = "log_tests.rs"]
+mod log_tests;
