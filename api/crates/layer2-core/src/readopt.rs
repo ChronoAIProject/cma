@@ -56,8 +56,8 @@ impl SessionService {
         let mut starting = record.clone();
         starting.session.status = SessionStatus::Provisioning;
         starting.session.stop_reason = None;
-        starting.session.last_seq += 1;
-        let seq = starting.session.last_seq;
+        let seq = self.sequences.take(id, starting.session.last_seq, 1);
+        starting.session.last_seq = seq;
         self.store.upsert(&starting).await.map_err(store_failed)?;
         self.store
             .append_events(&[Event {
@@ -101,9 +101,9 @@ impl SessionService {
         let mut settled = record.clone();
         settled.session.status = SessionStatus::Ready;
         settled.session.stop_reason = None;
-        settled.session.last_seq += 1;
-        let seq = settled.session.last_seq;
         let id = settled.session.id.clone();
+        let seq = self.sequences.take(&id, settled.session.last_seq, 1);
+        settled.session.last_seq = seq;
         if let Err(e) = self.store.upsert(&settled).await {
             tracing::warn!(session_id = %id, error = %e, "cannot record the recovered status");
             return;
@@ -261,6 +261,7 @@ impl SessionService {
         adopted.capabilities = capabilities;
         let entry = SessionEntry {
             session: adopted,
+            sequences: Arc::clone(&self.sequences),
             subject_credential: None,
             events: Vec::new(),
             screen: Arc::clone(&screen),
