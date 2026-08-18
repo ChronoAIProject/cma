@@ -299,6 +299,7 @@ pub(crate) fn spec() -> SessionSpec {
         geometry: None,
         environment_profile: None,
         subject_credential: None,
+        requested_mode: None,
         options: Default::default(),
     }
 }
