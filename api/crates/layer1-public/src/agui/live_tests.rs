@@ -97,6 +97,39 @@ fn successive_pieces_of_one_message_land_on_one_entry() {
 }
 
 #[test]
+fn reasoning_is_carried_under_the_name_the_protocol_uses_now() {
+    // `THINKING_*` is the deprecated family; AG-UI replaced it with
+    // `REASONING_*`. This service's capability document declared the old names
+    // — as false, so nothing was broken by it, but a client sizing its
+    // handling was being told about a vocabulary that is on its way out.
+    let frame = project_live(
+        &LiveFrame::ThoughtDelta("the file is probably under src/".into()),
+        "run_1",
+        "sesn_1",
+    )
+    .expect("reasoning has a shape here");
+
+    assert_eq!(frame.kind, "REASONING_MESSAGE_CONTENT");
+    assert_eq!(frame.body["delta"], "the file is probably under src/");
+    assert!(
+        frame.cursor().is_none(),
+        "reasoning is never committed, so it can never be resumed from"
+    );
+}
+
+#[test]
+fn reasoning_and_the_message_are_not_one_thing() {
+    // A client upserts by message identifier. Sharing one would fold the
+    // agent's reasoning into the message it is reasoning about.
+    let thinking =
+        project_live(&LiveFrame::ThoughtDelta("hmm".into()), "r", "s").expect("has a shape");
+    let saying =
+        project_live(&LiveFrame::MessageDelta("Right".into()), "r", "s").expect("has a shape");
+
+    assert_ne!(thinking.body["messageId"], saying.body["messageId"]);
+}
+
+#[test]
 fn what_this_protocol_has_no_shape_for_becomes_nothing() {
     // A terminal's bytes are a terminal fact. A runtime exiting is already
     // recorded durably as a status change the run stream carries in its own
