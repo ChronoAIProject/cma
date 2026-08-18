@@ -156,6 +156,12 @@ Changing an image reference in `infra/` is a deployment-surface change and belon
 
 **A commit reached `main` outside a pull request.** The run fails deliberately: there is no label, so there is no declared bump, and guessing one would put a number on a release nobody sized. Either tag and publish by hand, or revert and merge it properly.
 
+**The release pull request reads `BEHIND` and will not merge.** `develop` is missing the merge commit the *previous* release left on `main`. It carries no content — `git diff develop..main` is empty — but a merge commit is still a commit, and a protected branch requiring up-to-date branches will not take a pull request without it.
+
+Since `v0.4.0` the publish workflow opens that back-merge itself, as its last step, so this should not recur. If it does, the release gate now says so by name before anything else runs, and the fix is to merge that pull request. Merging `origin/main` into `develop` by hand does the same thing; do not force push, `develop` is protected.
+
+A back-merge that **conflicts** is left open deliberately rather than resolved automatically: a conflict means `develop` moved during the release, and a resolution nobody chose is how a release silently reverts something.
+
 **The push to GHCR is refused.** Two causes, in order of likelihood. The repository's default workflow permission is read-only — the explicit `permissions:` blocks should cover it, but confirm under Settings → Actions → General. Failing that, the organisation restricts package creation by Actions, which is not something this repository can change.
 
 **Two merges landed together.** They do not race; the workflow serializes on a single concurrency group, and the second computes its version after the first has tagged.
