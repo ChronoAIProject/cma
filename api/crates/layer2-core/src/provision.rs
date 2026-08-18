@@ -119,13 +119,18 @@ impl SessionService {
         // session was granted. Starting it anyway would leave a session whose
         // recorded abilities and real ones disagree, which is the state every
         // caller downstream trusts cannot happen.
-        SessionCapabilities::granted(session.options.mode, adapter.capabilities()).map_err(
-            |refusal| {
+        //
+        // Settled rather than merely checked: a session recorded before this
+        // model existed holds nothing, and nothing is a set that refuses every
+        // operation it is consulted for. The record is read back below, so
+        // writing it here is what the entry is then built from.
+        self.settle_capabilities(session, adapter)
+            .await
+            .map_err(|refusal| {
                 StartFailure::permanent(format!(
                     "this session's runtime can no longer be what it is: {refusal}"
                 ))
-            },
-        )?;
+            })?;
         // Resolved from the session rather than the request, so a runtime
         // replaced long afterwards is built the same way. A profile that has
         // since been deleted or changed hands fails the attempt rather than
@@ -393,6 +398,58 @@ impl SessionService {
             // name it, which is exactly the orphan reconciliation must catch.
             tracing::error!(session_id = %id, error = %e, "runtime provisioned but not recorded");
         }
+    }
+}
+
+impl SessionService {
+    /// Give a session the granted set it should have, and record it.
+    ///
+    /// Two jobs that must not be separated. It refuses a session whose runtime
+    /// can no longer be what the session is — the check every start makes —
+    /// and it writes the answer down where the session was recorded before
+    /// this model existed.
+    ///
+    /// The second job is why this exists. `granted` is the only thing that
+    /// produces a set, and until now the two paths that bring a session *back*
+    /// — readopting a surviving runtime, and starting a replacement — either
+    /// copied the record verbatim or computed the value and discarded it. A
+    /// session written by an older build therefore came back holding nothing,
+    /// which is not "granted nothing": it is refused at every gate that asks,
+    /// including the one behind every keystroke.
+    ///
+    /// Recorded rather than recomputed per process, because §5 makes the
+    /// record the authority and a set that exists only in memory is one the
+    /// next control plane has to derive again.
+    pub(crate) async fn settle_capabilities(
+        &self,
+        session: &Session,
+        adapter: &Arc<dyn KernelAdapter>,
+    ) -> Result<SessionCapabilities, crate::error::CoreError> {
+        let granted = SessionCapabilities::granted(session.options.mode, adapter.capabilities())?;
+        if !session.capabilities.unrecorded() {
+            return Ok(session.capabilities);
+        }
+        match self.store.get(&session.id).await {
+            Ok(Some(mut record)) => {
+                record.session.capabilities = granted;
+                if let Err(e) = self.store.upsert(&record).await {
+                    // Worth saying and not worth refusing over: the session
+                    // works with the set in hand, and the next sweep settles
+                    // it again.
+                    tracing::warn!(session_id = %session.id, error = %e, "cannot record what this session holds");
+                } else {
+                    tracing::info!(
+                        session_id = %session.id,
+                        "settled what this session holds; it was recorded before capabilities existed"
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(session_id = %session.id, error = %e, "cannot read this session to settle what it holds");
+            }
+        }
+        Ok(granted)
     }
 }
 

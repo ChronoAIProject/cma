@@ -597,6 +597,104 @@ async fn taking_a_conversation_back_over_rejoins_it_rather_than_opening_another(
 }
 
 #[tokio::test]
+async fn a_session_recorded_before_capabilities_existed_is_settled_when_it_comes_back() {
+    // The upgrade case, and the one that decides whether deploying the
+    // capability model costs somebody a running session. A record written by
+    // an older build has no granted set at all; read back, that is every
+    // capability false — which every gate reads as a refusal, including the
+    // one behind each keystroke.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    // Exactly what an older build left behind: everything else intact, the
+    // granted set absent.
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.capabilities = Default::default();
+    assert!(record.session.capabilities.unrecorded());
+    store.upsert(&record).await.expect("recorded");
+
+    drop(first);
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(recovered.readopted_sessions, 1);
+    let settled = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .session
+        .capabilities;
+    assert!(
+        settled.terminal,
+        "a terminal session must come back able to take a keystroke"
+    );
+    assert!(
+        !settled.unrecorded(),
+        "the settled set must be written down, not derived again by every process"
+    );
+    // Through the interface a caller actually uses, not only in the record.
+    restarted
+        .send_input(&alice, &created.id, b"ls\n".to_vec())
+        .await
+        .expect("a readopted session must accept input");
+}
+
+#[tokio::test]
+async fn a_session_that_recorded_its_own_set_keeps_it() {
+    // The other half: settling is for records that never had one. A session
+    // that was granted its abilities deliberately must not have them
+    // recomputed underneath it — that is the recomputation the whole model
+    // exists to forbid.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    // A set that could never be derived from this runtime, so a recomputation
+    // is visible rather than coincidental.
+    record.session.capabilities = crate::capabilities::SessionCapabilities {
+        terminal: true,
+        snapshot: false,
+        ..Default::default()
+    };
+    store.upsert(&record).await.expect("recorded");
+
+    drop(first);
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    restarted.reconcile().await;
+
+    let after = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .session
+        .capabilities;
+    assert!(
+        after.terminal && !after.snapshot,
+        "a recorded set must survive being picked back up: {after:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_provider_that_answers_nothing_defers_rather_than_replaces() {
     // The failure that already happened in production: the provider could not
     // be enumerated *and* could not be attached to, because it was not
