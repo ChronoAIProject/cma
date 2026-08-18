@@ -99,7 +99,9 @@ describe('a run that stopped badly', () => {
   });
 
   it('names the ability, when the failure was a refusal', () => {
-    const state = stream([failed(3, { message: 'cannot be what it is', capability: 'conversation' })]);
+    const state = stream([
+      failed(3, { message: 'cannot be what it is', capability: 'conversation' }),
+    ]);
 
     expect(state.entries[0]).toMatchObject({ kind: 'failure', capability: 'conversation' });
     expect(state.error).toMatchObject({ capability: 'conversation' });
