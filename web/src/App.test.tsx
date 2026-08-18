@@ -382,29 +382,78 @@ describe('App', () => {
     });
   });
 
-  it('reports a failed action without disconnecting the sessions that did not fail', async () => {
-    seedSessions(3);
+  it('keeps the terminal attached when the details sheet opens and closes', async () => {
+    // §12 puts the sheet under the terminal rather than beside it, so opening
+    // it changes the terminal's height and nothing else. Rendered around the
+    // terminal instead of beside it, a toggle would remount xterm and take the
+    // scrollback with it — which is the whole cost of getting this wrong, and
+    // is invisible until somebody scrolls up and finds nothing.
+    seedSessions(1);
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: /hide session details/i }));
+    await user.click(screen.getByRole('button', { name: /show session details/i }));
+
+    // One socket still, not three. A remounted terminal redials.
+    expect(sockets).toHaveLength(1);
+  });
+
+  it('reports a failed action without detaching any of twelve live terminals', async () => {
+    // §12's own worked example, at the size that makes it matter: the canvas
+    // attaches its whole budget, one session's stop comes back an error, and
+    // nothing else may lose its connection to say so.
+    seedSessions(MAX_LIVE_NODES);
     window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
     await waitFor(() => {
-      expect(sockets).toHaveLength(3);
+      expect(sockets).toHaveLength(MAX_LIVE_NODES);
     });
 
     // Nothing stubs the stop endpoint, so the request comes back 404 — the
     // same shape as a 409, an expired token or a network blip.
-    await user.click(screen.getByRole('button', { name: /^end session/i }));
+    await user.click(screen.getByRole('button', { name: /^end$/i }));
 
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toBeInTheDocument();
+    // A band at the head of the column, not a sentence in place of the surface.
+    expect(alert).toHaveClass('band');
+
     /*
-     * One session's request failed. Rendering the notice in place of the
-     * surface unmounted the canvas, so the other two lost their terminals and
-     * their connections to report something that was not about them.
+     * Twelve sessions attached, one request failed. Rendering the notice in
+     * place of the surface unmounted the canvas, so eleven sessions that had
+     * not failed lost their terminals and their connections to report
+     * something that was not about them.
      */
-    expect(document.querySelectorAll('[data-node-id]')).toHaveLength(3);
-    expect(isAttached('sesn_1')).toBe(true);
-    expect(isAttached('sesn_2')).toBe(true);
+    expect(document.querySelectorAll('[data-node-id]')).toHaveLength(MAX_LIVE_NODES);
+    for (let i = 0; i < MAX_LIVE_NODES; i += 1) {
+      expect(isAttached(`sesn_${String(i)}`), `sesn_${String(i)}`).toBe(true);
+    }
+    // And no session was redialled to report the failure.
+    expect(sockets).toHaveLength(MAX_LIVE_NODES);
+  });
+
+  it('clears the failure as the next action starts', async () => {
+    // §12: the band reports the most recent attempt, so a stale failure never
+    // sits above a console that has since recovered.
+    seedSessions(1);
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: /^end$/i }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^reconnect$/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
   });
 
   it('keeps the node that inherits focus attached when a session is deleted', async () => {
@@ -427,7 +476,7 @@ describe('App', () => {
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
       await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
-    await user.click(screen.getByRole('button', { name: /delete session/i }));
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
     await user.click(screen.getByRole('button', { name: /delete permanently/i }));
 
     await waitFor(() => {

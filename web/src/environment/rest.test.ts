@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRestProfileStore, toProfile } from './rest';
+import { DEFAULT_AGENT } from './types';
 
 /**
  * The profile store that talks to the control plane.
@@ -30,7 +31,8 @@ describe('reading a profile off the wire', () => {
       name: 'build tools',
       variables: [{ key: 'BUILD_MODE', value: 'release' }],
       packages: [{ name: 'ripgrep', version: '14' }],
-      skills: ['nyxid'],
+      agent: { ...DEFAULT_AGENT, skills: ['nyxid'] },
+      nyxid: { services: [] },
       mandatory: { packages: ['nyxid'], skills: ['ornn-agent-manual-cli'] },
       created_at: '2026-08-14T00:00:00Z',
       updated_at: '2026-08-14T01:00:00Z',
@@ -53,7 +55,7 @@ describe('reading a profile off the wire', () => {
     const profile = toProfile({ id: 'envp_2', name: 'bare' });
     expect(profile.variables).toEqual([]);
     expect(profile.packages).toEqual([]);
-    expect(profile.skills).toEqual([]);
+    expect(profile.agent.skills).toEqual([]);
     expect(profile.mandatory.packages).toEqual([]);
   });
 
@@ -93,7 +95,13 @@ describe('talking to the control plane', () => {
       vi.fn().mockResolvedValue(respond({ detail: 'BUILD MODE is not a usable name' }, 422)),
     );
     await expect(
-      createRestProfileStore().create({ name: 'x', variables: [], packages: [], skills: [] }),
+      createRestProfileStore().create({
+        name: 'x',
+        variables: [],
+        packages: [],
+        agent: DEFAULT_AGENT,
+        nyxid: { services: [] },
+      }),
     ).rejects.toThrow(/not a usable name/);
   });
 
@@ -110,7 +118,8 @@ describe('talking to the control plane', () => {
       name: 'renamed',
       variables: [],
       packages: [],
-      skills: [],
+      agent: { ...DEFAULT_AGENT, skills: [] },
+      nyxid: { services: [] },
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -143,5 +152,50 @@ describe('talking to the control plane', () => {
     const catalogue = await createRestProfileStore().catalogue();
     expect(catalogue.skills[0]?.name).toBe('nyxid');
     expect(catalogue.mandatory.skills).toEqual(['ornn-agent-manual-cli']);
+  });
+});
+
+describe('the plane a profile starts sessions on', () => {
+  it('reads what the control plane recorded', () => {
+    const profile = toProfile({
+      id: 'envp_1',
+      name: 'reviewer',
+      agent: { kernel: 'claude-code', mode: 'conversation' },
+    });
+    expect(profile.agent.mode).toBe('conversation');
+  });
+
+  it('reads a profile written before planes existed as a terminal', () => {
+    // What every session was then, and what the core still defaults to.
+    // Reading it back as anything else would change what an existing profile
+    // starts.
+    expect(toProfile({ id: 'envp_1', name: 'old', agent: { kernel: 'codex' } }).agent.mode).toBe(
+      'terminal',
+    );
+  });
+
+  it('refuses to invent a plane from a value it does not recognise', () => {
+    expect(
+      toProfile({ id: 'envp_1', name: 'odd', agent: { kernel: 'codex', mode: 'holodeck' } }).agent
+        .mode,
+    ).toBe('terminal');
+  });
+
+  it('sends the plane back when a profile is stored', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond({ id: 'envp_1', name: 'reviewer' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createRestProfileStore().create({
+      name: 'reviewer',
+      agent: { ...DEFAULT_AGENT, mode: 'conversation' },
+      nyxid: { services: [] },
+      variables: [],
+      packages: [],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      agent: { mode: string };
+    };
+    expect(body.agent.mode).toBe('conversation');
   });
 });

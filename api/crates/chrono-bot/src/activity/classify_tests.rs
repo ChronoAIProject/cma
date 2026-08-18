@@ -34,6 +34,7 @@ fn every_session_verb_is_recognised() {
         (Method::GET, "transcript", Action::SessionTranscriptRead),
         (Method::GET, "events", Action::SessionEventsRead),
         (Method::GET, "terminal", Action::SessionTerminalAttach),
+        (Method::POST, "plane", Action::SessionPlaneChange),
     ] {
         let c = classified(method.clone(), &format!("/api/v1/sessions/sesn_1/{verb}"));
         assert_eq!(c.action, action, "{method} {verb}");
@@ -276,5 +277,132 @@ fn a_replaced_bundle_leaks_no_more_than_a_created_one() {
     assert!(
         classified(Method::PUT, "/api/v1/environment-profiles/envp_1").reads_body,
         "an edit has to be read for its shape to be recorded at all"
+    );
+}
+
+#[test]
+fn asking_for_an_attach_ticket_records_the_attach_it_is_for() {
+    let c = classify(&Method::POST, "/api/v1/sessions/sesn_1/terminal-ticket").expect("classified");
+    assert!(matches!(c.action, Action::SessionTerminalAttach));
+    assert!(
+        !c.reads_body,
+        "the body decides only whether to supersede, and is nobody's business afterwards"
+    );
+}
+
+#[test]
+fn a_ticket_never_reaches_a_record() {
+    // The property the whole ticket design rests on: a credential in a URL is
+    // acceptable only while nothing writes it down.
+    let mut detail = ActivityDetail::new();
+    detail_from_query(
+        Some("ticket=aaaaaaaabbbbbbbbccccccccdddddddd&after=7"),
+        &mut detail,
+    );
+    let rendered = format!("{detail:?}");
+    assert!(
+        !rendered.contains("aaaaaaaa"),
+        "a ticket was recorded: {rendered}"
+    );
+    assert!(
+        rendered.contains('7'),
+        "the allowlisted cursor should still be kept: {rendered}"
+    );
+}
+
+#[test]
+fn every_operating_verb_is_recorded_as_its_own_action() {
+    // Grouping them would make "somebody typed" and "somebody stopped the
+    // agent" the same entry, which is the distinction anybody reading this log
+    // after an incident is looking for.
+    for (verb, expected) in [
+        ("input", Action::SessionInput),
+        ("interrupt", Action::SessionInterrupt),
+        ("steer", Action::SessionSteer),
+        ("resize", Action::SessionResize),
+    ] {
+        let classified = classify(&Method::POST, &format!("/api/v1/sessions/sesn_1/{verb}"))
+            .unwrap_or_else(|| panic!("{verb} is served"));
+        assert_eq!(classified.action, expected, "for {verb}");
+        assert_eq!(
+            classified.target,
+            Some(ActivityTarget::Session(SessionId("sesn_1".into())))
+        );
+    }
+}
+
+#[test]
+fn nothing_a_caller_sends_to_a_session_is_read_into_the_record() {
+    // Keystrokes and prompts are the owner's own words to their own agent, and
+    // an approval payload is a decision about their own work. The guarantee is
+    // structural: these classifications read no body at all, so there is
+    // nowhere for any of it to land however the request shape grows.
+    for path in [
+        "/api/v1/sessions/sesn_1/input",
+        "/api/v1/sessions/sesn_1/steer",
+        "/api/v1/sessions/sesn_1/interrupt",
+        "/api/v1/sessions/sesn_1/resize",
+        "/api/v1/sessions/sesn_1/approvals/req_1",
+    ] {
+        let classified =
+            classify(&Method::POST, path).unwrap_or_else(|| panic!("{path} is served"));
+        assert!(
+            !classified.reads_body,
+            "{path} must not read a body into the record"
+        );
+    }
+}
+
+#[test]
+fn answering_an_approval_names_the_session_rather_than_the_request() {
+    // Which request was answered is in the session's own event log, where it
+    // belongs to the conversation. This log is about who touched what.
+    let classified = classify(&Method::POST, "/api/v1/sessions/sesn_1/approvals/req_9")
+        .expect("approvals are served");
+    assert_eq!(classified.action, Action::SessionApprovalResolve);
+    assert_eq!(
+        classified.target,
+        Some(ActivityTarget::Session(SessionId("sesn_1".into())))
+    );
+}
+
+#[test]
+fn reading_usage_is_a_read_rather_than_an_operation() {
+    let classified =
+        classify(&Method::GET, "/api/v1/sessions/sesn_1/usage").expect("usage is served");
+    assert_eq!(classified.action, Action::SessionUsageRead);
+}
+
+#[test]
+fn an_operating_verb_asked_for_with_the_wrong_method_is_not_served() {
+    // The router would answer 405, and a record of an action that never
+    // happened is worse than no record.
+    assert!(classify(&Method::GET, "/api/v1/sessions/sesn_1/input").is_none());
+    assert!(classify(&Method::POST, "/api/v1/sessions/sesn_1/usage").is_none());
+}
+
+#[test]
+fn moving_a_session_between_planes_records_which_plane_and_nothing_else() {
+    // The one session verb whose body says something worth keeping. Which
+    // surface a session is driven on is exactly what somebody reading this
+    // record needs to make sense of a handover that was asked for; everything
+    // else a caller sends to a session is their own content.
+    let c = classified(Method::POST, "/api/v1/sessions/sesn_1/plane");
+    assert_eq!(c.action, Action::SessionPlaneChange);
+    assert_eq!(
+        c.target,
+        Some(ActivityTarget::Session(SessionId("sesn_1".into())))
+    );
+    assert!(c.reads_body, "the plane is in the body");
+
+    let detail = detail_from_body(
+        Action::SessionPlaneChange,
+        br#"{"plane":"conversation","note":"something the caller added later"}"#,
+    );
+    assert_eq!(detail.get(DetailKey::Plane), Some("conversation"));
+    assert_eq!(
+        detail.iter().count(),
+        1,
+        "a field added to this request later has nowhere here to land"
     );
 }

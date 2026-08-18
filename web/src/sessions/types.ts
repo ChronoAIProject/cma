@@ -5,6 +5,8 @@
  * not invent state the core does not have.
  */
 
+import type { SessionCapabilities } from '../agui';
+
 /**
  * Lifecycle: provisioning -> ready -> running <-> idle -> terminated.
  *
@@ -25,8 +27,56 @@ export type SessionLifecycle =
  */
 export type StopReason = 'error' | 'other';
 
+/**
+ * The two planes a session can be reached on.
+ *
+ * Exclusive by construction: `capabilities.rs` fixes the granted set at
+ * creation and a session holds one or the other. Moving between them is a
+ * rotation and never a toggle — the session is captured, its runtime is
+ * replaced, and it resumes from the capture (§18.6).
+ */
+export type SessionPlane = 'terminal' | 'conversation';
+
 /** The kernels the control plane can run. */
 export type Kernel = 'codex' | 'claude-code';
+
+/**
+ * A runtime this deployment can start a session on, and what it can be.
+ *
+ * Read from `GET /api/v1/kernels` rather than listed here, because which
+ * runtimes exist and what each can serve are facts about a deployment. A list
+ * kept in the client is wrong the first time one changes, and being wrong here
+ * means offering somebody a session the control plane will refuse.
+ */
+export interface KernelOffer {
+  readonly id: string;
+  /** The planes this runtime can serve. Empty means it can serve none. */
+  readonly modes: readonly SessionPlane[];
+}
+
+/**
+ * One service a session's credential may reach.
+ *
+ * Identifiers always; a name and a description only when the caller's own
+ * service catalogue offered them. A catalogue that could not be asked costs
+ * the names and not the answer, so a service with no name is still a service
+ * this session reaches.
+ */
+export interface SessionService {
+  readonly id: string;
+  /** What the owner recognises it by, when the catalogue said. */
+  readonly name?: string;
+  readonly description?: string;
+  /**
+   * Whether the platform mandates it.
+   *
+   * Drawn as fixed rather than as something the owner chose, matching how the
+   * picker already treats the entries that cannot be unticked — for the same
+   * stated reason: a person deciding what a session may touch should see the
+   * whole answer.
+   */
+  readonly mandated: boolean;
+}
 
 export interface Session {
   readonly id: string;
@@ -48,10 +98,60 @@ export interface Session {
    * recognised as missing rather than silently absent.
    */
   readonly rotatedAt?: number;
+  /**
+   * Who started the session, as they should be shown.
+   *
+   * Absent when the control plane would not name them: naming somebody is its
+   * own grant, and a caller who does not hold it is told nothing rather than
+   * handed an identifier. Never fall back to the subject — it is not a name
+   * and reads as a rendering fault when drawn as one.
+   */
+  readonly creator?: SessionCreator;
+  /**
+   * What this session's credential may reach.
+   *
+   * `undefined` and `[]` are different facts and must not be drawn alike.
+   * Undefined means the control plane did not report it — an older build, or a
+   * projection this one does not carry — and the honest answer is that we do
+   * not know. Empty means this session reaches nothing, which is a real answer
+   * somebody can act on.
+   */
+  readonly reach?: readonly SessionService[];
+  /**
+   * Which plane this session is drawn on — `Web_Style.md` §1 and §18.
+   *
+   * A property of the session, decided when it was created, and not a view and
+   * not a preference. The client reads it and draws what it implies; there is
+   * nothing here to toggle, because the two planes are exclusive by
+   * construction in the core.
+   *
+   * Absent when the control plane did not say. A session whose plane is not
+   * reported falls back to the terminal, which is what every session was
+   * before the conversation plane existed — the safe direction, since a
+   * terminal drawn for a conversation session shows an empty screen and a
+   * conversation drawn for a terminal session shows nothing at all.
+   */
+  readonly plane?: SessionPlane;
+  /**
+   * What this session was granted, read once at the boundary.
+   *
+   * #116: components ask "may this session steer" rather than trying and
+   * handling a refusal. Held on the session because it is a fact about the
+   * session, decided at creation and changed only by an explicit, recorded act
+   * of its owner — moving it between planes, which is a rotation and arrives
+   * as a new record rather than as an edit to this one.
+   */
+  readonly capabilities: SessionCapabilities;
+}
+
+/** How the person who started a session is drawn. */
+export interface SessionCreator {
+  readonly displayName?: string;
+  readonly avatarUrl?: string;
 }
 
 /** Which semantic token paints a lifecycle state. */
-export type StateTone = 'ok' | 'warn' | 'danger' | 'neutral';
+export type StateTone = 'live' | 'wait' | 'fail' | 'ended';
 
 /**
  * `idle` is the state most often misread. A session whose bot pod was
@@ -62,13 +162,13 @@ export function toneFor(lifecycle: SessionLifecycle): StateTone {
   switch (lifecycle) {
     case 'ready':
     case 'running':
-      return 'ok';
+      return 'live';
     case 'provisioning':
     case 'rotating':
     case 'idle':
-      return 'warn';
+      return 'wait';
     case 'terminated':
-      return 'neutral';
+      return 'ended';
     default: {
       // Exhaustiveness: a new lifecycle state must be given a tone
       // deliberately rather than silently rendering as unknown.

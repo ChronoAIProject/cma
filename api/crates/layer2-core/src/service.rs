@@ -13,11 +13,13 @@ use layer3_adapter::{KernelAdapter, RuntimeHandle, TerminalInput};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
 use crate::authz::{Caller, Capability};
+use crate::capabilities::{servable_modes, SessionCapabilities};
 use crate::clock::now_rfc3339;
 use crate::environment_service::EnvironmentProfileService;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
+use crate::options::{AgentOptions, SessionMode};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
@@ -27,37 +29,19 @@ use crate::terminal::{ScreenModel, TerminalGeometry};
 /// so lagging is survivable; unbounded buffering is not.
 pub(crate) const LIVE_BUFFER: usize = 512;
 
+pub use crate::lease::{AttachmentHandle, Detached};
+
 /// Builds a screen model at a given geometry.
 ///
 /// Injected so the core never depends on a particular terminal parser.
 pub type ScreenFactory = Arc<dyn Fn(TerminalGeometry) -> Box<dyn ScreenModel> + Send + Sync>;
 
-/// An exclusive terminal attachment.
-///
-/// Holding this is what makes an attachment exclusive; dropping it releases the
-/// lease. Attachment is not a tenth core operation — it is an exclusivity mode
-/// on the live stream.
-pub struct AttachmentHandle {
-    pub(crate) session_id: SessionId,
-    pub(crate) service: Arc<SessionService>,
-    /// Live terminal output for as long as the attachment is held.
-    pub output: broadcast::Receiver<Vec<u8>>,
-    /// Bytes that repaint the current screen, delivered before live output.
-    pub repaint: Vec<u8>,
-    /// Geometry the repaint was rendered at.
-    pub geometry: TerminalGeometry,
-}
-
-impl Drop for AttachmentHandle {
-    fn drop(&mut self) {
-        let service = Arc::clone(&self.service);
-        let id = self.session_id.clone();
-        // Release synchronously where possible; the lock is never held across
-        // an await inside the service, so a blocking release cannot deadlock.
-        tokio::spawn(async move {
-            service.release_attachment(&id).await;
-        });
-    }
+/// Who currently holds a session's terminal.
+pub(crate) struct Attachment {
+    /// Which attachment this is, among those this session has issued.
+    pub(crate) generation: u64,
+    /// Signals the holder that the attachment has been taken from them, and why.
+    pub(crate) supersede: broadcast::Sender<crate::lease::Detached>,
 }
 
 /// Everything about a session that exists only while its runtime does.
@@ -79,7 +63,38 @@ pub(crate) struct SessionEntry {
     /// Transcript length at the last capture, so an unchanged one is not rewritten.
     pub(crate) captured_len: usize,
     pub(crate) live: broadcast::Sender<Vec<u8>>,
-    pub(crate) attached: bool,
+    /// Liveness on the conversation plane: pieces of a message being assembled.
+    ///
+    /// Separate from the terminal's byte stream because the two are different
+    /// kinds of thing and a session has one plane or the other. Kept typed
+    /// rather than as bytes, because a token-level piece of a message is not a
+    /// screen and rendering it into one would be a decision the core has no
+    /// business making.
+    pub(crate) live_frames: broadcast::Sender<crate::event::LiveFrame>,
+    /// Input toward the session's conversation, when it holds one.
+    pub(crate) conversation: Option<mpsc::Sender<layer3_adapter::ConversationInput>>,
+    /// The message the agent is still assembling, and which one it is.
+    ///
+    /// A runtime streams a message in pieces and says nothing to mark the end
+    /// of one; what marks it is the next message starting, or the turn ending.
+    /// Held here so the finished message can be committed at that moment
+    /// rather than each piece being written down as though it were history.
+    pub(crate) assembling: Option<(Option<String>, String)>,
+    /// Decisions the runtime is blocked on, by the identifier that answers one.
+    ///
+    /// Held so an answer to something nothing is waiting for is refused rather
+    /// than forwarded: a runtime handed one will either ignore it or act on
+    /// the wrong thing, and neither is visible to whoever answered.
+    pub(crate) pending_approvals: HashSet<String>,
+    /// The live attachment, when one is held.
+    pub(crate) attached: Option<Attachment>,
+    /// How many attachments this session has issued.
+    ///
+    /// Monotonic rather than a count of live ones, so a replacement attachment
+    /// is never numbered the same as the one it replaced — which is the whole
+    /// basis on which a superseded holder's release is told apart from a real
+    /// one.
+    pub(crate) attachments_issued: u64,
 }
 
 /// What distinguishes one deployment of this service from another.
@@ -225,11 +240,22 @@ impl SessionService {
             .ok_or(CoreError::SessionNotFound)
     }
 
-    /// Identifiers of the runtimes this service can back a session with.
-    pub fn available_kernels(&self) -> Vec<KernelId> {
-        let mut ids: Vec<_> = self.adapters.keys().cloned().collect();
-        ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        ids
+    /// The runtimes this service can back a session with, and what each can be.
+    ///
+    /// The planes travel with the identifier because a caller choosing a
+    /// runtime is choosing what its session will be, and the two questions
+    /// answered separately can be answered inconsistently. What each runtime
+    /// can serve is read from the adapter rather than configured, so a kernel
+    /// that gains or loses an ability is advertised correctly without anything
+    /// here being edited.
+    pub fn available_kernels(&self) -> Vec<(KernelId, Vec<SessionMode>)> {
+        let mut offerings: Vec<_> = self
+            .adapters
+            .iter()
+            .map(|(id, adapter)| (id.clone(), servable_modes(adapter.capabilities())))
+            .collect();
+        offerings.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        offerings
     }
 
     /// Create a session and bring its runtime up in the background.
@@ -249,14 +275,6 @@ impl SessionService {
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
         caller.authorization.require(Capability::CreateSession)?;
-        // Resolved before the record is written: an unknown kernel is the
-        // caller's mistake and should be refused outright rather than accepted
-        // and then failed asynchronously.
-        let adapter =
-            self.adapters.get(&spec.kernel).cloned().ok_or_else(|| {
-                CoreError::RuntimeUnavailable(format!("no runtime {}", spec.kernel))
-            })?;
-
         // Checked before anything is recorded: a selection this caller may not
         // use, or a store that cannot be read, must fail the request rather
         // than leave a session provisioning towards an environment it will
@@ -265,12 +283,74 @@ impl SessionService {
             .resolve(caller, spec.environment_profile.as_ref())
             .await?;
 
+        // The profile says how the agent behaves, so the request does not.
+        // Taking it from here rather than from the caller is what makes a
+        // session reproducible from the bundle it names: two sessions started
+        // on one profile are the same session twice, whoever started them.
+        let agent = self
+            .environments
+            .agent_for(caller, spec.environment_profile.as_ref())
+            .await?;
+        let mut spec = spec;
+        spec.options = AgentOptions {
+            mode: agent.mode,
+            model: agent.model.clone(),
+            reasoning_effort: agent.reasoning_effort,
+            permission: agent.permission,
+            credential: agent.credential,
+        };
+
+        // Resolved before the record is written: a profile naming a kernel this
+        // deployment cannot start is refused outright rather than accepted and
+        // then failed asynchronously.
+        let adapter =
+            self.adapters.get(&agent.kernel).cloned().ok_or_else(|| {
+                CoreError::RuntimeUnavailable(format!("no runtime {}", agent.kernel))
+            })?;
+
+        // Settled here, while somebody is still on the line to be told. A
+        // session whose kernel cannot do what its mode requires can never work,
+        // and accepting it would mean writing a record and then failing it
+        // asynchronously against a caller who has long since gone.
+        let capabilities = SessionCapabilities::granted(spec.options.mode, adapter.capabilities())
+            .inspect_err(|refusal| {
+                tracing::info!(
+                    subject = %caller.subject,
+                    kernel = %agent.kernel,
+                    reason = %refusal,
+                    "refused a session its runtime could not be"
+                );
+            })?;
+
+        // What the session may reach, settled now and written down. Resolved
+        // once here rather than on every later question, because the profile
+        // it comes from can be edited afterwards and the session's reach does
+        // not follow it.
+        let granted_services = self
+            .environments
+            .services_for(&caller.subject, spec.environment_profile.as_ref())
+            .await;
+
+        // Refused here, by name, while somebody is still on the line to be
+        // told. A grant can be revoked between saving a profile and starting a
+        // session from it, so this is the truthful moment to check — and a
+        // session started against a service its owner has taken back would run
+        // perfectly and refuse every call the agent made on their behalf,
+        // which is the failure this refusal exists to replace.
+        self.environments
+            .refuse_ungranted(
+                caller,
+                spec.subject_credential.as_deref(),
+                &granted_services,
+            )
+            .await?;
+
         let geometry = spec.geometry.unwrap_or_default();
         let id = SessionId::generate();
         let session = Session {
             id: id.clone(),
             owner: caller.subject.clone(),
-            kernel: spec.kernel.clone(),
+            kernel: agent.kernel.clone(),
             status: SessionStatus::Provisioning,
             recovery_state: RecoveryState::Normal,
             stop_reason: None,
@@ -281,6 +361,8 @@ impl SessionService {
             runtime_version: None,
             rotations: 0,
             rotated_at: None,
+            capabilities,
+            granted_services: Some(granted_services),
             created_at: now_rfc3339(),
         };
 

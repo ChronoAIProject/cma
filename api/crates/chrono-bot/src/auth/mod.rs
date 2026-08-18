@@ -11,69 +11,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::{
-    extract::State,
-    http::{header, HeaderMap},
-    response::Response,
-};
+use axum::http::HeaderMap;
 pub mod profile;
 
-use layer1_public::AuthenticatedSubject;
-use layer2_core::{Authorization, SubjectId};
-use serde::Deserialize;
+use layer2_core::{Authorization, SessionId, SubjectId};
 use tokio::sync::RwLock;
 
 use token::random_token;
 
 /// Name of the session cookie this service issues.
 pub const SESSION_COOKIE: &str = "chrono_bot_session";
-
-/// What the provider issued for a signed-in subject.
-///
-/// The refresh token is the reason this is stored at all: an access token
-/// outlives neither a long terminal session nor a long agent turn, and the only
-/// alternative to renewing it is interrupting the user.
-#[derive(Clone)]
-pub struct SubjectTokens {
-    /// Currently valid access token.
-    pub access_token: String,
-    /// Used to obtain the next access token, when the provider issued one.
-    pub refresh_token: Option<String>,
-    /// When the access token stops being accepted.
-    pub expires_at: std::time::Instant,
-}
-
-impl std::fmt::Debug for SubjectTokens {
-    /// Redacted: no `{:?}` may put a live token in a log.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SubjectTokens")
-            .field("access_token", &"<redacted>")
-            .field(
-                "refresh_token",
-                &self.refresh_token.as_ref().map(|_| "<redacted>"),
-            )
-            .finish()
-    }
-}
-
-impl SubjectTokens {
-    /// Whether the access token should be renewed now.
-    ///
-    /// Renewed early rather than on expiry: a token that dies mid-turn fails a
-    /// request the user is waiting on, and the margin costs nothing.
-    pub fn needs_refresh(&self, margin: std::time::Duration) -> bool {
-        std::time::Instant::now() + margin >= self.expires_at
-    }
-}
-
-/// Provider metadata, as far as this service uses it.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct ProviderMetadata {
-    authorization_endpoint: String,
-    token_endpoint: String,
-    #[serde(default)]
-    userinfo_endpoint: Option<String>,
-}
 
 /// How the service establishes who is calling.
 #[derive(Debug, Clone)]
@@ -118,6 +65,29 @@ pub struct AuthState {
     /// Display details captured at sign-in, so the interface can show a person
     /// rather than an identifier.
     pub profiles: RwLock<HashMap<SubjectId, profile::Profile>>,
+    /// Mints and reclaims the credential each session presents.
+    ///
+    /// Optional: without it a session falls back to its owner's own token, and
+    /// reaches everything they reach. That is how this service behaved before
+    /// credentials were scoped, and it is what a deployment that has not
+    /// configured a platform root still gets.
+    issuer: RwLock<Option<Arc<keys::KeyIssuer>>>,
+    /// The credential minted for each live session.
+    ///
+    /// Held so a session keeps presenting one value rather than minting a
+    /// fresh one on every ask, and so the old one can be reclaimed once its
+    /// replacement is in place. The owner is kept alongside because reclaiming
+    /// a key needs their token, and by then the session may be gone.
+    issued: RwLock<HashMap<SessionId, Issued>>,
+    /// Credentials replaced but not yet taken back.
+    ///
+    /// A replacement is not safe to revoke the moment it is minted: the
+    /// session is still presenting the old one until the new value has
+    /// reached it. Holding them here for a sweep is what removes the window
+    /// entirely — by the next pass the push has long since happened, and a
+    /// credential that outlives its session by a minute is not a risk while
+    /// one that dies mid-turn is a failed request somebody is waiting on.
+    superseded: RwLock<Vec<(String, SubjectId)>>,
     /// What the provider has said about bearer tokens, briefly.
     ///
     /// Separate from `sessions` because the two are different credentials with
@@ -136,6 +106,19 @@ pub struct AuthState {
     /// so there is genuinely nothing to record rather than somewhere missing
     /// to record it.
     records: Option<records::SignInRecords>,
+}
+
+/// A credential this service minted for one session.
+#[derive(Clone)]
+pub struct Issued {
+    /// The platform's identifier, used to take it back.
+    pub id: String,
+    /// The value the session presents. Never logged.
+    pub value: String,
+    /// Whose account it was minted on.
+    pub owner: SubjectId,
+    /// When it was minted, which is what says when to replace it.
+    pub minted_at: std::time::Instant,
 }
 
 /// Derive the PKCE challenge for a verifier, per S256.
@@ -157,6 +140,9 @@ impl AuthState {
                 .build()
                 .expect("http client builds"),
             metadata: RwLock::new(None),
+            issuer: RwLock::new(None),
+            issued: RwLock::new(HashMap::new()),
+            superseded: RwLock::new(Vec::new()),
             sessions: RwLock::new(HashMap::new()),
             tokens: RwLock::new(HashMap::new()),
             authorizations: RwLock::new(HashMap::new()),
@@ -217,79 +203,6 @@ impl AuthState {
         }
     }
 
-    /// Who a bearer token belongs to, asking the provider when necessary.
-    ///
-    /// The provider is the only thing that can answer this. Decoding the token
-    /// here would accept anything shaped like one, and would keep accepting it
-    /// after it had been revoked.
-    async fn subject_for_bearer(&self, token: &str) -> Option<SubjectId> {
-        if let Some((subject, authorization, profile)) = self.bearer.get(token).await {
-            self.adopt_bearer(&subject, authorization, profile, token)
-                .await;
-            return Some(subject);
-        }
-        let meta = self.metadata().await.ok()?;
-        match crate::auth::flow::resolve_subject(self, &meta, token).await {
-            Ok((subject, permissions, profile)) => {
-                let authorization = crate::permissions::capabilities_from_permissions(&permissions);
-                self.bearer
-                    .remember(
-                        token,
-                        subject.clone(),
-                        authorization.clone(),
-                        profile.clone(),
-                    )
-                    .await;
-                self.adopt_bearer(&subject, authorization, profile, token)
-                    .await;
-                Some(subject)
-            }
-            Err(e) => {
-                // Not an error worth a stack trace: an expired or withdrawn
-                // token is an ordinary thing for a client to present.
-                tracing::debug!(error = %e, "a bearer token was not accepted");
-                None
-            }
-        }
-    }
-
-    /// Make a bearer caller indistinguishable from a signed-in one downstream.
-    ///
-    /// Everything past the middleware reads capabilities, a profile and a
-    /// delegated credential from the same places whichever way the caller
-    /// arrived. Keeping the token as the delegated credential is what lets a
-    /// session started by a server act on that caller's behalf, exactly as one
-    /// started from a browser does.
-    async fn adopt_bearer(
-        &self,
-        subject: &SubjectId,
-        authorization: Authorization,
-        profile: crate::auth::profile::Profile,
-        token: &str,
-    ) {
-        self.authorizations
-            .write()
-            .await
-            .insert(subject.clone(), authorization);
-        self.profiles.write().await.insert(subject.clone(), profile);
-        let mut tokens = self.tokens.write().await;
-        let entry = tokens
-            .entry(subject.clone())
-            .or_insert_with(|| SubjectTokens {
-                access_token: token.to_string(),
-                refresh_token: None,
-                // Held for as long as this service will reuse the answer about it.
-                // The provider decides when the token really expires; this only
-                // says when to stop assuming it has not been withdrawn.
-                expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
-            });
-        // Only when this service is not already holding a better one: a token
-        // it minted itself can be renewed, and a client's cannot.
-        if entry.refresh_token.is_none() {
-            entry.access_token = token.to_string();
-        }
-    }
-
     /// Fetch and cache the provider's metadata document.
     async fn metadata(&self) -> Result<ProviderMetadata, String> {
         if let Some(m) = self.metadata.read().await.clone() {
@@ -323,6 +236,10 @@ impl AuthState {
         // resolve, so only those two are rewritten.
         meta.token_endpoint = rebase(&meta.token_endpoint, &base);
         meta.userinfo_endpoint = meta.userinfo_endpoint.as_deref().map(|e| rebase(e, &base));
+        meta.introspection_endpoint = meta
+            .introspection_endpoint
+            .as_deref()
+            .map(|e| rebase(e, &base));
 
         *self.metadata.write().await = Some(meta.clone());
         tracing::info!(
@@ -332,6 +249,118 @@ impl AuthState {
             "provider metadata discovered"
         );
         Ok(meta)
+    }
+
+    /// Give this service the means to mint per-session credentials.
+    ///
+    /// Set after construction because the platform root is configuration and
+    /// this state is built before it is read. Absent leaves every session on
+    /// its owner's own token, which is the behaviour that predates scoping.
+    pub async fn use_issuer(&self, issuer: Arc<keys::KeyIssuer>) {
+        *self.issuer.write().await = Some(issuer);
+    }
+
+    /// Sessions whose credential has been held longer than `lifetime`.
+    ///
+    /// Age rather than a stated expiry, because the platform does not return
+    /// one when it mints. Replacing well inside the day these last means a
+    /// shortened lifetime upstream would have to halve before a session ever
+    /// presented a dead credential.
+    pub async fn sessions_due_for_reissue(
+        &self,
+        lifetime: std::time::Duration,
+    ) -> Vec<(SessionId, SubjectId)> {
+        let now = std::time::Instant::now();
+        self.issued
+            .read()
+            .await
+            .iter()
+            .filter(|(_, h)| now.duration_since(h.minted_at) >= lifetime)
+            .map(|(s, h)| (s.clone(), h.owner.clone()))
+            .collect()
+    }
+
+    /// Mint a session a fresh credential, holding the old one for a sweep.
+    ///
+    /// Returns the new value for the caller to push. The one being replaced
+    /// stays valid until [`Self::take_back_superseded`] runs, so the session
+    /// never holds a credential the provider has stopped accepting.
+    pub async fn reissue(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[layer2_core::ServiceId],
+    ) -> Option<String> {
+        let issuer = { self.issuer.read().await.clone() }?;
+        let owner_token = self.access_token(subject).await?;
+        let minted = issuer
+            .mint(session, subject, &owner_token, services)
+            .await?;
+
+        let previous = self.issued.write().await.insert(
+            session.clone(),
+            Issued {
+                id: minted.id,
+                value: minted.full_key.clone(),
+                owner: subject.clone(),
+                minted_at: std::time::Instant::now(),
+            },
+        );
+        if let Some(old) = previous {
+            self.superseded.write().await.push((old.id, old.owner));
+        }
+        Some(minted.full_key)
+    }
+
+    /// Take back credentials replaced on an earlier pass.
+    pub async fn take_back_superseded(&self) -> usize {
+        let pending: Vec<(String, SubjectId)> = std::mem::take(&mut *self.superseded.write().await);
+        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
+            return 0;
+        };
+        let mut taken = 0;
+        for (id, owner) in pending {
+            if let Some(token) = self.access_token(&owner).await {
+                issuer.revoke(&id, &token).await;
+                taken += 1;
+            }
+        }
+        taken
+    }
+
+    /// Take back credentials this deployment minted for sessions that are gone.
+    ///
+    /// Read from the platform rather than from memory, because the ones worth
+    /// finding are exactly those this process has forgotten. Only keys whose
+    /// name says this deployment minted them are touched — the account is
+    /// shared with other products and other control planes.
+    pub async fn reclaim_orphaned_credentials(
+        &self,
+        service: &Arc<layer2_core::SessionService>,
+    ) -> usize {
+        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
+            return 0;
+        };
+        let owners: Vec<SubjectId> = { self.tokens.read().await.keys().cloned().collect() };
+        let mut reclaimed = 0;
+        for owner in owners {
+            let Some(token) = self.access_token(&owner).await else {
+                continue;
+            };
+            for (id, session) in issuer.minted_here(&token).await {
+                if service.session_is_live(&session).await {
+                    continue;
+                }
+                // Held for a session this process is still tracking? Then it is
+                // being replaced, not orphaned, and the sweep owns it.
+                if self.issued.read().await.contains_key(&session) {
+                    continue;
+                }
+                issuer.revoke(&id, &token).await;
+                reclaimed += 1;
+            }
+        }
+        reclaimed
     }
 
     /// Store the tokens issued for a subject.
@@ -373,20 +402,6 @@ impl AuthState {
     }
 }
 
-/// Supply the core with an owner's credential when the owner is absent.
-///
-/// The core recovers sessions on its own — after a restart, or when a runtime
-/// has to be replaced — and a recovered session that presents no credential is
-/// a session whose every model call fails. So the credential is fetched from
-/// wherever it is currently held rather than being carried along from the
-/// request that happened to create the session.
-#[async_trait::async_trait]
-impl layer2_core::CredentialSource for AuthState {
-    async fn credential_for(&self, subject: &SubjectId) -> Option<String> {
-        self.access_token(subject).await
-    }
-}
-
 /// Move a URL onto another origin, keeping its path and query.
 ///
 /// Used for back-channel endpoints only. Returns the original string when it
@@ -404,44 +419,26 @@ fn rebase(endpoint: &str, base: &str) -> String {
     }
 }
 
-fn session_cookie(headers: &HeaderMap) -> Option<String> {
-    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
-    raw.split(';')
-        .filter_map(|part| part.trim().split_once('='))
-        .find(|(k, _)| *k == SESSION_COOKIE)
-        .map(|(_, v)| v.to_string())
-}
-
-/// Middleware attaching the authenticated subject to the request.
-pub async fn attach_subject(
-    State(auth): State<Arc<AuthState>>,
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
-    if let Some(subject) = auth.resolve(req.headers()).await {
-        // The credential rides separately from identity: nearly every handler
-        // needs the subject, almost none needs a credential, so taking one has
-        // to be deliberate.
-        if let Some(token) = auth.access_token(&subject).await {
-            req.extensions_mut()
-                .insert(layer1_public::auth::DelegatedCredential(token));
-        }
-        // The same resolution the identity endpoint reports, so what a client
-        // was told it may do and what this request is allowed to do cannot
-        // drift apart.
-        req.extensions_mut()
-            .insert(auth.effective_authorization(&subject).await);
-        req.extensions_mut().insert(AuthenticatedSubject(subject));
-    }
-    next.run(req).await
-}
-
 pub mod bearer;
+mod delegation;
+mod identity;
+mod middleware;
+mod tokens;
+
+pub use middleware::attach_subject;
+pub use tokens::SubjectTokens;
+
+pub(crate) use middleware::session_cookie;
+pub(crate) use tokens::ProviderMetadata;
+
 pub mod capabilities;
 pub mod entitlements;
 pub mod flow;
+pub mod keys;
+mod permissions;
 pub mod records;
 pub mod refresh;
+mod session_routes;
 mod token;
 
 pub use records::SignInRecords;

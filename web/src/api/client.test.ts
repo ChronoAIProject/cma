@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { ApiError, toSession } from './client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, listKernels, toSession } from './client';
 
 /**
  * The wire is a trust boundary. These cover what the control plane actually
@@ -21,6 +21,31 @@ describe('toSession', () => {
     expect(s.kernel).toBe('codex');
     expect(s.lifecycle).toBe('ready');
     expect(s.createdAt).toBe(Date.parse('2026-08-13T10:00:00Z'));
+  });
+
+  it('carries the creator when the control plane names them', () => {
+    const s = toSession({
+      ...valid,
+      creator: { display_name: 'Ada Lovelace', avatar_url: 'https://pictures.example/ada.png' },
+    });
+    expect(s.creator?.displayName).toBe('Ada Lovelace');
+    expect(s.creator?.avatarUrl).toBe('https://pictures.example/ada.png');
+  });
+
+  it('leaves the creator absent when the control plane named nobody', () => {
+    // A caller without the grant to name people is sent no creator at all, and
+    // the panel must omit the row rather than draw a heading over nothing.
+    expect(toSession(valid).creator).toBeUndefined();
+    expect(toSession({ ...valid, creator: {} }).creator).toBeUndefined();
+    expect(toSession({ ...valid, creator: null }).creator).toBeUndefined();
+  });
+
+  it('keeps a creator that has a name but no picture', () => {
+    // Every directory entry written before pictures were captured is this
+    // shape, so it must render rather than be discarded as malformed.
+    const s = toSession({ ...valid, creator: { display_name: 'Ada Lovelace' } });
+    expect(s.creator?.displayName).toBe('Ada Lovelace');
+    expect(s.creator?.avatarUrl).toBeUndefined();
   });
 
   it('accepts every lifecycle the core models', () => {
@@ -59,5 +84,124 @@ describe('ApiError', () => {
     expect(new ApiError(401, 'nope').isUnauthenticated).toBe(true);
     expect(new ApiError(500, 'boom').isUnauthenticated).toBe(false);
     expect(new ApiError(0, 'offline').isUnauthenticated).toBe(false);
+  });
+});
+
+describe('what a session reaches', () => {
+  it('tells an absent field apart from an empty one', () => {
+    // "We were not told" is not "this session reaches nothing", and a client
+    // that collapsed them would answer a question nobody asked.
+    const absent = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+    });
+    expect(absent.reach).toBeUndefined();
+
+    const empty = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [],
+    });
+    expect(empty.reach).toEqual([]);
+  });
+
+  it('keeps the identifier when the catalogue offered no name', () => {
+    const session = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [{ id: 'api-github', mandated: false }],
+    });
+    expect(session.reach).toEqual([
+      { id: 'api-github', name: undefined, description: undefined, mandated: false },
+    ]);
+  });
+
+  it('drops an entry with no usable identifier rather than drawing a blank one', () => {
+    const session = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [{ name: 'GitHub' }, null, 'api-github', { id: '', mandated: true }],
+    });
+    expect(session.reach).toEqual([]);
+  });
+
+  it('reads a missing mandated flag as not mandated', () => {
+    // The safe direction: drawing a chosen service as fixed would tell
+    // somebody they cannot remove something they can.
+    const session = toSession({
+      id: 'sesn_1',
+      status: 'running',
+      kernel: 'codex',
+      created_at: '2026-08-18T08:53:00Z',
+      reach: [{ id: 'api-github' }],
+    });
+    expect(session.reach?.[0]?.mandated).toBe(false);
+  });
+});
+
+describe('listKernels', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function answer(body: unknown): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(body),
+      } as unknown as Response),
+    );
+  }
+
+  it('reads what each runtime can be', async () => {
+    answer({
+      kernels: [
+        { id: 'codex', modes: ['terminal', 'conversation'] },
+        { id: 'claude-code', modes: ['conversation'] },
+      ],
+    });
+
+    await expect(listKernels()).resolves.toEqual([
+      { id: 'codex', modes: ['terminal', 'conversation'] },
+      { id: 'claude-code', modes: ['conversation'] },
+    ]);
+  });
+
+  it('drops a plane this client cannot draw', async () => {
+    // Offering it would put a choice on screen that ends in a surface nobody
+    // has written. The runtime is still listed, because it still exists.
+    answer({ kernels: [{ id: 'future', modes: ['terminal', 'holodeck'] }] });
+
+    await expect(listKernels()).resolves.toEqual([{ id: 'future', modes: ['terminal'] }]);
+  });
+
+  it('keeps a runtime that serves nothing', async () => {
+    // "Runs no sessions" and "does not exist" are different answers, and a
+    // form draws them differently.
+    answer({ kernels: [{ id: 'stub', modes: [] }] });
+
+    await expect(listKernels()).resolves.toEqual([{ id: 'stub', modes: [] }]);
+  });
+
+  it('fails visibly on a runtime with no identifier', async () => {
+    answer({ kernels: [{ modes: ['terminal'] }] });
+
+    await expect(listKernels()).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('fails visibly when the answer is not a list', async () => {
+    answer({ kernels: 'codex' });
+
+    await expect(listKernels()).rejects.toBeInstanceOf(ApiError);
   });
 });
