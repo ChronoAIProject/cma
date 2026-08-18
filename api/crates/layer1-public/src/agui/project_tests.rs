@@ -240,7 +240,7 @@ fn the_sequence_rides_outside_the_payload() {
     // It is the SSE id, which is what a reconnecting client hands back. In the
     // body a client would be tempted to read it as protocol.
     let p = projected(EventKind::TurnStarted);
-    assert_eq!(p.events[0].seq, 7);
+    assert_eq!(p.events[0].seq, Some(7));
     let rendered = serde_json::to_value(&p.events[0]).expect("serializes");
     assert!(rendered.get("seq").is_none(), "got {rendered}");
     assert_eq!(rendered["type"], "RUN_STARTED");

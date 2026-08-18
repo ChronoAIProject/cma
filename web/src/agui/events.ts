@@ -43,6 +43,20 @@ interface EventBase {
    * exactly the window nobody tests.
    */
   readonly seq: number;
+  /**
+   * Whether this frame is what is happening rather than what happened.
+   *
+   * A liveness frame — a piece of a message the agent is still typing — is not
+   * in the durable log and carries no cursor. It **must not** touch the
+   * resumption state: `seq` is meaningless on one, and treating it as a
+   * position would send the next reconnect somewhere the log has never been.
+   *
+   * Stated by the server rather than inferred. `EventSource` reports
+   * `lastEventId` as the last id it was *given*, so a frame sent without one
+   * is indistinguishable here from a frame repeating the previous id — and
+   * deduplicating on that would drop every liveness frame in silence.
+   */
+  readonly ephemeral?: boolean;
 }
 
 export interface RunStarted extends EventBase {
@@ -221,6 +235,7 @@ export function toEvent(raw: unknown): AguiEvent {
     threadId: str(frame.threadId),
     runId: str(frame.runId),
     seq: num(frame.seq),
+    ephemeral: frame['chrono:live'] === true,
   };
   const kind = str(frame.type);
 
