@@ -306,8 +306,31 @@ impl SessionService {
             .agent_for(caller, spec.environment_profile.as_ref())
             .await?;
         let mut spec = spec;
+        // Which plane a session is on is the exception, and only where no
+        // profile was named.
+        //
+        // Everything else here is how the *agent* behaves — which model, how
+        // hard it thinks, how much it may do unattended — and belongs to the
+        // profile so that two sessions started on one are the same session
+        // twice. A plane is not that. It is how a person means to interact,
+        // which is the caller's business and the interface's, not the bundle's.
+        //
+        // Without this, an interface that exists only to hold conversations
+        // could not create one: AG-UI asks for a conversation, the deployment
+        // default overwrote it with whatever this deployment happens to prefer,
+        // and the very next line refused the session it had just created for
+        // lacking the ability it had just asked for. A profile that names a
+        // mode still decides, unchanged.
+        let mode = match (spec.environment_profile.is_some(), spec.requested_mode) {
+            // A profile names one, so it decides. Unchanged.
+            (true, _) => agent.mode,
+            // No profile, and the caller said which plane they meant.
+            (false, Some(asked)) => asked,
+            // No profile and nothing asked: this deployment's own default.
+            (false, None) => agent.mode,
+        };
         spec.options = AgentOptions {
-            mode: agent.mode,
+            mode,
             model: agent.model.clone(),
             reasoning_effort: agent.reasoning_effort,
             permission: agent.permission,
