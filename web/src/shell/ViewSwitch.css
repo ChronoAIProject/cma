@@ -1,9 +1,7 @@
 /*
- * The view switch — docs/Web_Style.md §7, segmented options.
- *
- * The selected segment is the one thing in the bar that takes an impression:
- * §3 lists "the selected segment" among the raised things, because it is the
- * one you have pressed.
+ * The view switch — docs/Web_Style.md §6 and §7: a 10px-radius segmented
+ * control whose selected segment sits on --raised, with no impression —
+ * §3 retired the letterpress contract, and nothing here casts a shadow.
  */
 
 .viewswitch {
@@ -19,16 +17,15 @@
 
 .viewswitch__segment {
   height: var(--control-h-sm);
-  padding-inline: var(--space-2);
+  padding-inline: var(--space-3);
   color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  font-size: var(--text-note);
+  font-weight: 500;
   white-space: nowrap;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
 }
 
 .viewswitch__segment:hover {
@@ -37,9 +34,8 @@
 
 .viewswitch__segment[aria-pressed='true'] {
   color: var(--ink);
-  background: var(--surface);
+  background: var(--raised);
   border-color: var(--rule-2);
-  box-shadow: var(--lift-rest);
 }
 
 .viewswitch__segment:focus-visible {
