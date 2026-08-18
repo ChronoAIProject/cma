@@ -83,6 +83,7 @@ impl SessionService {
             // The owner is not on the line to delegate one; the renewal loop
             // hands the session a fresh credential once it is running.
             subject_credential: None,
+            requested_mode: None,
         };
 
         self.begin_start(id).await;
@@ -91,7 +92,14 @@ impl SessionService {
         let spawned = session.clone();
         tokio::spawn(async move {
             service
-                .bring_up(spawned, spec, adapter, geometry, None)
+                .bring_up(
+                    spawned,
+                    spec,
+                    adapter,
+                    geometry,
+                    None,
+                    crate::provision_failure::Abandonment::Keep,
+                )
                 .await;
         });
 

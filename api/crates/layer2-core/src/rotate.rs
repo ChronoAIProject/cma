@@ -366,12 +366,20 @@ impl SessionService {
             options: moved.session.options.clone(),
             environment_profile: moved.session.environment_profile.clone(),
             subject_credential: None,
+            requested_mode: None,
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();
         tokio::spawn(async move {
             service
-                .bring_up(session, spec, adapter, geometry, restore)
+                .bring_up(
+                    session,
+                    spec,
+                    adapter,
+                    geometry,
+                    restore,
+                    crate::provision_failure::Abandonment::Keep,
+                )
                 .await;
         });
         Ok(moved.session)
