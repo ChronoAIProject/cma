@@ -31,6 +31,14 @@ use super::project::AguiEvent;
 /// One in flight at a time, which is what a turn is.
 const IN_FLIGHT: &str = "msg_live";
 
+/// The identifier the agent's reasoning travels under.
+///
+/// Distinct from the in-flight message for the same reason that one is
+/// distinct from the committed message: they are different things and a client
+/// upserting by identifier must not merge them. Reasoning is never committed
+/// at all, so this identifier never becomes a durable one.
+const REASONING: &str = "reasoning_live";
+
 /// Project a liveness frame, where this protocol has a shape for one.
 ///
 /// `None` for everything else, and silently: a terminal's bytes are a terminal
@@ -45,6 +53,29 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             run_id: run_id.to_string(),
             thread_id: thread_id.to_string(),
             body: serde_json::json!({ "messageId": IN_FLIGHT, "delta": text }),
+            seq: None,
+        }),
+        /*
+         * `REASONING_MESSAGE_CONTENT`, and only it.
+         *
+         * The protocol also has `REASONING_START` and `REASONING_END`, and
+         * they are deliberately not emitted: this lane sees a stream of
+         * thoughts and has no view of where a turn begins or ends, so a
+         * bracket sent from here would be a guess. The run's own lifecycle
+         * events already say when the thinking happened, and a client clears
+         * reasoning when the run ends. `docs/API_AGUI.md` says so rather than
+         * leaving a client to infer it from the absence.
+         *
+         * The `THINKING_*` family is the deprecated spelling of these. It is
+         * declared in the capability document as false rather than omitted,
+         * because a client written against the older names needs to be told
+         * they are not coming rather than left to time out on them.
+         */
+        LiveFrame::ThoughtDelta(text) => Some(AguiEvent {
+            kind: "REASONING_MESSAGE_CONTENT",
+            run_id: run_id.to_string(),
+            thread_id: thread_id.to_string(),
+            body: serde_json::json!({ "messageId": REASONING, "delta": text }),
             seq: None,
         }),
         LiveFrame::TerminalOutput(_) | LiveFrame::Exited { .. } => None,
