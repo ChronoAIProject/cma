@@ -114,10 +114,16 @@ pub(super) async fn replay(
         loop {
             if let Some(event) = open.pending.pop_front() {
                 let frame = SseEvent::default()
-                    .id(event.seq.to_string())
                     .event(event.kind)
                     .json_data(&event)
                     .unwrap_or_else(|_| SseEvent::default().event("RUN_ERROR"));
+                // Everything replayed comes from the log, so every frame here
+                // has one. Read through the same accessor as the run stream so
+                // the two cannot come to differ about it.
+                let frame = match event.cursor() {
+                    Some(id) => frame.id(id),
+                    None => frame,
+                };
                 return Some((Ok(frame), open));
             }
             tokio::time::sleep(POLL_INTERVAL).await;
