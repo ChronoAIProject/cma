@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEventStream } from './wire';
+import { parseEventStream, wireTransport } from './wire';
 import { toEvent } from './events';
 
 /**
@@ -148,5 +148,146 @@ describe('what the interface serves is what this client reads', () => {
     const events = parseEventStream(body).map(toEvent);
 
     expect(events.map((e) => e.type)).toEqual(['RUN_STARTED', 'RUN_FINISHED']);
+  });
+});
+
+/**
+ * The live path, which had no test at all — and that is exactly why the
+ * service and this client disagreed about SSE framing for a whole release.
+ *
+ * The tests above exercise `parseEventStream`, which is the *history* path:
+ * plain HTTP, parsed by hand, and it reads a named frame perfectly well. The
+ * live path is `EventSource`, and `EventSource` does not: `onmessage` fires
+ * only for a frame with no `event:` name. So the client received nothing at
+ * all from production while every test here passed.
+ */
+class FakeEventSource {
+  static last: FakeEventSource | undefined;
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  closed = false;
+  readonly named = new Map<string, (e: MessageEvent) => void>();
+
+  constructor(readonly url: string) {
+    FakeEventSource.last = this;
+  }
+
+  addEventListener(kind: string, fn: (e: MessageEvent) => void) {
+    this.named.set(kind, fn);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  /** Deliver a frame the way a real EventSource would: by name, or unnamed. */
+  emit(data: unknown, options: { name?: string; id?: string } = {}) {
+    const event = {
+      data: JSON.stringify(data),
+      lastEventId: options.id ?? '',
+    } as MessageEvent;
+    if (options.name === undefined) {
+      this.onmessage?.(event);
+      return;
+    }
+    // The spec's behaviour, and the whole point: a named frame reaches only a
+    // listener registered for that exact name. `onmessage` never sees it.
+    this.named.get(options.name)?.(event);
+  }
+}
+
+describe('the live stream, not just the history read', () => {
+  it('receives an unnamed frame, which is what the service sends', () => {
+    const original = globalThis.EventSource;
+    (globalThis as { EventSource: unknown }).EventSource = FakeEventSource;
+    try {
+      const seen: Record<string, unknown>[] = [];
+      const stop = wireTransport.open(
+        'sesn_1',
+        (frame) => seen.push(frame as Record<string, unknown>),
+        () => undefined,
+      );
+      FakeEventSource.last?.emit(
+        { type: 'TEXT_MESSAGE_CONTENT', messageId: 'm1', delta: 'hi' },
+        { id: '7' },
+      );
+      stop();
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.type).toBe('TEXT_MESSAGE_CONTENT');
+      expect(seen[0]?.seq).toBe(7);
+    } finally {
+      (globalThis as { EventSource: unknown }).EventSource = original;
+    }
+  });
+
+  it('still receives a named frame, so a rolling deploy does not go silent', () => {
+    // Both builds run at once during a deploy, and §5 does not allow that to
+    // interrupt a session. A client that read only the new shape would draw
+    // nothing for whichever replica answered it.
+    const original = globalThis.EventSource;
+    (globalThis as { EventSource: unknown }).EventSource = FakeEventSource;
+    try {
+      const seen: Record<string, unknown>[] = [];
+      const stop = wireTransport.open(
+        'sesn_1',
+        (frame) => seen.push(frame as Record<string, unknown>),
+        () => undefined,
+      );
+      FakeEventSource.last?.emit({ type: 'RUN_STARTED' }, { name: 'RUN_STARTED', id: '3' });
+      stop();
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.type).toBe('RUN_STARTED');
+    } finally {
+      (globalThis as { EventSource: unknown }).EventSource = original;
+    }
+  });
+
+  it('delivers each frame exactly once', () => {
+    // The named path and the unnamed path must not both fire for one frame.
+    // Liveness deliberately bypasses the deduplication upstream, so a frame
+    // delivered twice would append a piece of the message being typed twice.
+    const original = globalThis.EventSource;
+    (globalThis as { EventSource: unknown }).EventSource = FakeEventSource;
+    try {
+      const seen: unknown[] = [];
+      const stop = wireTransport.open(
+        'sesn_1',
+        (frame) => seen.push(frame),
+        () => undefined,
+      );
+      FakeEventSource.last?.emit({ type: 'RUN_STARTED' }, { name: 'RUN_STARTED' });
+      FakeEventSource.last?.emit({ type: 'RUN_FINISHED' });
+      stop();
+
+      expect(seen).toHaveLength(2);
+    } finally {
+      (globalThis as { EventSource: unknown }).EventSource = original;
+    }
+  });
+
+  it('receives a kind this build has never heard of', () => {
+    // The reason the service stopped naming frames at all. An `EventSource`
+    // cannot listen for a name it does not know, so a kind added by a newer
+    // control plane can only arrive unnamed — and `API_AGUI.md` requires it to
+    // arrive, so it can be shown as unknown rather than dropped.
+    const original = globalThis.EventSource;
+    (globalThis as { EventSource: unknown }).EventSource = FakeEventSource;
+    try {
+      const seen: Record<string, unknown>[] = [];
+      const stop = wireTransport.open(
+        'sesn_1',
+        (frame) => seen.push(frame as Record<string, unknown>),
+        () => undefined,
+      );
+      FakeEventSource.last?.emit({ type: 'SOMETHING_ADDED_LATER', detail: 'x' }, { id: '9' });
+      stop();
+
+      expect(seen).toHaveLength(1);
+      expect(toEvent(seen[0]).type).toBe('UNKNOWN');
+    } finally {
+      (globalThis as { EventSource: unknown }).EventSource = original;
+    }
   });
 });

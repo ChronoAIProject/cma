@@ -18,6 +18,13 @@ struct Handshake {
     asked: Vec<String>,
     /// The mode it was told to hold the session to, if any.
     mode: Option<String>,
+    /// Every frame it received, whole.
+    ///
+    /// Kept as well as the method list because a missing method is invisible
+    /// in that list — it lands there as an empty string — and a missing method
+    /// is exactly the defect that stopped every conversation turn: the prompt
+    /// went out as a JSON-RPC request with an id and nothing to dispatch on.
+    frames: Vec<serde_json::Value>,
 }
 
 /// Serve one bridge that answers everything, and hand back what it was asked.
@@ -49,6 +56,7 @@ async fn bridging(
 
         let mut asked = Vec::new();
         let mut mode = None;
+        let mut frames = Vec::new();
         while let Some(Ok(frame)) = ws.next().await {
             let Message::Binary(bytes) = frame else {
                 continue;
@@ -57,6 +65,7 @@ async fn bridging(
                 continue;
             };
             let call: serde_json::Value = serde_json::from_slice(payload).expect("json-rpc");
+            frames.push(call.clone());
             let method = call["method"].as_str().unwrap_or_default().to_string();
             if method == "session/set_mode" {
                 mode = call["params"]["modeId"].as_str().map(str::to_string);
@@ -85,7 +94,11 @@ async fn bridging(
                 }
             }
         }
-        Handshake { asked, mode }
+        Handshake {
+            asked,
+            mode,
+            frames,
+        }
     });
 
     (url, served)
@@ -276,4 +289,87 @@ async fn rejoining_wins_over_what_the_pod_says_it_was_handed() {
         "a held conversation must not be loaded from disk, got {:?}",
         done.asked
     );
+}
+
+#[tokio::test]
+async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
+    // The defect this exists for made every conversation turn hang, on every
+    // kernel that speaks this protocol. The prompt was built as its parameters
+    // alone and handed to the sender, which added only `jsonrpc` and `id` — so
+    // what went on the wire was a request with no `method` and its parameters
+    // at the top level. Nothing could dispatch it, the agent was never asked
+    // anything, and the turn sat open until somebody gave up.
+    //
+    // Asserted on the serialised frame rather than on the call, because that
+    // is where it was wrong. Every existing test here passed throughout.
+    let (url, served) = bridging(None, None, Some(3)).await;
+    let stream = connect(&url).await;
+    let (channel, _control) = Bridge::open(stream, "/home/chrono".into(), None, None)
+        .await
+        .expect("the bridge answered the handshake");
+
+    channel
+        .input
+        .send(crate::ConversationInput::Prompt(vec![
+            crate::ContentBlock::from("hi"),
+        ]))
+        .await
+        .expect("the bridge is listening");
+
+    let done = served.await.expect("the fixture finished");
+    let prompt = done
+        .frames
+        .iter()
+        .find(|f| f["method"] == "session/prompt")
+        .unwrap_or_else(|| {
+            panic!(
+                "no session/prompt was ever sent; the bridge saw {:?}",
+                done.frames
+            )
+        });
+
+    assert_eq!(prompt["jsonrpc"], "2.0");
+    assert!(
+        prompt["id"].is_number(),
+        "an answer has to be routable back"
+    );
+    assert!(
+        prompt["params"]["sessionId"].is_string(),
+        "the parameters belong under `params`, not at the top level: {prompt}"
+    );
+    assert!(prompt["params"]["prompt"].is_array(), "{prompt}");
+}
+
+#[tokio::test]
+async fn every_request_this_bridge_sends_is_dispatchable() {
+    // The general form, so the next request added cannot repeat it. A JSON-RPC
+    // request without a method is undispatchable whatever it was meant to ask,
+    // and the failure is silent at both ends.
+    let (url, served) = bridging(None, None, Some(3)).await;
+    let stream = connect(&url).await;
+    let (channel, _control) =
+        Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
+            .await
+            .expect("the bridge answered the handshake");
+    channel
+        .input
+        .send(crate::ConversationInput::Prompt(vec![
+            crate::ContentBlock::from("anything"),
+        ]))
+        .await
+        .expect("the bridge is listening");
+
+    let done = served.await.expect("the fixture finished");
+    for frame in &done.frames {
+        // A response carries a result rather than a method; only requests and
+        // notifications are being checked here.
+        if frame.get("result").is_some() || frame.get("error").is_some() {
+            continue;
+        }
+        assert!(
+            frame["method"].is_string(),
+            "a request with no method cannot be dispatched: {frame}"
+        );
+        assert_eq!(frame["jsonrpc"], "2.0", "{frame}");
+    }
 }
