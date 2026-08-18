@@ -10,11 +10,9 @@ import './StatusBand.css';
  * glancing at the bottom of the window finds the same fact in the same place
  * whatever they are looking at.
  *
- * In a multi-column view its 40px is shared by the columns' own footers, and
- * the rule still runs across. That is why this is one band divided rather than
- * a footer per column: two footers that are the same row cannot drift apart,
- * and §5's whole argument for setting a band's height is that accumulated
- * padding is what lets aligned columns drift.
+ * One band across the whole window, undivided. It no longer carries a cell
+ * per column, because the columns no longer draw their own footers — the
+ * band is the page's foot, not a sum of the columns'.
  *
  * The zone is stated rather than assumed (§12): a fixed zone means the same
  * session reads the same to everyone who sees it, and a reader who does not
@@ -32,64 +30,35 @@ interface StatusBandProps {
   /**
    * Anything the page must say about what it is NOT showing.
    *
-   * §13 requires the canvas to state how many sessions are unattached and why,
-   * because silent truncation reads as breakage.
+   * §13 requires the canvas to state how many sessions are unattached and
+   * why, because silent truncation reads as breakage.
    */
   readonly note?: string;
   /**
-   * The width of the page's leading column, when it has one.
-   *
-   * The zone sits in that cell, so the band's first vertical rule lands on the
-   * rail's, and the page reads as one surface rather than two. It follows the
-   * column's width, because a collapsed rail is still a column.
-   */
-  readonly leadingColumn?: string;
-  /**
-   * Below 30rem — §16. "The status band keeps the zone and the count and drops
-   * the build." The zone and what the page is showing are what somebody needs
-   * to read a time and know where they are; the build is what they quote in a
-   * report, and a phone is not where that happens.
+   * Below 30rem — §16. "The footer keeps the zone and the count and drops
+   * the build." The zone and what the page is showing are what somebody
+   * needs to read a time and know where they are; the build is what they
+   * quote in a report, and a phone is not where that happens.
    */
   readonly compact?: boolean;
 }
 
-export function StatusBand({ showing, note, leadingColumn, compact = false }: StatusBandProps) {
+export function StatusBand({ showing, note, compact = false }: StatusBandProps) {
   return (
     <footer className="band band--foot statusband">
-      {/*
-       * The leading column's share of the band. It is empty because the rail
-       * has nothing to report at its foot — what it carries is a list, and the
-       * list's own summary belongs in the list. The cell exists so the band's
-       * first vertical rule continues the rail's, which is what makes the page
-       * read as one surface rather than two.
-       *
-       * Nothing that must be read is put in it. A collapsed rail is 48px wide,
-       * and a fact that disappears when a panel collapses is a fact collapsing
-       * cost somebody — which §7 forbids.
-       */}
-      {leadingColumn !== undefined ? (
-        <div
-          className="statusband__cell statusband__lead"
-          style={{ width: leadingColumn }}
-          aria-hidden="true"
-        />
-      ) : null}
+      <span className="band__label">Zone</span>
+      <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
 
-      <div className="statusband__cell statusband__main">
-        <span className="band__label">Zone</span>
-        <span className="band__value">{DISPLAY_ZONE_LABEL}</span>
+      <span className="band__value statusband__showing">{showing}</span>
+      {note !== undefined ? <span className="band__value statusband__note">{note}</span> : null}
 
-        <span className="band__value statusband__showing">{showing}</span>
-        {note !== undefined ? <span className="band__value statusband__note">{note}</span> : null}
-
-        <span className="band__spacer" />
-        {compact ? null : (
-          <>
-            <span className="band__label">Build</span>
-            <span className="band__value">{BUILD}</span>
-          </>
-        )}
-      </div>
+      <span className="band__spacer" />
+      {compact ? null : (
+        <>
+          <span className="band__label">Build</span>
+          <span className="band__value">{BUILD}</span>
+        </>
+      )}
     </footer>
   );
 }
