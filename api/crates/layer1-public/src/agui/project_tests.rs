@@ -365,3 +365,84 @@ fn a_session_being_moved_ends_the_run_rather_than_going_silent() {
         "the message must say the session returns"
     );
 }
+
+/// The bytes a frame actually becomes on the wire.
+///
+/// Rendered through axum's own response machinery rather than inspected as a
+/// type, because the defect these guard was invisible at the type level: the
+/// frame was correct in every way except one field that only exists once it is
+/// serialised, and every test in this file passed while the browser received
+/// nothing at all.
+async fn on_the_wire(event: &AguiEvent) -> String {
+    use axum::response::IntoResponse;
+    let frame = super::sse_frame(event);
+    let response = axum::response::sse::Sse::new(futures_util::stream::once(async move {
+        Ok::<_, std::convert::Infallible>(frame)
+    }))
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("the body is small");
+    String::from_utf8(body.to_vec()).expect("frames are text")
+}
+
+#[tokio::test]
+async fn a_frame_carries_no_event_name() {
+    // The reason this matters is not style. `EventSource` has no wildcard
+    // listener: a frame carrying `event: X` is delivered only to a listener
+    // registered for exactly `X`, and never to `onmessage`. So a named frame
+    // is unreceivable by any client that has not heard of that kind — which
+    // this service's additive event set makes routine, and which
+    // `docs/API_AGUI.md` explicitly requires to keep working.
+    //
+    // While the frames were named, the deployed chat surface received nothing
+    // whatsoever. Not the liveness lane — everything.
+    let projected = project(
+        &logged(
+            4,
+            EventKind::MessageCommitted {
+                content: "hi".into(),
+            },
+        ),
+        "run_1",
+        "sesn_1",
+    );
+    let wire = on_the_wire(&projected.events[0]).await;
+
+    assert!(
+        !wire.contains("event:"),
+        "a named frame is unreachable for a client that does not know the name: {wire:?}"
+    );
+    assert!(
+        wire.contains("\"type\":\"TEXT_MESSAGE_START\""),
+        "the kind travels in the body, which is what a client dispatches on: {wire:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_durable_frame_carries_its_sequence_as_the_sse_id() {
+    // The cursor a client resumes on. It is deliberately not in the body, so
+    // this is the only place it can be, and a client reading it from anywhere
+    // else gets nothing.
+    let projected = project(&logged(41, EventKind::TurnStarted), "run_1", "sesn_1");
+    let wire = on_the_wire(&projected.events[0]).await;
+
+    assert!(wire.contains("id: 41"), "{wire:?}");
+}
+
+#[tokio::test]
+async fn a_liveness_frame_carries_no_sse_id_at_all() {
+    // Given one, it becomes a cursor: a client reconnecting on it asks the log
+    // to continue from a position the log has never held, and everything
+    // between there and the real position is skipped.
+    let live = crate::agui::live::project_live(
+        &layer2_core::LiveFrame::MessageDelta("half a word".into()),
+        "run_1",
+        "sesn_1",
+    )
+    .expect("a message being typed has a shape");
+    let wire = on_the_wire(&live).await;
+
+    assert!(!wire.contains("id:"), "{wire:?}");
+    assert!(wire.contains("\"chrono:live\":true"), "{wire:?}");
+}
