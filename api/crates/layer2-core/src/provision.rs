@@ -84,15 +84,15 @@ impl SessionService {
         .await
         {
             Ok(Ok(())) => {}
-            Ok(Err(reason)) => self.abandon(&id, &adapter, &reason).await,
+            Ok(Err(failure)) => self.abandon(&id, &adapter, &failure).await,
             Err(_) => {
                 self.abandon(
                     &id,
                     &adapter,
-                    &format!(
+                    &crate::provision_failure::StartFailure::transient(format!(
                         "the runtime did not become usable within {}s",
                         PROVISION_DEADLINE.as_secs()
-                    ),
+                    )),
                 )
                 .await
             }
@@ -127,9 +127,19 @@ impl SessionService {
         self.settle_capabilities(session, adapter)
             .await
             .map_err(|refusal| {
-                StartFailure::permanent(format!(
+                let named = match &refusal {
+                    crate::error::CoreError::CapabilityUnsupported(what) => Some(what.clone()),
+                    _ => None,
+                };
+                let failure = StartFailure::permanent(format!(
                     "this session's runtime can no longer be what it is: {refusal}"
-                ))
+                ));
+                // The refusal arrived typed and knew which ability was
+                // missing. Keeping only the sentence is where that was lost.
+                match named {
+                    Some(what) => failure.lacking(what),
+                    None => failure,
+                }
             })?;
         // Resolved from the session rather than the request, so a runtime
         // replaced long afterwards is built the same way. A profile that has
@@ -268,6 +278,7 @@ impl SessionService {
 
         let mut entry = SessionEntry {
             session: seeded,
+            sequences: Arc::clone(&self.sequences),
             subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
@@ -284,12 +295,13 @@ impl SessionService {
             captured_len,
         };
         entry.session.status = SessionStatus::Ready;
-        crate::service::append(
+        crate::log::append(
             &mut entry,
             EventKind::StatusChanged {
                 status: SessionStatus::Ready,
                 stop_reason: None,
                 detail: None,
+                capability: None,
             },
         );
         self.entries.write().await.insert(id.clone(), entry);
@@ -310,10 +322,7 @@ impl SessionService {
             if let Some(conversation_id) = named_conversation {
                 let mut entries = self.entries.write().await;
                 if let Some(entry) = entries.get_mut(&id) {
-                    crate::service::append(
-                        entry,
-                        EventKind::ConversationOpened { conversation_id },
-                    );
+                    crate::log::append(entry, EventKind::ConversationOpened { conversation_id });
                 }
             }
             crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
@@ -363,22 +372,25 @@ impl SessionService {
         let Ok(Some(mut record)) = self.store.get(id).await else {
             return;
         };
-        record.session.last_seq += 1;
-        let seq = record.session.last_seq;
+        let seq = self.sequences.take(id, record.session.last_seq, 1);
+        record.session.last_seq = seq;
         if let Err(e) = self.store.upsert(&record).await {
             tracing::warn!(session_id = %id, error = %e, "cannot record progress");
             return;
         }
-        if let Err(e) = self
-            .store
-            .append_events(&[Event {
-                session_id: id.clone(),
-                seq,
-                kind: EventKind::Progress { stage },
-            }])
+        if self
+            .append_durably(
+                id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind: EventKind::Progress { stage },
+                }],
+            )
             .await
+            .is_err()
         {
-            tracing::warn!(session_id = %id, error = %e, "cannot append progress");
+            tracing::warn!(session_id = %id, "cannot append progress");
         }
     }
 

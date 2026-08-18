@@ -27,7 +27,8 @@ use tokio::sync::mpsc;
 
 use crate::event::{EventKind, LiveFrame};
 use crate::ids::SessionId;
-use crate::service::{append, SessionService};
+use crate::log::append;
+use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 
 impl SessionService {
@@ -63,6 +64,27 @@ impl SessionService {
                 return;
             }
         };
+        // A piece of the agent's reasoning. Liveness and nothing else: unlike a
+        // message it is never committed, so it accumulates nowhere and the
+        // durable log does not learn it happened. Handled before the message
+        // arm below rather than inside it, because the one thing they must not
+        // share is the accumulation.
+        if let SessionUpdate::AgentThoughtChunk(chunk) = &update {
+            let Some(text) = plain_text(&chunk.content) else {
+                return;
+            };
+            let live = {
+                let entries = self.entries.read().await;
+                let Some(entry) = entries.get(id) else {
+                    return;
+                };
+                entry.live_frames.clone()
+            };
+            // No flush: nothing was appended and nothing changed about the
+            // session. A thought that reaches nobody is simply unwatched.
+            let _ = live.send(LiveFrame::ThoughtDelta(text));
+            return;
+        }
         // A piece of a message is liveness, and is shown rather than recorded.
         // What is recorded is the message the pieces add up to, at the moment
         // the runtime moves on from it.
@@ -148,6 +170,7 @@ impl SessionService {
                     status: SessionStatus::Idle,
                     stop_reason: Some(StopReason::RequiresAction),
                     detail: None,
+                    capability: None,
                 },
             );
         }
@@ -197,6 +220,7 @@ impl SessionService {
                     status: SessionStatus::Ready,
                     stop_reason: Some(reason),
                     detail: None,
+                    capability: None,
                 },
             );
         }
@@ -234,6 +258,7 @@ impl SessionService {
                         status: SessionStatus::Idle,
                         stop_reason: Some(StopReason::Error),
                         detail: Some("the runtime's conversation ended mid-turn".to_string()),
+                        capability: None,
                     },
                 );
             }

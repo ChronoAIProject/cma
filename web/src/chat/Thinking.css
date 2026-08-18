@@ -1,0 +1,41 @@
+/* ── What the agent is working through, §18.8 ────────────────────────────
+ *
+ * Liveness, and drawn as such: quieter than anything it sits above, capped in
+ * height, and carrying no colour at all. The semantic inks describe session
+ * and system state (§2) and describe nothing the agent thought.
+ */
+
+.thinking {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-left: 2px solid var(--rule-2);
+}
+
+.thinking__label {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+/* Capped rather than unbounded. Reasoning arrives fast and says less than any
+ * line of the conversation it would otherwise push off the screen. */
+.thinking__body {
+  max-height: 8rem;
+  overflow-y: auto;
+  color: var(--ink-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-base);
+  white-space: pre-wrap;
+}
+
+/* Said on the surface, not only in the document: a reader who saw this and
+ * reloaded to find it gone would otherwise report it as lost work. */
+.thinking__note {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}

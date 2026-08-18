@@ -40,13 +40,57 @@ pub(super) struct AguiEvent {
     /// Everything else the event carries.
     #[serde(flatten)]
     pub body: serde_json::Value,
-    /// The durable sequence this was projected from.
+    /// The durable sequence this was projected from, when there is one.
     ///
     /// Not part of the protocol's own payload: it rides as the SSE id, which
     /// is what a reconnecting client hands back. Skipped in the body so a
     /// client is never tempted to read it as protocol.
-    #[serde(skip)]
-    pub seq: u64,
+    ///
+    /// **`None` for a liveness frame, and the option is the guard.** What is
+    /// happening on a session — a message being typed — is not in the durable
+    /// log and cannot be resumed from. A frame like that given an id becomes a
+    /// cursor: a client that reconnects on it asks the log to continue from a
+    /// number the log has never heard of, and everything between there and the
+    /// real position is skipped. Making the field an `Option` is what stops
+    /// that being a rule somebody has to remember.
+    ///
+    /// Its **absence** is stated on the wire as `chrono:live`, because a
+    /// client cannot otherwise see it. `EventSource` reports `lastEventId` as
+    /// the last id it was *given*, so a frame sent without one is
+    /// indistinguishable from a frame repeating the previous id — and a client
+    /// deduplicating on that would silently drop every liveness frame.
+    ///
+    /// This is not the thing the paragraph above forbids. A cursor is a
+    /// position a client could wrongly resume from; this says there is no
+    /// position, which is the opposite hazard. It is written from this one
+    /// field, so the two cannot come to disagree.
+    #[serde(
+        rename = "chrono:live",
+        serialize_with = "mark_live",
+        skip_serializing_if = "Option::is_some"
+    )]
+    pub seq: Option<u64>,
+}
+
+/// Write the marker that says this frame carries no cursor.
+///
+/// Only ever reached for a frame whose sequence is `None` — the field is
+/// skipped otherwise — so it writes the one value it can mean.
+fn mark_live<S>(_seq: &Option<u64>, out: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    out.serialize_bool(true)
+}
+
+impl AguiEvent {
+    /// The SSE id this frame travels under, if it may travel under one.
+    ///
+    /// One place, so the durable stream and the replay cannot disagree about
+    /// it and neither can accidentally stamp a liveness frame.
+    pub(super) fn cursor(&self) -> Option<String> {
+        self.seq.map(|seq| seq.to_string())
+    }
 }
 
 /// Whether a run ends here, and how.
@@ -85,7 +129,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
         run_id: run_id.to_string(),
         thread_id: thread_id.to_string(),
         body,
-        seq: event.seq,
+        seq: Some(event.seq),
     };
 
     match &event.kind {
@@ -191,6 +235,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             status,
             stop_reason,
             detail,
+            capability,
         } => match ends_the_run(*status, *stop_reason) {
             true => Projected {
                 events: vec![make(
@@ -198,6 +243,23 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                     serde_json::json!({
                         "message": detail.clone().unwrap_or_else(|| "the session stopped".into()),
                         "code": stop_reason.map(wire_stop_reason),
+                        // The ability the session lacked, when that is what
+                        // stopped it. The core arrives at a refusal typed and
+                        // knows the name; a client shown "something went
+                        // wrong" has been handed the one part it could not
+                        // act on. Absent for every failure that was not a
+                        // refusal, which is most of them.
+                        "capability": capability,
+                        // Whether the session is coming back. A rotation ends
+                        // the run — its runtime is being torn down — but
+                        // nothing has gone wrong, and a client that cannot
+                        // tell the two apart draws a handover as a failure.
+                        // The protocol has no third lifecycle event, so this
+                        // rides as an extension rather than as an invented
+                        // one; `Web_Style.md` §11 forbids a rotating session
+                        // taking the failure ink, and this is what a client
+                        // distinguishes on.
+                        "chrono:returns": *status == SessionStatus::Rotating,
                     }),
                 )],
                 ending: Some(Ending::Failed),

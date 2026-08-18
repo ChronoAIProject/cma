@@ -14,7 +14,8 @@ use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::service::{append, Attachment, AttachmentHandle, SessionService};
+use crate::log::append;
+use crate::service::{Attachment, AttachmentHandle, SessionService};
 use crate::terminal::TerminalGeometry;
 
 /// How an attach should treat an attachment somebody already holds.
