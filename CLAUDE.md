@@ -52,6 +52,7 @@ infra/web/deployment.yaml
 infra/web/configmap.yaml
 infra/web/secret.yaml
 infra/web/service.yaml
+infra/web/gcpbackendpolicy.yaml
 infra/api/Dockerfile
 infra/api/deployment.yaml
 infra/api/configmap.yaml
@@ -67,7 +68,18 @@ infra/runtime/Dockerfile
 
 No additional manifests, no Helm charts, no kustomize overlays.
 
-The last five exist because the control plane depends on them by name. It
+`infra/web/gcpbackendpolicy.yaml` is here for the same reason its neighbour
+is, and was added after the absence was measured rather than predicted: the
+frontend's own hostname carries everything the browser calls, because the
+bundle uses same-origin paths and the image proxies them onward. Without a
+policy the balancer's default of thirty seconds bounds the whole response, and
+the conversation surface's event stream was being cut at exactly that, every
+time. A client resumes on its cursor so nothing durable is lost — what is lost
+is what is deliberately never durable, the message being typed and the agent's
+reasoning, which reads as an agent that keeps stalling rather than as a
+timeout.
+
+The api-side five exist because the control plane depends on them by name. It
 runs as a named service account, receives the sandbox key through a named
 secret-provider class, and answers on named hostnames. Leaving those applied by
 hand meant the deployment had hard dependencies with no source of truth, which
