@@ -222,12 +222,6 @@ impl SessionService {
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
-        // Built for either plane, and fed only by the terminal. A conversation
-        // session never writes to it — the honest shape would be one entry per
-        // plane, which is a larger change than this and is worth making once
-        // rather than halfway.
-        let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
-            Arc::new(Mutex::new((self.screen_factory)(geometry)));
 
         // Seeded from the record rather than from the copy passed in, because
         // the record is the authority and the copy is a snapshot from before
@@ -240,6 +234,32 @@ impl SessionService {
             _ => (session.clone(), None),
         };
         seeded.geometry = geometry;
+
+        // Built for either plane, and fed only by the terminal. A conversation
+        // session never writes to it — the honest shape would be one entry per
+        // plane, which is a larger change than this and is worth making once
+        // rather than halfway.
+        let mut model = (self.screen_factory)(geometry);
+        /*
+         * Replayed into the new screen, exactly as readopt does. This path
+         * serves a session being revived or given a replacement runtime, and
+         * both are the same session: §5 asks that everything it has shown
+         * remains visible, and "a session that returns blank has lost the work
+         * as far as its owner can tell". The transcript is in storage either
+         * way; not reading it here was the whole of the difference.
+         */
+        let restored = self
+            .stored_transcript(context_ref.as_deref())
+            .await
+            .unwrap_or_default();
+        if !restored.is_empty() {
+            model.apply(&restored);
+            tracing::info!(session_id = %id, bytes = restored.len(), "transcript restored");
+        }
+        let screen: Arc<Mutex<Box<dyn ScreenModel>>> = Arc::new(Mutex::new(model));
+        // What the capture sweep has already stored, so an unchanged screen is
+        // not written back over itself on the next tick.
+        let captured_len = screen.lock().await.repaint_bytes().len();
 
         let (terminal_input, terminal_output) = match terminal {
             Some(channel) => (Some(channel.input), Some(channel.output)),
@@ -261,7 +281,7 @@ impl SessionService {
             attached: None,
             attachments_issued: 0,
             context_ref,
-            captured_len: 0,
+            captured_len,
         };
         entry.session.status = SessionStatus::Ready;
         crate::service::append(
