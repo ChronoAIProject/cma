@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ids::SessionId;
-use crate::store::{ContextStore, StoreError};
+use crate::store::{ContextStore, SessionStore, StoreError};
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
     admin, await_settled, credential_on, service, service_with_context, service_with_credentials,
@@ -230,5 +230,63 @@ async fn a_recovered_session_is_given_its_owners_credential() {
         credential_on(&restarted, &created.id).await.as_deref(),
         Some("a-fresh-credential"),
         "a session taken back over must be given the credential its owner has now"
+    );
+}
+
+#[tokio::test]
+async fn a_replaced_session_comes_back_with_what_it_had_shown() {
+    // §5: "Everything it has shown remains visible. A session that returns
+    // blank has lost the work as far as its owner can tell." Readopting
+    // replayed the stored transcript and the provisioning path did not, so a
+    // session legitimately given a new runtime came back empty above its
+    // prompt even though its screen was in storage.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let context = Arc::new(FakeContext::default());
+    let first = service_with_context(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&context) as Arc<dyn ContextStore>,
+    );
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    // Something on the screen, then stored, exactly as the capture sweep does.
+    write_screen(&first, &created.id, b"work the owner can see\r\n").await;
+    assert!(
+        first.capture_transcript(&created.id).await,
+        "the transcript must be captured before it can be restored"
+    );
+
+    let handle = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    drop(first);
+    adapter.lose(&handle).await;
+
+    let restarted = service_with_context(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&context) as Arc<dyn ContextStore>,
+    );
+    assert_eq!(restarted.reconcile().await.reprovisioned_sessions, 1);
+    await_settled(&restarted, &alice, &created.id).await;
+
+    // Read the way the existing restart test reads it: this screen model
+    // records bytes rather than rendering rows, so what it repaints is the
+    // observable.
+    let transcript = restarted
+        .session_transcript(&alice, &created.id)
+        .await
+        .expect("readable after the runtime was replaced");
+    assert_eq!(
+        transcript, b"work the owner can see\r\n",
+        "a session given a new runtime must still show what it had shown"
     );
 }
