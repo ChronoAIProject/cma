@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
 import { BouncingText } from '../sessions/BouncingText';
+import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
 import type { Entry } from './conversation';
 import { fullTimestampOrNone } from '../sessions/sessionTime';
@@ -36,6 +37,15 @@ interface MessageStreamProps {
    * live message at all, draws the same conversation.
    */
   readonly live?: { readonly text: string };
+  /**
+   * What the agent is reasoning about, while it reasons — §18.8.
+   *
+   * Drawn above the in-flight message, because that is the order it happens
+   * in. Nothing is drawn when there is none: §18.4's rule that a control which
+   * can never work is not one currently unavailable applies here too, and an
+   * empty band would suggest a kernel was thinking silently.
+   */
+  readonly reasoning?: { readonly text: string };
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
 }
@@ -43,7 +53,13 @@ interface MessageStreamProps {
 /** How close to the bottom still counts as "following the conversation". */
 const PINNED_WITHIN_PX = 48;
 
-export function MessageStream({ entries, turnInFlight = false, live, footer }: MessageStreamProps) {
+export function MessageStream({
+  entries,
+  turnInFlight = false,
+  live,
+  reasoning,
+  footer,
+}: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
   /** How much had arrived the last time somebody was looking at the bottom. */
@@ -64,7 +80,7 @@ export function MessageStream({ entries, turnInFlight = false, live, footer }: M
    * agent takes. Removed the moment anything arrives, and claiming no
    * progress — §11's reason for a wave rather than a bar.
    */
-  const waiting = turnInFlight && live === undefined;
+  const waiting = turnInFlight && live === undefined && reasoning === undefined;
 
   useEffect(() => {
     // The effect does the one thing effects are for: telling an external
@@ -104,6 +120,7 @@ export function MessageStream({ entries, turnInFlight = false, live, footer }: M
             turnInFlight={turnInFlight}
           />
         ))}
+        {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
         {live === undefined ? null : (
           /*
            * The in-flight message. Same band, same ink, same everything as a
