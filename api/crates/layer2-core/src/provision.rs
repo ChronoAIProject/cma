@@ -268,6 +268,7 @@ impl SessionService {
 
         let mut entry = SessionEntry {
             session: seeded,
+            sequences: Arc::clone(&self.sequences),
             subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
@@ -284,7 +285,7 @@ impl SessionService {
             captured_len,
         };
         entry.session.status = SessionStatus::Ready;
-        crate::service::append(
+        crate::log::append(
             &mut entry,
             EventKind::StatusChanged {
                 status: SessionStatus::Ready,
@@ -310,10 +311,7 @@ impl SessionService {
             if let Some(conversation_id) = named_conversation {
                 let mut entries = self.entries.write().await;
                 if let Some(entry) = entries.get_mut(&id) {
-                    crate::service::append(
-                        entry,
-                        EventKind::ConversationOpened { conversation_id },
-                    );
+                    crate::log::append(entry, EventKind::ConversationOpened { conversation_id });
                 }
             }
             crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
@@ -363,22 +361,25 @@ impl SessionService {
         let Ok(Some(mut record)) = self.store.get(id).await else {
             return;
         };
-        record.session.last_seq += 1;
-        let seq = record.session.last_seq;
+        let seq = self.sequences.take(id, record.session.last_seq, 1);
+        record.session.last_seq = seq;
         if let Err(e) = self.store.upsert(&record).await {
             tracing::warn!(session_id = %id, error = %e, "cannot record progress");
             return;
         }
-        if let Err(e) = self
-            .store
-            .append_events(&[Event {
-                session_id: id.clone(),
-                seq,
-                kind: EventKind::Progress { stage },
-            }])
+        if self
+            .append_durably(
+                id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind: EventKind::Progress { stage },
+                }],
+            )
             .await
+            .is_err()
         {
-            tracing::warn!(session_id = %id, error = %e, "cannot append progress");
+            tracing::warn!(session_id = %id, "cannot append progress");
         }
     }
 

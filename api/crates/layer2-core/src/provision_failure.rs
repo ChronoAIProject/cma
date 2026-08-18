@@ -176,25 +176,27 @@ impl SessionService {
                 record.session.status = SessionStatus::Terminated;
                 record.session.stop_reason = Some(StopReason::Error);
                 record.session.recovery_state = RecoveryState::Retired;
-                record.session.last_seq += 1;
-                let seq = record.session.last_seq;
+                let seq = self.sequences.take(id, record.session.last_seq, 1);
+                record.session.last_seq = seq;
                 let session_id = record.session.id.clone();
                 if let Err(e) = self.store.upsert(&record).await {
                     tracing::error!(session_id = %id, error = %e, "cannot record the failure");
                 }
                 if let Err(e) = self
-                    .store
-                    .append_events(&[crate::event::Event {
-                        session_id,
-                        seq,
-                        kind: EventKind::StatusChanged {
-                            status: SessionStatus::Terminated,
-                            stop_reason: Some(StopReason::Error),
-                            // The reason travels with the event so the person
-                            // watching learns what the log already knew.
-                            detail: Some(reason.to_string()),
-                        },
-                    }])
+                    .append_durably(
+                        id,
+                        vec![crate::event::Event {
+                            session_id,
+                            seq,
+                            kind: EventKind::StatusChanged {
+                                status: SessionStatus::Terminated,
+                                stop_reason: Some(StopReason::Error),
+                                // The reason travels with the event so the person
+                                // watching learns what the log already knew.
+                                detail: Some(reason.to_string()),
+                            },
+                        }],
+                    )
                     .await
                 {
                     tracing::error!(session_id = %id, error = %e, "cannot record the failure event");
