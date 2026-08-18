@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
+import { BouncingText } from '../sessions/BouncingText';
 import { ToolCall } from './ToolCall';
 import type { Entry } from './conversation';
 import { fullTimestampOrNone } from '../sessions/sessionTime';
@@ -27,6 +28,14 @@ interface MessageStreamProps {
   readonly entries: readonly Entry[];
   /** Drawn under the last entry while a turn is in flight. */
   readonly turnInFlight?: boolean;
+  /**
+   * What the agent is saying right now, before it has committed to it.
+   *
+   * Drawn after the last entry and never as one — §18.1. It is *replaced* by
+   * the committed message rather than appended to, so a reload, which has no
+   * live message at all, draws the same conversation.
+   */
+  readonly live?: { readonly text: string };
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
 }
@@ -34,7 +43,12 @@ interface MessageStreamProps {
 /** How close to the bottom still counts as "following the conversation". */
 const PINNED_WITHIN_PX = 48;
 
-export function MessageStream({ entries, turnInFlight = false, footer }: MessageStreamProps) {
+export function MessageStream({
+  entries,
+  turnInFlight = false,
+  live,
+  footer,
+}: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
   /** How much had arrived the last time somebody was looking at the bottom. */
@@ -47,6 +61,15 @@ export function MessageStream({ entries, turnInFlight = false, footer }: Message
    * already had.
    */
   const behind = pinned ? 0 : Math.max(0, entries.length - seenAt);
+
+  /*
+   * §18.1: between the turn starting and the first thing arriving, the wave
+   * with a word. A turn that has started and produced nothing is otherwise
+   * indistinguishable from a dead stream, and a turn takes as long as the
+   * agent takes. Removed the moment anything arrives, and claiming no
+   * progress — §11's reason for a wave rather than a bar.
+   */
+  const waiting = turnInFlight && live === undefined;
 
   useEffect(() => {
     // The effect does the one thing effects are for: telling an external
@@ -86,6 +109,26 @@ export function MessageStream({ entries, turnInFlight = false, footer }: Message
             turnInFlight={turnInFlight}
           />
         ))}
+        {live === undefined ? null : (
+          /*
+           * The in-flight message. Same band, same ink, same everything as a
+           * committed one — §18.1 forbids a message restyling itself when it
+           * settles, and this is the same rule read forwards. The caret is the
+           * one difference, and it belongs to this and to nothing else.
+           */
+          <article className="turn" data-role="assistant">
+            <span className="turn__who">Agent</span>
+            <div className="turn__body">
+              <AgentContent text={live.text} />
+              <b className="turn__caret" aria-hidden="true" />
+            </div>
+          </article>
+        )}
+        {waiting ? (
+          <p className="stream__waiting">
+            <BouncingText text="Working" />
+          </p>
+        ) : null}
         {footer}
       </div>
 
