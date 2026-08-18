@@ -28,6 +28,7 @@ pub mod ids;
 pub mod inventory;
 mod lease;
 mod lifecycle;
+mod log;
 mod provision;
 mod provision_failure;
 mod reading;

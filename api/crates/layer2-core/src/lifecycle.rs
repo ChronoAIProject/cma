@@ -11,7 +11,8 @@ use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{SessionId, SubjectId};
-use crate::service::{append, store_failed, SessionService};
+use crate::log::append;
+use crate::service::{store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::SessionRecord;
 
