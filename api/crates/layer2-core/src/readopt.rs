@@ -59,8 +59,9 @@ impl SessionService {
         let seq = self.sequences.take(id, starting.session.last_seq, 1);
         starting.session.last_seq = seq;
         self.store.upsert(&starting).await.map_err(store_failed)?;
-        self.store
-            .append_events(&[Event {
+        self.append_durably(
+            id,
+            vec![Event {
                 session_id: id.clone(),
                 seq,
                 kind: EventKind::StatusChanged {
@@ -68,9 +69,10 @@ impl SessionService {
                     stop_reason: None,
                     detail: None,
                 },
-            }])
-            .await
-            .map_err(store_failed)?;
+            }],
+        )
+        .await
+        .map_err(store_failed)?;
 
         let geometry = starting.session.geometry;
         let spec = SessionSpec {
@@ -108,20 +110,23 @@ impl SessionService {
             tracing::warn!(session_id = %id, error = %e, "cannot record the recovered status");
             return;
         }
-        if let Err(e) = self
-            .store
-            .append_events(&[Event {
-                session_id: id.clone(),
-                seq,
-                kind: EventKind::StatusChanged {
-                    status: SessionStatus::Ready,
-                    stop_reason: None,
-                    detail: None,
-                },
-            }])
+        if self
+            .append_durably(
+                &id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind: EventKind::StatusChanged {
+                        status: SessionStatus::Ready,
+                        stop_reason: None,
+                        detail: None,
+                    },
+                }],
+            )
             .await
+            .is_err()
         {
-            tracing::warn!(session_id = %id, error = %e, "cannot append the recovered status");
+            tracing::warn!(session_id = %id, "cannot append the recovered status");
         }
         if let Some(entry) = self.entries.write().await.get_mut(&id) {
             entry.session.status = SessionStatus::Ready;
