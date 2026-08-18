@@ -9,6 +9,8 @@
  */
 
 .console__body {
+  /* The positioned ancestor the details drawer overlays below 75rem (§16). */
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
