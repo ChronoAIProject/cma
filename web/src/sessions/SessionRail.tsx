@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Session } from './types';
 import { toneFor } from './types';
 import type { Stage } from './progress';
@@ -34,6 +34,17 @@ import './SessionRail.css';
 /** Which dots the collapsed strip shows, and in which order. */
 const TONE_ORDER = ['live', 'wait', 'fail', 'ended'] as const;
 
+/**
+ * The filter pills — §12: `All 5`, `Live 2`, `Stopped 3`. Live is the live
+ * tone; stopped is everything else still listed. Rail-local state, because a
+ * filter is about this look at the list, not a setting to carry across tabs.
+ */
+type RailFilter = 'all' | 'live' | 'stopped';
+
+function isLive(session: Session): boolean {
+  return toneFor(session.lifecycle) === 'live';
+}
+
 interface SessionRailProps {
   readonly sessions: readonly Session[];
   readonly activeId: string | null;
@@ -68,7 +79,15 @@ export function SessionRail({
   onToggleCollapsed,
   stages = {},
 }: SessionRailProps) {
-  const ordered = sortSessions(sessions, order);
+  const [filter, setFilter] = useState<RailFilter>('all');
+  const filtered =
+    filter === 'all' ? sessions : sessions.filter((s) => (filter === 'live') === isLive(s));
+  const ordered = sortSessions(filtered, order);
+  const counts: Record<RailFilter, number> = {
+    all: sessions.length,
+    live: sessions.filter(isLive).length,
+    stopped: sessions.filter((s) => !isLive(s)).length,
+  };
   const handleRef = useRef<HTMLButtonElement>(null);
   // Focus moves to the handle when the panel collapses or opens, because §7
   // says so and because the alternative is stranding somebody on a control
@@ -166,10 +185,25 @@ export function SessionRail({
        * rule still runs straight across every column.
        */}
       <div className="band rail__chrome">
-        <button type="button" className="button button--block rail__new" onClick={onCreate}>
+        {/* §12: the rail's one full-width primary key. */}
+        <button type="button" className="button button--primary button--block" onClick={onCreate}>
           <span aria-hidden="true">+</span> New session
         </button>
         <div className="rail__filters">
+          {(['all', 'live', 'stopped'] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={`tag rail__filter${filter === option ? ' tag--on' : ''}`}
+              aria-pressed={filter === option}
+              onClick={() => {
+                setFilter(option);
+              }}
+            >
+              {option === 'all' ? 'All' : option === 'live' ? 'Live' : 'Stopped'} {counts[option]}
+            </button>
+          ))}
+          <span className="band__spacer" />
           <button
             type="button"
             className="button button--sm"
@@ -181,7 +215,7 @@ export function SessionRail({
             // description of the current state and is routinely misread.
             aria-label={`Sorted ${order} first. Change order.`}
           >
-            {order === 'newest' ? 'Newest first' : 'Oldest first'}
+            {order === 'newest' ? 'Newest' : 'Oldest'}
           </button>
         </div>
       </div>
@@ -195,24 +229,26 @@ export function SessionRail({
                 type="button"
                 role="tab"
                 aria-selected={active}
-                className={`rail__tab${active ? ' rail__tab--active' : ''}`}
+                className="row-item"
                 title={fullTimestamp(session.createdAt)}
                 onClick={() => {
                   onSelect(session.id);
                 }}
               >
                 <span
-                  className={`rail__dot tone-bg-${toneFor(session.lifecycle)}`}
+                  className={`row-item__dot tone-bg-${toneFor(session.lifecycle)}`}
                   aria-hidden="true"
                 />
-                <span className="rail__time">{tabLabel(session.createdAt)}</span>
+                <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
+                <span className="row-item__meta">{session.kernel}</span>
                 {/*
                  * What makes a list of times into a list of work (§12). It
                  * never wraps: a row that grows with its longest sentence
                  * makes the list a different height every time it reloads.
                  */}
-                <span className="rail__activity">{lastActivity(session, stages[session.id])}</span>
-                <span className="rail__meta">{session.kernel}</span>
+                <span className="row-item__activity">
+                  {lastActivity(session, stages[session.id])}
+                </span>
               </button>
             </li>
           );
@@ -228,7 +264,13 @@ export function SessionRail({
        * is on every page, so a rail that also carried it would be the second
        * place a reader had to reconcile.
        */}
-      {sessions.length === 0 ? <p className="rail__empty">No sessions yet.</p> : null}
+      {sessions.length === 0 ? (
+        <p className="rail__empty">No sessions yet.</p>
+      ) : ordered.length === 0 ? (
+        // §14's rule, held here too: an empty list says what would have been
+        // there. The filter narrowed to nothing; the sessions still exist.
+        <p className="rail__empty">Nothing matches this filter.</p>
+      ) : null}
     </div>
   );
 }
