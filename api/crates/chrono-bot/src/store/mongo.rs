@@ -8,12 +8,14 @@
 use futures_util::TryStreamExt;
 use layer2_core::{
     store::{SessionRecord, SessionStore, StoreError},
-    Event, SessionId, SubjectId,
+    Event, SessionId, StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReplaceOptions};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
+
+use super::event_doc;
 
 const SESSIONS: &str = "sessions";
 const EVENTS: &str = "session_events";
@@ -58,21 +60,32 @@ struct SessionDoc {
     rotations: Option<i64>,
     #[serde(default)]
     rotated_at: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct EventDoc {
-    session_id: String,
-    seq: i64,
-    /// The event kind, stored as the core serialises it so the vocabulary
-    /// lives in one place rather than being mirrored here.
-    kind: mongodb::bson::Bson,
+    /// What the session was granted when it was created.
+    ///
+    /// Optional because records written before capabilities existed have no
+    /// such field; those load claiming nothing, which is settled the next time
+    /// the session is placed.
+    #[serde(default)]
+    capabilities: Option<mongodb::bson::Bson>,
+    /// What the session's credential may reach, decided when it was created.
+    ///
+    /// Optional because records written before the grant was recorded have no
+    /// such field, and the absence is a different fact from an empty list: one
+    /// says the grant was never written down and falls back to the profile,
+    /// the other says the session may reach nothing.
+    #[serde(default)]
+    granted_services: Option<Vec<String>>,
 }
 
 /// A MongoDB-backed session store.
+///
+/// Events are held as raw documents rather than as a typed collection: the
+/// driver would otherwise decide for itself what an unreadable document means,
+/// and telling a newer vocabulary apart from real corruption is exactly the
+/// decision `event_doc` exists to make.
 pub struct MongoSessionStore {
     sessions: Collection<SessionDoc>,
-    events: Collection<EventDoc>,
+    events: Collection<Document>,
 }
 
 impl MongoSessionStore {
@@ -143,6 +156,14 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         runtime_version: s.runtime_version.clone(),
         rotations: Some(i64::from(s.rotations)),
         rotated_at: s.rotated_at.clone(),
+        capabilities: Some(
+            mongodb::bson::serialize_to_bson(&s.capabilities)
+                .map_err(|e| StoreError::Malformed(e.to_string()))?,
+        ),
+        granted_services: s
+            .granted_services
+            .as_ref()
+            .map(|services| services.iter().map(|id| id.0.clone()).collect()),
     })
 }
 
@@ -183,7 +204,15 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             runtime_version: d.runtime_version,
             rotations: d.rotations.unwrap_or(0).clamp(0, i64::from(u32::MAX)) as u32,
             rotated_at: d.rotated_at,
+            capabilities: match d.capabilities {
+                Some(v) => mongodb::bson::deserialize_from_bson(v)
+                    .map_err(|e| StoreError::Malformed(e.to_string()))?,
+                None => Default::default(),
+            },
             environment_profile: d.environment_profile.map(layer2_core::EnvironmentProfileId),
+            granted_services: d
+                .granted_services
+                .map(|services| services.into_iter().map(layer2_core::ServiceId).collect()),
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,
@@ -245,17 +274,8 @@ impl SessionStore for MongoSessionStore {
         if events.is_empty() {
             return Ok(());
         }
-        let docs: Result<Vec<EventDoc>, StoreError> = events
-            .iter()
-            .map(|e| {
-                Ok(EventDoc {
-                    session_id: e.session_id.0.clone(),
-                    seq: e.seq as i64,
-                    kind: mongodb::bson::serialize_to_bson(&e.kind)
-                        .map_err(|err| StoreError::Malformed(err.to_string()))?,
-                })
-            })
-            .collect();
+        let docs: Result<Vec<Document>, StoreError> =
+            events.iter().map(event_doc::to_document).collect();
         self.events
             .insert_many(docs?)
             .await
@@ -263,7 +283,11 @@ impl SessionStore for MongoSessionStore {
         Ok(())
     }
 
-    async fn events_since(&self, id: &SessionId, after: u64) -> Result<Vec<Event>, StoreError> {
+    async fn events_since(
+        &self,
+        id: &SessionId,
+        after: u64,
+    ) -> Result<Vec<StoredEvent>, StoreError> {
         let mut cursor = self
             .events
             .find(doc! { "session_id": &id.0, "seq": { "$gt": after as i64 } })
@@ -276,12 +300,7 @@ impl SessionStore for MongoSessionStore {
             .await
             .map_err(|e| StoreError::Unavailable(format!("events cursor: {e}")))?
         {
-            out.push(Event {
-                session_id: SessionId(d.session_id),
-                seq: d.seq.max(0) as u64,
-                kind: mongodb::bson::deserialize_from_bson(d.kind)
-                    .map_err(|e| StoreError::Malformed(e.to_string()))?,
-            });
+            out.push(event_doc::from_document(d)?);
         }
         Ok(out)
     }

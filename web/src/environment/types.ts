@@ -7,6 +7,8 @@
  * not invited to attempt something that will be undone, but the server applies
  * it whatever this code does.
  */
+import type { CredentialMode, PermissionMode, ReasoningEffort } from '../sessions/options';
+import type { SessionPlane } from '../sessions/types';
 
 /** One environment variable in a profile. */
 export interface ProfileVariable {
@@ -31,20 +33,94 @@ export interface MandatoryEntries {
 export interface EnvironmentProfile {
   readonly id: string;
   readonly name: string;
+  readonly agent: AgentConfiguration;
+  readonly nyxid: NyxIdAccess;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
-  readonly skills: readonly string[];
   readonly mandatory: MandatoryEntries;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
+/**
+ * How the agent behaves in a session started from this profile.
+ *
+ * These were once chosen per session, which meant answering the same five
+ * questions on every start and left a session describable only by repeating
+ * them. Skills sit here rather than beside software because a skill is
+ * something the agent knows how to do, not something installed in the box.
+ */
+export interface AgentConfiguration {
+  readonly kernel: string;
+  /**
+   * Which plane sessions from this profile are driven on.
+   *
+   * On the profile rather than on the request, exactly as the core has it:
+   * two sessions started from one profile must be the same session twice, and
+   * the plane is the largest difference there could be between them. It is
+   * also why the choice is offered where a profile is authored — a session
+   * cannot be moved onto the other plane without being rotated (§18.6).
+   */
+  readonly mode: SessionPlane;
+  readonly model?: string;
+  readonly reasoningEffort: ReasoningEffort;
+  readonly permission: PermissionMode;
+  readonly credential: CredentialMode;
+  readonly skills: readonly string[];
+}
+
+/**
+ * Which of the owner's platform services a session may reach.
+ *
+ * A session is given a credential minted for it alone, limited to what is
+ * named here. Selecting nothing is not a bare session: what the deployment
+ * mandates is added whatever this says, because one credential serves the
+ * agent's own model calls as well as everything else.
+ */
+export interface NyxIdAccess {
+  readonly services: readonly string[];
+}
+
+/** A service the owner may allow, as the picker lists it. */
+export interface PlatformService {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+}
+
+/** The picker's answer: what may be chosen, and what cannot be unchosen. */
+export interface ServiceCatalogue {
+  readonly services: readonly PlatformService[];
+  readonly mandatory: readonly string[];
+}
+
+/**
+ * What a profile is when nobody has said otherwise.
+ *
+ * Mirrors what the deployment answers for a session that names no profile, so
+ * a new profile starts where an unqualified session would and a form is never
+ * drawn with a control at no value.
+ */
+export const DEFAULT_AGENT: AgentConfiguration = {
+  kernel: 'codex',
+  // What every session was before the conversation plane existed, and what
+  // the core still defaults to. Reading a profile back as something else
+  // would change what an existing profile starts.
+  mode: 'terminal',
+  model: undefined,
+  reasoningEffort: 'high',
+  permission: 'guarded',
+  credential: 'delegated',
+  skills: [],
+};
+
 /** What a caller supplies when creating or replacing a profile. */
 export interface ProfileDraft {
   readonly name: string;
+  readonly agent: AgentConfiguration;
+  readonly nyxid: NyxIdAccess;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
-  readonly skills: readonly string[];
 }
 
 /** A skill the registry offers, as the picker renders it. */
@@ -90,11 +166,25 @@ export interface EnvironmentProfileStore {
   remove(id: string): Promise<void>;
   /** Skills this user may select, and what the platform mandates. */
   catalogue(): Promise<SkillCatalogue>;
+  /** Services this user may allow a session to reach, and which are fixed. */
+  services(): Promise<ServiceCatalogue>;
 }
 
-/** An empty draft, for the "new profile" form. */
+/**
+ * An empty draft, for the "new profile" form.
+ *
+ * Empty of the owner's own choices, not of behaviour: the agent section starts
+ * where an unqualified session would, so a profile someone names and saves
+ * without touching anything behaves the way this deployment already does.
+ */
 export function emptyDraft(): ProfileDraft {
-  return { name: '', variables: [], packages: [], skills: [] };
+  return {
+    name: '',
+    variables: [],
+    packages: [],
+    agent: { ...DEFAULT_AGENT },
+    nyxid: { services: [] },
+  };
 }
 
 /** The draft that would replace an existing profile unchanged. */
@@ -103,7 +193,8 @@ export function draftOf(profile: EnvironmentProfile): ProfileDraft {
     name: profile.name,
     variables: [...profile.variables],
     packages: [...profile.packages],
-    skills: [...profile.skills],
+    agent: { ...profile.agent, skills: [...profile.agent.skills] },
+    nyxid: { services: [...profile.nyxid.services] },
   };
 }
 

@@ -41,11 +41,32 @@ pub mod permission {
     pub const ADMIN_CONTROL: &str = "chrono-bot:admin:control";
 }
 
-/// Wildcard the provider issues to a full administrator.
+/// Wildcard the provider issues across everything it serves.
+///
+/// **Not an administrator here.** The provider is shared, and this is its
+/// vocabulary rather than ours: it says the subject is fully entitled *on the
+/// provider*, which is a statement about storage, sandboxes and every other
+/// product behind it. Reading it as permission to act on another subject's
+/// work in this service hands one product's grant to a different product's
+/// data, and a session belongs to the person who started it.
+///
+/// So it grants what a caller may do to their own sessions, and nothing that
+/// reaches anybody else's. Only a grant that names this product can do that.
 const WILDCARD: &str = "*";
 
-/// Prefix a product-wide wildcard would carry.
+/// Wildcard naming this product, which does grant everything here.
+///
+/// Distinct from the one above because this one was written by somebody
+/// deciding about chrono-bot.
 const PRODUCT_WILDCARD: &str = "chrono-bot:*";
+
+/// What a subject may do to their own work, and nothing beyond it.
+const OWN_WORK: [Capability; 4] = [
+    Capability::CreateSession,
+    Capability::UseOwnSessions,
+    Capability::TerminateOwnSession,
+    Capability::ManageOwnEnvironmentProfiles,
+];
 
 /// Translate provider permissions into the capabilities the core enforces.
 ///
@@ -56,12 +77,17 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
     permissions: impl IntoIterator<Item = S>,
 ) -> Authorization {
     let mut granted: Vec<Capability> = Vec::new();
-    let mut wildcard = false;
+    let mut own_work = false;
+    let mut everything = false;
 
     for raw in permissions {
         let p = raw.as_ref().trim();
-        if p == WILDCARD || p == PRODUCT_WILDCARD {
-            wildcard = true;
+        if p == WILDCARD {
+            own_work = true;
+            continue;
+        }
+        if p == PRODUCT_WILDCARD {
+            everything = true;
             continue;
         }
         match p {
@@ -90,12 +116,16 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
         }
     }
 
-    if wildcard {
+    // The provider's own wildcard reaches the caller's work and stops there.
+    if own_work {
+        granted.extend(OWN_WORK);
+    }
+
+    // A wildcard naming this product is the only thing that crosses subjects
+    // without saying which capability it means.
+    if everything {
+        granted.extend(OWN_WORK);
         granted.extend([
-            Capability::CreateSession,
-            Capability::UseOwnSessions,
-            Capability::TerminateOwnSession,
-            Capability::ManageOwnEnvironmentProfiles,
             Capability::ReadAllSessions,
             Capability::ReadRuntimeInventory,
             Capability::ReadEventLog,
@@ -216,8 +246,44 @@ mod tests {
     }
 
     #[test]
-    fn a_platform_wildcard_grants_everything() {
+    fn the_platform_wildcard_grants_a_caller_their_own_work() {
         let a = capabilities_from_permissions(["*"]);
+        for c in [
+            Capability::CreateSession,
+            Capability::UseOwnSessions,
+            Capability::TerminateOwnSession,
+            Capability::ManageOwnEnvironmentProfiles,
+        ] {
+            assert!(a.allows(c), "the provider's wildcard must grant {c:?}");
+        }
+    }
+
+    #[test]
+    fn the_platform_wildcard_does_not_reach_another_subjects_work() {
+        // The provider is shared, and its wildcard is a statement about the
+        // provider rather than about this service. Reading it as administrator
+        // here showed every subject's sessions to every subject holding it.
+        let a = capabilities_from_permissions(["*"]);
+        for c in [
+            Capability::ReadAllSessions,
+            Capability::ReadRuntimeInventory,
+            Capability::ReadEventLog,
+            Capability::ReadActivityLog,
+            Capability::ReadUserDirectory,
+            Capability::ControlAnySession,
+        ] {
+            assert!(!a.allows(c), "the provider's wildcard must not grant {c:?}");
+        }
+        assert!(
+            !a.is_privileged(),
+            "a caller entitled on the provider is not an operator here"
+        );
+    }
+
+    #[test]
+    fn a_product_wildcard_grants_everything_here() {
+        // Named this product, so it is a decision about this product.
+        let a = capabilities_from_permissions(["chrono-bot:*"]);
         for c in [
             Capability::CreateSession,
             Capability::UseOwnSessions,
@@ -230,13 +296,26 @@ mod tests {
             Capability::ReadUserDirectory,
             Capability::ControlAnySession,
         ] {
-            assert!(a.allows(c), "wildcard must grant {c:?}");
+            assert!(a.allows(c), "the product wildcard must grant {c:?}");
         }
     }
 
     #[test]
-    fn a_product_wildcard_grants_everything_here() {
-        assert!(capabilities_from_permissions(["chrono-bot:*"]).allows(Capability::ReadAllSessions));
+    fn the_permissions_this_deployment_actually_issues_reach_no_other_subject() {
+        // The exact set the provider returns for a subject here. Every one of
+        // these belongs to another product except the wildcard, and none of
+        // them is a decision that this subject may see somebody else's work.
+        let a = capabilities_from_permissions([
+            "object:delete",
+            "fkst:session:stop",
+            "sandbox:execute",
+            "ornn:skill:read",
+            "bucket:read",
+            "*",
+        ]);
+        assert!(a.allows(Capability::UseOwnSessions));
+        assert!(!a.allows(Capability::ReadAllSessions));
+        assert!(!a.allows(Capability::ControlAnySession));
     }
 
     #[test]

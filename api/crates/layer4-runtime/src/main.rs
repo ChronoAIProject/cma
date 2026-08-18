@@ -4,46 +4,102 @@
 //! real pseudo-terminal and relays that terminal to the control plane over a
 //! WebSocket. This binary is never linked into the control plane.
 
-mod agent_config;
+mod bridge;
+mod carry;
 mod conversation;
+mod lanes;
+mod link;
+mod prelude;
 mod pty;
 mod upstream;
 
 use std::net::SocketAddr;
 
-use axum::{
-    extract::{
-        ws::{Message, WebSocket},
-        Path, Query, State, WebSocketUpgrade,
-    },
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
-use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use axum::{extract::State, response::IntoResponse, routing::get, Router};
+use tokio::sync::Mutex;
 
-use crate::agent_config::{AgentConfig, PLACEHOLDER_KEY};
-use crate::pty::{PtyRegistry, PtySession};
+use crate::bridge::Bridge;
+use crate::pty::PtyRegistry;
 use crate::upstream::{CredentialHolder, UpstreamState};
 
 #[derive(Clone)]
-struct AppState {
+pub(crate) struct AppState {
     registry: PtyRegistry,
     command: String,
     /// The owner's credential, swappable while the agent runs.
     credential: CredentialHolder,
     /// This pod's home directory, where the agent keeps its conversation.
     home: std::path::PathBuf,
+    /// Where under home this kernel records its conversation, if it records
+    /// one at all.
+    ///
+    /// Told to this pod by the adapter that started it rather than known here.
+    /// A supervisor that named one kernel's directory could host only that
+    /// kernel — and it is the layer that owns a kernel's name that should be
+    /// spelling it.
+    ///
+    /// `None` means this kernel declared no snapshot support, which is a
+    /// different answer from "nothing recorded yet" and is reported as one.
+    snapshot_dir: Option<String>,
+    /// How this kernel is told to continue a named conversation, if it must be.
+    resume_args: Option<String>,
+    /// Whether a conversation handed to this runtime has to name itself.
+    ///
+    /// Stated by the adapter rather than inferred from anything here. A kernel
+    /// told by name which conversation to continue, and given no name, starts
+    /// a fresh one and reports success — silent loss, discovered by its owner.
+    /// Whether that applies is a fact about the kernel, and only the layer
+    /// that owns it knows: a kernel resumed by a command verb and one resumed
+    /// by a protocol call are both told by name, and neither is distinguishable
+    /// from here.
+    snapshot_named: bool,
     /// The conversation this pod is taking over, once one has been handed to it.
     ///
     /// The agent is not started until something attaches, which is what makes
     /// a handover possible over HTTP at all: the conversation can arrive after
     /// the pod is running and still be there before the agent reads it.
     resuming: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// The kernel's conversation bridge, once anything has asked for one.
+    ///
+    /// Started lazily, exactly as the pty is, and for the same reason: a pod
+    /// runs one session on one plane, and starting a process nothing is going
+    /// to talk to would put a kernel on the model endpoint for no reason.
+    conversation: std::sync::Arc<Mutex<Option<std::sync::Arc<Bridge>>>>,
 }
 
 impl AppState {
+    /// The kernel's conversation bridge, started if it is not already running.
+    ///
+    /// Lazy for the same reason the pty is: a pod hosts one session on one
+    /// plane, and which plane is decided by what the control plane opens. A
+    /// bridge started eagerly would be a kernel process on the model endpoint
+    /// for a session that was only ever going to be a terminal.
+    async fn conversation_bridge(&self) -> std::io::Result<std::sync::Arc<Bridge>> {
+        let mut held = self.conversation.lock().await;
+        if let Some(running) = held.as_ref() {
+            return Ok(std::sync::Arc::clone(running));
+        }
+        if self.registry.is_running().await {
+            // One session, one plane. A pod driving a terminal and a
+            // conversation at once would be two sessions sharing a sandbox,
+            // and neither would be the one anybody asked for.
+            return Err(std::io::Error::other(
+                "this runtime is already hosting a terminal",
+            ));
+        }
+        let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command())?);
+        *held = Some(std::sync::Arc::clone(&bridge));
+        Ok(bridge)
+    }
+
+    /// The conversation this pod was handed, if it was handed one.
+    pub(crate) fn resuming(&self) -> Option<String> {
+        match self.resuming.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
     /// The command to start the agent with, given what this pod has been told.
     fn agent_command(&self) -> String {
         let carried = match self.resuming.lock() {
@@ -57,44 +113,16 @@ impl AppState {
         // continued is the agent's decision, it differs between kernels, and
         // it changes between agent versions. Getting it wrong must be
         // correctable without shipping a new binary.
-        let resume =
-            std::env::var("CHRONO_RUNTIME_RESUME_ARGS").unwrap_or_else(|_| "resume".to_string());
+        let Some(resume) = self.resume_args.as_deref() else {
+            // This kernel finds its own history; there is nothing to append.
+            return self.command.clone();
+        };
         // Named, never "the latest". The agent selects among conversations
         // recorded in the current working directory, and one carried from
         // another pod was recorded somewhere else — so "the latest" finds
         // nothing, starts a fresh conversation, and reports success.
         format!("{} {resume} {conversation}", self.command)
     }
-}
-
-/// Geometry the control plane requests when it attaches.
-#[derive(Debug, Deserialize)]
-struct AttachParams {
-    #[serde(default)]
-    cols: Option<u16>,
-    #[serde(default)]
-    rows: Option<u16>,
-}
-
-/// A control message from the control plane. Terminal bytes travel as binary
-/// frames; this is the text-frame vocabulary, mirrored on the browser side.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "t", rename_all = "snake_case")]
-enum ControlFrame {
-    Resize {
-        cols: u16,
-        rows: u16,
-    },
-    Signal {
-        sig: String,
-    },
-    /// Replace the credential the local proxy presents upstream.
-    ///
-    /// Arrives on the same socket as terminal traffic so a refresh needs no
-    /// second connection, and takes effect without restarting the agent.
-    Credential {
-        value: String,
-    },
 }
 
 #[tokio::main]
@@ -120,6 +148,23 @@ async fn main() {
     let command =
         std::env::var("CHRONO_RUNTIME_COMMAND").unwrap_or_else(|_| "/bin/bash -l".to_string());
 
+    // Where this kernel records its conversation, and how it is told to
+    // continue one. Both are the kernel's business and neither is known here;
+    // the adapter that started this pod supplies them. Read once at startup
+    // rather than per request, so a pod's behaviour cannot change under it.
+    let snapshot_dir = non_empty("CHRONO_RUNTIME_SNAPSHOT_DIR");
+    let resume_args = non_empty("CHRONO_RUNTIME_RESUME_ARGS");
+    let snapshot_named =
+        non_empty("CHRONO_RUNTIME_SNAPSHOT_NAMED").is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    match snapshot_dir.as_deref() {
+        Some(dir) => tracing::info!(dir, "this runtime can hand its conversation over"),
+        // Said at startup rather than discovered at rotation, when the answer
+        // decides whether a session can be carried anywhere.
+        None => tracing::info!(
+            "no snapshot directory configured; this runtime cannot hand its conversation over"
+        ),
+    }
+
     let credential = CredentialHolder::new();
 
     // The agent talks to this proxy, not to the model endpoint. Configuration
@@ -138,37 +183,28 @@ async fn main() {
             "CHRONO_UPSTREAM_BASE_URL is unset; the agent will start but has no model endpoint"
         );
     } else {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/chrono".to_string());
-        let agent_config = AgentConfig {
-            // No version segment here. The upstream is a brokered service whose own
-            // base URL already carries one, and the broker appends whatever path
-            // arrives; adding /v1 produces .../v1/v1/responses and a 404.
-            proxy_base_url: format!("http://{proxy_bind}"),
-            model: std::env::var("CHRONO_UPSTREAM_MODEL")
-                .unwrap_or_else(|_| "gpt-5.6-sol".to_string()),
-            wire_api: std::env::var("CHRONO_UPSTREAM_WIRE_API")
-                .unwrap_or_else(|_| "responses".to_string()),
-            provider_name: "Chrono LLM".to_string(),
-            // Defaults here match the core's own: a runtime started without
-            // these must not be more permissive than one configured
-            // explicitly.
-            effort: std::env::var("CHRONO_AGENT_EFFORT").unwrap_or_else(|_| "medium".to_string()),
-            approval_policy: std::env::var("CHRONO_AGENT_APPROVAL")
-                .unwrap_or_else(|_| "on-request".to_string()),
-            sandbox_mode: std::env::var("CHRONO_AGENT_SANDBOX")
-                .unwrap_or_else(|_| "read-only".to_string()),
-        };
-        if let Err(e) = agent_config.write(std::path::Path::new(&home)) {
-            tracing::error!(error = %e, "cannot write agent configuration");
-            std::process::exit(2);
-        }
-
         spawn_credential_proxy(
             "model",
             proxy_bind,
             upstream_base.clone(),
             credential.clone(),
         );
+    }
+
+    // Whatever this kernel needs on disk before it starts, written where it
+    // was told and never read. Which kernel this is, what it needs and where
+    // it goes are the adapter's to say — a supervisor that knew any of them
+    // would be a supervisor that can host one kernel.
+    match prelude::write(&home) {
+        Ok(Some(_)) => {}
+        Ok(None) => tracing::info!("this kernel asked for no configuration file"),
+        Err(e) => {
+            // Loud rather than warned about. A kernel started without the
+            // configuration it was meant to have runs differently from the
+            // session that was ordered, and does it silently.
+            tracing::error!(error = %e, "cannot write the kernel configuration");
+            std::process::exit(2);
+        }
     }
 
     // The agent also drives a CLI that acts on the owner's behalf against the
@@ -193,13 +229,17 @@ async fn main() {
         command: command.clone(),
         credential,
         home: home.clone(),
+        snapshot_dir,
+        resume_args,
+        snapshot_named,
         resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        conversation: std::sync::Arc::new(Mutex::new(None)),
     };
 
     let app = Router::new()
         .route("/livez", get(|| async { "ok" }))
         .route("/readyz", get(ready))
-        .route("/runtime/{id}/terminal", get(attach))
+        .route("/runtime/{id}/terminal", get(link::attach))
         // What makes this pod replaceable. The control plane takes this before
         // tearing the pod down and hands it to the one that takes over.
         .route(
@@ -241,22 +281,33 @@ async fn conversation_restore(
         )
             .into_response();
     }
-    match conversation::restore(&state.home, &body, &stamp()) {
+    let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
+        return unsupported();
+    };
+    match conversation::restore(&state.home, sessions_dir, &body, &stamp()) {
         Ok(restored) => {
-            let Some(conversation) = restored.session_id else {
-                // Accepting this would start a fresh conversation while the
-                // caller believes the old one was carried across — and the
-                // runtime it came from is about to be torn down.
-                tracing::error!("the conversation handed over does not name itself");
-                return (
-                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                    "the conversation does not name itself, so the agent cannot be told to continue it",
-                )
-                    .into_response();
-            };
-            match state.resuming.lock() {
-                Ok(mut guard) => *guard = Some(conversation),
-                Err(poisoned) => *poisoned.into_inner() = Some(conversation),
+            match restored.session_id {
+                Some(conversation) => match state.resuming.lock() {
+                    Ok(mut guard) => *guard = Some(conversation),
+                    Err(poisoned) => *poisoned.into_inner() = Some(conversation),
+                },
+                // Whether this matters depends on the kernel, and the adapter
+                // that started this pod has already said which it is. One that
+                // must be told by name which conversation to continue, and is
+                // not told, starts a fresh one and reports success — silent
+                // loss, and the runtime this came from is about to be torn
+                // down. One that finds its own history was never told anything.
+                None if state.snapshot_named => {
+                    tracing::error!("the conversation handed over does not name itself");
+                    return (
+                        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                        "the conversation does not name itself, so the agent cannot be told to continue it",
+                    )
+                        .into_response();
+                }
+                None => tracing::info!(
+                    "the conversation handed over names no identifier; this kernel finds its own"
+                ),
             }
             axum::http::StatusCode::NO_CONTENT.into_response()
         }
@@ -273,6 +324,18 @@ async fn conversation_restore(
     }
 }
 
+/// An environment value, treating blank as absent.
+///
+/// A key set to the empty string is how a deployment says "not this one" in a
+/// manifest, and reading that as a configured value would point a snapshot at
+/// the home directory itself.
+fn non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 /// A filename-safe stamp, distinct per restore within a pod.
 fn stamp() -> String {
     let seconds = std::time::SystemTime::now()
@@ -282,9 +345,25 @@ fn stamp() -> String {
     format!("carried-{seconds}")
 }
 
+/// This runtime declared no snapshot support.
+///
+/// Distinct from having nothing recorded yet, and deliberately so: a caller
+/// that read "cannot" as "nothing" would replace a runtime and silently drop
+/// the session's history.
+fn unsupported() -> axum::response::Response {
+    (
+        axum::http::StatusCode::NOT_IMPLEMENTED,
+        "this runtime does not capture its agent's conversation",
+    )
+        .into_response()
+}
+
 /// Hand over the agent's conversation so it can be resumed elsewhere.
 async fn conversation_snapshot(State(state): State<AppState>) -> impl IntoResponse {
-    match conversation::capture(&state.home) {
+    let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
+        return unsupported();
+    };
+    match conversation::capture(&state.home, sessions_dir) {
         Ok(Some(bytes)) => (
             axum::http::StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
@@ -344,127 +423,6 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         "runtimes": live,
         "credential": state.credential.is_set().await,
     }))
-}
-
-async fn attach(
-    ws: WebSocketUpgrade,
-    Path(id): Path<String>,
-    Query(params): Query<AttachParams>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    let cols = params.cols.unwrap_or(80).max(1);
-    let rows = params.rows.unwrap_or(24).max(1);
-    ws.on_upgrade(move |socket| async move {
-        if let Err(e) = relay(socket, state, id.clone(), cols, rows).await {
-            tracing::warn!(runtime = %id, error = %e, "terminal relay ended with an error");
-        }
-    })
-}
-
-async fn relay(
-    socket: WebSocket,
-    state: AppState,
-    id: String,
-    cols: u16,
-    rows: u16,
-) -> std::io::Result<()> {
-    let session: std::sync::Arc<PtySession> = state
-        .registry
-        .get_or_start(&id, &state.agent_command(), cols, rows, PLACEHOLDER_KEY)
-        .await?;
-
-    // Subscribe before the first resize so no output produced during startup
-    // is missed by this attachment.
-    let mut output = session.output.subscribe();
-    session.resize(cols, rows)?;
-
-    let (mut sink, mut source) = socket.split();
-
-    let runtime = id.clone();
-    let mut pump_out = tokio::spawn(async move {
-        loop {
-            match output.recv().await {
-                Ok(chunk) => {
-                    if sink.send(Message::Binary(chunk.into())).await.is_err() {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    // The consumer can always recover from a fresh screen, so
-                    // lagging is survivable and must be reported, not hidden.
-                    tracing::warn!(runtime = %runtime, skipped, "terminal consumer lagged");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
-    let session_in = std::sync::Arc::clone(&session);
-    let credential_in = state.credential.clone();
-    let runtime = id.clone();
-    let mut pump_in = tokio::spawn(async move {
-        while let Some(frame) = source.next().await {
-            match frame {
-                Ok(Message::Binary(bytes)) => {
-                    if let Err(e) = session_in.write_input(&bytes) {
-                        tracing::warn!(runtime = %runtime, error = %e, "pty write failed");
-                        break;
-                    }
-                }
-                Ok(Message::Text(text)) => match serde_json::from_str::<ControlFrame>(&text) {
-                    Ok(ControlFrame::Resize { cols, rows }) => {
-                        if let Err(e) = session_in.resize(cols, rows) {
-                            tracing::warn!(runtime = %runtime, error = %e, "resize rejected");
-                        }
-                    }
-                    Ok(ControlFrame::Credential { value }) => {
-                        // Never logged with its value; the holder reports only
-                        // that a replacement happened.
-                        credential_in.set(value).await;
-                    }
-                    Ok(ControlFrame::Signal { sig }) => {
-                        // Signals are delivered in band as the control
-                        // character the kernel already understands, so no
-                        // separate signalling path is needed.
-                        let byte: Option<u8> = match sig.as_str() {
-                            "INT" => Some(0x03),
-                            "QUIT" => Some(0x1c),
-                            "TERM" | "HUP" => Some(0x04),
-                            _ => None,
-                        };
-                        match byte {
-                            Some(b) => {
-                                if let Err(e) = session_in.write_input(&[b]) {
-                                    tracing::warn!(runtime = %runtime, error = %e, "signal write failed");
-                                }
-                            }
-                            None => {
-                                tracing::warn!(runtime = %runtime, %sig, "unknown signal ignored")
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(runtime = %runtime, error = %e, "malformed control frame ignored")
-                    }
-                },
-                Ok(Message::Close(_)) => break,
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(runtime = %runtime, error = %e, "terminal read failed");
-                    break;
-                }
-            }
-        }
-    });
-
-    // A dropped connection detaches; it does not end the session. The process
-    // keeps running and the next attach reuses it.
-    tokio::select! {
-        _ = &mut pump_out => pump_in.abort(),
-        _ = &mut pump_in => pump_out.abort(),
-    }
-    tracing::info!(runtime = %id, "terminal detached");
-    Ok(())
 }
 
 async fn shutdown_signal() {

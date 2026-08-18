@@ -56,7 +56,6 @@ Idempotency-Key: <client-generated-uuid>
 Content-Type: application/json
 
 {
-  "kernel": "codex",
   "llm_source": "chrono",
   "environment": "default",
   "workspace": { "type": "git", "url": "https://github.com/org/repo", "ref": "main" },
@@ -67,14 +66,15 @@ Content-Type: application/json
 
 | Field | Required | Notes |
 |---|---|---|
-| `kernel` | yes | `codex` \| `claude_code` |
 | `llm_source` | yes | `chrono` (brokered through NyxID) or `own` (the user's own account) |
 | `environment` | no | Name of a pre-provisioned environment profile. **Never carries secret values** — it selects a profile provisioned out of band |
 | `workspace` | no | Omit for an empty workspace |
 | `concurrent_input` | no | `reject` \| `enqueue` \| `interrupt` \| `rollback`. Default `enqueue`. Immutable for the session's life |
 | `metadata` | no | Opaque to chrono-bot; echoed back |
 
-`llm_source`, `kernel`, and `environment` are **frozen at creation**. Changing any of them means a new session.
+**A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
+
+`llm_source` and `environment` are **frozen at creation**, as is the kernel they resolve to. Changing any of them means a new session.
 
 **`201 Created`**
 
@@ -107,22 +107,126 @@ DELETE /api/v1/sessions/{id}
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
 
+### Changing which plane a session is driven on
+
+```http
+POST /api/v1/sessions/{id}/plane
+Content-Type: application/json
+
+{ "plane": "conversation" }
+```
+
+`terminal` or `conversation`. Naming the plane the session is already on changes nothing and is not an error.
+
+**It is a rotation.** The session's conversation is captured, its sandbox is released, a replacement is started under the other front-end, and the agent resumes from the capture. The session keeps its identifier, its history, its configuration and its place in its owner's list; `rotations` and `rotated_at` move exactly as they do for a runtime upgrade, and `rotated_at` is the moment the conversation was taken — anything the agent did after it did not travel.
+
+**`200 OK`** returns the session mid-handover, `status: "rotating"`. That is the window in which a client must refuse input rather than accept and lose it; the session becomes usable again on its own, and the event stream says when.
+
+The granted set is re-derived and re-reported: a session moved to `conversation` stops conforming to `…/conf/terminal` and starts conforming to `…/conf/conversation`. A client that cached the old set will be refused by name, which is the point of refusing by name.
+
+**Only the owner.** An operator capability does not stand in here: ending somebody's session is something an operator has to be able to do, and deciding what they are looking at is not.
+
+Every refusal comes before anything is torn down, and a refused session keeps running exactly as it was:
+
+| Situation | Status | `code` |
+|---|---|---|
+| The kernel does not serve that plane | `422` | `capability_unsupported`, naming `conversation` or `terminal` |
+| The kernel cannot carry its conversation across | `422` | `capability_unsupported`, naming `snapshot` |
+| The session is already being moved, or has no runtime | `409` | `invalid_state` |
+| The session is somebody else's | `404` | `session_not_found` |
+
+### What a session may reach
+
+A read carries `reach`: the services this session's credential may call on its owner's behalf.
+
+```json
+"reach": [
+  { "id": "api-github", "name": "GitHub", "description": "Repositories and pull requests", "mandated": false },
+  { "id": "nyxid", "name": "NyxID", "mandated": true }
+]
+```
+
+This is the other half of a fact whose first half is `capabilities`. Capabilities are what a session can **do**; `reach` is what it can **touch**. A client showing one and not the other is describing half a session.
+
+The whole path — catalogue, profile, grant, credential, sandbox — is `docs/Services.md`.
+
+**It is the session's answer, not its profile's.** A session's reach is decided when it is provisioned and recorded on the session. A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps the scope it was provisioned with, so reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one. It survives a rotation for the same reason: a replaced runtime is the same session.
+
+`mandated` marks what this deployment requires in every session, so a client can draw those entries as fixed rather than guessing which cannot be removed.
+
+`name` and `description` come from the caller's own service catalogue and are **absent when it could not be asked**. A catalogue that is down costs the names and not the answer: the identifiers alone are still true, and reporting an error here would render a transient outage as a session that reaches nothing. See `docs/Services.md`.
+
+**Never a credential.** `reach` carries identifiers and display names. What a session may reach is a fact about its configuration; what it holds is not, and no token, no expiry and nothing that could be used to fingerprint one appears here.
+
 ---
 
 ## 3. Input, interrupt, steer
+
+### One route, two planes
+
+`input` means different things to the two kinds of session, and the session's granted capabilities decide which. A caller never chooses: read `capabilities` on the session object, or just send — the projection is the same operation in the core either way.
+
+**Conversation session** — the text opens a prompt turn.
 
 ```http
 POST /api/v1/sessions/{id}/input
 { "text": "Refactor the auth module to use the new token type." }
 ```
 
+**Terminal session** — the text is typed at the terminal, with a newline unless you say otherwise.
+
+```http
+POST /api/v1/sessions/{id}/input
+{ "text": "ls -la", "newline": true }
+```
+
+`newline` defaults to `true`: a client sending a line means to submit it. Send `false` to compose a command in pieces.
+
+For anything a JSON string cannot carry — control characters, escape sequences, and the keypresses that answer a kernel's own on-screen approval prompt — send raw bytes instead:
+
+```http
+POST /api/v1/sessions/{id}/input
+{ "bytes_b64": "GwtC" }
+```
+
+`bytes_b64` is refused on a conversation session: a conversation takes words, and decoding bytes into a prompt would send something nobody typed. Sending both fields on a terminal session uses the bytes — a caller who supplied them meant something the text could not express.
+
+**On the terminal plane, input is how approvals are answered and how a turn is steered.** That kernel asks on its own screen, and the answer is a keypress. There is no separate operation for it, and §5 says so where a client would look.
+
+### Interrupt
+
 ```http
 POST /api/v1/sessions/{id}/interrupt
+```
+
+Stops what the session is doing without ending it. On a conversation this cancels the turn in flight; on a terminal it delivers `SIGINT`.
+
+Interrupting requires the `interrupt` capability on a conversation session. Not every kernel has one — a wire can offer a prompt and no way to withdraw it — and a session whose kernel cannot is refused by name rather than left waiting for something that will not happen.
+
+### Steer
+
+```http
 POST /api/v1/sessions/{id}/steer
 { "text": "Stop — only touch files under src/auth/." }
 ```
 
-`steer` redirects a turn already in progress. `interrupt` ends it. Sending input while a turn is in flight resolves according to the session's `concurrent_input` policy; on `reject` it returns `409` with `problem.type` ending `/turn-in-progress`.
+Redirects a turn already in progress, which is not the same as starting a new one. Projected only where the kernel advertises `steer`; elsewhere it returns the typed capability error. Subsets are declared, not discovered.
+
+Sending input while a turn is in flight resolves according to the session's `concurrent_input` policy; on `reject` it returns `409` with `problem.type` ending `/turn-in-progress`.
+
+### While a terminal is attached
+
+A live PTY attachment holds the terminal exclusively, and that changes what these routes do:
+
+| | while attached | reason |
+|---|---|---|
+| `input` | `409` `/already-attached` | keystrokes injected into a live attachment land inside an escape sequence that client is drawing; afterwards neither side can tell which characters were whose |
+| `resize` | `409` `/already-attached` | the attached client declared the geometry it is drawing for, and resizing reflows a screen it is halfway through painting |
+| `interrupt` | **allowed** | a signal is not a keystroke — it does not enter the byte stream and cannot corrupt what is being drawn, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
+
+The rule is about *this* route, not about the terminal. The client holding the attachment drives it through its own connection and is unaffected: refusing writes at the operation itself would refuse that client its own keystrokes.
+
+With no attachment live, all three operate the terminal directly.
 
 ---
 
@@ -169,9 +273,11 @@ POST /api/v1/sessions/{id}/approvals/{request_id}
 { "decision": "allow" }
 ```
 
-`decision` is `allow` or `deny`; `reason` is optional on a deny and is surfaced to the agent so it can adapt.
+`decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions: `deny` refuses this and the turn carries on without it, `abort` refuses it and stops the turn. A client that meant the second and sent the first watches the agent try something else instead of stopping.
 
-While an approval is pending the session is `idle` with `stop_reason: requires_action`, and the pending request ids are listed on the session object. That state survives a client disconnect and a control plane restart — a request waiting when you reconnect is still answerable.
+**Conversation sessions only.** On a terminal session this returns the typed capability error naming `conversation`: that kernel asks on its own screen and its answer is a keypress, so the operation to use is `POST /input` with the bytes the prompt is waiting for (§3). Inventing an approval route there would be a second way to say something the session cannot hear.
+
+While an approval is pending the session is `idle` with `stop_reason: requires_action`, and the pending request ids are listed on the session object. That state survives a client disconnect and a control plane restart — a request waiting when you reconnect is still answerable. Answering one nothing is waiting for is refused rather than forwarded.
 
 ---
 
@@ -180,11 +286,24 @@ While an approval is pending the session is `idle` with `stop_reason: requires_a
 ```http
 GET  /api/v1/sessions/{id}/screen          → current rendered screen
 POST /api/v1/sessions/{id}/resize          { "cols": 120, "rows": 40 }
+POST /api/v1/sessions/{id}/terminal-ticket { "takeover": false }
 ```
 
 REST exposes these for clients that need terminal state without holding a stream. The live byte stream itself is the [PTY interface](./API_PTY.md).
 
 `resize` with a zero dimension is rejected with `422`.
+
+### Attach ticket
+
+```json
+{ "ticket": "…", "expires_at": "2026-08-17T14:37:14Z" }
+```
+
+The browser WebSocket API cannot set a header on an upgrade, so a bearer-authenticated frontend exchanges its credential here — over a route that *can* carry one — for a single-use, ~30-second, session- and subject-bound ticket, and presents that as `?ticket=…` on the upgrade. Same-origin cookie clients need none of this and attach unchanged.
+
+`{"takeover": true}` supersedes whoever currently holds the attachment; the superseded client is sent a close frame naming the reason. Without it, attaching over a live attachment is a typed conflict.
+
+A session with no terminal capability is refused here with `capability_unsupported`, not issued a ticket for something it cannot do. The full contract, including what makes a ticket in a URL acceptable and what is never recorded, is in [API_PTY.md §2.1](./API_PTY.md).
 
 **Both are owner-only, and no operator capability reaches them.** A screen carries whatever the agent has printed, and a session started from an environment bundle has that bundle's values in its process environment — so what is on a screen may be its owner's secrets. This is the same rule `transcript` follows, for the same content by another route.
 
@@ -197,17 +316,14 @@ GET /api/v1/sessions/{id}/usage
 ```
 
 ```json
-{
-  "tokens": { "input": 184203, "cached_input": 121004, "output": 9877, "reasoning": 4120 },
-  "active_seconds": 1844,
-  "cost": { "amount": "412", "currency": "USD" },
-  "budget": { "max_cost": { "amount": "2500", "currency": "USD" } }
-}
+{ "input_tokens": 184203, "output_tokens": 9877, "context_used": 41204 }
 ```
 
-Monetary amounts are **integer strings in minor units** — `"412"` is $4.12. Never floats.
+Requires the `usage` capability. Not every kernel reports token counts, and one that does not returns the typed capability error rather than a plausible zero.
 
-For `llm_source: "own"` the token figures are absent: the user's turns bill to their own account and chrono-bot cannot observe them. Container time is still metered.
+`input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall — a conversation that was compacted genuinely holds less than it did.
+
+Monetary accounting is not served here yet. When it is, amounts will be **integer strings in minor units** — `"412"` is $4.12 — never floats.
 
 ---
 
@@ -223,12 +339,32 @@ GET /api/v1/conformance
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/events-replay",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/steering",
+  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/interrupt",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
   "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/usage"
 ] }
 ```
 
 Representations carry `Link: <…/conf/rest-core>; rel="profile"`, and the service advertises `Link: </openapi.json>; rel="service-desc"`.
+
+### What this deployment can run
+
+```http
+GET /api/v1/kernels
+```
+
+```json
+{ "kernels": [
+  { "id": "codex", "modes": ["terminal", "conversation"] },
+  { "id": "claude-code", "modes": ["conversation"] }
+] }
+```
+
+Which runtimes this deployment can back a session with, and which planes each one can be asked to serve. A caller still does not choose a kernel on a session — an environment profile names it — so this is what a client offers while somebody is *authoring* a profile.
+
+`modes` is derived from what the adapter advertises, through the same code that decides a session's granted set. A pairing listed here is one the deployment will accept, and a pairing absent from it is refused with `capability_unsupported` naming the plane. That is the point of publishing it: the refusal belongs where the choice is being made, not after a session has been asked for.
+
+A runtime that serves neither plane is listed with an empty `modes`. It is still a runtime this deployment knows about, and reporting it as absent would be a different claim.
 
 The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated from code so it cannot drift.
 
@@ -260,6 +396,26 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `503` | Control plane recovering or failing over; retry |
 
 `501` responses name the missing capability in `detail`, so a client learns what is unavailable rather than guessing.
+
+### The three service refusals
+
+Starting a session against a service can fail for three different reasons, and a client that cannot tell them apart retries the one that will never succeed and gives up on the one that would have worked.
+
+| `code` | Status | What it means | What to do |
+|---|---|---|---|
+| `service_not_granted` | `422` | The owner has not granted this service. `detail` names it. | Grant it in NyxID. **Retrying will not help.** |
+| `service_catalogue_unavailable` | `503` | The catalogue could not be asked. The owner's services are fine. | **Retry.** Nothing is wrong with the session or the profile. |
+| — | — | This deployment has no catalogue at all. | Nothing. It is not an error: profiles still store selections and sessions still honour them, there is simply nothing to choose from. |
+
+Told apart by `code` and by status, never by prose — a client matching on a sentence breaks when somebody rewords one.
+
+`service_catalogue_unavailable` is deliberately not `runtime_unavailable`: a caller told the runtime is unavailable goes and looks at the sandbox provider, which has nothing to do with it.
+
+**The refusal is at provision, not at profile write.** A grant can be revoked between saving a profile and starting a session from it, so the write-time answer is friendlier and the provision-time answer is the true one. A profile naming a service the catalogue does not currently grant is stored, and logged as a warning; the session started from it is what gets refused.
+
+**A catalogue that cannot be asked refuses nothing.** What a session may reach is recorded on the profile; the catalogue exists to help choose, not to authorise. Blocking session creation on NyxID being reachable would take the service down with it, and would do so for selections settled days ago.
+
+See `docs/Services.md` for the whole path.
 
 ---
 

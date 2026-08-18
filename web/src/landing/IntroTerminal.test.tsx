@@ -134,3 +134,60 @@ describe('IntroTerminal', () => {
     expect(screen.getByText(/enter to continue/i)).toBeDefined();
   });
 });
+
+describe('§15 the signed-out surface', () => {
+  it('focuses the prompt on first paint', async () => {
+    // §10 and §15: focus on load rests on the prompt, so a keyboard visitor
+    // can type immediately without hunting. Time-to-interactive is 0ms, not
+    // 3.2 seconds — the animation is decoration over a usable field.
+    await renderIntro();
+    expect(document.activeElement).toBe(screen.getByRole('textbox'));
+  });
+
+  it('keeps every character a visitor types at 300ms', async () => {
+    const user = userEvent.setup();
+    await renderIntro();
+    await user.keyboard('open a pull request');
+    expect(screen.getByRole('textbox')).toHaveValue('open a pull request');
+  });
+
+  it('completes the animation on a click, not only on Escape', async () => {
+    // §15: any keypress or click completes it. A click that only moved focus
+    // left the gesture a visitor reaches for when they have decided the
+    // introduction is an obstacle doing nothing.
+    const user = userEvent.setup();
+    const { container } = await renderIntro();
+    const frame = container.querySelector('.intro__frame') as HTMLElement;
+
+    await user.click(frame);
+
+    expect(container.querySelector('.intro__row')).toHaveAttribute('data-live', 'true');
+  });
+
+  it('carries the accessible transcript before any animation starts', async () => {
+    // §10: the introduction is never the only route to its information, and a
+    // screen reader user never waits for an animation.
+    const { container } = await renderIntro();
+    const transcript = container.querySelector('.sr-only');
+    expect(transcript?.textContent).toContain('chrono-bot, a managed agent runtime from ChronoAI.');
+    expect(transcript?.textContent).toContain('How can I help you today?');
+  });
+
+  it('states what the product is, in words a visitor can read', async () => {
+    // §15 opens with "a statement, and a terminal that already works". It was
+    // a screen-reader-only heading, which is a statement nobody sighted saw.
+    await renderIntro();
+    expect(screen.getByRole('heading', { level: 1 })).toBeVisible();
+  });
+
+  it('does not nag an empty prompt', async () => {
+    // §15: the sign-in affordance appears only once the visitor has typed a
+    // character.
+    const user = userEvent.setup();
+    await renderIntro();
+    expect(screen.queryByRole('button', { name: /sign in and run it/i })).toBeNull();
+
+    await user.keyboard('a');
+    expect(screen.getByRole('button', { name: /sign in and run it/i })).toBeInTheDocument();
+  });
+});

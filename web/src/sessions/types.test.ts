@@ -9,14 +9,14 @@ describe('session lifecycle presentation', () => {
     // docs/API_Overview.md calls this out as the most commonly misread state:
     // the bot pod was reclaimed to save resources and the session is revivable
     // under the same id. Styling it as danger would teach operators to panic.
-    expect(toneFor('idle')).toBe('warn');
-    expect(toneFor('idle')).not.toBe('danger');
+    expect(toneFor('idle')).toBe('wait');
+    expect(toneFor('idle')).not.toBe('fail');
     expect(labelFor('idle')).toBe('idle');
   });
 
   it('treats healthy states as healthy', () => {
-    expect(toneFor('ready')).toBe('ok');
-    expect(toneFor('running')).toBe('ok');
+    expect(toneFor('ready')).toBe('live');
+    expect(toneFor('running')).toBe('live');
   });
 
   it('gives every lifecycle state a tone and a label', () => {

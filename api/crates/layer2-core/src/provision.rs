@@ -19,13 +19,13 @@ use layer3_adapter::{
 };
 use tokio::sync::{broadcast, Mutex};
 
+use crate::capabilities::SessionCapabilities;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
+use crate::provision_failure::StartFailure;
 use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
-use crate::session::{
-    ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus, StopReason,
-};
+use crate::session::{ProvisioningStage, Session, SessionSpec, SessionStatus};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How long a runtime may take to become usable.
@@ -44,7 +44,7 @@ const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
 /// the call allowed. Someone asking for a session wants a session, and a
 /// transient failure is not an answer to give them — so the first failure is
 /// retried rather than reported.
-const PROVISION_ATTEMPTS: u32 = 4;
+pub(crate) const PROVISION_ATTEMPTS: u32 = 4;
 
 /// Wait before the first retry, doubling thereafter.
 ///
@@ -69,7 +69,13 @@ impl SessionService {
         // rather than being required of every caller.
         let mut spec = spec;
         if spec.subject_credential.is_none() {
-            spec.subject_credential = self.credential_for(&session.owner).await;
+            let services = self
+                .environments
+                .services_for(&session.owner, session.environment_profile.as_ref())
+                .await;
+            spec.subject_credential = self
+                .credential_for(&session.id, &session.owner, &services)
+                .await;
         }
         match tokio::time::timeout(
             PROVISION_DEADLINE,
@@ -97,94 +103,34 @@ impl SessionService {
         self.finish_start(&id).await;
     }
 
-    /// Keep trying to bring a runtime up until one does, or the attempts run out.
-    ///
-    /// Each attempt starts clean. A previous attempt may have created a runtime
-    /// before failing — an attach that timed out leaves one running — and
-    /// retrying without tearing that down would leak one sandbox per attempt.
-    async fn start_with_retries(
-        self: &Arc<Self>,
-        session: &Session,
-        spec: &SessionSpec,
-        adapter: &Arc<dyn KernelAdapter>,
-        geometry: TerminalGeometry,
-        restore: Option<&Vec<u8>>,
-    ) -> Result<(), String> {
-        let mut backoff = Duration::from_millis(
-            self.retry_backoff_ms
-                .load(std::sync::atomic::Ordering::Relaxed),
-        );
-        let mut last = String::new();
-
-        for attempt in 1..=PROVISION_ATTEMPTS {
-            match self
-                .start_runtime(session, spec, adapter, geometry, restore)
-                .await
-            {
-                Ok(()) => {
-                    if attempt > 1 {
-                        tracing::info!(
-                            session_id = %session.id,
-                            attempt,
-                            "runtime started after retrying"
-                        );
-                    }
-                    return Ok(());
-                }
-                Err(reason) => {
-                    tracing::warn!(
-                        session_id = %session.id,
-                        attempt,
-                        of = PROVISION_ATTEMPTS,
-                        reason = %reason,
-                        "could not start the runtime; trying again"
-                    );
-                    self.discard_runtime(&session.id, adapter).await;
-                    last = reason;
-                }
-            }
-            if attempt < PROVISION_ATTEMPTS {
-                tokio::time::sleep(backoff).await;
-                backoff *= 2;
-            }
-        }
-
-        Err(format!(
-            "could not start a runtime after {PROVISION_ATTEMPTS} attempts. Last error: {last}"
-        ))
-    }
-
-    /// Tear down whatever a failed attempt left behind.
-    ///
-    /// Without this each retry strands the runtime the previous one created,
-    /// which is how a session that eventually succeeds still costs several
-    /// sandboxes.
-    async fn discard_runtime(&self, id: &SessionId, adapter: &Arc<dyn KernelAdapter>) {
-        let Ok(Some(mut record)) = self.store.get(id).await else {
-            return;
-        };
-        let Some(handle) = record.runtime_id.take().map(RuntimeHandle) else {
-            return;
-        };
-        if let Err(e) = adapter.terminate(&handle).await {
-            tracing::warn!(session_id = %id, error = %e, "could not discard a failed runtime");
-        }
-        if let Err(e) = self.store.upsert(&record).await {
-            tracing::error!(session_id = %id, error = %e, "cannot clear the discarded runtime");
-        }
-        self.entries.write().await.remove(id);
-    }
-
     /// The successful path, from nothing to an attached terminal.
-    async fn start_runtime(
+    pub(crate) async fn start_runtime(
         self: &Arc<Self>,
         session: &Session,
         spec: &SessionSpec,
         adapter: &Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
         restore: Option<&Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), StartFailure> {
         let id = session.id.clone();
+        // Checked again, because this also runs for a session being revived or
+        // carried onto a replacement runtime — long after it was created, and
+        // possibly onto a build of its kernel that no longer does what the
+        // session was granted. Starting it anyway would leave a session whose
+        // recorded abilities and real ones disagree, which is the state every
+        // caller downstream trusts cannot happen.
+        //
+        // Settled rather than merely checked: a session recorded before this
+        // model existed holds nothing, and nothing is a set that refuses every
+        // operation it is consulted for. The record is read back below, so
+        // writing it here is what the entry is then built from.
+        self.settle_capabilities(session, adapter)
+            .await
+            .map_err(|refusal| {
+                StartFailure::permanent(format!(
+                    "this session's runtime can no longer be what it is: {refusal}"
+                ))
+            })?;
         // Resolved from the session rather than the request, so a runtime
         // replaced long afterwards is built the same way. A profile that has
         // since been deleted or changed hands fails the attempt rather than
@@ -193,9 +139,33 @@ impl SessionService {
             .environments
             .resolve_for_owner(&session.owner, session.environment_profile.as_ref())
             .await
-            .map_err(|e| format!("this session's environment could not be prepared: {e}"))?;
+            .map_err(|e| {
+                StartFailure::transient(format!(
+                    "this session's environment could not be prepared: {e}"
+                ))
+            })?;
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
+        // What the runtime is told, translated once. Some kernels settle how
+        // much the agent may do unattended per conversation rather than per
+        // runtime, so this is needed twice and computing it twice would be two
+        // places for the translation to drift.
+        let options = runtime_options(&spec.options);
+        /*
+         * Read from the session rather than from the profile, exactly as the
+         * credential's own scope is: a session keeps what it was granted when
+         * it was provisioned, and a bundle widened or narrowed since must not
+         * change what a running session believes it may reach.
+         *
+         * Names only. The credential minted against them travels a different
+         * path entirely and never enters the sandbox.
+         */
+        let reaches: Vec<String> = self
+            .services_for(&id)
+            .await
+            .into_iter()
+            .map(|service| service.0)
+            .collect();
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
@@ -204,13 +174,14 @@ impl SessionService {
                     rows: geometry.rows(),
                 },
                 subject_credential: spec.subject_credential.clone(),
-                options: runtime_options(&spec.options),
+                options: options.clone(),
                 restore_from: restore.cloned(),
+                reaches,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })
             .await
-            .map_err(|e| format!("could not provision a runtime: {e}"))?;
+            .map_err(StartFailure::from_provisioning)?;
 
         // Recorded before anything else is attempted. From here a runtime
         // exists, and a record that does not name it is one nothing can reclaim.
@@ -219,14 +190,38 @@ impl SessionService {
             .await;
         self.note_progress(&id, ProvisioningStage::Attaching).await;
 
-        let channel = adapter
-            .attach_terminal(&handle)
-            .await
-            .map_err(|e| format!("could not attach to the runtime: {e}"))?;
+        // Whichever plane this session was granted, and only that one. A
+        // terminal session opens no conversation and a conversation session
+        // attaches no terminal: the two are exclusive by construction, and
+        // opening both would put a kernel on two planes for one session.
+        let conversing = session.capabilities.conversation;
+        let terminal = match conversing {
+            false => Some(adapter.attach_terminal(&handle).await.map_err(|e| {
+                StartFailure::transient(format!("could not attach to the runtime: {e}"))
+            })?),
+            true => None,
+        };
+        let conversation = match conversing {
+            true => Some(
+                adapter
+                    .open_conversation(&handle, &options)
+                    .await
+                    .map_err(|e| {
+                        // A kernel that advertised a conversation and cannot open one
+                        // will not start being able to. Refused permanently so the
+                        // owner is told now rather than after the backoff.
+                        StartFailure::permanent(format!("could not open the conversation: {e}"))
+                    })?,
+            ),
+            false => None,
+        };
+
+        let named_conversation = conversation
+            .as_ref()
+            .and_then(|c| c.conversation_id.clone());
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
-        let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
-            Arc::new(Mutex::new((self.screen_factory)(geometry)));
+        let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
 
         // Seeded from the record rather than from the copy passed in, because
         // the record is the authority and the copy is a snapshot from before
@@ -240,17 +235,53 @@ impl SessionService {
         };
         seeded.geometry = geometry;
 
+        // Built for either plane, and fed only by the terminal. A conversation
+        // session never writes to it — the honest shape would be one entry per
+        // plane, which is a larger change than this and is worth making once
+        // rather than halfway.
+        let mut model = (self.screen_factory)(geometry);
+        /*
+         * Replayed into the new screen, exactly as readopt does. This path
+         * serves a session being revived or given a replacement runtime, and
+         * both are the same session: §5 asks that everything it has shown
+         * remains visible, and "a session that returns blank has lost the work
+         * as far as its owner can tell". The transcript is in storage either
+         * way; not reading it here was the whole of the difference.
+         */
+        let restored = self
+            .stored_transcript(context_ref.as_deref())
+            .await
+            .unwrap_or_default();
+        if !restored.is_empty() {
+            model.apply(&restored);
+            tracing::info!(session_id = %id, bytes = restored.len(), "transcript restored");
+        }
+        let screen: Arc<Mutex<Box<dyn ScreenModel>>> = Arc::new(Mutex::new(model));
+        // What the capture sweep has already stored, so an unchanged screen is
+        // not written back over itself on the next tick.
+        let captured_len = screen.lock().await.repaint_bytes().len();
+
+        let (terminal_input, terminal_output) = match terminal {
+            Some(channel) => (Some(channel.input), Some(channel.output)),
+            None => (None, None),
+        };
+
         let mut entry = SessionEntry {
             session: seeded,
             subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
-            runtime: Some(handle),
-            input: Some(channel.input.clone()),
+            runtime: Some(handle.clone()),
+            input: terminal_input.clone(),
             live: live.clone(),
-            attached: false,
+            live_frames: live_frames.clone(),
+            conversation: conversation.as_ref().map(|c| c.input.clone()),
+            pending_approvals: Default::default(),
+            assembling: None,
+            attached: None,
+            attachments_issued: 0,
             context_ref,
-            captured_len: 0,
+            captured_len,
         };
         entry.session.status = SessionStatus::Ready;
         crate::service::append(
@@ -263,24 +294,57 @@ impl SessionService {
         );
         self.entries.write().await.insert(id.clone(), entry);
 
-        // The relay runs for the session's life, independent of any client.
-        spawn_relay(id.clone(), channel.output, screen, live);
+        // Both run for the session's life, independent of any client. A
+        // session nobody is watching still paints its screen and still records
+        // what its agent did, which is what makes the log a record rather than
+        // a broadcast.
+        if let Some(output) = terminal_output {
+            spawn_relay(id.clone(), output, screen, live);
+        }
+        if let Some(channel) = conversation {
+            // Recorded before anything is said on it. What this is for is a
+            // control plane that has not started yet: the one replacing this
+            // process reads the log to learn what the runtime calls the
+            // conversation already running in it, and without that it opens a
+            // second one beside it.
+            if let Some(conversation_id) = named_conversation {
+                let mut entries = self.entries.write().await;
+                if let Some(entry) = entries.get_mut(&id) {
+                    crate::service::append(
+                        entry,
+                        EventKind::ConversationOpened { conversation_id },
+                    );
+                }
+            }
+            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
+        }
 
-        // Hand over the owner's credential before the agent can need it, so the
-        // first turn is already authenticated.
-        if let Some(credential) = spec.subject_credential.clone() {
-            let _ = channel
-                .input
-                .send(TerminalInput::Credential(credential))
+        // Handed over before the agent can need it, so the first turn is
+        // already authenticated. Asked of the adapter rather than pushed down
+        // the terminal channel: the credential's consumer is the supervisor's
+        // proxy, and a runtime that renders no terminal still calls out on its
+        // owner's behalf.
+        if let Some(credential) = spec.subject_credential.as_deref() {
+            if let Err(e) = adapter.refresh_credential(&handle, credential).await {
+                // Logged rather than fatal, and never with the value. The
+                // session is usable — someone can read it and type into it —
+                // and what it cannot do is act on their behalf until a
+                // credential lands. The top-up sweep is what retries that.
+                tracing::warn!(
+                    session_id = %id,
+                    error = %e,
+                    "the runtime started without its owner's credential"
+                );
+            }
+        }
+        if let Some(input) = &terminal_input {
+            let _ = input
+                .send(TerminalInput::Resize(TermSize {
+                    cols: geometry.columns(),
+                    rows: geometry.rows(),
+                }))
                 .await;
         }
-        let _ = channel
-            .input
-            .send(TerminalInput::Resize(TermSize {
-                cols: geometry.columns(),
-                rows: geometry.rows(),
-            }))
-            .await;
 
         self.flush(&id).await;
         self.note_progress(&id, ProvisioningStage::Ready).await;
@@ -335,59 +399,57 @@ impl SessionService {
             tracing::error!(session_id = %id, error = %e, "runtime provisioned but not recorded");
         }
     }
+}
 
-    /// Give up on a session, saying why, and take any runtime down with it.
+impl SessionService {
+    /// Give a session the granted set it should have, and record it.
     ///
-    /// The state is written even though nobody is waiting for it. That is the
-    /// whole point: the caller left long ago, and a session that fails silently
-    /// is indistinguishable from one still starting.
-    async fn abandon(&self, id: &SessionId, adapter: &Arc<dyn KernelAdapter>, reason: &str) {
-        tracing::error!(session_id = %id, reason, "session could not be started");
-
-        let runtime = match self.store.get(id).await {
+    /// Two jobs that must not be separated. It refuses a session whose runtime
+    /// can no longer be what the session is — the check every start makes —
+    /// and it writes the answer down where the session was recorded before
+    /// this model existed.
+    ///
+    /// The second job is why this exists. `granted` is the only thing that
+    /// produces a set, and until now the two paths that bring a session *back*
+    /// — readopting a surviving runtime, and starting a replacement — either
+    /// copied the record verbatim or computed the value and discarded it. A
+    /// session written by an older build therefore came back holding nothing,
+    /// which is not "granted nothing": it is refused at every gate that asks,
+    /// including the one behind every keystroke.
+    ///
+    /// Recorded rather than recomputed per process, because §5 makes the
+    /// record the authority and a set that exists only in memory is one the
+    /// next control plane has to derive again.
+    pub(crate) async fn settle_capabilities(
+        &self,
+        session: &Session,
+        adapter: &Arc<dyn KernelAdapter>,
+    ) -> Result<SessionCapabilities, crate::error::CoreError> {
+        let granted = SessionCapabilities::granted(session.options.mode, adapter.capabilities())?;
+        if !session.capabilities.unrecorded() {
+            return Ok(session.capabilities);
+        }
+        match self.store.get(&session.id).await {
             Ok(Some(mut record)) => {
-                let handle = record.runtime_id.take().map(RuntimeHandle);
-                record.session.status = SessionStatus::Terminated;
-                record.session.stop_reason = Some(StopReason::Error);
-                record.session.recovery_state = RecoveryState::Retired;
-                record.session.last_seq += 1;
-                let seq = record.session.last_seq;
-                let session_id = record.session.id.clone();
+                record.session.capabilities = granted;
                 if let Err(e) = self.store.upsert(&record).await {
-                    tracing::error!(session_id = %id, error = %e, "cannot record the failure");
+                    // Worth saying and not worth refusing over: the session
+                    // works with the set in hand, and the next sweep settles
+                    // it again.
+                    tracing::warn!(session_id = %session.id, error = %e, "cannot record what this session holds");
+                } else {
+                    tracing::info!(
+                        session_id = %session.id,
+                        "settled what this session holds; it was recorded before capabilities existed"
+                    );
                 }
-                if let Err(e) = self
-                    .store
-                    .append_events(&[crate::event::Event {
-                        session_id,
-                        seq,
-                        kind: EventKind::StatusChanged {
-                            status: SessionStatus::Terminated,
-                            stop_reason: Some(StopReason::Error),
-                            // The reason travels with the event so the person
-                            // watching learns what the log already knew.
-                            detail: Some(reason.to_string()),
-                        },
-                    }])
-                    .await
-                {
-                    tracing::error!(session_id = %id, error = %e, "cannot record the failure event");
-                }
-                handle
             }
-            _ => None,
-        };
-
-        self.entries.write().await.remove(id);
-
-        // A runtime may exist even though the session failed — provisioning can
-        // succeed and attaching still fail. Leaving it running would be the
-        // leak this design exists to prevent.
-        if let Some(handle) = runtime {
-            if let Err(e) = adapter.terminate(&handle).await {
-                tracing::warn!(session_id = %id, error = %e, "could not tear down the runtime");
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(session_id = %session.id, error = %e, "cannot read this session to settle what it holds");
             }
         }
+        Ok(granted)
     }
 }
 
@@ -396,8 +458,12 @@ impl SessionService {
 /// The two vocabularies are separate on purpose — the core must not speak any
 /// runtime's dialect — so this is the single place they meet, and the only
 /// place a new option has to be taught to cross.
-fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
+pub(crate) fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
     RuntimeOptions {
+        mode: match options.mode {
+            crate::options::SessionMode::Terminal => layer3_adapter::RuntimeMode::Terminal,
+            crate::options::SessionMode::Conversation => layer3_adapter::RuntimeMode::Conversation,
+        },
         model: options.model.clone(),
         reasoning_effort: Some(options.reasoning_effort.as_str().to_string()),
         permission: match options.permission {
@@ -406,5 +472,9 @@ fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
             PermissionMode::Unrestricted => RuntimePermission::Unrestricted,
         },
         own_credential: matches!(options.credential, crate::options::CredentialMode::Own),
+        // Nothing to rejoin: this is a runtime being started, which has no
+        // conversation yet. Taking one back over is the readopt path's, and it
+        // reads the name from the record rather than from anything held here.
+        resume_conversation: None,
     }
 }

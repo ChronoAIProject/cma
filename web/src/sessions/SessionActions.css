@@ -1,106 +1,49 @@
 /*
- * Session actions, per docs/Web_Style.md.
+ * Session actions — docs/Web_Style.md §7 and §12.
  *
- * A stack of full-width buttons at the foot of the details panel. Full width
- * because they are the panel's actions rather than controls competing for a
- * row, and stacked because their order carries meaning: least destructive
- * first.
+ * The controls themselves are the shared `.button` family; what lives here is
+ * their arrangement. A row in the session header, at the head of the terminal
+ * they act on.
  */
 
 .actions {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.actions__button {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  text-align: left;
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  color: var(--ink);
-  background: transparent;
-  border: 1px solid var(--rule-2);
-  border-radius: 2px;
-  padding: var(--space-2);
-  cursor: pointer;
-}
-
-.actions__button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.actions__button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  flex: none;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
 }
 
 /*
- * Disabled rather than removed, so the panel keeps its shape as a session
- * moves between states and nobody has to hunt for a control that was there a
- * moment ago. The hint beneath each one says why it is unavailable, since a
- * greyed button on its own only communicates refusal.
+ * The one sentence explaining why the disabled controls are disabled. Drawn on
+ * the surface rather than in a tooltip, which §7 rejects as unreachable by
+ * touch and invisible to anyone scanning. It truncates before the controls do:
+ * a reason nobody can act on is worth less than the control it describes.
  */
-.actions__button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.actions__hint {
-  font-size: var(--text-xs);
+.actions__reason {
+  overflow: hidden;
   color: var(--ink-3);
+  text-overflow: ellipsis;
 }
 
 /*
- * The action that gets someone moving again. Marked because when it is offered
- * it is almost always what the person came to the panel for: their session is
- * stopped and they want it back.
+ * The destructive confirmation is inline, in place of the row's own controls
+ * (§7) — never a second dialog over a dialog. Replacing the row rather than
+ * adding to it is also what stops the answer being read as one more action.
  */
-.actions__button--primary {
-  border-color: var(--accent);
-}
-
-.actions__button--primary:hover:not(:disabled) {
-  background: var(--surface-2);
-}
-
-/*
- * The destructive action is marked, and its wording says so too — colour alone
- * would carry nothing to someone who cannot distinguish it.
- */
-.actions__button--danger {
-  color: var(--emphasis);
-  border-color: var(--rule-2);
-}
-
-.actions__button--danger:hover:not(:disabled) {
-  border-color: var(--emphasis);
-}
-
-.actions__button--danger .actions__hint {
-  color: var(--emphasis);
-}
-
-.actions__confirm {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid var(--emphasis);
-  border-radius: 2px;
-}
-
 .actions__question {
-  margin: 0;
-  font-family: var(--font-ui);
+  color: var(--fail);
   font-size: var(--text-sm);
-  color: var(--ink);
+  white-space: nowrap;
 }
 
-.actions__row {
-  display: flex;
-  gap: var(--space-2);
+/*
+ * The same question shape without the alarm. Deleting a session is
+ * irreversible and takes `--fail`; moving one between planes costs a turn and
+ * a pause, and drawing that in the colour reserved for destruction would spend
+ * the one signal that is supposed to mean "this cannot be undone".
+ */
+.actions__question--cost {
+  color: var(--ink-2);
+  white-space: normal;
 }

@@ -33,6 +33,8 @@ struct UserDoc {
     display_name: Option<String>,
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    avatar_url: Option<String>,
     first_seen: String,
     last_seen: String,
 }
@@ -42,6 +44,7 @@ fn from_doc(d: UserDoc) -> RegisteredUser {
         subject: SubjectId(d.subject),
         display_name: d.display_name,
         email: d.email,
+        avatar_url: d.avatar_url,
         first_seen: d.first_seen,
         last_seen: d.last_seen,
     }
@@ -89,6 +92,7 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
             "$set": {
                 "display_name": user.display_name.as_deref(),
                 "email": user.email.as_deref(),
+                "avatar_url": user.avatar_url.as_deref(),
                 "last_seen": &user.last_seen,
             },
             "$setOnInsert": { "first_seen": &user.first_seen },
@@ -152,6 +156,7 @@ mod tests {
             subject: subject.to_string(),
             display_name: Some("Ada Lovelace".into()),
             email: Some("ada@example.com".into()),
+            avatar_url: Some("https://pictures.example/ada.png".into()),
             first_seen: "2026-08-01T00:00:00Z".into(),
             last_seen: "2026-08-14T00:00:00Z".into(),
         }
@@ -177,6 +182,11 @@ mod tests {
         let user = from_doc(doc);
         assert!(user.display_name.is_none());
         assert!(user.email.is_none());
+        // Every entry written before pictures were captured is in this shape.
+        // They gain one when their subject next signs in, and until then the
+        // surface draws them without — which is why absence has to read as
+        // absence rather than fail the document.
+        assert!(user.avatar_url.is_none());
         assert_eq!(user.label(), None);
     }
 

@@ -1,0 +1,201 @@
+/*
+ * The operations page — docs/Web_Style.md §14.
+ *
+ * A page, not a dialog: it is the one surface that shows many rows at once,
+ * and a 560px dialog was why its rows truncated.
+ */
+
+.operator {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+
+/*
+ * The head band every column shares. Its height comes from .band--head, so the
+ * page's rule lands where the sessions view's does and the window does not
+ * shift as somebody switches between them.
+ */
+.operator__head {
+  gap: var(--space-2);
+}
+
+/*
+ * The four views, in the page's second band — §14. A second band rather than a
+ * taller header, for the reason §5 gives every column.
+ */
+.operator__tabs {
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--rule);
+}
+
+.operator__tab {
+  height: var(--control-h);
+  padding-inline: var(--space-3);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+}
+
+.operator__tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * The selected view is named by its border *and* by aria-selected, so colour is
+ * never the only signal.
+ */
+.operator__tab--on {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+/*
+ * The view's own body scrolls. The page does not scroll (§5), and this is the
+ * one surface that can hold a hundred rows.
+ */
+.operator__view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  padding: var(--space-3) var(--page-gutter);
+  overflow-y: auto;
+}
+
+.operator__error {
+  margin-inline: var(--page-gutter);
+}
+
+.operator__waiting,
+.operator__summary {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+/* The same treatment `field__error` gives a failure elsewhere in the product. */
+.operator__error {
+  color: var(--fail);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* Filters — ordinary selects that narrow without reordering. */
+
+.operator__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.operator__filter {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.operator__filter-label {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.operator__confirm {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+/*
+ * Record list — rows, not a table. Hairline separators, no zebra striping, no
+ * hover highlight and no row-level click target: nothing in this panel
+ * navigates.
+ */
+
+.record {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  /* The list scrolls inside the dialog body; the page still never scrolls. */
+  overflow-y: auto;
+  max-height: 50vh;
+}
+
+.record__row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.record__row:last-child {
+  border-bottom: 0;
+}
+
+.record__at {
+  flex: none;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.record__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.record__primary {
+  color: var(--ink);
+  font-size: var(--text-base);
+}
+
+.record__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.record__actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/*
+ * An identifier is drawn as an identifier, so a reader can tell at a glance
+ * that they are not looking at somebody named that.
+ */
+.record__identifier {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.record__anonymous {
+  color: var(--ink-3);
+}
+
+.record__empty {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}

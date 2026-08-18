@@ -14,8 +14,14 @@
 
 import { interfaceLine } from '../interfaces';
 
-/** Which token a run of text is painted with. */
-export type Tone = 'ink' | 'dim' | 'accent' | 'emphasis' | 'ok';
+/**
+ * Which token a run of text is painted with.
+ *
+ * Three tones, because Web_Style.md §2 retires the second accent and reserves
+ * the semantic colours for session and system state. The introduction is
+ * authored copy, so it paints with the platform's own ramp and nothing else.
+ */
+export type Tone = 'ink' | 'dim' | 'accent';
 
 export interface Segment {
   readonly text: string;
@@ -61,13 +67,13 @@ const BOOT: readonly Line[] = [
     segments: [
       { text: 'identity   ', tone: 'dim' },
       { text: 'nyxid · ', tone: 'ink' },
-      { text: 'guest', tone: 'emphasis' },
+      { text: 'guest', tone: 'accent' },
     ],
   },
   {
     segments: [
       { text: 'install    ', tone: 'dim' },
-      { text: 'none', tone: 'ok' },
+      { text: 'none', tone: 'accent' },
       { text: ' — the machine is already running', tone: 'ink' },
     ],
   },
@@ -80,7 +86,7 @@ const GREETING: readonly Line[] = [
     typed: true,
     segments: [
       { text: "Hi, I'm ", tone: 'ink' },
-      { text: 'ChronoBot', tone: 'emphasis' },
+      { text: 'ChronoBot', tone: 'accent' },
       { text: " — I'm a managed agent provided by ChronoAI.", tone: 'ink' },
     ],
   },

@@ -39,19 +39,6 @@
   cursor: grabbing;
 }
 
-/*
- * Outside the scrolling viewport, so what the budget cost cannot be panned out
- * of sight.
- */
-.canvas__budget {
-  flex: none;
-  padding: var(--space-2) var(--space-4);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-  border-top: 1px solid var(--rule);
-}
-
 .node {
   display: flex;
   flex-direction: column;
@@ -72,13 +59,16 @@
 }
 
 /*
- * Focus — this node, and only this node, receives keystrokes. The accent border
- * and glow together separate it from a hover, and the handle's aria-pressed
- * carries the same fact without colour.
+ * Focus — this node, and only this node, receives keystrokes.
+ *
+ * §13's table: 1px --accent, the impression in accent. Hover changes weight
+ * within the neutral ramp and focus changes hue, so the two can never be
+ * mistaken for each other, and the handle's aria-pressed carries the same fact
+ * without colour at all.
  */
 .node[data-focused='true'] {
   border-color: var(--accent);
-  box-shadow: var(--glow-rest);
+  box-shadow: var(--press-card-accent);
 }
 
 .node__head {
@@ -106,6 +96,7 @@
 }
 
 .node__started {
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--ink-2);
 }
@@ -117,8 +108,9 @@
 .node__meta,
 .node__readonly {
   overflow: hidden;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
   text-overflow: ellipsis;
   text-transform: uppercase;
   color: var(--ink-3);
@@ -160,7 +152,7 @@
 @media (prefers-reduced-motion: no-preference) {
   .node {
     transition:
-      border-color 150ms ease,
-      box-shadow 150ms ease;
+      border-color var(--motion-press) ease,
+      box-shadow var(--motion-press) ease;
   }
 }

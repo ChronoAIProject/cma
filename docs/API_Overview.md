@@ -29,6 +29,7 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 | `resize_terminal` | Inform the runtime its terminal geometry changed |
 | `screen_snapshot` | Fetch the current rendered terminal screen |
 | `get_usage` | Read token, time, and cost accounting for a session |
+| `change_plane` | Move a session onto the other plane, as a rotation |
 
 **The core is the union of what every interface and every kernel needs, never the intersection.** `resize_terminal` exists in exactly one interface and still belongs in the core.
 
@@ -45,8 +46,19 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 | `resize_terminal` | — | ● | ● | — | — |
 | `screen_snapshot` | — | ● | ● | — | — |
 | `get_usage` | ● | ● | — | — | ● |
+| `change_plane` | ○ observed | ● | ○ observed | — | — |
 
-**REST is the superset facade.** It has no structural constraint and implements every operation, so it is the reference realisation of the core. Every other interface is a projection of the same model, not of REST.
+● served · ○ observed but not initiated · — absent
+
+**`change_plane` is administration, not conversation.** AG-UI and PTY are told when it happens — a state delta carrying both planes and the snapshot moment, and a typed close frame naming where the session went — and neither offers a way to ask for it. That is a declared subset under rule 3, not an omission: a protocol whose vocabulary is runs and messages has no honest shape for "stop being a terminal", and a terminal that could talk itself out of existence would be a control with nothing left to draw its answer on. REST serves it, as the superset facade serves everything.
+
+**REST is the superset facade.** It has no structural constraint and serves every operation, so it is the reference realisation of the core. Every other interface is a projection of the same model, not of REST.
+
+A dot above means the interface projects the operation. Whether a *particular session* can be asked for it is a second question, answered by that session's capabilities: `steer`, `interrupt` and `get_usage` depend on what the kernel behind it actually offers, and `resize_terminal` and `screen_snapshot` on whether it has a terminal at all. An operation the session cannot honour is refused by name — never with a 404, and never accepted and dropped.
+
+Capabilities are one half of what a session is; **reach** is the other. Capabilities say what a session can *do*; its reach says what it can *touch* — the services its credential may call on its owner's behalf. Both are decided when the session is created and recorded on it, so neither follows a later edit to the profile it was started from — and the granted set moves only when the owner moves the session between planes, which is a rotation and is written to the session's log, and REST projects both on the session object (`docs/API_REST.md`, `docs/Services.md`).
+
+`send_input` is one operation with two projections, decided by the session rather than by the caller: keystrokes to a terminal, a prompt turn to a conversation. On the terminal plane it is also how that kernel's own on-screen approvals are answered and how a turn is steered, which is why `resolve_approval` reads "at the TUI" for PTY and why `steer` is not a separate call there.
 
 An interface exposing a subset is expected. An interface inventing an operation absent from the core is a defect.
 
@@ -112,8 +124,22 @@ The event log is the single source of truth and the reason every interface can b
 
 - **Append-only**, with a **monotonic `seq` per session**. Not a global sequence.
 - Resumable: `?starting_after=<seq>` replays from a cursor. One integer of server state; no `Last-Event-ID` plumbing.
-- **Durable events are semantic.** Turn boundaries, tool calls, approvals, status changes, usage.
-- **Ephemeral events are deltas.** Token-level output and terminal bytes are streamed for liveness and never persisted. A client that misses them recovers from the durable event, or from a screen snapshot.
+- **Durable events are semantic.** The complete set, which is what `EventKind` holds and nothing more:
+
+  | | |
+  |---|---|
+  | `session_created` · `progress` · `status_changed` | a session coming into being, and how it is getting on |
+  | `turn_started` · `turn_completed` | turn boundaries |
+  | `message_committed` | what the agent finished saying |
+  | `tool_call_started` · `tool_call_updated` | what it did, and where that got to |
+  | `usage_reported` | totals, not deltas — a lost total is corrected by the next one |
+  | `conversation_gap` | the boundary where part of a conversation was dropped rather than recorded |
+  | `approval_requested` · `approval_resolved` | what it was blocked on, and how that was answered |
+  | `terminal_attached` · `terminal_detached` · `terminal_resized` | who held the terminal, and at what size |
+
+  A client must tolerate a discriminator it does not know: this set grows, and a control plane mid-rollout reads events a newer one wrote.
+
+- **Ephemeral events are deltas.** Token-level message pieces and terminal bytes are streamed for liveness and never persisted — deliberately, because numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time. A client that misses them recovers from the committed message, or from a screen snapshot.
 
 Clients reconnect by opening the stream first, then reading history, then deduplicating on event id — never by assuming the stream replays.
 
@@ -149,7 +175,25 @@ No specification defines a named conformance profile for agent services. chrono-
 
 The same class URIs appear in every surface, so one vocabulary is visible everywhere. If a standard later emerges, the URIs change and the architecture does not.
 
-**Invoking an operation an interface does not project returns a typed error naming the missing capability**, never a generic 404 or a silent no-op. MCP's `-32021` carrying `data.requiredCapabilities` is the shape every interface mirrors.
+The classes:
+
+| Class | A session holds it when |
+|---|---|
+| `…/conf/core` | always — every session has a lifecycle, a log and a status |
+| `…/conf/conversation` | its kernel holds a structured conversation and it was created for one |
+| `…/conf/terminal` | its kernel renders a terminal and it was created for one |
+| `…/conf/steering` | its kernel accepts input while a turn is in flight |
+| `…/conf/interrupt` | its kernel can abandon a turn without ending the session |
+| `…/conf/usage` | its kernel reports what it has spent |
+| `…/conf/approvals` · `…/conf/events-replay` | the service does, for every session |
+
+**Two claims, and they are not the same.** What an *interface* declares is what it could project for some session — the vocabulary a client must be ready for. What a *session* carries is its granted set, decided when it was created from what its kernel can actually do, and reported on the session itself. It changes only where its owner asks for `change_plane`, and that change is recorded rather than quiet. A service that renders terminals still cannot render one for a session that has none.
+
+The two planes are exclusive: a session holds `conversation` or `terminal`, never both. Every interface dispatches on that to decide what an operation means, and a session claiming both would make "send input" ambiguous — keystrokes or a prompt, with no way to tell which was meant.
+
+**Invoking an operation a session does not hold returns a typed error naming the missing capability**, never a generic 404 or a silent no-op. MCP's `-32021` carrying `data.requiredCapabilities` is the shape every interface mirrors.
+
+A capability is declared only where it has been demonstrated against the kernel behind it. Kernels differ more than they look: one accepts input mid-turn and cannot be interrupted, another the reverse, and a third can do neither. Each absence is stated rather than discovered.
 
 ---
 
@@ -160,4 +204,4 @@ The same class URIs appear in every surface, so one vocabulary is visible everyw
 3. **Subsets are declared, not discovered.** A client can ask what an interface projects.
 4. **Errors are typed and name what is missing.** Never a bare status code.
 5. **Concurrent input has one answer.** A second turn arriving while one is in flight resolves identically on every interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
-6. **Identity is NyxID.** Every interface authenticates the same subject and scopes every operation to it. No interface has its own user model.
+6. **Identity is NyxID.** Every interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.

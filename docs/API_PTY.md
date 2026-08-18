@@ -27,7 +27,41 @@ GET /api/v1/sessions/{id}/terminal
 Upgrade: websocket
 ```
 
-Authenticated as the session owner. A second concurrent attach is rejected — see §6.
+Authenticated as the session owner. A second concurrent attach is rejected — see §6. Two ways to authenticate; see §2.1.
+
+### 2.1 Authenticating the upgrade
+
+The browser WebSocket API cannot set an `Authorization` header on the upgrade, and cross-origin cookies are not a workable contract for chrono-bot's actual consumers — other products' frontends, on their own origins. So there are two ways in, and a client uses whichever fits it.
+
+**Same-origin, cookie-authenticated** (our own dashboard): nothing to do. The browser sends the session cookie itself and the upgrade is authenticated like any other route.
+
+**Cross-origin, bearer-authenticated** (a product frontend): exchange the credential for a ticket over a route that *can* carry a header, then present the ticket on the upgrade.
+
+```http
+POST /api/v1/sessions/{id}/terminal-ticket
+Authorization: Bearer …
+Content-Type: application/json
+
+{ "takeover": false }
+```
+
+```json
+{ "ticket": "…", "expires_at": "2026-08-17T14:37:14Z" }
+```
+
+```
+wss://…/api/v1/sessions/{id}/terminal?ticket=…
+```
+
+The body is optional; omitting it means `takeover: false`.
+
+**What makes a ticket in a URL acceptable.** It is single-use — the second redemption is refused, and so is the second attempt after a refused first. It expires in about thirty seconds. It is bound to one session and one subject, and it grants nothing but the attachment it was issued for. A ticket presented against a different session is refused *and spent*. The long-lived credential never appears in a URL, a proxy log, or a browser history entry, which is the whole point of the exchange.
+
+**A ticket is never recorded.** The activity log keeps only what its classifier names, and `ticket` is not a name it knows. Nothing logs a ticket's value. Asking for a ticket is recorded as the attach it is for, with no query parameters and no body content.
+
+**Alternative considered.** The token could instead ride `Sec-WebSocket-Protocol`, which browsers do let a page set. The ticket is preferred because it keeps long-lived credentials out of the WebSocket layer entirely: a subprotocol header carries the real credential into every intermediary on the path and into whatever any of them logs, for the life of the connection, whereas a ticket's exposure is bounded to seconds and to one use.
+
+**Refusals happen before the upgrade.** A missing, spent, expired, or wrong-session ticket produces an HTTP `401` with a problem document, not a socket that opens and immediately closes — so a client can tell "you are not allowed" from "the terminal went away".
 
 ### Framing
 
@@ -67,6 +101,19 @@ Resize frames with `cols` or `rows` of `0` are rejected with `{"t":"error"}` and
 
 **A dropped connection does not end the session.** It detaches. The session remains alive and reattachable, and the kernel keeps working.
 
+**The reconnect contract**, in order, every time:
+
+```
+1. (bearer clients) POST …/terminal-ticket   ← a ticket is single-use; reconnecting means a new one
+2. Open the WebSocket
+3. Send {"t":"resize", …}                    ← still mandatory, still before any binary frame
+4. Receive {"t":"ready", …}                  ← limits and conformance classes
+5. Receive the screen snapshot and scrollback as binary
+6. Live bytes
+```
+
+Step 1 is not optional on reconnect. A ticket is spent the moment it is redeemed, so a client that kept one for later will find it refused.
+
 chrono-bot maintains a **server-side terminal emulator** per live session, so on reattach the client receives a full screen snapshot and then live output. This is necessary rather than convenient: replaying raw historical bytes is wrong after any resize, and a full-screen application's byte stream cannot be seeked.
 
 Consequences for clients:
@@ -91,7 +138,15 @@ A revive is a **cold start**. Clients should surface that rather than presenting
 
 ## 6. Concurrency
 
-One read-write attachment per session. A second attach receives `{"t":"error","code":"already_attached"}` and the connection closes.
+One read-write attachment per session. A second attach receives `{"t":"error","code":"already_attached"}` and the connection closes. `TerminalAttached` and `TerminalDetached` appear in the session's durable event log, so anything watching that stream can see who holds it.
+
+**Takeover.** The owner may claim a terminal somebody already holds, by asking for the ticket with `{"takeover": true}`. This exists because the alternative is a lock-out: a client whose connection died in a way the server has not yet noticed still holds the attachment, and its owner cannot get back into their own session.
+
+The superseded client is **told**, not merely starved of output — it receives a close frame with code `4000` and the reason `the owner attached this terminal from somewhere else`. A terminal that simply stops updating is indistinguishable from a broken one, and whoever is looking at it will reload and take the attachment straight back, which is a fight nobody wins.
+
+Takeover is not a way around ownership: a session the caller does not own is refused exactly as an ordinary attach would be.
+
+**Observers do not attach.** A client that only needs to watch uses `GET /screen` and the events stream. A second attachment is the wrong tool for it, and taking one would displace whoever is actually working.
 
 Multi-viewer fan-out is not offered in this version. The server-side emulator makes it possible later; the seam exists, the feature does not.
 
@@ -108,7 +163,17 @@ Multi-viewer fan-out is not offered in this version. The server-side emulator ma
 | `screen_snapshot` | delivered on attach; also available over [REST](./API_REST.md) |
 | `resolve_approval` | **at the TUI.** The user answers the kernel's own prompt by typing |
 
-`create_session`, `steer`, and `get_usage` are not projected here. Create the session over REST first, then attach.
+`create_session`, `steer`, `get_usage` and `change_plane` are not projected here. Create the session over REST first, then attach.
+
+`change_plane` is the one worth explaining. A terminal that could move its own session onto the conversation plane would be a control whose own surface stops existing the moment it succeeds, with nowhere left to draw the answer. It is asked for over [REST](./API_REST.md) — but it is **observed** here, because it happens to this attachment:
+
+| Close code | Means |
+|---|---|
+| `4000` | the owner attached this terminal from somewhere else |
+| `4001` | the session moved to the conversation plane and has no terminal any more |
+| `4002` | the session is being carried onto an updated runtime; attach again in a moment |
+
+All three are in the private range, and all three close with a reason rather than going quiet. They ask different things of whoever is looking — go to the other tab, stop looking for a terminal, wait a moment — which is why they cannot share a code.
 
 ### Approvals behave differently here, and it matters
 

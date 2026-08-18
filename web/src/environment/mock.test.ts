@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMockProfileStore } from './mock';
 import { emptyDraft } from './types';
+import { DEFAULT_AGENT } from './types';
 
 function draft(name: string) {
   return { ...emptyDraft(), name };
@@ -23,8 +24,8 @@ describe('the in-memory profile store', () => {
     const created = await store.create(draft('bare'));
 
     expect(created.packages.map((p) => p.name)).toContain('nyxid');
-    expect(created.skills).toContain('nyxid');
-    expect(created.skills).toContain('ornn-agent-manual-cli');
+    expect(created.agent.skills).toContain('nyxid');
+    expect(created.agent.skills).toContain('ornn-agent-manual-cli');
     expect(created.mandatory.skills).toContain('ornn-agent-manual-cli');
   });
 
@@ -32,16 +33,18 @@ describe('the in-memory profile store', () => {
     const store = createMockProfileStore();
     const created = await store.create({
       ...draft('mine'),
-      skills: ['chosen'],
+      agent: { ...DEFAULT_AGENT, skills: ['chosen'] },
+      nyxid: { services: [] },
       packages: [{ name: 'ripgrep' }],
     });
 
     const stripped = await store.update(created.id, {
       ...draft('mine'),
-      skills: [],
+      agent: { ...DEFAULT_AGENT, skills: [] },
+      nyxid: { services: [] },
       packages: [],
     });
-    expect(stripped.skills).toContain('nyxid');
+    expect(stripped.agent.skills).toContain('nyxid');
     expect(stripped.packages.map((p) => p.name)).toContain('nyxid');
   });
 

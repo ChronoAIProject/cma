@@ -47,6 +47,12 @@ pub struct Reclaimed {
     pub reprovisioned_sessions: usize,
     /// Sessions carried onto the current runtime version.
     pub rotated_sessions: usize,
+    /// Sessions left exactly as they were, because nothing could be confirmed.
+    ///
+    /// Counted rather than merely logged: a sweep that defers every session is
+    /// a provider outage, and one that defers the same session forever is a
+    /// sandbox that answers nobody. Both are worth seeing in one number.
+    pub deferred_sessions: usize,
 }
 
 /// What the provider says is running, for one kernel.
@@ -255,7 +261,33 @@ impl SessionService {
                     reclaimed.readopted_sessions += 1;
                     return;
                 }
+                Err(e) if alive.is_none() => {
+                    /*
+                     * Could not be asked, and could not be reached. Those two
+                     * failures have one likely cause — the provider is not
+                     * answering — and replacing a sandbox on that evidence
+                     * abandons a session that is very probably still running,
+                     * with its conversation inside it.
+                     *
+                     * The module's rule, applied in the direction it was
+                     * missing from: a runtime is acted on when the record
+                     * positively says so, never merely because this process
+                     * could not hear it. Waiting costs one sweep. Replacing
+                     * costs somebody's work, and has: a provider that became
+                     * ready 1.2 seconds after a boot sweep cost two owners
+                     * their conversations, and the sandboxes holding them are
+                     * still running, unreferenced.
+                     */
+                    tracing::warn!(
+                        session_id = %id,
+                        error = %e,
+                        "cannot reach this session's runtime and cannot confirm it is gone; leaving it for the next sweep"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
                 Err(e) => {
+                    // The provider was asked and says this runtime is there.
                     // Listed but unreachable is no more usable than gone.
                     tracing::warn!(session_id = %id, error = %e, "cannot take over the runtime");
                 }
@@ -296,7 +328,6 @@ impl SessionService {
         tracing::warn!(session_id = %id, "starting a new runtime for a session that lost one");
         let geometry = starting.session.geometry;
         let spec = SessionSpec {
-            kernel: starting.session.kernel.clone(),
             geometry: Some(geometry),
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),

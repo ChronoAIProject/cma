@@ -1,26 +1,89 @@
 /*
- * Landing surface. Every value here traces to docs/Web_Style.md.
+ * The signed-out surface — docs/Web_Style.md §15.
+ *
+ * "A statement, and a terminal that already works." A statement column beside
+ * a live terminal panel, inside the same page frame as every other page.
  *
  * The surface follows the active theme rather than pinning itself to dark.
- * Web_Style.md section 2 and section 9 require both themes to be supported and
- * to meet AA, and the light ANSI palette is specified precisely so a terminal
- * remains legible there. Forcing dark would also mean a second set of colours
- * in the codebase, which is the drift the token system exists to prevent.
+ * §2 and §9 require both themes to be supported and to meet AA, and the light
+ * ANSI palette is specified precisely so a terminal remains legible there.
+ * Forcing dark would also mean a second set of colours in the codebase, which
+ * is the drift the token system exists to prevent.
  */
 
 .intro {
   position: relative;
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding: var(--frame-inset);
+  flex: 1 1 auto;
+  gap: var(--space-8);
+  /* Stretch, so the terminal panel fills its share rather than hugging the
+     script that happens to be printing into it. */
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--page-gutter);
   background: var(--ground);
+}
+
+/* ── The statement ────────────────────────────────────────────────────── */
+
+.intro__statement {
+  display: flex;
+  flex: 0 1 34rem;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
+  justify-content: center;
+  min-width: 0;
+}
+
+.intro__headline {
+  margin: 0;
+  font-size: var(--text-display);
+  font-weight: 500;
+  letter-spacing: var(--track-display);
+  line-height: 1;
+  text-wrap: balance;
+}
+
+.intro__lede {
+  max-width: 30rem;
+  color: var(--ink-2);
+  font-size: var(--text-2xl);
+  line-height: var(--leading-base);
+  text-wrap: pretty;
+}
+
+/*
+ * Below 60rem the statement stacks above the terminal rather than beside it:
+ * two columns at that width leave the terminal too narrow to read, and §16
+ * makes the terminal the last surface to give up space.
+ */
+@media (max-width: 59.999rem) {
+  .intro {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .intro__statement {
+    flex: none;
+  }
+
+  .intro__headline {
+    font-size: var(--text-3xl);
+  }
+
+  .intro__lede {
+    font-size: var(--text-md);
+  }
 }
 
 .intro__frame {
   display: flex;
-  flex: 1;
+  flex: 1 1 44rem;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   gap: var(--space-1);
   padding: var(--space-6);
   overflow-x: auto;
@@ -58,12 +121,6 @@
 .tone-accent {
   color: var(--accent);
 }
-.tone-emphasis {
-  color: var(--emphasis);
-}
-.tone-ok {
-  color: var(--ok);
-}
 
 /*
  * Caret during scripted output. Once the prompt goes live this element
@@ -77,7 +134,7 @@
   width: 1ch;
   height: 1em;
   vertical-align: text-bottom;
-  background: var(--emphasis);
+  background: var(--accent);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -117,7 +174,7 @@
   flex: 1;
   min-width: 0;
   color: var(--ink);
-  caret-color: var(--emphasis);
+  caret-color: var(--accent);
   background: none;
   border: none;
   outline: none;
@@ -136,14 +193,14 @@
 }
 
 .intro__row:focus-within {
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: var(--focus-prompt);
 }
 
 .intro__hint {
   padding-left: var(--space-6);
   color: var(--ink-3);
   font-size: var(--text-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
 }
 
 .intro__skip {
@@ -155,9 +212,9 @@
   padding: var(--space-1) var(--space-3);
   color: var(--ink-3);
   font-size: var(--text-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-label);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius);
 }
 
 .intro__skip:hover {
@@ -168,8 +225,8 @@
 @media (prefers-reduced-motion: no-preference) {
   .intro__skip {
     transition:
-      color 150ms ease,
-      border-color 150ms ease;
+      color var(--motion-colour) ease,
+      border-color var(--motion-colour) ease;
   }
 }
 
@@ -185,7 +242,7 @@
  * for less motion — the words carry the instruction either way.
  */
 .intro__blink {
-  color: var(--emphasis);
+  color: var(--accent);
 }
 
 @media (prefers-reduced-motion: no-preference) {

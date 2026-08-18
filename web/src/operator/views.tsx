@@ -1,3 +1,4 @@
+import { Button } from '../ui/Button';
 import { Chip } from '../ui/Chip';
 import { fullTimestampOrNone } from '../sessions/sessionTime';
 import type { Capability } from '../auth/types';
@@ -176,7 +177,7 @@ export function NamespaceView({ inventory }: { readonly inventory: RuntimeInvent
                     <>
                       {provider.kernel}
                       {runtime.unaccounted ? (
-                        <Chip tone="warn" inline>
+                        <Chip tone="wait" inline>
                           unaccounted
                         </Chip>
                       ) : null}
@@ -200,7 +201,7 @@ export function NamespaceView({ inventory }: { readonly inventory: RuntimeInvent
               primary={
                 <>
                   {provider.kernel}
-                  <Chip tone="warn" inline>
+                  <Chip tone="wait" inline>
                     unknown
                   </Chip>
                 </>
@@ -267,31 +268,26 @@ export function SessionsView({
               confirming === session.id ? (
                 <>
                   <span className="operator__confirm">End this session?</span>
-                  <button
-                    type="button"
-                    className="button button--danger"
+                  <Button
+                    tone="danger"
                     disabled={busy}
                     onClick={() => {
                       onTerminate(session.id);
                     }}
                   >
                     End
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
+                  </Button>
+                  <Button
                     onClick={() => {
                       onConfirm(null);
                     }}
                   >
                     Cancel
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className="button"
+                  <Button
                     disabled={!controls.canStop || busy}
                     title={controls.stopReason}
                     onClick={() => {
@@ -299,10 +295,8 @@ export function SessionsView({
                     }}
                   >
                     Stop
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
+                  </Button>
+                  <Button
                     disabled={!controls.canTerminate || busy}
                     title={controls.terminateReason}
                     onClick={() => {
@@ -310,7 +304,7 @@ export function SessionsView({
                     }}
                   >
                     End
-                  </button>
+                  </Button>
                 </>
               )
             }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { abilitiesFor, listable } from './availability';
 import type { Session, SessionLifecycle } from './types';
+import { NO_CAPABILITIES } from '../agui';
 
 /**
  * The promise a session owner is given, as assertions.
@@ -12,7 +13,14 @@ import type { Session, SessionLifecycle } from './types';
  */
 
 function session(lifecycle: SessionLifecycle, stopReason?: 'error' | 'other'): Session {
-  return { id: `sesn_${lifecycle}`, kernel: 'codex', lifecycle, createdAt: 0, stopReason };
+  return {
+    id: `sesn_${lifecycle}`,
+    kernel: 'codex',
+    lifecycle,
+    createdAt: 0,
+    stopReason,
+    capabilities: NO_CAPABILITIES,
+  };
 }
 
 const ALL: readonly SessionLifecycle[] = [
@@ -63,7 +71,7 @@ describe('what a session allows', () => {
     expect(can.canStop).toBe(false);
     expect(can.canDelete).toBe(false);
     expect(can.canRevive).toBe(false);
-    expect(can.reason).toMatch(/updated runtime/i);
+    expect(can.reason).toMatch(/being moved/i);
   });
 
   it('lets a session that is still starting be abandoned', () => {

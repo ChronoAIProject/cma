@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::terminal::{ScreenSnapshot, TerminalGeometry};
+use crate::test_support::{spec, user, FakeAdapter, FakeStore};
 
 /// A screen model that records what it was fed, so the relay's behaviour
 /// can be observed without a real terminal parser.
@@ -89,4 +90,99 @@ async fn output_with_no_subscriber_is_not_an_error() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert_eq!(screen.lock().await.repaint_bytes(), b"onetwo".to_vec());
+}
+
+#[tokio::test]
+async fn a_session_runs_on_the_kernel_this_deployment_configured() {
+    // A caller cannot name one, and the type is what says so: the field a
+    // caller would have filled is gone, so an interface cannot reach past the
+    // decision by substituting a literal — which is what both of them did, and
+    // what the core then silently overwrote.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            ..Default::default()
+        });
+    let svc = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+    );
+    let alice = user("alice");
+
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    assert_eq!(
+        created.kernel,
+        crate::test_support::kernel(),
+        "the deployment's default is what an unspecified session gets"
+    );
+}
+
+#[tokio::test]
+async fn a_kernel_this_deployment_does_not_run_is_refused_before_anything_is_recorded() {
+    // The profile is where a kernel is named, so a profile naming one this
+    // deployment cannot start must fail the request rather than leave a session
+    // provisioning towards a runtime that does not exist.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::ids::KernelId::new("a-kernel-this-deployment-does-not-run"),
+            ..Default::default()
+        });
+    let svc = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+    );
+    let alice = user("alice");
+
+    let err = svc
+        .create_session(&alice, spec())
+        .await
+        .expect_err("a kernel this deployment cannot start must not be accepted");
+    assert!(
+        matches!(err, CoreError::RuntimeUnavailable(_)),
+        "got {err:?}"
+    );
+    assert!(
+        svc.list_sessions(&alice).await.is_empty(),
+        "nothing may be recorded for a session that was refused"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_is_advertised_as_what_it_says_it_can_be() {
+    // What a client is offered comes from the adapter, not from a list kept
+    // beside it: a kernel that gains the conversation plane is offered for it
+    // the moment it says so, and one that loses a plane stops being offered
+    // without anything here being edited.
+    let store = Arc::new(FakeStore::default());
+    let screen_only = Arc::new(FakeAdapter::default());
+    let svc = crate::test_support::service(Arc::clone(&store), screen_only);
+
+    assert_eq!(
+        svc.available_kernels(),
+        vec![(crate::test_support::kernel(), vec![SessionMode::Terminal])],
+        "the fake runtime renders a screen and holds no conversation"
+    );
+
+    let both = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    });
+    let svc = crate::test_support::service(Arc::clone(&store), both);
+
+    assert_eq!(
+        svc.available_kernels(),
+        vec![(
+            crate::test_support::kernel(),
+            vec![SessionMode::Terminal, SessionMode::Conversation]
+        )],
+    );
 }
