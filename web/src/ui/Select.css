@@ -30,5 +30,5 @@
 .select__unavailable {
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-label);
 }

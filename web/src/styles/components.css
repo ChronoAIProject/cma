@@ -1,113 +1,54 @@
 /*
- * The shared component layer — docs/Web_Style.md §3, §5, §7 and §14.
+ * The shared component layer — docs/Web_Style.md §3, §5, §7, §12 and §14.
  *
  * base.css is element selectors and global resets; component styling does not
- * live there. This file holds the class vocabulary that is shared across
- * components and belongs to none of them: the letterpress state contract, the
- * two button sizes, fields, the one dropdown pattern, bands, cards, record
- * rows and the semantic tone helpers.
+ * live there. This file holds the class vocabulary shared across components and
+ * belonging to none of them: the two depth levels, the control set, fields,
+ * dropdowns, status chips, rows, cards, plates and the tone helpers.
  *
  * Rules belonging to exactly one component stay in that component's own .css.
- * A class that acquires a single owner should move there rather than stay.
  */
 
-/* ── Depth: the state contract, §3 ────────────────────────────────────────
+/* ── Depth, §3 ────────────────────────────────────────────────────────────
  *
- * Hover presses INTO the impression: the shadow shrinks and the element moves
- * down and right by the difference. Nothing in this interface lifts toward the
- * cursor. Active goes flush. Disabled carries no impression at all, because
- * the impression is what says a thing can be pressed and a greyed key that
- * still looks pressable reads as broken rather than unavailable.
+ * Two levels. A thing resting on the page carries --lift-rest; a thing floating
+ * over it carries --lift-plate and never moves. Nothing translates on hover:
+ * hover raises the background one step in the ramp, active lowers it one step,
+ * and that is the whole vocabulary. The letterpress contract is retired.
  */
 
-.press--accent {
-  box-shadow: var(--press-accent-rest);
+.lift {
+  box-shadow: var(--lift-rest);
 }
 
-.press--quiet {
-  box-shadow: var(--press-quiet-rest);
-}
-
-.press--card {
-  box-shadow: var(--press-card-rest);
-}
-
-/* A plate floats over the page and never moves — §3. */
-.press--plate {
-  box-shadow: var(--press-card-rest);
-}
-
-.press--accent:hover:not(:disabled, [aria-disabled='true']) {
-  box-shadow: var(--press-accent-hover);
-}
-
-.press--quiet:hover:not(:disabled, [aria-disabled='true']) {
-  box-shadow: var(--press-quiet-hover);
-}
-
-.press--card:hover {
-  box-shadow: var(--press-card-hover);
-}
-
-.press--accent:active:not(:disabled, [aria-disabled='true']),
-.press--quiet:active:not(:disabled, [aria-disabled='true']) {
-  box-shadow: var(--press-flush);
-}
-
-.press--accent:disabled,
-.press--quiet:disabled,
-.press--accent[aria-disabled='true'],
-.press--quiet[aria-disabled='true'] {
-  box-shadow: var(--press-none);
-}
-
-/* Focus stacks the ring OVER whatever impression the state holds — §3, §8. */
-.press--accent:focus-visible {
-  box-shadow: var(--press-accent-rest), var(--focus-ring);
-}
-
-.press--quiet:focus-visible {
-  box-shadow: var(--press-quiet-rest), var(--focus-ring);
-}
-
-.press--card:focus-visible,
-.press--plate:focus-visible {
-  box-shadow: var(--press-card-rest), var(--focus-ring);
+.plate {
+  background: var(--raised);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--lift-plate);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .press--accent,
-  .press--quiet,
-  .press--card {
+  .button,
+  .chip,
+  .row-item,
+  .select,
+  .field__control {
     transition:
-      transform var(--motion-press) ease,
-      box-shadow var(--motion-press) ease,
-      color var(--motion-colour) ease,
       background var(--motion-colour) ease,
-      border-color var(--motion-colour) ease;
-  }
-
-  /*
-   * The translate is suppressed under reduced motion by living here; the
-   * shadow swap alone still communicates the press, so nothing is lost.
-   */
-  .press--accent:hover:not(:disabled, [aria-disabled='true']),
-  .press--quiet:hover:not(:disabled, [aria-disabled='true']) {
-    transform: translate(2px, 2px);
-  }
-
-  .press--accent:active:not(:disabled, [aria-disabled='true']),
-  .press--quiet:active:not(:disabled, [aria-disabled='true']) {
-    transform: translate(4px, 4px);
+      border-color var(--motion-colour) ease,
+      color var(--motion-colour) ease,
+      box-shadow var(--motion-press) ease;
   }
 }
 
 /* ── Buttons, §7 ──────────────────────────────────────────────────────────
  *
- * Two heights and no others. Height is declared on the control and every
- * control is border-box: a quiet button carries a 1px border and an accent
- * button does not, so under content-box the two render 2px apart and sit a
- * pixel out of line in the same row.
+ * One primary per surface, spent on the action that surface exists for.
+ * Everything else is secondary or quiet, and the rest goes in the overflow
+ * menu — a header carrying four equally-weighted keys makes the reader choose
+ * before they can read. Every control is border-box, so a bordered and an
+ * unbordered control in the same row measure alike.
  */
 
 .button {
@@ -120,117 +61,136 @@
   padding-inline: var(--space-3);
   color: var(--ink-2);
   font-family: var(--font-ui);
-  font-size: var(--text-base);
+  font-size: var(--text-note);
   white-space: nowrap;
-  background: var(--surface);
+  background: none;
   border: 1px solid var(--rule-2);
   border-radius: var(--radius);
 }
 
-.button:hover:not(:disabled) {
+.button:hover:not(:disabled, [aria-disabled='true']) {
   color: var(--ink);
+  background: var(--raised);
 }
 
-.button:disabled {
+.button:active:not(:disabled, [aria-disabled='true']) {
+  background: var(--sunken);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.button:disabled,
+.button[aria-disabled='true'] {
   color: var(--ink-3);
   background: var(--inset);
   border-color: var(--rule);
   cursor: not-allowed;
 }
 
-/* One accent button per view, spent on the action the view exists for. */
-.button--accent {
+/* The primary. No border: the fill is the edge. */
+.button--primary {
   color: var(--on-accent);
-  font-weight: 500;
+  font-weight: 600;
   background: var(--accent-fill);
-  border-color: var(--accent-edge);
+  border-color: transparent;
 }
 
-.button--accent:hover:not(:disabled) {
+.button--primary:hover:not(:disabled) {
   color: var(--on-accent);
+  filter: brightness(1.06);
 }
 
-/* Destructive actions take --fail and confirm inline, never in a second dialog. */
+/* Quiet: no border at all. For a third-rank action beside two ranked ones. */
+.button--quiet {
+  color: var(--ink-2);
+  border-color: transparent;
+}
+
+/* Destructive. Confirms inline, in place of the controls that raised it. */
 .button--danger {
   color: var(--fail);
-  border-color: var(--fail);
-}
-
-.button--danger:hover:not(:disabled) {
-  color: var(--fail);
+  border-color: var(--fail-wash);
 }
 
 .button--sm {
   height: var(--control-h-sm);
-  padding-inline: var(--space-2);
-  font-size: var(--text-sm);
+  padding-inline: var(--space-3);
+  font-size: var(--text-meta);
+  border-radius: var(--radius-sm);
 }
 
-/* A panel's one full-width primary action. */
+.button--md {
+  height: var(--control-h-md);
+  font-size: var(--text-ui);
+}
+
+/* A panel's one full-width primary action — the rail's new-session key. */
 .button--block {
   width: 100%;
-  height: var(--control-h-block);
+  height: var(--control-h-lg);
+  font-size: var(--text-ui);
+  font-weight: 600;
 }
 
-/* The landing's opening actions. */
-.button--lg {
-  height: var(--control-h-lg);
-  padding-inline: var(--space-4);
-  font-size: var(--text-md);
+/* The landing's opening action. */
+.button--xl {
+  height: var(--control-h-xl);
+  padding-inline: var(--space-5);
+  font-size: var(--text-body);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+}
+
+/* An icon-only control: the overflow key, a collapse handle, a dismiss. */
+.button--icon {
+  width: var(--control-h);
+  min-width: 0;
+  padding: 0;
 }
 
 /*
- * Controls are disabled, never removed, and every disabled control states why.
- * The reason is part of the button because a tooltip is unreachable by touch
- * and invisible to anyone scanning. A stacked key holds a 52px minimum so a
- * column of them stays even when one reason wraps.
+ * §7: controls are disabled, never removed, and the reason is stated on the
+ * surface — once per row, beside the controls it explains, never in a tooltip
+ * and never repeated on each key.
  */
-.button--stacked {
-  flex-direction: column;
-  gap: 2px;
-  align-items: flex-start;
-  height: auto;
-  min-height: var(--stacked-min);
-  padding-block: var(--space-2);
-  text-align: left;
-  white-space: normal;
-}
-
-.button__reason {
+.control-reason {
+  overflow: hidden;
   color: var(--ink-3);
-  font-size: var(--text-2xs);
-  line-height: var(--leading-xs);
+  font-size: var(--text-note);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* ── Fields, §7 ──────────────────────────────────────────────────────────
- *
- * Flat: you type into it, so it takes no impression. --press-none is the
- * hairline, not a shadow.
- */
+/* ── Fields, §7 ───────────────────────────────────────────────────────── */
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .field__label {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-note);
 }
 
 .field__control {
-  height: var(--control-h);
-  padding-inline: var(--space-2);
+  height: var(--control-h-md);
+  padding-inline: var(--space-3);
   color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-base);
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
   background: var(--inset);
   border: 1px solid var(--rule-2);
   border-radius: var(--radius);
+}
+
+.field__control::placeholder {
+  color: var(--ink-3);
 }
 
 .field__control:focus-visible {
@@ -238,23 +198,21 @@
   box-shadow: var(--focus-ring);
 }
 
-.field__control:disabled {
-  color: var(--ink-3);
-  cursor: not-allowed;
-}
-
 .field__hint {
   color: var(--ink-3);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
 }
 
-/* ── The one dropdown pattern, §7 ─────────────────────────────────────────
+.field__error {
+  color: var(--fail);
+  font-size: var(--text-note);
+}
+
+/* ── Dropdowns, §7 ───────────────────────────────────────────────────────
  *
- * An instrument closed and a plate open: hairline and fill at rest with no
- * impression, since it is not a key; the open menu floats and takes the card
- * impression. Choosing a VALUE is a select; choosing an ACTION is a menu.
- * They look alike and behave differently, so a select never runs anything
- * when it opens.
+ * An instrument closed and a plate open. Choosing a VALUE is a select;
+ * choosing an ACTION is a menu. A select never runs anything when it opens.
  */
 
 .select {
@@ -263,37 +221,28 @@
   align-items: center;
   justify-content: space-between;
   height: var(--control-h);
-  padding-inline: var(--space-2);
+  min-width: 0;
+  padding-inline: var(--space-3);
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: var(--text-base);
-  background: var(--inset);
+  font-size: var(--text-ui);
+  background: var(--surface);
   border: 1px solid var(--rule-2);
   border-radius: var(--radius);
 }
 
-/* A filter dropdown holds a minimum so its row does not resize as the value changes. */
-.select--filter {
-  min-width: var(--dropdown-min);
+.select__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.select:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-/*
- * The caret FLIPS rather than rotating: at 10px a rotation reads as a wobble.
- * Content rather than transform, so there is nothing to animate.
- */
-.select__caret {
-  color: var(--ink-3);
-  font-size: var(--text-2xs);
-  line-height: 1;
-}
-
+/* The caret flips rather than rotating: at this size a rotation reads as a wobble. */
 .select__caret::before {
   content: '▾';
+  color: var(--ink-3);
+  font-size: 9px;
+  line-height: 1;
 }
 
 .select[aria-expanded='true'] .select__caret::before {
@@ -303,55 +252,48 @@
 .menu {
   position: absolute;
   z-index: 20;
-  min-width: var(--dropdown-min);
+  min-width: 200px;
   margin: 0;
-  padding: var(--space-1);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  box-shadow: var(--press-card-rest);
+  padding: var(--space-2);
+  list-style: none;
+  background: var(--raised);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--lift-plate);
 }
 
 .menu__item {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-3);
   align-items: center;
-  justify-content: space-between;
   width: 100%;
-  height: var(--control-h);
-  padding-inline: var(--space-2);
+  height: var(--control-h-lg);
+  padding-inline: var(--space-3);
   color: var(--ink-2);
   font-family: var(--font-ui);
-  font-size: var(--text-md);
+  font-size: var(--text-ui);
   text-align: left;
-  list-style: none;
   cursor: pointer;
   background: none;
   border: 0;
-  border-left: 2px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
 }
 
 .menu__item:hover,
 .menu__item--active {
   color: var(--ink);
-  background: var(--raised);
+  background: var(--inset);
 }
 
-/*
- * Disabled, never removed (§7). The reason travels beside the label rather
- * than in a tooltip, for the same reason a disabled key carries its own.
- */
 .menu__item[aria-disabled='true'] {
   color: var(--ink-3);
   cursor: not-allowed;
 }
 
-/* Marked on the leading edge AND by a tick — never colour alone. */
-.menu__item[aria-selected='true'],
-.menu__item[aria-checked='true'] {
+/* Selected is marked by a tick as well as by weight — never colour alone. */
+.menu__item[aria-selected='true'] {
   color: var(--ink);
-  border-left-color: var(--accent);
+  font-weight: 600;
 }
 
 .menu__tick::before {
@@ -359,12 +301,266 @@
   color: var(--accent);
 }
 
-/* ── Bands, §5 ────────────────────────────────────────────────────────────
+.menu__kind {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+}
+
+/* ── Status, §2 and §7 ────────────────────────────────────────────────────
  *
- * A band's height is SET on the band, never accumulated from padding: padding
+ * A pill carrying a dot and a word. The word is mandatory: colour never carries
+ * meaning alone, and `stopped` is never drawn as a failure.
+ */
+
+.status {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  height: var(--chip-h);
+  padding-inline: 10px;
+  font-family: var(--font-ui);
+  font-size: var(--text-meta);
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: var(--radius-pill);
+}
+
+.status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.status--live {
+  color: var(--live);
+  background: var(--live-wash);
+}
+.status--wait {
+  color: var(--wait);
+  background: var(--wait-wash);
+}
+.status--fail {
+  color: var(--fail);
+  background: var(--fail-wash);
+}
+.status--ended {
+  color: var(--ended);
+  background: var(--raised);
+}
+
+/* A neutral tag: a count, a filter that is off, a fact about a service. */
+.tag {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: var(--chip-h);
+  padding-inline: 10px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: 0.06em;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+}
+
+.tag--on {
+  color: var(--on-accent);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  background: var(--accent-fill);
+  border-color: transparent;
+}
+
+/* ── Rows, §12 and §14 ────────────────────────────────────────────────────
+ *
+ * A selectable row (the rail) and a record row (operations) are different
+ * things: one is a target, the other is read. Both are rows, neither is a table.
+ */
+
+.row-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 2px var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+.row-item:hover {
+  background: var(--raised);
+}
+
+/* The selected session is marked on its leading edge and by its background. */
+.row-item[aria-selected='true'] {
+  background: var(--raised);
+  box-shadow: var(--edge-selected), var(--lift-rest);
+}
+
+.row-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.row-item__dot {
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.row-item__subject {
+  color: var(--ink);
+  font-size: var(--text-ui);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-item__meta {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+}
+
+/*
+ * What the session last did — §12. It never wraps: a row that grows with its
+ * longest sentence makes the list a different height every time it reloads.
+ */
+.row-item__activity {
+  grid-column: 2 / span 2;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--text-note);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+
+/* Rows are read one at a time: no zebra striping, no hover, nothing navigates. */
+.record__row {
+  display: grid;
+  grid-template-columns: 190px 1fr auto;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.record__row:last-child {
+  border-bottom: 0;
+}
+
+.record__at {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.record__primary {
+  color: var(--ink);
+  font-size: var(--text-body);
+}
+
+.record__meta {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+
+/* An identifier is drawn as an identifier, so nobody reads it as a name. */
+.record__identifier {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+
+.record__empty {
+  color: var(--ink-3);
+  font-size: var(--text-note);
+}
+
+/* ── Cards and notices, §3, §12 ──────────────────────────────────────────
+ *
+ * A row of peer cards is a grid, never a flex row of hand-set widths.
+ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+/*
+ * A failed action — §12. Inside the surface's own column, above what it shows
+ * and never in place of it, and dismissible: it reports one attempt about one
+ * session, and the surface beneath it may hold a dozen live terminals.
+ */
+.notice {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+}
+
+.notice--fail {
+  background: var(--fail-wash);
+  border: 1px solid var(--fail);
+}
+
+.notice--quiet {
+  background: var(--raised);
+  border: 1px solid var(--rule);
+}
+
+.notice__title {
+  color: var(--ink);
+  font-size: var(--text-ui);
+}
+
+.notice__detail {
+  color: var(--ink-2);
+  font-size: var(--text-note);
+}
+
+/* ── Bands, §5 and §6 ─────────────────────────────────────────────────────
+ *
+ * A band's height is set on the band, never accumulated from padding: padding
  * is what lets two aligned columns drift apart when one gains a longer label.
- * A column needing more chrome adds a second band beneath the first; it never
- * grows its header.
  */
 
 .band {
@@ -372,46 +568,52 @@
   flex: none;
   gap: var(--space-3);
   align-items: center;
-  padding-inline: var(--space-3);
-  background: var(--surface);
+  padding-inline: var(--space-5);
+}
+
+.band--bar {
+  height: var(--bar-height);
+  gap: var(--space-5);
+  background: var(--ground);
+  border-bottom: 1px solid var(--rule);
 }
 
 .band--head {
   height: var(--band-head);
+  padding-inline: var(--space-6);
+  background: var(--surface);
   border-bottom: 1px solid var(--rule);
 }
 
 .band--foot {
   height: var(--band-foot);
+  gap: var(--space-4);
+  background: var(--ground);
   border-top: 1px solid var(--rule);
 }
 
-/*
- * One type size lives in a band — mono xs, tracked and uppercase for a label,
- * plain for a value. The single exception is a band's subject, the session
- * time, at lg.
- */
+.band__subject {
+  color: var(--ink);
+  font-size: var(--text-subject);
+  font-weight: 600;
+  letter-spacing: var(--track-tight);
+  font-variant-numeric: tabular-nums;
+}
+
 .band__label {
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
   white-space: nowrap;
 }
 
 .band__value {
-  color: var(--ink-2);
+  color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   white-space: nowrap;
-}
-
-.band__subject {
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-lg);
-  font-variant-numeric: tabular-nums;
 }
 
 .band__spacer {
@@ -419,80 +621,120 @@
   min-width: 0;
 }
 
-/* ── Cards, §3 and §7 ─────────────────────────────────────────────────────
+/* ── Section labels ─────────────────────────────────────────────────────── */
+
+.eyebrow {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+/* ── Semantic tone helpers, §2 ───────────────────────────────────────────
  *
- * A row of peer cards is a GRID, never a flex row of hand-set widths: columns
- * are equal by construction and every card stretches to the tallest, so
- * content length can never decide how big a card is.
+ * Session and system state. Never decorative, never the only carrier.
  */
 
-.card {
-  display: flex;
+.tone-ink-live {
+  color: var(--live);
+}
+.tone-ink-wait {
+  color: var(--wait);
+}
+.tone-ink-fail {
+  color: var(--fail);
+}
+.tone-ink-ended {
+  color: var(--ended);
+}
+
+.tone-bg-live {
+  background: var(--live);
+}
+.tone-bg-wait {
+  background: var(--wait);
+}
+.tone-bg-fail {
+  background: var(--fail);
+}
+.tone-bg-ended {
+  background: var(--ended);
+}
+
+/* ── Waiting, §8 and §11 ─────────────────────────────────────────────────
+ *
+ * A pulse on a dot, or a bar reflecting steps the control plane reported.
+ * Never a spinner, and never a bar that advances on a timer.
+ */
+
+.pulse {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.progress {
+  height: 3px;
+  overflow: hidden;
+  background: var(--inset);
+  border-radius: var(--radius-pill);
+}
+
+.progress__fill {
+  height: 100%;
+  background: var(--wait);
+  border-radius: var(--radius-pill);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ── Carried from the previous revision ──────────────────────────────────
+ *
+ * Not part of the Quiet instrument sheet. Each rule below keeps one surface
+ * rendering until the milestone issue that retires it lands, and names that
+ * issue. Nothing may be added here; the section only shrinks.
+ */
+
+/*
+ * The stacked key — retired by #253, which moves the reason to a sibling
+ * .control-reason drawn once per row. The 52px minimum keeps a column of
+ * stacked keys even while one reason wraps.
+ */
+.button--stacked {
   flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  box-shadow: var(--press-card-rest);
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: var(--space-3);
-  align-items: stretch;
-}
-
-/* A card whose text overruns scrolls inside itself rather than growing. */
-.card__body {
-  min-height: 0;
-  overflow: auto;
-}
-
-/* ── Record rows, §14 ─────────────────────────────────────────────────────
- *
- * Rows, not a table: rows are read one at a time and a table's column rules
- * earn nothing here. No zebra striping, no hover highlight, no row-level click
- * target — nothing on that page navigates.
- */
-
-.row {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px var(--space-3);
+  gap: 2px;
+  align-items: flex-start;
+  height: auto;
+  min-height: calc(var(--control-h) + var(--space-5));
   padding-block: var(--space-2);
-  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  white-space: normal;
 }
 
-.row__time {
-  grid-row: 1 / span 2;
-  align-self: start;
+.button__reason {
   color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
 }
 
-.row__primary {
-  color: var(--ink);
-  font-size: var(--text-md);
-}
-
-.row__meta {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-/* ── Collapsing a panel, §7 ───────────────────────────────────────────────
- *
- * A collapsed panel becomes a handle, never nothing. The glyph points where
- * the panel will go and reverses when collapsed, so the control describes its
- * outcome rather than its state.
+/*
+ * The collapse handle — restyled by #254 (rail) and #261 (dialogs). The glyph
+ * points where the panel will go and reverses when collapsed.
  */
-
 .collapse-handle {
   display: grid;
   place-items: center;
@@ -500,7 +742,7 @@
   height: var(--hit);
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-base);
+  font-size: var(--text-note);
   line-height: 1;
   background: none;
   border: 1px solid transparent;
@@ -517,40 +759,11 @@
   box-shadow: var(--focus-ring);
 }
 
-/* ── Semantic tone helpers, §2 ────────────────────────────────────────────
- *
- * Session and system state. Never used decoratively, and never carrying
- * meaning alone — always paired with the state word.
- */
-
-.tone-ink-live {
-  color: var(--live);
-}
-.tone-ink-wait {
-  color: var(--wait);
-}
-.tone-ink-fail {
-  color: var(--fail);
-}
-.tone-ink-ended {
-  color: var(--ended);
-}
-
 /*
- * The product's only glow, §3: a 6px halo on the dot of a live session. It
- * rides the live tone itself so there is exactly one place it can be added,
- * and the tone helpers are only ever put on a status dot.
+ * A filter select holds §7's 200px minimum so its row does not resize as the
+ * value changes. Kept beside .select rather than in Select.css because the
+ * minimum is the shared dropdown contract, not one component's choice.
  */
-.tone-bg-live {
-  background: var(--live);
-  box-shadow: var(--halo-live);
-}
-.tone-bg-wait {
-  background: var(--wait);
-}
-.tone-bg-fail {
-  background: var(--fail);
-}
-.tone-bg-ended {
-  background: var(--ended);
+.select--filter {
+  min-width: 200px;
 }

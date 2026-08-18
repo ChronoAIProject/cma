@@ -38,8 +38,8 @@ body {
   background: var(--ground);
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: var(--text-base);
-  line-height: var(--leading-base);
+  font-size: var(--text-ui);
+  line-height: var(--leading-ui);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
