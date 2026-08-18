@@ -205,6 +205,20 @@ pub struct SessionSpec {
     /// here can read it.
     #[serde(skip)]
     pub subject_credential: Option<String>,
+    /// The plane the caller asked for, when they asked for one.
+    ///
+    /// The exception to the rule above, and it is narrow: everything in
+    /// `options` describes how the *agent* behaves and belongs to the profile,
+    /// so that two sessions started on one bundle are the same session twice.
+    /// A plane is not that — it is how a person means to interact, which is
+    /// the caller's business and their interface's.
+    ///
+    /// Honoured only when no profile was named; a profile that names a mode
+    /// still decides. `None` means the caller expressed nothing and the
+    /// deployment's own default applies, which is what an interface with no
+    /// way to say sends.
+    #[serde(default)]
+    pub requested_mode: Option<crate::options::SessionMode>,
 }
 
 /// A session and everything the core knows about it.
