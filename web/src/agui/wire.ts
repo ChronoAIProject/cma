@@ -91,7 +91,18 @@ export const wireTransport: AguiTransport = {
      * arriving must produce the same result (§18.1), and one code path is how
      * that stays true.
      */
-    const url = `${streamUrl(session)}&starting_after=${String(cursor)}`;
+    /*
+     * `follow=false` is what makes this finish. Without it the route holds the
+     * stream open across turns — which is right for the live path above and
+     * fatal here: `text()` settles only when the stream ends, so a history
+     * read against a following stream could resolve only by failing.
+     *
+     * That is not a hypothetical. The connection awaits this before it
+     * delivers anything, so every live frame sat in a buffer behind a promise
+     * that never resolved, and the surface stayed empty however well the rest
+     * of the path worked.
+     */
+    const url = `${streamUrl(session)}&starting_after=${String(cursor)}&follow=false`;
     const response = await fetch(url, {
       credentials: 'same-origin',
       headers: { accept: 'text/event-stream' },
