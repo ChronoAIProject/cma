@@ -135,6 +135,7 @@ async fn the_owner_credential_reaches_the_runtime_at_creation() {
             geometry: None,
             options: Default::default(),
             subject_credential: Some("first-token".into()),
+            requested_mode: None,
         },
     )
     .await
@@ -162,6 +163,7 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
                 geometry: None,
                 options: Default::default(),
                 subject_credential: Some("first-token".into()),
+                requested_mode: None,
             },
         )
         .await
@@ -201,6 +203,7 @@ async fn a_renewal_does_not_leak_across_subjects() {
             geometry: None,
             options: Default::default(),
             subject_credential: Some("a-token".into()),
+            requested_mode: None,
         },
     )
     .await
@@ -230,6 +233,7 @@ async fn a_terminated_session_is_not_renewed() {
                 geometry: None,
                 options: Default::default(),
                 subject_credential: Some("token".into()),
+                requested_mode: None,
             },
         )
         .await
@@ -255,6 +259,7 @@ async fn a_session_created_without_a_credential_is_still_usable() {
             environment_profile: None,
             geometry: None,
             subject_credential: None,
+            requested_mode: None,
             options: Default::default(),
         },
     )
