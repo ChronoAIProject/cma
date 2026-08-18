@@ -156,7 +156,7 @@ data:
   # a session on an image nobody maintains, and forbids interrupting it to fix
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:v0.2.0"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:v0.3.0"
   # What one session reserves, and therefore how many run at once.
   #
   # The namespace carries a ResourceQuota, and these divide into it: at 2 CPU
