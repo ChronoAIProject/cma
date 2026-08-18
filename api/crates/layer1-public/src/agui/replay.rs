@@ -86,13 +86,40 @@ pub(super) async fn replay(
         .await
         .map_err(Problem)?;
 
+    // The live lane, on the session's own stream.
+    //
+    // This is the stream a client holds open across turns, so it is where what
+    // is happening belongs. Offering liveness only on the run stream would
+    // require a client to hold two connections and decide for itself how to
+    // interleave them — which is exactly the ordering question §18.1 of
+    // `Web_Style.md` says must have one answer — and a client that posts a run
+    // without consuming its response would never see any of it.
+    //
+    // Absent for a session with no conversation, or none running. The durable
+    // lane is unaffected either way: that is the difference between a turn
+    // nobody can watch and a turn nobody can read.
+    let watching = state.sessions.subscribe_live(&caller, &id).await.ok();
+
     struct Following {
         service: Arc<layer2_core::SessionService>,
         caller: layer2_core::Caller,
         id: SessionId,
         seq: u64,
         pending: std::collections::VecDeque<super::project::AguiEvent>,
+        watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
+        /// Polls since the last attempt to attach to the live lane.
+        ///
+        /// A client opens this stream as soon as it has a session, which is
+        /// routinely before that session is running — so the first attempt
+        /// fails and, without this, the client would never see a live frame
+        /// however long it stayed connected. Retried on a much slower cadence
+        /// than the log is polled, because attaching costs a read and the
+        /// window it covers is a session starting rather than anything urgent.
+        since_attempt: u8,
     }
+
+    /// Poll cycles between attempts to attach to a session's live lane.
+    const ATTACH_EVERY: u8 = 8;
 
     let mut opening = Following {
         service: Arc::clone(&state.sessions),
@@ -100,6 +127,8 @@ pub(super) async fn replay(
         id: id.clone(),
         seq,
         pending: Default::default(),
+        watching,
+        since_attempt: 0,
     };
     for event in first {
         opening.seq = event.seq;
@@ -126,7 +155,51 @@ pub(super) async fn replay(
                 };
                 return Some((Ok(frame), open));
             }
-            tokio::time::sleep(POLL_INTERVAL).await;
+            // Whichever lane speaks first. Sleeping the poll interval
+            // unconditionally would hold a piece of a message for up to that
+            // long, which on a fast agent is most of what makes the difference
+            // between watching a turn and waiting on one.
+            if let Some(live) = open.watching.as_mut() {
+                match tokio::time::timeout(POLL_INTERVAL, live.recv()).await {
+                    Ok(Ok(frame)) => {
+                        let run = open.id.0.clone();
+                        open.pending
+                            .extend(super::live::project_live(&frame, &run, &run));
+                        if !open.pending.is_empty() {
+                            continue;
+                        }
+                    }
+                    // Behind, and what was missed was liveness. Everything that
+                    // happened is in the log, and the poll below is what makes
+                    // it good.
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(frames))) => {
+                        tracing::debug!(
+                            session_id = %open.id,
+                            frames,
+                            "a watcher fell behind; the durable log still carries the turn"
+                        );
+                    }
+                    // The runtime went away. Whatever that means for the
+                    // session is durable and arrives on the poll, so this lane
+                    // simply stops rather than ending the stream: the session
+                    // outlives its runtime and a client stays attached to it.
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                        open.watching = None;
+                    }
+                    Err(_) => {}
+                }
+            } else {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                open.since_attempt = open.since_attempt.saturating_add(1);
+                if open.since_attempt >= ATTACH_EVERY {
+                    open.since_attempt = 0;
+                    open.watching = open
+                        .service
+                        .subscribe_live(&open.caller, &open.id)
+                        .await
+                        .ok();
+                }
+            }
             let read = open
                 .service
                 .events_since(&open.caller, &open.id, Some(open.seq))
