@@ -136,3 +136,36 @@ fn the_session_stream_is_where_a_client_watches_a_turn() {
          reconnect to a position the log has never held"
     );
 }
+
+#[test]
+fn a_history_read_is_bounded_and_a_watch_is_not() {
+    // The defect this exists for was not in either half of the route. Followed
+    // is right for a client watching a session, and this stream is documented
+    // as never ending on its own. But the reference client also read *history*
+    // from it, with `await response.text()` — and a promise over a stream that
+    // never closes can only settle by failing.
+    //
+    // The connection awaits that read before it delivers anything, so every
+    // live frame queued behind it forever and the surface stayed empty however
+    // well the rest of the path worked. One query parameter is the difference
+    // between a subscription and a value.
+    let watching: Replay = serde_urlencoded::from_str("thread_id=sesn_1").expect("parses");
+    assert!(
+        watching.follows(),
+        "a client that says nothing wants the stream held open, as every existing caller does"
+    );
+
+    let reading: Replay =
+        serde_urlencoded::from_str("thread_id=sesn_1&starting_after=4&follow=false")
+            .expect("parses");
+    assert!(!reading.follows());
+    assert_eq!(
+        reading.starting_after(),
+        Some(4),
+        "and it still resumes from where the caller had got to"
+    );
+
+    let explicit: Replay =
+        serde_urlencoded::from_str("thread_id=sesn_1&follow=true").expect("parses");
+    assert!(explicit.follows());
+}

@@ -501,6 +501,9 @@ async fn create(
                 // are the values the session was started with.
                 options: Default::default(),
                 subject_credential: credential.map(|axum::Extension(c)| c.0),
+                // This interface takes no plane, so the profile or the
+                // deployment decides — which is what it has always done.
+                requested_mode: None,
             },
         )
         .await?;
