@@ -182,6 +182,18 @@ export class AguiConnection {
    */
   #deliver(raw: unknown, onEvent: (event: AguiEvent) => void) {
     const event = toEvent(raw);
+    /*
+     * Liveness passes straight through, touching neither the cursor nor the
+     * seen-set. It has no sequence — what it arrives with is whatever id the
+     * last durable frame carried — so recording it would mark a durable
+     * event as already delivered and drop the real one when it comes, and
+     * every piece of a message after the first would collide with the piece
+     * before it and be dropped in silence.
+     */
+    if (event.ephemeral === true) {
+      onEvent(event);
+      return;
+    }
     if (this.#seen.has(event.seq)) {
       return;
     }

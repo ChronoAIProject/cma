@@ -125,6 +125,8 @@ export function ConversationSurface({
       <MessageStream
         entries={conversation.entries}
         turnInFlight={conversation.turnInFlight}
+        live={conversation.live}
+        reasoning={conversation.reasoning}
         footer={
           pending === undefined ? null : (
             <ApprovalCard

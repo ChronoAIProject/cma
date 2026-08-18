@@ -228,3 +228,147 @@ describe('the plane-change boundary', () => {
     expect(boundary).not.toHaveTextContent(/moved to/i);
   });
 });
+
+describe('a run that failed, §18.9', () => {
+  /** Fold a failure as the projection sends one, through the real parser. */
+  const failure = (body: Record<string, unknown>) =>
+    fold([toEvent({ type: 'RUN_ERROR', seq: 9, message: 'the run failed', ...body })]);
+
+  it('says what failed, in the stream rather than in place of it', () => {
+    const state = fold([
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 1, messageId: 'm1', role: 'assistant' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 2, messageId: 'm1', delta: 'reading a file' }),
+      toEvent({ type: 'RUN_ERROR', seq: 3, message: 'the model endpoint refused' }),
+    ]);
+    render(<MessageStream entries={state.entries} />);
+
+    expect(screen.getByText('the model endpoint refused')).toBeTruthy();
+    expect(
+      screen.getByText('reading a file'),
+      'what the agent already did stays readable',
+    ).toBeTruthy();
+  });
+
+  it('says the word as well as wearing the ink', () => {
+    // §2: colour is never the only carrier. A reader who cannot distinguish
+    // the ink must still be able to read what happened.
+    render(<MessageStream entries={failure({}).entries} />);
+
+    expect(screen.getByText('Run failed')).toBeTruthy();
+  });
+
+  it('names the ability when the failure was a refusal', () => {
+    render(<MessageStream entries={failure({ capability: 'conversation' }).entries} />);
+
+    const named = screen.getByText(/This session cannot/);
+    expect(named.textContent).toContain('conversation');
+  });
+
+  it('names nothing when there was nothing to name', () => {
+    render(<MessageStream entries={failure({}).entries} />);
+
+    expect(screen.queryByText(/This session cannot/)).toBeNull();
+  });
+
+  it('draws nothing at all for a session being carried onto another runtime', () => {
+    // §11: a rotating session never takes the failure ink. It arrives on the
+    // same frame as a failure, so this is the only thing keeping them apart.
+    const state = failure({
+      message: 'moving this session to the other plane',
+      'chrono:returns': true,
+    });
+    render(<MessageStream entries={state.entries} />);
+
+    expect(screen.queryByText('Run failed')).toBeNull();
+  });
+});
+
+describe('a turn in flight, §18.1', () => {
+  it('says something is happening before anything has arrived', () => {
+    // A turn that has started and produced nothing is otherwise
+    // indistinguishable from a dead stream, and a turn takes as long as the
+    // agent takes.
+    render(<MessageStream entries={[]} turnInFlight />);
+
+    expect(screen.getByText('Working')).toBeTruthy();
+  });
+
+  it('stops saying it the moment there is something to read', () => {
+    render(<MessageStream entries={[]} turnInFlight live={{ text: 'Hel' }} />);
+
+    expect(screen.queryByText('Working')).toBeNull();
+    expect(screen.getByText('Hel')).toBeTruthy();
+  });
+
+  it('draws the message being typed after the last entry, not as one', () => {
+    const state = fold([
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 1, messageId: 'm1', role: 'user' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 1, messageId: 'm1', delta: 'do the thing' }),
+    ]);
+    const { container } = render(
+      <MessageStream entries={state.entries} turnInFlight live={{ text: 'on it' }} />,
+    );
+
+    const turns = [...container.querySelectorAll('.turn')];
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.textContent).toContain('on it');
+  });
+
+  it('gives the caret to the message being typed and to nothing else', () => {
+    const settled = fold([
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 1, messageId: 'm1', role: 'assistant' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 1, messageId: 'm1', delta: 'committed' }),
+      toEvent({ type: 'RUN_FINISHED', seq: 2 }),
+    ]);
+    const { container } = render(
+      <MessageStream entries={settled.entries} turnInFlight live={{ text: 'still going' }} />,
+    );
+
+    const carets = [...container.querySelectorAll('.turn__caret')];
+    expect(carets).toHaveLength(1);
+    expect(carets[0]?.closest('.turn')?.textContent).toContain('still going');
+  });
+
+  it('draws nothing extra when a turn is not in flight', () => {
+    render(<MessageStream entries={[]} />);
+
+    expect(screen.queryByText('Working')).toBeNull();
+  });
+});
+
+describe('what the agent is working through, §18.8', () => {
+  it('shows the reasoning, and says it is not kept', () => {
+    // A reader who saw this and reloaded to find it gone would otherwise
+    // report data loss, so the surface says so rather than only the document.
+    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'checking src/' }} />);
+
+    expect(screen.getByText('checking src/')).toBeTruthy();
+    expect(screen.getByText(/gone when the turn ends/)).toBeTruthy();
+  });
+
+  it('draws nothing at all when there is no reasoning', () => {
+    // Not an empty band. §18.4's rule: a thing that can never appear is not
+    // one that is currently unavailable, and an empty box would suggest the
+    // agent was thinking silently.
+    const { container } = render(<MessageStream entries={[]} turnInFlight />);
+
+    expect(container.querySelector('.thinking')).toBeNull();
+  });
+
+  it('carries no colour', () => {
+    // §2: the semantic inks describe session and system state and describe
+    // nothing the agent thought.
+    const { container } = render(<MessageStream entries={[]} reasoning={{ text: 'hmm' }} />);
+    const classes = [...container.querySelectorAll('.thinking, .thinking *')]
+      .flatMap((node) => [...node.classList])
+      .join(' ');
+
+    expect(classes).not.toMatch(/live|wait|fail|ended|accent/);
+  });
+
+  it('replaces the waiting wave once reasoning starts arriving', () => {
+    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'hmm' }} />);
+
+    expect(screen.queryByText('Working')).toBeNull();
+  });
+});

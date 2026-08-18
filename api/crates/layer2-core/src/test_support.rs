@@ -87,12 +87,32 @@ impl SessionStore for FakeStore {
         Ok(())
     }
 
+    /// Append, refusing a sequence the session already has.
+    ///
+    /// The refusal is the point. This double accepted duplicates, so a race
+    /// that the database rejects outright looked perfectly healthy here — the
+    /// suite could not see the defect that dropped a turn's events in
+    /// production, because the only thing that would have caught it was the
+    /// unique index this stands in for. A double that is more permissive than
+    /// the thing it doubles is a test that passes for the wrong reason.
+    ///
+    /// Ordered, like the real one, so the count reported is genuinely what was
+    /// written before the collision.
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         self.guard().await?;
-        self.events
-            .lock()
-            .await
-            .extend(events.iter().cloned().map(StoredEvent::from));
+        let mut held = self.events.lock().await;
+        for (written, event) in events.iter().enumerate() {
+            if held
+                .iter()
+                .any(|e| e.session_id == event.session_id && e.seq == event.seq)
+            {
+                return Err(StoreError::SequenceTaken {
+                    written,
+                    total: events.len(),
+                });
+            }
+            held.push(StoredEvent::from(event.clone()));
+        }
         Ok(())
     }
 
@@ -153,6 +173,18 @@ pub(crate) fn kernel() -> KernelId {
 /// Calling this twice with the same store is the restart: the second instance
 /// shares the durable record and nothing else.
 pub(crate) fn service(store: Arc<FakeStore>, adapter: Arc<FakeAdapter>) -> Arc<SessionService> {
+    service_over(store, adapter)
+}
+
+/// The same, over any store at all.
+///
+/// Taken as the trait rather than the double so a test can stand a badly
+/// behaved implementation in front of the service — a store is a port, and how
+/// the core survives one that misbehaves is worth being able to say.
+pub(crate) fn service_over(
+    store: Arc<dyn SessionStore>,
+    adapter: Arc<FakeAdapter>,
+) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
