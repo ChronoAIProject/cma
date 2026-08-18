@@ -1337,6 +1337,7 @@ dependencies = [
  "layer2-core",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "tokio",
  "tracing",
  "uuid",
