@@ -7,9 +7,9 @@ import { Mark, gapFor } from './Mark';
 /**
  * The mark and the faces beneath it — docs/Web_Style.md §17 and §4.
  *
- * The mark was a glyph in Geist Pixel, which §4 retires. A mark that depends
- * on a typeface goes dark when that typeface does, which is what these
- * assertions exist to prevent recurring.
+ * The mark was once a glyph in a pixel face §4 has since retired. A mark that
+ * depends on a typeface goes dark when that typeface does, which is what
+ * these assertions exist to prevent recurring.
  */
 
 const FONTS = resolve(process.cwd(), 'src/assets/fonts');
@@ -54,13 +54,15 @@ describe('the mark', () => {
 });
 
 describe('the platform faces', () => {
-  it('vendors both faces with their licence', () => {
-    const files = readdirSync(FONTS);
-    expect(files).toContain('Geist-Variable.woff2');
-    expect(files).toContain('GeistMono-Variable.woff2');
-    expect(files).toContain('OFL.txt');
-    // Geist Pixel is retired with the glyph mark it existed to draw.
-    expect(files.filter((name) => name.startsWith('GeistPixel'))).toEqual([]);
+  it('vendors both faces with their licences, and nothing else', () => {
+    // Exact equality, deliberately: §4 retires a face by removing it, and a
+    // retired face lingering beside the vendored pair would ship dead bytes.
+    expect(readdirSync(FONTS).sort()).toEqual([
+      'Figtree-Variable.woff2',
+      'JetBrainsMono-Variable.woff2',
+      'OFL-Figtree.txt',
+      'OFL-JetBrainsMono.txt',
+    ]);
   });
 
   it('requests no font from a third party', () => {
@@ -84,16 +86,25 @@ describe('the platform faces', () => {
     // Text must be readable before the faces arrive, so each stack carries a
     // system fallback after the vendored name.
     const tokens = readFileSync(resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8');
-    for (const name of ['--font-ui', '--font-mono']) {
+    const stacks: Record<string, string> = {
+      '--font-ui': "'Figtree'",
+      '--font-mono': "'JetBrains Mono'",
+    };
+    for (const [name, face] of Object.entries(stacks)) {
       const stack = new RegExp(`${name}:\\s*([^;]+);`).exec(tokens)?.[1] ?? '';
+      // The vendored face leads and a system fallback follows it.
+      expect(stack.trim().startsWith(face)).toBe(true);
       expect(stack.split(',').length).toBeGreaterThan(1);
     }
-    expect(tokens).not.toContain('Geist Pixel');
   });
 
   it('licenses both faces under the OFL', () => {
-    const licence = readFileSync(join(FONTS, 'OFL.txt'), 'utf8');
-    expect(licence).toContain('SIL OPEN FONT LICENSE Version 1.1');
-    expect(licence).toContain('geist-font');
+    const figtree = readFileSync(join(FONTS, 'OFL-Figtree.txt'), 'utf8');
+    expect(figtree).toContain('SIL OPEN FONT LICENSE Version 1.1');
+    expect(figtree).toContain('Figtree Project Authors');
+
+    const mono = readFileSync(join(FONTS, 'OFL-JetBrainsMono.txt'), 'utf8');
+    expect(mono).toContain('SIL OPEN FONT LICENSE Version 1.1');
+    expect(mono).toContain('JetBrains Mono Project Authors');
   });
 });
