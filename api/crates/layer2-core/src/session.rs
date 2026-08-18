@@ -272,9 +272,15 @@ pub struct Session {
     /// runtime whose abilities have since changed would silently make a live
     /// session into a different one.
     ///
-    /// Empty on sessions recorded before this existed. That is the safe
-    /// direction — such a session claims nothing until it is next placed, at
-    /// which point its set is settled against the runtime it actually gets.
+    /// Empty on sessions recorded before this existed, and settled the first
+    /// time such a session is placed or picked back up — `settle_capabilities`
+    /// derives it against the runtime it actually has and writes it down.
+    ///
+    /// The empty state is therefore transient rather than safe. It was
+    /// described as safe on the assumption that a session holding nothing
+    /// simply claims nothing; in fact every gate that consults the set refuses,
+    /// including the one behind each keystroke, so a session left empty is
+    /// listed, openable and dead.
     #[serde(default)]
     pub capabilities: crate::capabilities::SessionCapabilities,
     /// What this session's credential may reach, decided when it was created.
