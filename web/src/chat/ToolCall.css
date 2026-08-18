@@ -42,7 +42,7 @@
 .toolcall__caret {
   flex: none;
   color: var(--ink-3);
-  font-size: var(--text-2xs);
+  font-size: var(--text-label);
   line-height: 1;
 }
 
@@ -87,7 +87,7 @@
   flex: none;
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: var(--text-base);
+  font-size: var(--text-note);
 }
 
 /*
@@ -100,7 +100,7 @@
   overflow: hidden;
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -109,7 +109,7 @@
   flex: none;
   margin-left: auto;
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
@@ -142,7 +142,7 @@
   padding: var(--space-3);
   overflow: auto;
   font-family: var(--font-mono);
-  font-size: var(--text-base);
+  font-size: var(--text-note);
   line-height: var(--term-leading);
   background: var(--inset);
   border-top: 1px solid var(--rule);

@@ -128,11 +128,13 @@ describe('the band grid', () => {
     const { container } = render(<SessionHeader session={SESSION} />);
     expect(container.querySelector('.band__subject')).not.toBeNull();
     expect(rule(sheet('styles/components.css'), '.band__subject')).toContain(
-      'font-size: var(--text-lg)',
+      'font-size: var(--text-subject)',
     );
-    // Everything else in a band is mono xs — one type size per band.
+    // Everything else in a band is mono at the label size — one size per band.
     for (const selector of ['.band__label', '.band__value']) {
-      expect(rule(sheet('styles/components.css'), selector)).toContain('font-size: var(--text-xs)');
+      expect(rule(sheet('styles/components.css'), selector)).toContain(
+        'font-size: var(--text-label)',
+      );
     }
   });
 });
