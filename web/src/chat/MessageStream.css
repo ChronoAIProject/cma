@@ -1,8 +1,10 @@
 /*
  * The message stream — docs/Web_Style.md §18.1.
  *
- * Turns as bands separated by a rule, not bubbles. Two things distinguish a
- * turn: who is speaking, and the ink its content takes.
+ * A reading column, 760px, centred. The agent's turns are full width and
+ * unboxed at the reading size; the owner's are right-aligned blocks on the
+ * inset. No avatars, no alternating alignment beyond that one asymmetry, no
+ * bubble on the agent's side.
  */
 
 .stream {
@@ -19,10 +21,23 @@
  * the page around this.
  */
 .stream__surface {
+  display: flex;
   flex: 1 1 auto;
+  justify-content: center;
   min-height: 0;
   padding-inline: var(--page-gutter);
   overflow-y: auto;
+}
+
+/* The reading column — §5: centred and capped, whatever the surface's width. */
+.stream__column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
+  max-width: var(--read-column);
+  padding-block: var(--space-6);
+  height: fit-content;
 }
 
 /*
@@ -34,6 +49,7 @@
   position: absolute;
   right: var(--space-4);
   bottom: var(--space-4);
+  height: var(--control-h-sm);
   box-shadow: var(--lift-rest);
 }
 
@@ -43,11 +59,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding-block: var(--space-4);
-  border-bottom: 1px solid var(--rule);
 }
 
-.turn__who {
+/*
+ * The eyebrow — a live dot, then CHRONOBOT · <kernel> in mono, uppercase by
+ * style. The owner's turn takes the same slot with `You`, right-aligned.
+ */
+.turn__eyebrow {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: var(--text-label);
@@ -55,35 +76,56 @@
   text-transform: uppercase;
 }
 
+.turn__dot {
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  border-radius: 50%;
+}
+
 /*
- * The agent's words are the ones being read, so they take the primary ink and
- * the owner's take the secondary. That is the whole visual distinction, and it
- * is the reason there are no bubbles and no alternating alignment.
+ * The agent's words are the ones being read: the whole column, unboxed, at
+ * the reading size.
  */
 .turn__body {
   color: var(--ink);
-  font-size: var(--text-ui);
-  line-height: var(--leading-ui);
+  font-size: var(--text-read);
+  line-height: var(--leading-read);
   text-wrap: pretty;
 }
 
+/*
+ * The owner's turn — §18.1: a block, right-aligned, on the inset, at most 78%
+ * of the column, with the trailing corner tightened so the shape points at
+ * where the request came from.
+ */
+.turn[data-role='user'] {
+  align-items: flex-end;
+}
+
 .turn[data-role='user'] .turn__body {
-  color: var(--ink-2);
+  max-width: 78%;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-body);
+  background: var(--inset);
+  border-radius: var(--radius-lg);
+  border-end-end-radius: 4px;
 }
 
 /*
- * The one difference between a message arriving and one that has settled.
- * Nothing else changes on commit: a message that restyled itself would tell a
- * reader the earlier state was provisional when it was not.
- *
- * The same caret the introduction uses (§15), for the same reason.
+ * The one difference between a message arriving and one that has settled —
+ * §18.1's own geometry: a 9×17px accent block. Nothing else changes on
+ * commit: a message that restyled itself would tell a reader the earlier
+ * state was provisional when it was not.
  */
 .turn__caret {
   display: inline-block;
-  width: 1ch;
-  height: 1em;
+  width: 9px;
+  height: 17px;
+  margin-left: 2px;
   vertical-align: text-bottom;
   background: var(--accent);
+  border-radius: 1px;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -109,16 +151,16 @@
  */
 .turn--unknown .turn__body {
   color: var(--ink-3);
-  font-size: var(--text-meta);
+  font-size: var(--text-note);
 }
 
 /*
  * A tool call sits in the stream where it happened, between the turns it
  * happened between: that is where a reader looks for what the agent did next.
- * It carries no `who` label — the call is the agent's by construction.
+ * It carries no eyebrow — the call is the agent's by construction.
  */
 .turn--tool {
-  padding-block: var(--space-2);
+  gap: 0;
 }
 
 /* ── A boundary where conversation was lost, §18.6 ───────────────────── */
@@ -130,7 +172,6 @@
   align-items: baseline;
   padding-block: var(--space-3);
   border-top: 1px solid var(--wait);
-  border-bottom: 1px solid var(--rule);
 }
 
 .gap__label {
@@ -143,19 +184,21 @@
 
 .gap__note {
   color: var(--ink-3);
-  font-size: var(--text-meta);
+  font-size: var(--text-note);
 }
 
 /* ── Waiting for the first thing in a turn, §18.1 ────────────────────────
  *
- * The §11 wave with a word, drawn only between the turn starting and anything
- * arriving. It claims no progress — that is the whole reason it is a wave and
- * not a bar — and it goes the moment there is something to read.
+ * The §8 pulse with a word, drawn only between the turn starting and anything
+ * arriving. It claims no progress, and it goes the moment there is something
+ * to read.
  */
 
 .stream__waiting {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
   margin: 0;
-  padding-block: var(--space-3);
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: var(--text-label);
@@ -163,20 +206,27 @@
   text-transform: uppercase;
 }
 
+.stream__waitdot {
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  border-radius: 50%;
+}
+
 /* ── A run that stopped badly, §18.9 ─────────────────────────────────────
  *
- * In the stream, where it happened. The label carries `--fail` *and* says the
- * word: §2 forbids colour as the only carrier, and a reader who cannot
- * distinguish the ink must still be able to read what happened.
+ * In the stream, where it happened, as a --fail notice. The label carries
+ * `--fail` *and* says the word: §2 forbids colour as the only carrier.
  */
 
 .failure {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--fail-wash);
   border: 1px solid var(--fail);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .failure__label {
@@ -234,7 +284,7 @@
 .agent__heading {
   margin: 0;
   font-size: var(--text-body);
-  font-weight: 500;
+  font-weight: 600;
   text-wrap: balance;
 }
 
@@ -247,18 +297,21 @@
 }
 
 /*
- * A code block scrolls inside itself; the stream never does. Content length is
- * not allowed to decide the width of the surface it sits in.
+ * A code block scrolls inside itself; the stream never does. Content length
+ * is not allowed to decide the width of the surface it sits in. §18.1: the
+ * mono face at half a step under the terminal size, on the sunken ground,
+ * inside the card radius with a hairline.
  */
 .agent__block {
   margin: 0;
   padding: var(--space-3);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: var(--text-note);
+  font-size: calc(var(--term-size) - 0.5px);
   line-height: var(--term-leading);
-  background: var(--inset);
-  border-radius: var(--radius);
+  background: var(--sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
 }
 
 .agent__code {
@@ -266,5 +319,5 @@
   font-family: var(--font-mono);
   font-size: var(--text-note);
   background: var(--inset);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
 }

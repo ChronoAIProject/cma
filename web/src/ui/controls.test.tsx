@@ -37,6 +37,8 @@ const PERMITTED_HEIGHTS = new Set([
   // A textarea grows; its floor is stated in control heights rather than in
   // pixels, which is the property this check exists to hold.
   'calc(var(--control-h) * 2)',
+  // §18.3's own number: the approval's answers sit two above the field step.
+  'calc(var(--control-h-md) + 2px)',
 ]);
 
 function stylesheets(dir: string): string[] {
