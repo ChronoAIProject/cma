@@ -324,7 +324,7 @@ impl SessionService {
         }
         moved.session.rotations = moved.session.rotations.saturating_add(1);
         moved.session.rotated_at = Some(taken_at.clone());
-        moved.session.last_seq += 1;
+        moved.session.last_seq = self.sequences.take(&id, moved.session.last_seq, 1);
         if let Err(e) = self.store.upsert(&moved).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
             self.finish_start(&id).await;
@@ -383,9 +383,9 @@ impl SessionService {
         let mut rotating = record.clone();
         rotating.session.status = SessionStatus::Rotating;
         rotating.session.stop_reason = None;
-        rotating.session.last_seq += 1;
-        let seq = rotating.session.last_seq;
         let id = rotating.session.id.clone();
+        let seq = self.sequences.take(&id, rotating.session.last_seq, 1);
+        rotating.session.last_seq = seq;
 
         if let Err(e) = self.store.upsert(&rotating).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the handover");
