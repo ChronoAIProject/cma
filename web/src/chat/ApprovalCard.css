@@ -16,7 +16,7 @@
   background: var(--surface);
   border: 1px solid var(--accent);
   border-radius: var(--radius);
-  box-shadow: var(--press-card-rest);
+  box-shadow: var(--lift-rest);
 }
 
 /*
@@ -26,8 +26,8 @@
 .approval__question {
   margin: 0;
   color: var(--ink);
-  font-size: var(--text-md);
-  line-height: var(--leading-base);
+  font-size: var(--text-ui);
+  line-height: var(--leading-ui);
   text-wrap: pretty;
 }
 
@@ -35,7 +35,7 @@
   margin: 0;
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
 }

@@ -9,7 +9,12 @@
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  height: var(--sheet-height);
+  /*
+   * The sheet borrows the drawer's 360px until #255 replaces it with the
+   * right drawer §12 now specifies — the retired --sheet-height took 412px
+   * from the surface it was describing.
+   */
+  height: var(--drawer-width);
   min-height: 0;
   font-family: var(--font-ui);
   background: var(--surface);
@@ -72,7 +77,7 @@
 
 .details__row dt {
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--ink-3);
@@ -81,13 +86,13 @@
 .details__row dd {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   color: var(--ink);
 }
 
 .details__id {
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   overflow-wrap: anywhere;
 }
 
@@ -98,7 +103,7 @@
 .details__state {
   margin-top: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   color: var(--ink-2);
   background: var(--inset);
   border-left: 2px solid var(--rule-2);
@@ -107,7 +112,7 @@
 .details__ending {
   margin-top: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   color: var(--ink);
   background: var(--inset);
   border-left: 2px solid var(--wait);
@@ -133,7 +138,7 @@
   width: 20px;
   height: 20px;
   color: var(--ink-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   /* The initial, when there is no picture. Uppercase already, so this only
      keeps a descender from shifting the row. */
   line-height: 1;
@@ -171,7 +176,7 @@
 .details__servicename {
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
 
 /*
@@ -181,7 +186,7 @@
 .details__serviceid {
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
 }
 
 /*
@@ -191,5 +196,5 @@
 .details__unknown {
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
