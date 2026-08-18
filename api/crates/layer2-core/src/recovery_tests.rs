@@ -12,7 +12,6 @@
 
 use std::sync::Arc;
 
-use crate::options::AgentOptions;
 use crate::service::Deployment;
 use crate::session::{SessionStatus, StopReason};
 use crate::store::SessionStore;
@@ -117,13 +116,22 @@ async fn recovery_keeps_the_session_the_owner_configured() {
     let adapter = Arc::new(FakeAdapter::default());
     let alice = user("alice");
 
-    let mut chosen = spec();
-    chosen.options = AgentOptions {
-        model: Some("a-specific-model".to_string()),
-        ..AgentOptions::default()
-    };
+    // The model is pinned where it now lives: on what the session is started
+    // from, rather than on the request. The guarantee under test is unchanged —
+    // whatever the session was started with must survive its sandbox.
+    let pinned =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            model: Some("a-specific-model".to_string()),
+            ..Default::default()
+        });
+    let chosen = spec();
 
-    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let first = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&pinned),
+    );
     let created = first.create_session(&alice, chosen).await.expect("created");
     await_settled(&first, &alice, &created.id).await;
     let lost = store
@@ -136,7 +144,11 @@ async fn recovery_keeps_the_session_the_owner_configured() {
 
     drop(first);
     adapter.lose(&lost).await;
-    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let restarted = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&pinned),
+    );
     restarted.reconcile().await;
     await_settled(&restarted, &alice, &created.id).await;
 
@@ -478,4 +490,292 @@ async fn reviving_someone_elses_session_is_refused() {
         svc.stop_session(&mallory, &created.id).await.is_err(),
         "and stopping is no more public than reviving"
     );
+}
+
+/// A store, a conversation-capable runtime, and the profile that puts a
+/// session on the conversation plane — shared across two services, because
+/// "restart" here means a second service over the same everything.
+fn conversing_deployment() -> (
+    Arc<FakeStore>,
+    Arc<FakeAdapter>,
+    Arc<crate::environment_service::EnvironmentProfileService>,
+) {
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    (
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter {
+            capabilities: crate::conversation_support::conversing(),
+            ..FakeAdapter::default()
+        }),
+        profiles,
+    )
+}
+
+#[tokio::test]
+async fn a_conversation_session_is_taken_back_over_as_one() {
+    // The §5 failure this closes, and the one that section did not anticipate:
+    // not a deployment interrupting a session, but a deployment leaving it
+    // listed, intact, and unusable. Readopt predates conversation mode and
+    // attached a terminal to everything — which two of three kernels do not
+    // have, and which leaves nothing to prompt even where it succeeds.
+    let (store, adapter, profiles) = conversing_deployment();
+    let alice = user("alice");
+
+    let id = {
+        let first = crate::test_support::service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            Arc::clone(&profiles),
+        );
+        let created = first.create_session(&alice, spec()).await.expect("created");
+        await_settled(&first, &alice, &created.id).await;
+        created.id
+    };
+
+    // The process is gone; the record and the runtime are not.
+    let replacement = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    // No revive: nothing was stopped. Prompting is what a person does next,
+    // and it is where the runtime has to be picked back up — exactly as
+    // attaching is for the terminal plane.
+    replacement
+        .send_prompt(&alice, &id, "still there?".to_string())
+        .await
+        .expect("a live runtime is taken back over, and the session prompted");
+}
+
+#[tokio::test]
+async fn taking_a_conversation_back_over_rejoins_it_rather_than_opening_another() {
+    // The half that is invisible without asking. The bridge in the pod
+    // outlives a control plane restart, so opening a conversation rather than
+    // rejoining one leaves a second running beside the first: the owner still
+    // sees their history, because the durable log has it, and the agent has
+    // lost everything it knew.
+    let (store, adapter, profiles) = conversing_deployment();
+    let alice = user("alice");
+
+    let id = {
+        let first = crate::test_support::service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            Arc::clone(&profiles),
+        );
+        let created = first.create_session(&alice, spec()).await.expect("created");
+        await_settled(&first, &alice, &created.id).await;
+        created.id
+    };
+    assert_eq!(
+        adapter.rejoined.lock().await.as_slice(),
+        &[None],
+        "a session being started has no conversation to rejoin"
+    );
+
+    let replacement = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    replacement
+        .send_prompt(&alice, &id, "still there?".to_string())
+        .await
+        .expect("taken back over");
+
+    let asked = adapter.rejoined.lock().await.clone();
+    assert_eq!(
+        asked.last().expect("a second open"),
+        &Some("conv-fixture".to_string()),
+        "the replacement must rejoin what the runtime is already running"
+    );
+}
+
+#[tokio::test]
+async fn a_session_recorded_before_capabilities_existed_is_settled_when_it_comes_back() {
+    // The upgrade case, and the one that decides whether deploying the
+    // capability model costs somebody a running session. A record written by
+    // an older build has no granted set at all; read back, that is every
+    // capability false — which every gate reads as a refusal, including the
+    // one behind each keystroke.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    // Exactly what an older build left behind: everything else intact, the
+    // granted set absent.
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.capabilities = Default::default();
+    assert!(record.session.capabilities.unrecorded());
+    store.upsert(&record).await.expect("recorded");
+
+    drop(first);
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(recovered.readopted_sessions, 1);
+    let settled = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .session
+        .capabilities;
+    assert!(
+        settled.terminal,
+        "a terminal session must come back able to take a keystroke"
+    );
+    assert!(
+        !settled.unrecorded(),
+        "the settled set must be written down, not derived again by every process"
+    );
+    // Through the interface a caller actually uses, not only in the record.
+    restarted
+        .send_input(&alice, &created.id, b"ls\n".to_vec())
+        .await
+        .expect("a readopted session must accept input");
+}
+
+#[tokio::test]
+async fn a_session_that_recorded_its_own_set_keeps_it() {
+    // The other half: settling is for records that never had one. A session
+    // that was granted its abilities deliberately must not have them
+    // recomputed underneath it — that is the recomputation the whole model
+    // exists to forbid.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    // A set that could never be derived from this runtime, so a recomputation
+    // is visible rather than coincidental.
+    record.session.capabilities = crate::capabilities::SessionCapabilities {
+        terminal: true,
+        snapshot: false,
+        ..Default::default()
+    };
+    store.upsert(&record).await.expect("recorded");
+
+    drop(first);
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    restarted.reconcile().await;
+
+    let after = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .session
+        .capabilities;
+    assert!(
+        after.terminal && !after.snapshot,
+        "a recorded set must survive being picked back up: {after:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_provider_that_answers_nothing_defers_rather_than_replaces() {
+    // The failure that already happened in production: the provider could not
+    // be enumerated *and* could not be attached to, because it was not
+    // answering at all. Reading that as "the sandbox is gone" replaces a
+    // session that is very probably still running, and the replacement carries
+    // no conversation.
+    let store = Arc::new(FakeStore::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let original = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    drop(first);
+
+    // A provider that answers neither question. Both failures have one cause,
+    // which is exactly why one must not be read as evidence about the other.
+    let silent = Arc::new(FakeAdapter {
+        refuse_list: true,
+        refuse_attach: true,
+        ..FakeAdapter::default()
+    });
+    let restarted = service(Arc::clone(&store), Arc::clone(&silent));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(
+        recovered.reprovisioned_sessions, 0,
+        "a session must not be replaced on evidence nobody has"
+    );
+    assert_eq!(
+        recovered.deferred_sessions, 1,
+        "it is deferred, and counted"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readable")
+            .expect("present")
+            .runtime_id,
+        Some(original),
+        "the record must still name the sandbox that is still running"
+    );
+    assert!(
+        silent.terminated.lock().await.is_empty(),
+        "and nothing may be torn down on the same non-evidence"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_the_provider_says_is_gone_is_still_replaced() {
+    // The other half. Deferring is for uncertainty, not for a positive answer:
+    // a session whose sandbox the provider says does not exist is one nobody
+    // can use until it is given another.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let handle = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    drop(first);
+
+    // The provider answers, and says this one is gone.
+    adapter.lose(&handle).await;
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    assert_eq!(recovered.deferred_sessions, 0);
 }

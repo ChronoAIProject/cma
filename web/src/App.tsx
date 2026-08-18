@@ -1,9 +1,10 @@
 import { Suspense, lazy } from 'react';
 import { IntroTerminal } from './landing/IntroTerminal';
-import { TopBar } from './shell/TopBar';
+import { PageFrame } from './shell/PageFrame';
 import { useAuth } from './auth/context';
 import './styles/tokens.css';
 import './styles/base.css';
+import './styles/components.css';
 
 /*
  * The console pulls in xterm.js, roughly 400KB before compression. A visitor
@@ -17,11 +18,17 @@ const Console = lazy(async () => {
 });
 
 /**
- * One page, two states.
+ * One page frame, two states.
  *
  * Unauthenticated it is a terminal that introduces itself and takes a prompt;
- * authenticated it is the same surface driven by live sessions. There is no
- * navigation and no second route — see CLAUDE.md and docs/Web_Style.md.
+ * authenticated it is the same frame carrying the two views docs/Web_Style.md
+ * §1 admits — sessions and operations.
+ *
+ * There is still no router and no second route. The app bar's switch chooses
+ * between views and nothing is pushed onto history, which is what keeps the
+ * frame from becoming navigation. A view is where somebody is right now, so it
+ * does not persist; an arrangement is a setting about how a list is drawn, and
+ * that does.
  */
 export function App() {
   const { state, signOut } = useAuth();
@@ -52,12 +59,13 @@ export function App() {
 
     case 'anonymous':
       return (
-        // The same bar as the signed-in state: a visitor and an owner are
-        // looking at one product, not two.
-        <div className="app-shell">
-          <TopBar />
+        // The same frame as the signed-in state: a visitor and an owner are
+        // looking at one product, not two. No view switch, because a visitor
+        // has no views to move between — the switch is not navigation and is
+        // not drawn where there is nothing to select.
+        <PageFrame showing="Signed out">
           <IntroTerminal />
-        </div>
+        </PageFrame>
       );
 
     default: {

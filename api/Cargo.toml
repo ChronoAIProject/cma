@@ -14,6 +14,24 @@ edition = "2021"
 publish = false
 
 [workspace.dependencies]
+# The Agent Client Protocol's published schema. Layer 3 *is* ACP, so its types
+# are taken from the protocol's own crate rather than mirrored by hand — a
+# hand-written copy drifts from the specification the first time it moves.
+#
+# The schema crate rather than the full `agent-client-protocol`: that one
+# carries a JSON-RPC runtime on a second async executor and a process-spawning
+# stdio transport, none of which fits a conversation that rides the
+# supervisor's WebSocket. Both clear `cargo deny`; this one costs less.
+agent-client-protocol-schema = { version = "1.5", features = [
+    # Per-turn token counts. Marked unstable by the protocol because the field
+    # is not in the specification yet, and enabled anyway because it is what a
+    # runtime actually sends: the codex bridge carries it on every prompt
+    # response, and get_usage exists to report exactly these numbers. Reading
+    # them from `_meta` instead would be the same coupling with none of the
+    # typing, and inventing our own would be a third spelling of a field that
+    # already has two.
+    "unstable_end_turn_token_usage",
+] }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
 futures-util = "0.3"

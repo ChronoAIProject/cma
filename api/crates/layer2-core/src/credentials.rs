@@ -5,17 +5,121 @@
 //! interprets. The value is opaque here: the core forwards it, and only the
 //! runtime and the provider ever understand it.
 
-use tokio::sync::mpsc;
-
-use crate::ids::{SessionId, SubjectId};
+use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::SessionService;
-use layer3_adapter::TerminalInput;
 
 impl SessionService {
+    /// Hand a running runtime the credential it should present from now on.
+    ///
+    /// Asked of the adapter rather than pushed down the terminal channel. The
+    /// credential's consumer was always the supervisor's proxy; it travelled as
+    /// terminal input only because the terminal was the sole channel there was,
+    /// which made it impossible to give one to a runtime that renders no
+    /// terminal at all.
+    ///
+    /// Reports whether it arrived. A credential that quietly failed to land
+    /// leaves a session that looks alive and refuses every call the agent makes
+    /// on its owner's behalf.
+    async fn deliver_credential(&self, id: &SessionId, credential: &str) -> bool {
+        let placed = {
+            let entries = self.entries.read().await;
+            entries
+                .get(id)
+                .and_then(|e| e.runtime.clone().map(|h| (e.session.kernel.clone(), h)))
+        };
+        let Some((kernel, handle)) = placed else {
+            tracing::warn!(session_id = %id, "no runtime to give a credential to");
+            return false;
+        };
+        let Some(adapter) = self.adapter_for(&kernel) else {
+            tracing::warn!(session_id = %id, %kernel, "no adapter to give a credential through");
+            return false;
+        };
+        match adapter.refresh_credential(&handle, credential).await {
+            Ok(()) => true,
+            Err(e) => {
+                // Never logged with its value — only that one did not arrive.
+                tracing::warn!(session_id = %id, error = %e, "could not deliver the credential");
+                false
+            }
+        }
+    }
+
+    /// The adapter backing a kernel, if this deployment has one.
+    fn adapter_for(
+        &self,
+        kernel: &KernelId,
+    ) -> Option<std::sync::Arc<dyn layer3_adapter::KernelAdapter>> {
+        self.adapters.get(kernel).cloned()
+    }
     /// The credential to present on an owner's behalf, if one can be had.
-    pub(crate) async fn credential_for(&self, owner: &SubjectId) -> Option<String> {
+    pub(crate) async fn credential_for(
+        &self,
+        session: &SessionId,
+        owner: &SubjectId,
+        services: &[crate::environment::ServiceId],
+    ) -> Option<String> {
         let source = self.credentials.as_ref()?;
-        source.credential_for(owner).await
+        source.credential_for(session, owner, services).await
+    }
+
+    /// What this session's profile says its credential may reach.
+    ///
+    /// Read from the session rather than from the request that created it, so
+    /// a credential minted long afterwards — for a replaced runtime, or after
+    /// a restart — is scoped the same way the first one was.
+    /// Whether this session still exists and could present a credential.
+    ///
+    /// A terminated session is not live even while its record remains: the
+    /// record is history, and history presents nothing.
+    pub async fn session_is_live(&self, id: &SessionId) -> bool {
+        match self.store.get(id).await {
+            Ok(Some(record)) => record.session.status.wants_runtime(),
+            _ => false,
+        }
+    }
+
+    pub async fn session_services(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
+        self.services_for(id).await
+    }
+
+    /// Hand one session a credential that was minted for it.
+    ///
+    /// Separate from the subject-wide push because a per-session credential is
+    /// not shared: replacing every session's value when one was reissued would
+    /// give each of them somebody else's.
+    pub async fn push_session_credential(&self, id: &SessionId, credential: String) -> bool {
+        {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(id) else {
+                return false;
+            };
+            entry.subject_credential = Some(credential.clone());
+        }
+        self.deliver_credential(id, &credential).await
+    }
+
+    pub(crate) async fn services_for(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
+        let Ok(Some(record)) = self.store.get(id).await else {
+            return Vec::new();
+        };
+        // The session's own answer, not its profile's. A credential minted long
+        // afterwards — for a replaced runtime, or after a restart — is scoped
+        // the way the first one was, even if the bundle it was started from has
+        // been widened or narrowed since.
+        if let Some(granted) = record.session.granted_services.clone() {
+            return granted;
+        }
+        // Recorded before the grant was written down. Falling back to the
+        // profile is the only answer available, and it is better than none: a
+        // session already running must not lose its model endpoint because
+        // this field did not exist when it started.
+        self.environments
+            .services_for(
+                &record.session.owner,
+                record.session.environment_profile.as_ref(),
+            )
+            .await
     }
 
     /// Hand a session the credential its owner currently has.
@@ -25,26 +129,20 @@ impl SessionService {
     /// the agent makes on its owner's behalf is refused, so the session looks
     /// broken while being perfectly alive.
     pub(crate) async fn supply_credential(&self, id: &SessionId, owner: &SubjectId) {
-        let Some(credential) = self.credential_for(owner).await else {
+        let services = self.services_for(id).await;
+        let Some(credential) = self.credential_for(id, owner, &services).await else {
             tracing::debug!(session_id = %id, "no credential held for this session's owner");
             return;
         };
-        let sender = {
+        {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
                 return;
             };
             entry.subject_credential = Some(credential.clone());
-            entry.input.clone()
-        };
-        match sender {
-            Some(tx) => match tx.send(TerminalInput::Credential(credential)).await {
-                Ok(()) => {
-                    tracing::info!(session_id = %id, "credential supplied to a recovered session")
-                }
-                Err(_) => tracing::warn!(session_id = %id, "could not supply the credential"),
-            },
-            None => tracing::warn!(session_id = %id, "no input channel to supply a credential on"),
+        }
+        if self.deliver_credential(id, &credential).await {
+            tracing::info!(session_id = %id, "credential supplied to a recovered session");
         }
     }
 
@@ -93,28 +191,22 @@ impl SessionService {
         subject: &SubjectId,
         credential: String,
     ) -> usize {
-        let targets: Vec<(SessionId, mpsc::Sender<TerminalInput>)> = {
+        let targets: Vec<SessionId> = {
             let mut entries = self.entries.write().await;
             entries
                 .values_mut()
                 .filter(|e| e.session.is_owned_by(subject) && !e.session.status.is_terminal())
-                .filter_map(|e| {
+                .map(|e| {
                     e.subject_credential = Some(credential.clone());
-                    e.input.clone().map(|tx| (e.session.id.clone(), tx))
+                    e.session.id.clone()
                 })
                 .collect()
         };
 
         let mut delivered = 0;
-        for (id, tx) in targets {
-            if tx
-                .send(TerminalInput::Credential(credential.clone()))
-                .await
-                .is_ok()
-            {
+        for id in targets {
+            if self.deliver_credential(&id, &credential).await {
                 delivered += 1;
-            } else {
-                tracing::warn!(session_id = %id, "could not deliver refreshed credential");
             }
         }
         if delivered > 0 {

@@ -48,6 +48,15 @@ pub enum CoreError {
     #[error("invalid state for operation")]
     InvalidState,
 
+    /// The session's runtime does not provide something the request needs.
+    ///
+    /// Carries the ability's own name, because "not supported" without saying
+    /// what is the answer a caller cannot act on. Distinct from
+    /// `InvalidRequest`: the request is perfectly sensible, and would be
+    /// honoured by a session placed on a runtime that offers this.
+    #[error("capability not supported: {0}")]
+    CapabilityUnsupported(String),
+
     /// The request was well-formed but describes something unusable.
     ///
     /// Distinct from `InvalidState`: nothing about the system prevents this,
@@ -56,6 +65,30 @@ pub enum CoreError {
     /// part of a request that may be a credential.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+
+    /// The owner has not granted this service, so no session may reach it.
+    ///
+    /// Carries the service's own identifier, because "not granted" without
+    /// saying what is an answer nobody can act on. **Not transient**: retrying
+    /// is pointless, and the thing to do is grant it in NyxID. That is what
+    /// separates it from `ServiceCatalogUnavailable`, which is the same
+    /// sentence about a different world.
+    #[error("service not granted: {0}")]
+    ServiceNotGranted(String),
+
+    /// The service catalogue could not be asked.
+    ///
+    /// **Transient.** The owner's services are fine; we cannot list them right
+    /// now. Retrying is correct, which is precisely what makes it a different
+    /// answer from `ServiceNotGranted` — a caller who cannot tell them apart
+    /// retries the one that will never succeed and gives up on the one that
+    /// would have.
+    ///
+    /// Distinct from `RuntimeUnavailable` too: a caller told "runtime
+    /// unavailable" looks at the sandbox provider, and this has nothing to do
+    /// with one.
+    #[error("service catalogue unavailable: {0}")]
+    ServiceCatalogUnavailable(String),
 }
 
 impl CoreError {
@@ -73,7 +106,10 @@ impl CoreError {
             Self::InvalidGeometry(_) => "invalid_geometry",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::InvalidState => "invalid_state",
+            Self::CapabilityUnsupported(_) => "capability_unsupported",
             Self::InvalidRequest(_) => "invalid_request",
+            Self::ServiceNotGranted(_) => "service_not_granted",
+            Self::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
         }
     }
 }
@@ -95,12 +131,41 @@ mod tests {
                 .code(),
             CoreError::RuntimeUnavailable("x".into()).code(),
             CoreError::InvalidState.code(),
+            CoreError::CapabilityUnsupported("terminal".into()).code(),
             CoreError::InvalidRequest("x".into()).code(),
+            CoreError::ServiceNotGranted("api-github".into()).code(),
+            CoreError::ServiceCatalogUnavailable("down".into()).code(),
         ];
         let mut sorted = codes.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), codes.len(), "codes must be unique: {codes:?}");
+    }
+
+    #[test]
+    fn a_service_refusal_says_which_of_the_three_it_is() {
+        // "You never granted this", "we cannot ask right now" and "this
+        // deployment has no catalogue" are three answers, and a caller who
+        // cannot tell them apart does the wrong thing for two of them. The
+        // third is not an error at all and so has no variant here.
+        assert_ne!(
+            CoreError::ServiceNotGranted("api-github".into()).code(),
+            CoreError::ServiceCatalogUnavailable("down".into()).code(),
+        );
+        // And neither is the sandbox provider being down, which is where a
+        // caller told "runtime unavailable" would go looking.
+        assert_ne!(
+            CoreError::ServiceCatalogUnavailable("down".into()).code(),
+            CoreError::RuntimeUnavailable("down".into()).code(),
+        );
+    }
+
+    #[test]
+    fn a_refusal_names_the_service_a_caller_has_to_act_on() {
+        // "Not granted" without saying what is an answer nobody can act on.
+        assert!(CoreError::ServiceNotGranted("api-github".into())
+            .to_string()
+            .contains("api-github"));
     }
 
     #[test]

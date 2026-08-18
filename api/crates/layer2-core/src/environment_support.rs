@@ -131,17 +131,83 @@ impl SkillCatalog for FakeSkillCatalog {
     }
 }
 
+/// A service catalogue that answers, or refuses, exactly as NyxID would.
+///
+/// The three answers it can give are the three this milestone exists to keep
+/// apart: a list of grants, a refusal to answer, and — by not being wired up
+/// at all — a deployment with no catalogue.
+pub(crate) struct FakeServiceCatalog {
+    granted: Vec<crate::environment::CatalogService>,
+    failure: Option<CatalogError>,
+}
+
+impl FakeServiceCatalog {
+    pub(crate) fn granting(ids: impl IntoIterator<Item = &'static str>) -> Self {
+        Self {
+            granted: ids
+                .into_iter()
+                .map(|id| crate::environment::CatalogService {
+                    id: crate::environment::ServiceId::new(id),
+                    name: id.to_string(),
+                    description: None,
+                })
+                .collect(),
+            failure: None,
+        }
+    }
+
+    pub(crate) fn unreachable() -> Self {
+        Self {
+            granted: Vec::new(),
+            failure: Some(CatalogError::Unavailable("connection refused".into())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::environment::ServiceCatalog for FakeServiceCatalog {
+    async fn available(
+        &self,
+        _subject: &SubjectId,
+        _credential: Option<&str>,
+    ) -> Result<Vec<crate::environment::CatalogService>, CatalogError> {
+        match &self.failure {
+            Some(CatalogError::Unavailable(m)) => Err(CatalogError::Unavailable(m.clone())),
+            Some(CatalogError::Malformed(m)) => Err(CatalogError::Malformed(m.clone())),
+            None => Ok(self.granted.clone()),
+        }
+    }
+}
+
+/// A profile service wired to a service catalogue, with one mandated service.
+pub(crate) fn service_catalog_service(
+    catalog: Option<Arc<FakeServiceCatalog>>,
+) -> Arc<EnvironmentProfileService> {
+    EnvironmentProfileService::new(
+        Arc::new(FakeProfileStore::default()),
+        Baseline::new(
+            [SoftwarePackage::new("platform-cli")],
+            [],
+            [crate::environment::ServiceId::new("nyxid")],
+        ),
+        None,
+        catalog.map(|c| c as Arc<dyn crate::environment::ServiceCatalog>),
+        fake_agent(),
+    )
+}
+
 /// The baseline the tests treat as what this deployment mandates.
 pub(crate) fn baseline() -> Baseline {
     Baseline::new(
         [SoftwarePackage::new("platform-cli")],
         [SkillId::new("mandatory-one"), SkillId::new("mandatory-two")],
+        [],
     )
 }
 
 /// A profile service over the given store, with the standard baseline.
 pub(crate) fn environments(store: Arc<FakeProfileStore>) -> Arc<EnvironmentProfileService> {
-    EnvironmentProfileService::new(store, baseline(), None)
+    EnvironmentProfileService::new(store, baseline(), None, None, fake_agent())
 }
 
 /// A profile service wired to a catalogue.
@@ -150,13 +216,34 @@ pub(crate) fn catalog_service(catalog: Arc<FakeSkillCatalog>) -> Arc<Environment
         Arc::new(FakeProfileStore::default()),
         baseline(),
         Some(catalog),
+        None,
+        crate::environment::AgentConfiguration {
+            // The kernel the fake adapter is registered under. The default is
+            // the one this deployment ships, and a fixture that left it there
+            // would be asking for a runtime the test never registered.
+            kernel: crate::ids::KernelId::new("fake"),
+            ..Default::default()
+        },
     )
+}
+
+/// The agent configuration these fixtures can actually start.
+///
+/// The real default names the kernel this deployment ships, which no test
+/// registers an adapter for. Naming the fake one here keeps every fixture
+/// startable without each test having to know why.
+pub(crate) fn fake_agent() -> crate::environment::AgentConfiguration {
+    crate::environment::AgentConfiguration {
+        kernel: crate::ids::KernelId::new("fake"),
+        ..Default::default()
+    }
 }
 
 /// A named profile with nothing else in it.
 pub(crate) fn profile_spec(name: &str) -> EnvironmentProfileSpec {
     EnvironmentProfileSpec {
         name: name.to_string(),
+        agent: fake_agent(),
         ..EnvironmentProfileSpec::default()
     }
 }

@@ -7,20 +7,24 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 use layer2_core::{
-    CoreError, KernelId, Session, SessionId, SessionService, SessionSpec, TerminalGeometry,
+    Caller, CoreError, EnvironmentProfileService, PublicIdentity, Session, SessionCapabilities,
+    SessionId, SessionService, SessionSpec, TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
 mod events;
+mod operate;
+mod tickets;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
+use crate::tickets::TerminalTickets;
 use crate::{InterfaceProfile, Operation};
 
 /// Base URI for problem types this interface returns.
@@ -31,6 +35,34 @@ const CONFORMS_TO: &[&str] = &[
     "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
     "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
 ];
+
+/// Where every conformance class this service declares is rooted.
+const CONF_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/conf";
+
+/// The classes one session satisfies, given what it was granted.
+///
+/// The interface-wide list above says what REST can project for *some*
+/// session; this says what it can project for *this* one. Both are needed and
+/// they are not the same claim: a service that renders a terminal still cannot
+/// render one for a session that has none, and a client told otherwise
+/// discovers it by getting an error where it expected a screen.
+fn conformance_for(capabilities: &SessionCapabilities) -> Vec<String> {
+    // `core` unconditionally: every session has a lifecycle, a log and a
+    // status, whatever plane it is driven on.
+    let mut classes = vec![format!("{CONF_BASE}/core")];
+    for (held, class) in [
+        (capabilities.terminal, "terminal"),
+        (capabilities.conversation, "conversation"),
+        (capabilities.steer, "steering"),
+        (capabilities.interrupt, "interrupt"),
+        (capabilities.usage, "usage"),
+    ] {
+        if held {
+            classes.push(format!("{CONF_BASE}/{class}"));
+        }
+    }
+    classes
+}
 
 /// The interface profile.
 pub struct RestInterface;
@@ -51,6 +83,7 @@ impl InterfaceProfile for RestInterface {
             Operation::ResizeTerminal,
             Operation::ScreenSnapshot,
             Operation::GetUsage,
+            Operation::ChangePlane,
         ]
     }
 }
@@ -58,21 +91,19 @@ impl InterfaceProfile for RestInterface {
 /// Request body for creating a session.
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
-    /// How the agent should behave. Omitted means the safe defaults.
-    #[serde(default)]
-    options: Option<layer2_core::AgentOptions>,
-    /// Which runtime should back the session.
-    pub kernel: String,
     /// Initial terminal width.
     #[serde(default)]
     pub cols: Option<u16>,
     /// Initial terminal height.
     #[serde(default)]
     pub rows: Option<u16>,
-    /// Reusable environment bundle to start the session with.
+    /// The environment profile to start the session from.
     ///
-    /// Omitting it does not mean a bare session: what the platform mandates is
-    /// applied either way.
+    /// The whole description of the session: which agent, which model, how
+    /// hard it thinks, how often it asks, whose access it spends, and what it
+    /// carries. Naming nothing is a choice too — it starts the session the way
+    /// this deployment says an unqualified session should start, which is not
+    /// the same as a bare one.
     #[serde(default)]
     pub environment_profile: Option<String>,
 }
@@ -102,6 +133,53 @@ pub struct SessionView {
     rotations: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     rotated_at: Option<String>,
+    /// Who started this session, as they should be shown.
+    ///
+    /// Absent when the caller may not be told — naming somebody is its own
+    /// grant — and absent when the provider released nothing worth drawing.
+    /// A client renders what it is given and never falls back to the subject
+    /// identifier, which is not a name and reads as a fault when shown as one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    creator: Option<PublicIdentity>,
+    /// What this particular session can be asked to do.
+    ///
+    /// Derived from the set it was granted at creation rather than from what
+    /// this interface can project in general, so a client reads the truth about
+    /// the session in front of it instead of the truth about the service.
+    conforms_to: Vec<String>,
+    /// What this session's credential may reach.
+    ///
+    /// The other half of a fact whose first half is already here: capabilities
+    /// are what a session can *do*, and this is what it can *touch*. A client
+    /// shown one and not the other is describing half a session.
+    ///
+    /// The session's own answer and never its profile's. A profile can be
+    /// edited after a session started from it and the session keeps the scope
+    /// it was provisioned with, so reading the profile would give the wrong
+    /// answer exactly when somebody has changed one.
+    reach: Vec<ReachView>,
+}
+
+/// One service a session may reach, as this interface renders it.
+///
+/// Never a credential, never a token, and never an expiry. What a session may
+/// reach is a fact about its configuration; what it holds is not.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReachView {
+    /// The identifier the profile stored. Always present.
+    id: String,
+    /// What the owner recognises it by, when the catalogue offers a name.
+    ///
+    /// A raw service identifier is not something anybody recognises, and a
+    /// catalogue that could not be asked costs the names rather than the
+    /// answer: the identifiers alone are still true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    /// Whether the platform mandates it, so a client can draw it as fixed
+    /// rather than guessing which entries cannot be removed.
+    mandated: bool,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -123,12 +201,92 @@ impl From<Session> for SessionView {
             rotations: s.rotations,
             rotated_at: s.rotated_at,
             created_at: s.created_at,
+            creator: None,
+            conforms_to: conformance_for(&s.capabilities),
+            // Filled by `reach`, which needs the catalogue and the baseline.
+            // Empty here rather than absent: a view built without them reports
+            // nothing rather than claiming a session reaches nothing.
+            reach: Vec::new(),
         }
     }
 }
 
+/// Describe what each session may reach, as far as this caller can be told.
+///
+/// One catalogue lookup for the whole page rather than one per row, for the
+/// same reason the directory is asked once: a list of twenty sessions is not a
+/// reason to ask NyxID twenty times.
+///
+/// A catalogue that cannot be reached costs the names and not the answer. §12
+/// of the API contract and #132's whole argument turn on that distinction:
+/// "we cannot ask right now" is not "you may reach nothing", and returning an
+/// error here would report a transient outage as a session with no reach.
+async fn reached(
+    environments: &EnvironmentProfileService,
+    caller: &Caller,
+    credential: Option<&str>,
+    sessions: &[Session],
+    views: &mut [SessionView],
+) {
+    let mandated: std::collections::HashSet<String> = environments
+        .baseline()
+        .services()
+        .iter()
+        .map(|s| s.0.clone())
+        .collect();
+
+    let named: std::collections::HashMap<String, layer2_core::CatalogService> = environments
+        .available_services(caller, credential)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|service| (service.id.0.clone(), service))
+        .collect();
+
+    for (session, view) in sessions.iter().zip(views.iter_mut()) {
+        view.reach = session
+            .granted_services
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| {
+                let known = named.get(&id.0);
+                ReachView {
+                    mandated: mandated.contains(&id.0),
+                    name: known.map(|s| s.name.clone()),
+                    description: known.and_then(|s| s.description.clone()),
+                    id: id.0,
+                }
+            })
+            .collect();
+    }
+}
+
+/// Attach the owner's identity to each view, as far as this caller may know it.
+///
+/// One lookup for the whole page rather than one per row: the directory is a
+/// database, and a list of twenty sessions is not a reason to ask it twenty
+/// times. A directory that cannot be reached costs the names and not the
+/// sessions — a list nobody can read is worse than one drawn without faces.
+async fn named(users: &UserDirectory, caller: &Caller, sessions: Vec<Session>) -> Vec<SessionView> {
+    let owners: Vec<_> = sessions.iter().map(|s| s.owner.clone()).collect();
+    let identities = users
+        .identities_known_to(caller, &owners)
+        .await
+        .unwrap_or_default();
+    sessions
+        .into_iter()
+        .map(|s| {
+            let creator = identities.get(&s.owner).cloned();
+            let mut view = SessionView::from(s);
+            view.creator = creator;
+            view
+        })
+        .collect()
+}
+
 /// A core failure rendered as an RFC 9457 problem document.
-pub(crate) struct Problem(pub(crate) CoreError);
+pub struct Problem(pub(crate) CoreError);
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
@@ -157,6 +315,25 @@ impl IntoResponse for Problem {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
             }
             CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
+            // 422 rather than 404: the route exists and the request is
+            // well-formed, and this session simply cannot honour it. A 404
+            // would send the caller looking for a spelling mistake.
+            CoreError::CapabilityUnsupported(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "capability-unsupported")
+            }
+            // 422 and never 503: retrying will not grant it. The request is
+            // well-formed and this owner has simply not given the service to
+            // anything — which is fixed in NyxID, not by trying again.
+            CoreError::ServiceNotGranted(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "service-not-granted")
+            }
+            // 503 and never 422: the owner's services are fine and we could
+            // not list them. Retrying is the correct thing to do, which is the
+            // whole reason this is a different answer from the one above.
+            CoreError::ServiceCatalogUnavailable(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service-catalogue-unavailable",
+            ),
         };
         (
             status,
@@ -184,6 +361,7 @@ impl From<CoreError> for Problem {
 /// outlives every session that used one — so it has its own router, mounted
 /// beside this one.
 pub mod environments;
+mod environments_shapes;
 
 /// What somebody running the service can see and do.
 ///
@@ -192,8 +370,58 @@ pub mod environments;
 /// route at a time.
 pub mod admin;
 
+/// What the session routes are served from.
+///
+/// Two services rather than one because a session names the person who started
+/// it, and a subject identifier is the wrong thing to put in front of anybody.
+/// Composed with `FromRef` so a handler that does not name anyone keeps asking
+/// for exactly what it uses.
+#[derive(Clone)]
+pub struct SessionsState {
+    /// Sessions and the runtimes serving them.
+    pub sessions: Arc<SessionService>,
+    /// Who has used the service, for naming the owner of one.
+    pub users: Arc<UserDirectory>,
+    /// One-time grants for attaching a terminal from a browser.
+    ///
+    /// Shared with the PTY interface, which is where they are redeemed. They
+    /// are minted here because this is the surface that can carry a
+    /// credential, and redeemed there because that is the surface that cannot.
+    pub tickets: Arc<TerminalTickets>,
+    /// The catalogue and the baseline, for naming what a session may reach.
+    ///
+    /// Here because a session reports its reach and a raw service identifier
+    /// is not something an owner recognises. The catalogue is asked as the
+    /// caller, since which services exist is a fact about their account.
+    pub environments: Arc<EnvironmentProfileService>,
+}
+
+impl FromRef<SessionsState> for Arc<SessionService> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.sessions)
+    }
+}
+
+impl FromRef<SessionsState> for Arc<UserDirectory> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.users)
+    }
+}
+
+impl FromRef<SessionsState> for Arc<TerminalTickets> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.tickets)
+    }
+}
+
+impl FromRef<SessionsState> for Arc<EnvironmentProfileService> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.environments)
+    }
+}
+
 /// Routes this interface contributes.
-pub fn router(service: Arc<SessionService>) -> Router {
+pub fn router(state: SessionsState) -> Router {
     Router::new()
         .route("/api/v1/sessions", post(create).get(list))
         .route("/api/v1/sessions/{id}", get(read))
@@ -206,7 +434,35 @@ pub fn router(service: Arc<SessionService>) -> Router {
         // be picked up again; the pair only makes sense together, which is why
         // reviving lives beside it rather than behind a creation call.
         .route("/api/v1/sessions/{id}/stop", post(stop))
+        .route("/api/v1/sessions/{id}/plane", post(plane))
         .route("/api/v1/sessions/{id}/revive", post(revive))
+        // Exchanges the credential this route can carry for one the WebSocket
+        // upgrade can. See `crate::tickets` for why that exchange exists.
+        .route(
+            "/api/v1/sessions/{id}/terminal-ticket",
+            post(tickets::terminal_ticket),
+        )
+        // What a caller sends to a session, on whichever plane it holds:
+        // keystrokes to a terminal, a prompt turn to a conversation. One route
+        // because it is one operation in the core, and the session's granted
+        // capabilities decide what it means.
+        .route("/api/v1/sessions/{id}/input", post(operate::input))
+        // Stop what it is doing without ending it. A signal on the terminal
+        // plane, the conversation's own cancel on the other.
+        .route("/api/v1/sessions/{id}/interrupt", post(operate::interrupt))
+        // Adding to a turn already running, which is not the same as starting
+        // one — and is refused by name where a kernel cannot tell them apart.
+        .route("/api/v1/sessions/{id}/steer", post(operate::steer))
+        .route("/api/v1/sessions/{id}/resize", post(operate::resize))
+        // Answering what a runtime is blocked on. Conversation sessions only:
+        // a terminal kernel asks on its own screen, and its answer is a
+        // keystroke, so inventing an operation here would be a second way to
+        // say something this session cannot hear.
+        .route(
+            "/api/v1/sessions/{id}/approvals/{request_id}",
+            post(operate::resolve_approval),
+        )
+        .route("/api/v1/sessions/{id}/usage", get(operate::usage))
         .route("/api/v1/sessions/{id}/screen", get(screen))
         // What the session has shown, for one that has no runtime to attach
         // to. Reading stopped work is not the same as resuming it.
@@ -216,7 +472,7 @@ pub fn router(service: Arc<SessionService>) -> Router {
         .route("/api/v1/sessions/{id}/events", get(events::stream))
         .route("/api/v1/conformance", get(conformance))
         .route("/api/v1/kernels", get(kernels))
-        .with_state(service)
+        .with_state(state)
 }
 
 async fn create(
@@ -238,12 +494,12 @@ async fn create(
                 environment_profile: body
                     .environment_profile
                     .map(layer2_core::EnvironmentProfileId),
-                kernel: KernelId::new(body.kernel),
                 geometry,
-                // Absent options mean the deployment's defaults, which are the
-                // cautious ones. A client that omits them never lands on a
-                // session that can act without asking.
-                options: body.options.unwrap_or_default(),
+                // Replaced by the core from the profile this session names.
+                // Sent as a default rather than left out because the spec is
+                // also what a rotation rebuilds a session from, where these
+                // are the values the session was started with.
+                options: Default::default(),
                 subject_credential: credential.map(|axum::Extension(c)| c.0),
             },
         )
@@ -253,19 +509,46 @@ async fn create(
 
 async fn list(
     State(service): State<Arc<SessionService>>,
+    State(users): State<Arc<UserDirectory>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
 ) -> Json<Vec<SessionView>> {
     let sessions = service.list_sessions(&caller).await;
-    Json(sessions.into_iter().map(SessionView::from).collect())
+    let mut views = named(&users, &caller, sessions.clone()).await;
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    reached(
+        &environments,
+        &caller,
+        credential.as_deref(),
+        &sessions,
+        &mut views,
+    )
+    .await;
+    Json(views)
 }
 
 async fn read(
     State(service): State<Arc<SessionService>>,
+    State(users): State<Arc<UserDirectory>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionView>, Problem> {
     let session = service.get_session(&caller, &SessionId(id)).await?;
-    Ok(Json(session.into()))
+    let sessions = vec![session];
+    let mut views = named(&users, &caller, sessions.clone()).await;
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    reached(
+        &environments,
+        &caller,
+        credential.as_deref(),
+        &sessions,
+        &mut views,
+    )
+    .await;
+    Ok(Json(views.remove(0)))
 }
 
 async fn terminate(
@@ -284,6 +567,35 @@ async fn stop(
 ) -> Result<StatusCode, Problem> {
     service.stop_session(&caller, &SessionId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Which plane the caller wants this session driven on.
+#[derive(Debug, Deserialize)]
+pub struct PlaneRequest {
+    /// The plane to move to. Naming the one it is already on changes nothing.
+    pub plane: layer2_core::SessionMode,
+}
+
+/// Move a session onto the other plane.
+///
+/// A rotation, and answered as one: the session comes back with its identifier,
+/// its history and its place in the caller's list, and the view returned is the
+/// session mid-handover — `rotating`, which is the window in which a client
+/// must refuse input rather than accept and lose it.
+///
+/// Every refusal is typed and names what is missing, per §3 of the overview: a
+/// kernel that does not serve the plane, or one that cannot carry its
+/// conversation across, is refused before anything is torn down.
+async fn plane(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    Json(body): Json<PlaneRequest>,
+) -> Result<Json<SessionView>, Problem> {
+    let session = service
+        .change_plane(&caller, &SessionId(id), body.plane)
+        .await?;
+    Ok(Json(session.into()))
 }
 
 async fn revive(
@@ -341,91 +653,21 @@ async fn conformance() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "conformsTo": CONFORMS_TO }))
 }
 
+/// The runtimes a session can be started on, and what each one can be.
+///
+/// The planes ride with the identifier so a client can refuse an impossible
+/// pairing where the person is still choosing, rather than submitting it and
+/// rendering the refusal that comes back. Both come from the same core answer,
+/// so an interface cannot offer a combination the core would decline.
 async fn kernels(State(service): State<Arc<SessionService>>) -> Json<serde_json::Value> {
-    let ids: Vec<String> = service
+    let offerings: Vec<serde_json::Value> = service
         .available_kernels()
         .into_iter()
-        .map(|k| k.0)
+        .map(|(kernel, modes)| serde_json::json!({ "id": kernel.0, "modes": modes }))
         .collect();
-    Json(serde_json::json!({ "kernels": ids }))
+    Json(serde_json::json!({ "kernels": offerings }))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rest_projects_every_core_operation() {
-        // REST has no structural constraint, so a missing operation here means
-        // the facade has drifted from the core rather than that the protocol
-        // cannot express it.
-        assert_eq!(RestInterface.operations().len(), 9);
-    }
-
-    /// Everything a client can observe about a refusal.
-    async fn rendered(e: CoreError) -> (StatusCode, serde_json::Value) {
-        let response = Problem(e).into_response();
-        let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("problem documents are small");
-        (
-            status,
-            serde_json::from_slice(&bytes).expect("a problem document is json"),
-        )
-    }
-
-    #[tokio::test]
-    async fn unauthorized_is_indistinguishable_from_not_found() {
-        // Not merely the same status. A body that still says "forbidden"
-        // confirms the identifier exists, which is the one thing this refusal
-        // is shaped to withhold — so every field a client can read must match.
-        let (forbidden_status, forbidden_body) = rendered(CoreError::Forbidden).await;
-        let (missing_status, missing_body) = rendered(CoreError::SessionNotFound).await;
-
-        assert_eq!(forbidden_status, StatusCode::NOT_FOUND);
-        assert_eq!(missing_status, StatusCode::NOT_FOUND);
-        assert_eq!(
-            forbidden_body, missing_body,
-            "a refusal that reads differently is an existence oracle"
-        );
-    }
-
-    #[test]
-    fn zero_geometry_is_unprocessable_not_a_server_error() {
-        let err = TerminalGeometry::new(0, 24).expect_err("zero width fails");
-        let response = Problem(CoreError::InvalidGeometry(err)).into_response();
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    #[test]
-    fn an_unreachable_runtime_is_service_unavailable() {
-        let response = Problem(CoreError::RuntimeUnavailable("down".into())).into_response();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    #[test]
-    fn a_view_carries_geometry_as_plain_integers() {
-        let s = Session {
-            id: SessionId("sesn_1".into()),
-            owner: layer2_core::SubjectId("subject-a".into()),
-            kernel: KernelId::new("example-runtime"),
-            status: layer2_core::SessionStatus::Ready,
-            recovery_state: layer2_core::RecoveryState::Normal,
-            stop_reason: None,
-            options: layer2_core::AgentOptions::default(),
-            environment_profile: None,
-            geometry: TerminalGeometry::new(120, 40).expect("valid"),
-            last_seq: 3,
-            runtime_version: None,
-            rotations: 0,
-            rotated_at: None,
-            created_at: "2026-08-12T00:00:00Z".into(),
-        };
-        let view: SessionView = s.into();
-        let json = serde_json::to_value(&view).expect("serializes");
-        assert_eq!(json["cols"], 120);
-        assert_eq!(json["rows"], 40);
-        assert!(json.get("stop_reason").is_none(), "absent reason omitted");
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

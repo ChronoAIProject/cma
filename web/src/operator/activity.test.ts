@@ -88,13 +88,13 @@ describe('how an entry reads', () => {
   });
 
   it('marks being turned away and failing as the outcomes worth noticing', () => {
-    expect(outcomeTone('denied')).toBe('danger');
-    expect(outcomeTone('failed')).toBe('warn');
-    expect(outcomeTone('succeeded')).toBe('ok');
+    expect(outcomeTone('denied')).toBe('fail');
+    expect(outcomeTone('failed')).toBe('wait');
+    expect(outcomeTone('succeeded')).toBe('live');
   });
 
   it('draws an unfamiliar outcome plainly rather than guessing at it', () => {
-    expect(outcomeTone('rejected')).toBe('neutral');
-    expect(outcomeTone('something_new')).toBe('neutral');
+    expect(outcomeTone('rejected')).toBe('ended');
+    expect(outcomeTone('something_new')).toBe('ended');
   });
 });

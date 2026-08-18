@@ -183,9 +183,10 @@ impl RecoveryState {
 pub struct SessionSpec {
     /// How the agent should behave, chosen at creation and fixed for the
     /// session's life.
+    ///
+    /// Filled in from the profile the session names, like the kernel: what a
+    /// caller sent here would be discarded, which is why a caller is not asked.
     pub options: AgentOptions,
-    /// Which runtime implementation should back the session.
-    pub kernel: KernelId,
     /// Terminal geometry to start the runtime at.
     #[serde(default)]
     pub geometry: Option<TerminalGeometry>,
@@ -264,6 +265,40 @@ pub struct Session {
     /// rather than puzzled over.
     #[serde(default)]
     pub rotated_at: Option<String>,
+    /// What this session was granted when it was created.
+    ///
+    /// Held with the session for the same reason its options are: it decides
+    /// what the session can be asked to do, and recomputing it later against a
+    /// runtime whose abilities have since changed would silently make a live
+    /// session into a different one.
+    ///
+    /// Empty on sessions recorded before this existed, and settled the first
+    /// time such a session is placed or picked back up — `settle_capabilities`
+    /// derives it against the runtime it actually has and writes it down.
+    ///
+    /// The empty state is therefore transient rather than safe. It was
+    /// described as safe on the assumption that a session holding nothing
+    /// simply claims nothing; in fact every gate that consults the set refuses,
+    /// including the one behind each keystroke, so a session left empty is
+    /// listed, openable and dead.
+    #[serde(default)]
+    pub capabilities: crate::capabilities::SessionCapabilities,
+    /// What this session's credential may reach, decided when it was created.
+    ///
+    /// Held with the session rather than resolved from its profile whenever
+    /// somebody asks. A profile can be edited after a session started from it,
+    /// and the session keeps the scope it was provisioned with — so reading
+    /// the profile to learn a session's reach gives the wrong answer precisely
+    /// when it matters, which is after somebody has widened or narrowed the
+    /// bundle a live session was started from.
+    ///
+    /// `None` on sessions recorded before this existed, which is not the same
+    /// fact as an empty grant: the first is "we did not write it down" and the
+    /// second is "this session may reach nothing". They are told apart because
+    /// the first still has to fall back to its profile, and the second must
+    /// not.
+    #[serde(default)]
+    pub granted_services: Option<Vec<crate::environment::ServiceId>>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
@@ -334,6 +369,8 @@ mod tests {
             runtime_version: None,
             rotations: 0,
             rotated_at: None,
+            capabilities: Default::default(),
+            granted_services: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
         assert!(session.is_owned_by(&owner));

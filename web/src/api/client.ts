@@ -12,9 +12,17 @@
  * undefined through the UI.
  */
 
-import type { Kernel, Session, SessionLifecycle } from '../sessions/types';
-import type { AgentOptions } from '../sessions/options';
+import type {
+  Kernel,
+  KernelOffer,
+  Session,
+  SessionCreator,
+  SessionLifecycle,
+  SessionPlane,
+  SessionService,
+} from '../sessions/types';
 import { isStage, type Stage } from '../sessions/progress';
+import { toCapabilities } from '../agui';
 
 /** A request that failed, carrying enough to tell the user why. */
 export class ApiError extends Error {
@@ -53,6 +61,9 @@ interface SessionPayload {
   runtime_version?: unknown;
   rotations?: unknown;
   rotated_at?: unknown;
+  creator?: unknown;
+  reach?: unknown;
+  conforms_to?: unknown;
 }
 
 /**
@@ -90,7 +101,87 @@ export function toSession(raw: unknown): Session {
     // Absent until a session has actually been moved, so an unparseable value
     // becomes absent rather than a date nobody can interpret.
     rotatedAt: rotatedAt(p.rotated_at),
+    creator: creator(p.creator),
+    reach: reach(p.reach),
+    plane: plane(p.conforms_to),
+    // Read once at the boundary, so components ask what a session may do
+    // rather than trying and handling a refusal.
+    capabilities: toCapabilities(raw),
   };
+}
+
+/**
+ * Which plane a session is drawn on, read from what it conforms to.
+ *
+ * The control plane reports a session's granted classes as URIs ending
+ * `/conf/<name>`; `conversation` and `terminal` are two of them and are
+ * exclusive by construction. Read from the session rather than assumed,
+ * because it is the session's own answer and no interface chooses one.
+ *
+ * A session that declares neither falls back to the terminal — what every
+ * session was before the conversation plane existed. That is the safe
+ * direction: a terminal drawn for a conversation session shows an empty
+ * screen, and a conversation drawn for a terminal session shows nothing.
+ */
+function plane(raw: unknown): SessionPlane | undefined {
+  const granted = toCapabilities({ conforms_to: raw });
+  if (granted.conversation) {
+    return 'conversation';
+  }
+  return granted.terminal ? 'terminal' : undefined;
+}
+
+/**
+ * What this session's credential may reach, as the control plane reported it.
+ *
+ * `undefined` when the field is absent — an older control plane, or one that
+ * does not project it — and an empty array when it is present and empty. The
+ * two are different facts: "we were not told" is not "this session reaches
+ * nothing", and drawing them alike would answer a question nobody asked.
+ *
+ * An entry with no usable identifier is dropped rather than rendered blank. An
+ * entry carrying anything that looks like credential material is not filtered
+ * here, because the projection carries none — see `docs/API_REST.md`.
+ */
+function reach(raw: unknown): readonly SessionService[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw.flatMap((entry): SessionService[] => {
+    if (typeof entry !== 'object' || entry === null) {
+      return [];
+    }
+    const service = entry as Record<string, unknown>;
+    if (typeof service.id !== 'string' || service.id === '') {
+      return [];
+    }
+    return [
+      {
+        id: service.id,
+        name: typeof service.name === 'string' ? service.name : undefined,
+        description: typeof service.description === 'string' ? service.description : undefined,
+        // Absent reads as not mandated, which is the safe direction: drawing a
+        // chosen service as fixed would tell somebody they cannot remove
+        // something they can.
+        mandated: service.mandated === true,
+      },
+    ];
+  });
+}
+
+/** The person who started a session, when the control plane named them. */
+function creator(raw: unknown): SessionCreator | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const c = raw as Record<string, unknown>;
+  const displayName = typeof c.display_name === 'string' ? c.display_name : undefined;
+  const avatarUrl = typeof c.avatar_url === 'string' ? c.avatar_url : undefined;
+  // Both absent is the same as no creator at all: an object with nothing in it
+  // would have the panel draw a heading over blank space.
+  return displayName === undefined && avatarUrl === undefined
+    ? undefined
+    : { displayName, avatarUrl };
 }
 
 /** The snapshot time a session was carried across from, if it was. */
@@ -150,30 +241,85 @@ export async function listSessions(): Promise<readonly Session[]> {
 }
 
 /**
+ * The runtimes this deployment can start a session on, and what each can be.
+ *
+ * Asked once and passed down, rather than asked wherever a form needs it: the
+ * answer describes the deployment and does not change while somebody fills a
+ * form in.
+ */
+export async function listKernels(): Promise<readonly KernelOffer[]> {
+  const body = await request('/api/v1/kernels');
+  const items = (body as { kernels?: unknown })?.kernels;
+  if (!Array.isArray(items)) {
+    throw new ApiError(0, 'the kernel list was not a list');
+  }
+  return items.map(toKernelOffer);
+}
+
+/**
+ * Read one runtime's offer.
+ *
+ * A plane this client cannot draw is dropped rather than carried: offering it
+ * would put a choice on screen that ends in a surface nobody has written. A
+ * runtime left with no planes is still listed, because it exists and saying
+ * otherwise is a different claim.
+ */
+function toKernelOffer(raw: unknown): KernelOffer {
+  const k = raw as { id?: unknown; modes?: unknown };
+  if (typeof k?.id !== 'string' || k.id === '') {
+    throw new ApiError(0, 'a runtime arrived with no identifier');
+  }
+  const modes = Array.isArray(k.modes) ? k.modes : [];
+  return { id: k.id, modes: modes.filter(isPlane) };
+}
+
+function isPlane(value: unknown): value is SessionPlane {
+  return value === 'terminal' || value === 'conversation';
+}
+
+/**
  * Provision a session on the given kernel.
  *
- * Options are sent as given. Omitting them is meaningful — the control plane
- * applies its own safe defaults — so an absent choice is never filled in here.
+ * The profile is the whole description of the session — which agent, which
+ * model, how freely it acts, and what it carries — so nothing else about the
+ * agent is sent. Omitting it is meaningful: the control plane starts the
+ * session the way this deployment says an unqualified session should start.
  */
 export async function createSession(
-  kernel: Kernel,
   cols: number,
   rows: number,
-  options?: AgentOptions,
   environmentProfile?: string | null,
 ): Promise<Session> {
   const body = await request('/api/v1/sessions', {
     method: 'POST',
     body: JSON.stringify({
-      kernel,
       cols,
       rows,
-      options,
       // Omitted rather than sent as null when nothing was chosen: absent means
-      // "whatever the platform mandates", which is not the same as a caller
-      // naming a bundle that does not exist.
+      // "this deployment's answer", which is not the same as a caller naming a
+      // bundle that does not exist.
       environment_profile: environmentProfile ?? undefined,
     }),
+  });
+  return toSession(body);
+}
+
+/**
+ * Move a session onto the other plane.
+ *
+ * A rotation, and answered as one: the session comes back `rotating`, which is
+ * the window in which it takes no input. What it costs — the turn in flight,
+ * and the pause — is stated before this is called, never after.
+ *
+ * A refusal arrives as an `ApiError` carrying the control plane's own sentence,
+ * which names the capability that is missing. It is shown rather than
+ * flattened: an API that names what is absent is worth nothing if the
+ * interface renders it as "something went wrong".
+ */
+export async function changePlane(id: string, plane: SessionPlane): Promise<Session> {
+  const body = await request(`/api/v1/sessions/${encodeURIComponent(id)}/plane`, {
+    method: 'POST',
+    body: JSON.stringify({ plane }),
   });
   return toSession(body);
 }

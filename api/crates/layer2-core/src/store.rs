@@ -14,8 +14,8 @@
 
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::directory::{DirectoryQuery, RegisteredUser};
-use crate::environment::EnvironmentProfile;
-use crate::event::Event;
+use crate::environment::{EnvironmentProfile, ServiceId};
+use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
 use crate::session::Session;
 
@@ -83,7 +83,11 @@ pub trait SessionStore: Send + Sync {
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError>;
 
     /// Events after a cursor, in sequence order.
-    async fn events_since(&self, id: &SessionId, after: u64) -> Result<Vec<Event>, StoreError>;
+    async fn events_since(
+        &self,
+        id: &SessionId,
+        after: u64,
+    ) -> Result<Vec<StoredEvent>, StoreError>;
 }
 
 /// Durable environment profiles.
@@ -191,8 +195,30 @@ pub trait UserDirectoryStore: Send + Sync {
 /// the core cannot know where credentials come from, so it asks through this.
 #[async_trait::async_trait]
 pub trait CredentialSource: Send + Sync {
-    /// The credential to present on a subject's behalf, if one is available.
-    async fn credential_for(&self, subject: &SubjectId) -> Option<String>;
+    /// The credential a session should present on its owner's behalf.
+    ///
+    /// Named per session rather than per subject because two of one owner's
+    /// sessions may be entitled to different things: what a session may reach
+    /// is a property of the work it was started for, not of the person who
+    /// started it.
+    ///
+    /// `services` is the profile's selection, carried verbatim and never read
+    /// here. The core does not know what a service is; it knows only that the
+    /// answer depends on which ones were chosen.
+    async fn credential_for(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+    ) -> Option<String>;
+
+    /// Give up whatever was issued for a session that has ended.
+    ///
+    /// Separate from issuing because the two happen at different moments and
+    /// the second must happen even when nobody is asking for a credential. A
+    /// credential nothing will ever present again is one nobody is watching,
+    /// which is the kind worth taking back.
+    async fn release(&self, session: &SessionId);
 }
 
 /// The agent's accumulated context, stored whole.
@@ -235,6 +261,8 @@ mod tests {
             runtime_version: None,
             rotations: 0,
             rotated_at: None,
+            capabilities: Default::default(),
+            granted_services: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }
     }

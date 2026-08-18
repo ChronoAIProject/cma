@@ -8,6 +8,7 @@
 mod activity;
 mod auth;
 mod config;
+mod kernels;
 mod permissions;
 mod renewal;
 mod screen;
@@ -15,7 +16,6 @@ mod skills;
 mod store;
 mod sweep;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{routing::get, Json, Router};
@@ -24,13 +24,8 @@ use layer1_public::{
     rest::RestInterface, InterfaceProfile,
 };
 use layer2_core::{
-    ActivityService, Baseline, EnvironmentProfileService, KernelId, ScreenModel, SessionService,
-    SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
-};
-use layer3_adapter::{
-    codex::{CodexAdapter, CodexSandboxSpec},
-    sandbox::SandboxClient,
-    KernelAdapter,
+    ActivityService, Baseline, EnvironmentProfileService, ScreenModel, SessionService, SkillId,
+    SoftwarePackage, TerminalGeometry, UserDirectory,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -85,27 +80,7 @@ async fn main() {
         );
     }
 
-    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    // The only place a concrete runtime implementation is named. Everything
-    // upstream of here selects by opaque identifier.
-    adapters.insert(
-        KernelId::new("codex"),
-        Arc::new(CodexAdapter::new(
-            SandboxClient::new(
-                config.sandbox_base_url.clone(),
-                config.sandbox_api_key.clone(),
-            ),
-            CodexSandboxSpec {
-                image: config.sandbox_image.clone(),
-                upstream_base_url: config.upstream_base_url.clone(),
-                upstream_model: config.upstream_model.clone(),
-                upstream_wire_api: config.upstream_wire_api.clone(),
-                platform_base_url: config.platform_base_url.clone(),
-                resume_args: config.runtime_resume_args.clone(),
-                ..CodexSandboxSpec::default()
-            },
-        )),
-    );
+    let adapters = crate::kernels::registry(&config);
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
@@ -204,6 +179,10 @@ async fn main() {
     let baseline = Baseline::new(
         config.baseline_packages.iter().map(SoftwarePackage::new),
         config.baseline_skills.iter().map(SkillId::new),
+        config
+            .baseline_services
+            .iter()
+            .map(layer2_core::ServiceId::new),
     );
     tracing::info!(
         packages = ?config.baseline_packages,
@@ -214,6 +193,23 @@ async fn main() {
     // The registry a caller picks skills from. It shares this service's machine
     // identity, and prefers the caller's own credential per request so the
     // answer is what they can see rather than only what is public.
+    // Built here rather than after the service, because both the picker that
+    // shows what may be chosen and the mint that turns a choice into reach ask
+    // the same platform the same question.
+    let issuer = (!config.platform_base_url.trim().is_empty()).then(|| {
+        Arc::new(auth::keys::KeyIssuer::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("http client builds"),
+            config.platform_base_url.clone(),
+            config.deployment_id.clone(),
+        ))
+    });
+    let service_picker = issuer.clone().map(|i| {
+        Arc::new(auth::keys::ServicePicker::new(i)) as Arc<dyn layer2_core::ServiceCatalog>
+    });
+
     let catalog = crate::skills::from_config(&config.platform_base_url, identity_for_catalog);
     if catalog.is_none() {
         tracing::warn!(
@@ -224,7 +220,13 @@ async fn main() {
         );
     }
 
-    let environments = EnvironmentProfileService::new(profile_store, baseline, catalog);
+    let environments = EnvironmentProfileService::new(
+        profile_store,
+        baseline,
+        catalog,
+        service_picker,
+        config.default_agent.clone(),
+    );
     let service = SessionService::new(
         adapters,
         screen_factory,
@@ -251,6 +253,18 @@ async fn main() {
 
     // Keeps delegated credentials valid underneath running sessions, and pushes
     // each renewal into the runtimes already using the old value.
+    // Per-session credentials are minted on the platform, so this only exists
+    // where a platform root is configured. Without one every session falls
+    // back to its owner's own token, which is what happened before scoping.
+    if let Some(issuer) = issuer {
+        auth_state.use_issuer(issuer).await;
+        tracing::info!(
+            deployment = %config.deployment_id,
+            services = ?config.baseline_services,
+            "each session gets its own credential, reaching these services and whatever its profile adds"
+        );
+    }
+
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
 
     // Sessions end only when their owner says so, which leaves this as the one
@@ -271,6 +285,10 @@ async fn main() {
     // What somebody running the service can see and do. Its own router under
     // its own path segment so the whole surface can be restricted in front of
     // this process as well as inside it.
+    // Minted where a credential can be carried and redeemed where one cannot,
+    // so both surfaces are handed the same store.
+    let tickets = layer1_public::tickets::TerminalTickets::new();
+
     let operator =
         layer1_public::rest::admin::router(Arc::new(layer1_public::rest::admin::AdminState {
             sessions: Arc::clone(&service),
@@ -281,12 +299,35 @@ async fn main() {
     let app = Router::new()
         .route("/livez", get(|| async { "ok" }))
         .route("/ready", get(ready))
-        .merge(layer1_public::rest::router(Arc::clone(&service)))
+        .merge(layer1_public::rest::router(
+            layer1_public::rest::SessionsState {
+                sessions: Arc::clone(&service),
+                users: Arc::clone(&users),
+                tickets: Arc::clone(&tickets),
+                environments: Arc::clone(&environments),
+            },
+        ))
         .merge(layer1_public::rest::environments::router(Arc::clone(
             &environments,
         )))
+        // The priority-1 interface, sharing the facade's state because it
+        // projects the same sessions: a thread here is a session there, and
+        // two states would be two answers to the same question.
+        .merge(layer1_public::agui::router(
+            layer1_public::rest::SessionsState {
+                sessions: Arc::clone(&service),
+                users: Arc::clone(&users),
+                tickets: Arc::clone(&tickets),
+                environments: Arc::clone(&environments),
+            },
+        ))
         .merge(operator)
-        .merge(layer1_public::pty::router(Arc::clone(&service)))
+        .merge(layer1_public::pty::router(
+            layer1_public::pty::TerminalState {
+                sessions: Arc::clone(&service),
+                tickets: Arc::clone(&tickets),
+            },
+        ))
         .merge(auth::router(Arc::clone(&auth_state)))
         // Ordered deliberately. A layer added later wraps the ones before it,
         // so identity is established first and recording sees both who called

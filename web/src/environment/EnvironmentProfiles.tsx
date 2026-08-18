@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Dialog } from '../ui/Dialog';
+import { Button } from '../ui/Button';
+import { Dialog, InlineConfirm } from '../ui/Dialog';
 import { ProfileEditor } from './ProfileEditor';
 import type {
   EnvironmentProfile,
   EnvironmentProfileStore,
   MandatoryEntries,
   ProfileDraft,
+  ServiceCatalogue,
   SkillCatalogue,
 } from './types';
 import { draftOf, emptyDraft, validate } from './types';
+import type { KernelOffer } from '../sessions/types';
 import './EnvironmentProfiles.css';
 
 /**
@@ -26,6 +29,14 @@ import './EnvironmentProfiles.css';
 interface EnvironmentProfilesProps {
   readonly store: EnvironmentProfileStore;
   readonly onClose: () => void;
+  /**
+   * The runtimes this deployment can run, and what each can be.
+   *
+   * Passed through to the editor rather than fetched here: the console already
+   * asks once, and a second asker is a second answer that can disagree with
+   * the first while somebody is choosing between them.
+   */
+  readonly kernels?: readonly KernelOffer[];
 }
 
 /** Until a profile has been read back, this is what the platform mandates. */
@@ -33,10 +44,14 @@ const NOTHING_MANDATED: MandatoryEntries = { packages: [], skills: [] };
 
 type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'edit'; id: string };
 
-export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps) {
+export function EnvironmentProfiles({ store, onClose, kernels = [] }: EnvironmentProfilesProps) {
   const [profiles, setProfiles] = useState<readonly EnvironmentProfile[] | null>(null);
   const [catalogue, setCatalogue] = useState<SkillCatalogue | null>(null);
   const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
+  const [servicesCatalogue, setServicesCatalogue] = useState<ServiceCatalogue | undefined>(
+    undefined,
+  );
+  const [servicesError, setServicesError] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [mode, setMode] = useState<Mode>({ kind: 'list' });
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
@@ -91,6 +106,29 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
     };
   }, [store]);
 
+  useEffect(() => {
+    let live = true;
+    store
+      .services()
+      .then((available) => {
+        if (live) {
+          setServicesCatalogue(available);
+          setServicesError(undefined);
+        }
+      })
+      .catch((cause: unknown) => {
+        // Same rule as the registry: a list that cannot be read costs the
+        // choice, not the form. A session still reaches what the deployment
+        // mandates, so a profile saved now is a working profile.
+        if (live) {
+          setServicesError(message(cause, 'Your services could not be listed.'));
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [store]);
+
   /*
    * Whatever the server last said it mandates, never a constant here: a
    * deployment that changes what every session carries changes this with no
@@ -136,37 +174,44 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
     return (
       <Dialog
         title={mode.kind === 'new' ? 'New environment profile' : 'Edit environment profile'}
+        /*
+         * The widest of §7's three. The editor is a form with pickers beside
+         * it; at 520px its rows truncated, which is the same reason §14 took
+         * operations out of a dialog.
+         */
+        width="wide"
         onClose={onClose}
         footer={
           <>
-            <button
-              type="button"
-              className="button"
+            <Button
               onClick={() => {
                 setMode({ kind: 'list' });
                 setError(undefined);
               }}
             >
               Cancel
-            </button>
-            <button
-              type="button"
-              className="button button--accent"
+            </Button>
+            <Button
+              tone="accent"
               disabled={saving}
               onClick={() => {
                 void save();
               }}
             >
               {saving ? 'Saving' : 'Save profile'}
-            </button>
+            </Button>
           </>
         }
       >
         <ProfileEditor
           draft={draft}
           onChange={setDraft}
+          kernels={kernels}
           skills={catalogue?.skills ?? []}
           skillsError={skillsError}
+          services={servicesCatalogue?.services ?? []}
+          mandatoryServices={servicesCatalogue?.mandatory ?? []}
+          servicesError={servicesError}
           mandatory={mandatory}
           error={error}
         />
@@ -177,11 +222,12 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
   return (
     <Dialog
       title="Environment profiles"
+      /* A list of rows with controls on each: §7's middle width. */
+      width="medium"
       onClose={onClose}
       footer={
-        <button
-          type="button"
-          className="button button--accent"
+        <Button
+          tone="accent"
           onClick={() => {
             setDraft(emptyDraft());
             setError(undefined);
@@ -189,7 +235,7 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
           }}
         >
           New profile
-        </button>
+        </Button>
       }
     >
       {error === undefined ? null : (
@@ -214,31 +260,25 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
                 <span className="profiles__meta">{summarise(profile)}</span>
               </span>
               {confirmingRemoval === profile.id ? (
-                <>
-                  <button
-                    type="button"
-                    className="button button--danger"
-                    onClick={() => {
-                      void remove(profile.id);
-                    }}
-                  >
-                    Confirm remove
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => {
-                      setConfirmingRemoval(null);
-                    }}
-                  >
-                    Keep
-                  </button>
-                </>
+                /*
+                 * Inline, in place of the row's own controls (§7). A second
+                 * dialog over this one is what the rule exists to forbid, and
+                 * a confirmation is exactly the thing that reaches for one.
+                 */
+                <InlineConfirm
+                  question="Remove this profile?"
+                  confirmLabel="Remove"
+                  onConfirm={() => {
+                    void remove(profile.id);
+                  }}
+                  onCancel={() => {
+                    setConfirmingRemoval(null);
+                  }}
+                />
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className="button"
+                  <Button
+                    size="sm"
                     onClick={() => {
                       setDraft(draftOf(profile));
                       setError(undefined);
@@ -246,16 +286,16 @@ export function EnvironmentProfiles({ store, onClose }: EnvironmentProfilesProps
                     }}
                   >
                     Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--danger"
+                  </Button>
+                  <Button
+                    size="sm"
+                    tone="danger"
                     onClick={() => {
                       setConfirmingRemoval(profile.id);
                     }}
                   >
                     Remove
-                  </button>
+                  </Button>
                 </>
               )}
             </li>
@@ -271,7 +311,7 @@ function summarise(profile: EnvironmentProfile): string {
   const parts = [
     `${profile.variables.length} variable${profile.variables.length === 1 ? '' : 's'}`,
     `${profile.packages.length} package${profile.packages.length === 1 ? '' : 's'}`,
-    `${profile.skills.length} skill${profile.skills.length === 1 ? '' : 's'}`,
+    `${profile.agent.skills.length} skill${profile.agent.skills.length === 1 ? '' : 's'}`,
   ];
   return parts.join(' · ');
 }

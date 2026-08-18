@@ -1,7 +1,12 @@
 /*
- * Dialog — docs/Web_Style.md section 6. Every value here is a token from that
- * document; the shared button classes live beside it because a dialog's footer
- * is where they are always used.
+ * The dialog shell — docs/Web_Style.md §3 and §7.
+ *
+ * A plate: it floats over the page, takes the card impression, and never
+ * moves. Nothing here presses in on hover, because a plate is not a key.
+ *
+ * The button classes it used to carry moved to styles/components.css; a dialog
+ * footer is where they are most often used but not where they belong, and two
+ * stylesheets declaring `.button` is how one of them drifts.
  */
 
 .dialog__scrim {
@@ -18,48 +23,47 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 560px;
   /* The dialog's own body scrolls; the page never does. */
   max-height: 80dvh;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
-  box-shadow: var(--glow-rest);
+  border-radius: var(--radius);
+  box-shadow: var(--press-card-rest);
 }
 
+/*
+ * Three widths and no others (§7): a question, a form, and a form with a
+ * picker beside it. A width chosen per surface is how two dialogs that ask the
+ * same kind of question end up different sizes.
+ */
+.dialog--narrow {
+  max-width: 520px;
+}
+
+.dialog--medium {
+  max-width: 700px;
+}
+
+.dialog--wide {
+  max-width: 1000px;
+}
+
+/*
+ * Header and footer are the same bands the rest of the page uses, so a dialog
+ * is built from the page's own grid rather than from a second one.
+ */
 .dialog__header {
-  display: flex;
-  flex: none;
   gap: var(--space-3);
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--rule);
 }
 
 .dialog__title {
-  font-size: var(--text-lg);
+  font-size: var(--text-xl);
   line-height: var(--leading-lg);
-}
-
-.dialog__close {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  color: var(--ink-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-chip);
-}
-
-.dialog__close:hover {
-  color: var(--ink);
-  background: var(--surface-2);
 }
 
 .dialog__body {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-4);
   min-height: 0;
@@ -68,64 +72,21 @@
 }
 
 .dialog__footer {
-  display: flex;
-  flex: none;
   gap: var(--space-2);
   justify-content: flex-end;
-  padding: var(--space-4);
-  border-top: 1px solid var(--rule);
 }
 
-/* Buttons — Web_Style.md section 6. One accent button per view; the rest quiet. */
-
-.button {
-  min-height: 32px;
-  padding: var(--space-2) var(--space-4);
-  color: var(--ink-2);
-  font-size: var(--text-base);
-  background: none;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-chip);
+/*
+ * A destructive question, asked in place of the controls that raised it (§7).
+ * Never a second dialog over the first.
+ */
+.confirm {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
 }
 
-.button:hover {
-  color: var(--ink);
-  background: var(--surface-2);
-}
-
-.button:disabled {
-  color: var(--ink-3);
-  cursor: not-allowed;
-}
-
-.button--accent {
-  color: var(--ground);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.button--accent:hover {
-  color: var(--ground);
-  background: var(--accent);
-  box-shadow: var(--glow-active);
-}
-
-.button--danger {
-  color: var(--danger);
-  border-color: var(--rule);
-}
-
-.button--quiet {
-  padding: var(--space-1) var(--space-2);
-  border-color: transparent;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .dialog__close,
-  .button {
-    transition:
-      color 150ms ease,
-      background 150ms ease,
-      box-shadow 150ms ease;
-  }
+.confirm__question {
+  color: var(--fail);
+  font-size: var(--text-sm);
 }

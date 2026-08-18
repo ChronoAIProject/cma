@@ -51,6 +51,8 @@ Four tools. Deliberately few — an MCP client is delegating a task, not driving
 
 Creates a session, delivers the task, and — with `wait: true` — blocks until the turn completes or an approval is required. Returns the session id, final status, and the agent's summary.
 
+This interface is not built yet, and the shape above is a proposal rather than a description. One part of it is already known to be wrong: `kernel` is not a caller's to choose. Which one a session runs on comes from the environment profile it names or from what the deployment configured, and whoever implements this should drop the argument rather than invent a way to honour it.
+
 `wait: false` returns the session id immediately for a caller that will poll.
 
 ### `chrono_send_input`

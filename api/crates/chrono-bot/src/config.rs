@@ -23,9 +23,19 @@ pub struct Config {
     pub sandbox_api_key: String,
     /// Image each sandbox runs.
     pub sandbox_image: String,
-    /// Where a sandbox forwards the agent's model calls, on the owner's behalf.
-    /// Arguments that make the agent resume rather than start fresh.
-    pub runtime_resume_args: String,
+    /// CPU each sandbox reserves, in Kubernetes quantity form.
+    ///
+    /// Configuration rather than a constant because it decides how many
+    /// sessions a deployment can run at once: the namespace has a quota, and
+    /// this figure divides into it. Sizing that from a rebuild means a session
+    /// nobody can start until an image ships.
+    pub sandbox_cpu: String,
+    /// Memory each sandbox reserves, in Kubernetes quantity form.
+    ///
+    /// The tighter of the two in practice. The agent is what runs here, and
+    /// an allowance it cannot work within is not a smaller session but a
+    /// session that dies partway through somebody's work.
+    pub sandbox_memory: String,
     /// What this deployment calls itself on the runtimes it creates.
     ///
     /// A sandbox provider is shared, so one key sees runtimes belonging to
@@ -44,6 +54,20 @@ pub struct Config {
     /// caller opted into, which is why an environment profile cannot remove an
     /// entry listed here.
     pub baseline_packages: Vec<String>,
+    /// How the agent behaves in a session that names no profile.
+    ///
+    /// The deployment's answer to "start me a session" when nobody has said
+    /// anything more. Configuration rather than a constant because which model
+    /// is worth spending, and how freely an agent may act before asking, are
+    /// decisions about this installation and not about the software.
+    pub default_agent: layer2_core::AgentConfiguration,
+    /// Services every session's credential may reach, whoever started it.
+    ///
+    /// A floor rather than a default. One credential serves the agent's model
+    /// calls and the platform CLI alike, so a profile that excluded the model
+    /// endpoint would leave the session unable to think rather than merely
+    /// narrower.
+    pub baseline_services: Vec<String>,
     /// Skills every session loads, whoever started it.
     ///
     /// Identified the way the registry identifies a skill: either its
@@ -54,6 +78,20 @@ pub struct Config {
     pub upstream_model: String,
     /// Request shape the upstream speaks.
     pub upstream_wire_api: String,
+    /// Where a sandbox forwards the second kernel's model calls.
+    ///
+    /// Falls back to the shared upstream when a deployment names none, which is
+    /// the ordinary case for a gateway that serves both request shapes at one
+    /// address.
+    pub claude_upstream_base_url: String,
+    /// Model the second kernel selects when a session names none.
+    pub claude_upstream_model: String,
+    /// Where a sandbox forwards the third kernel's model calls.
+    ///
+    /// Falls back to the shared upstream when a deployment names none.
+    pub dsh_upstream_base_url: String,
+    /// Model the third kernel selects when a session names none.
+    pub dsh_upstream_model: String,
     /// Root of the identity platform a session's CLI acts against.
     pub platform_base_url: String,
     /// Connection string for the durable session store.
@@ -99,10 +137,15 @@ impl Config {
             "http://example-host-02.example-namespace.svc.cluster.local",
         );
         let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
+        // What one session costs the namespace quota. Read as opaque strings
+        // and handed to the provider unchanged: these are Kubernetes
+        // quantities, and parsing them here would only add a way to be wrong
+        // about a syntax this service does not own.
+        let sandbox_cpu = var_or("CHRONO_SANDBOX_CPU", "1");
+        let sandbox_memory = var_or("CHRONO_SANDBOX_MEMORY", "1Gi");
         // How the agent is told to continue a conversation rather than start
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
-        let runtime_resume_args = var_or("CHRONO_RUNTIME_RESUME_ARGS", "resume");
         let deployment_id = var_or("CHRONO_DEPLOYMENT_ID", "chrono-bot");
         let adopts_untagged_runtimes =
             var_or("CHRONO_ADOPT_UNTAGGED_RUNTIMES", "true").trim() != "false";
@@ -112,9 +155,47 @@ impl Config {
         // genuinely mandates nothing sets the keys to a single space.
         let baseline_packages = list_or("CHRONO_BASELINE_PACKAGES", "nyxid");
         let baseline_skills = list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli");
+        // Named the way a person reads them; the identifiers the provider
+        // wants are resolved when a credential is minted.
+        let baseline_services = list_or("CHRONO_BASELINE_SERVICES", "chrono-llm,ornn-api");
+        // What a session is when nobody chose anything. Each key is read on
+        // its own and a value the software does not recognise is refused
+        // rather than silently replaced: a deployment that meant "ask first"
+        // and typed it wrong must be told, not quietly made autonomous.
+        let default_agent = layer2_core::AgentConfiguration {
+            kernel: layer2_core::KernelId::new(var_or("CHRONO_DEFAULT_AGENT_KERNEL", "codex")),
+            mode: parse_enum("CHRONO_DEFAULT_AGENT_MODE", "terminal")?,
+            model: Some(var_or("CHRONO_DEFAULT_AGENT_MODEL", "gpt-5.6-sol"))
+                .filter(|m| !m.trim().is_empty()),
+            reasoning_effort: parse_enum("CHRONO_DEFAULT_AGENT_EFFORT", "high")?,
+            permission: parse_enum("CHRONO_DEFAULT_AGENT_PERMISSION", "guarded")?,
+            credential: parse_enum("CHRONO_DEFAULT_AGENT_CREDENTIAL", "delegated")?,
+            // The baseline skills are what every session carries anyway, so a
+            // profile-less session carries exactly them and nothing else.
+            skills: list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli")
+                .into_iter()
+                .map(layer2_core::SkillId::new)
+                .collect(),
+        };
         let upstream_base_url = var_or("CHRONO_UPSTREAM_BASE_URL", "");
         let upstream_model = var_or("CHRONO_UPSTREAM_MODEL", "gpt-5.6-sol");
         let upstream_wire_api = var_or("CHRONO_UPSTREAM_WIRE_API", "responses");
+        // The second kernel's upstream. Its own keys because kernels do not
+        // share a model and need not share an endpoint: one speaks a
+        // completions-shaped API and the other a messages-shaped one, and a
+        // deployment whose gateway serves both at one address simply leaves the
+        // base URL unset and inherits the first.
+        let claude_upstream_base_url = match var_or("CHRONO_CLAUDE_UPSTREAM_BASE_URL", "") {
+            empty if empty.is_empty() => upstream_base_url.clone(),
+            named => named,
+        };
+        let claude_upstream_model = var_or("CHRONO_CLAUDE_UPSTREAM_MODEL", "claude-opus-5");
+        // The third kernel's, on the same terms and for the same reason.
+        let dsh_upstream_base_url = match var_or("CHRONO_DSH_UPSTREAM_BASE_URL", "") {
+            empty if empty.is_empty() => upstream_base_url.clone(),
+            named => named,
+        };
+        let dsh_upstream_model = var_or("CHRONO_DSH_UPSTREAM_MODEL", "deepseek-v4-flash");
         // Defaults to the same provider this service authenticates against, so
         // a session acts on the platform as the person who signed in.
         let platform_base_url = var_or("CHRONO_PLATFORM_BASE_URL", "");
@@ -189,14 +270,21 @@ impl Config {
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
-            runtime_resume_args,
+            sandbox_cpu,
+            sandbox_memory,
+            default_agent,
             deployment_id,
             adopts_untagged_runtimes,
             baseline_packages,
             baseline_skills,
+            baseline_services,
             upstream_base_url,
             upstream_model,
             upstream_wire_api,
+            claude_upstream_base_url,
+            claude_upstream_model,
+            dsh_upstream_base_url,
+            dsh_upstream_model,
             platform_base_url,
             mongodb_uri,
             mongodb_database,
@@ -258,6 +346,17 @@ fn parse_days(key: &str, raw: &str) -> Result<std::time::Duration, String> {
 /// Blank entries are dropped rather than kept as empty strings: a trailing
 /// comma is the most common way to write one of these by hand, and an empty
 /// package name would reach the runtime as an install of nothing.
+/// Read a value the core models as a closed set of names.
+///
+/// Refused rather than defaulted when unrecognised. These decide how freely an
+/// agent acts and whose access it spends, and a typo silently becoming the
+/// default is exactly the failure that would not be noticed until it mattered.
+fn parse_enum<T: serde::de::DeserializeOwned>(key: &str, default: &str) -> Result<T, String> {
+    let raw = var_or(key, default);
+    let quoted = format!("\"{}\"", raw.trim());
+    serde_json::from_str(&quoted).map_err(|_| format!("{key} does not name a value: {raw:?}"))
+}
+
 fn list_or(key: &str, default: &str) -> Vec<String> {
     var_or(key, default)
         .split(',')
@@ -265,6 +364,51 @@ fn list_or(key: &str, default: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+/// A resolved configuration for tests, with every field set to something
+/// plausible.
+///
+/// Here rather than in a test module because more than one module needs it,
+/// and a second copy is a second thing to update when a key is added — which
+/// is exactly when a stale copy stops compiling and gets filled in blindly.
+#[cfg(test)]
+impl Config {
+    pub fn sample() -> Self {
+        Config {
+            bind: "0.0.0.0:8080".into(),
+            public_url: "http://x".into(),
+            cors_origins: vec![],
+            sandbox_base_url: "http://r".into(),
+            sandbox_api_key: "k".into(),
+            sandbox_image: "img".into(),
+            sandbox_cpu: "1".into(),
+            sandbox_memory: "1Gi".into(),
+            default_agent: Default::default(),
+            baseline_packages: vec![],
+            baseline_skills: vec![],
+            baseline_services: vec![],
+            deployment_id: "chrono-bot".into(),
+            adopts_untagged_runtimes: true,
+            upstream_base_url: "http://u".into(),
+            upstream_model: "m".into(),
+            upstream_wire_api: "responses".into(),
+            claude_upstream_base_url: "http://u".into(),
+            claude_upstream_model: "m".into(),
+            dsh_upstream_base_url: "http://u".into(),
+            dsh_upstream_model: "m".into(),
+            platform_base_url: "http://p".into(),
+            mongodb_uri: "mongodb://h/db".into(),
+            mongodb_database: "db".into(),
+            activity_retention: std::time::Duration::from_secs(90 * 86_400),
+            context_bucket: "bkt".into(),
+            storage_client_id: "sa-id".into(),
+            storage_client_secret: "sa-secret".into(),
+            auth_mode: AuthMode::Trusted {
+                subject: "s".into(),
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -316,32 +460,7 @@ mod tests {
 
     #[test]
     fn auth_mode_names_match_the_variants() {
-        let c = Config {
-            bind: "0.0.0.0:8080".into(),
-            public_url: "http://x".into(),
-            cors_origins: vec![],
-            sandbox_base_url: "http://r".into(),
-            sandbox_api_key: "k".into(),
-            sandbox_image: "img".into(),
-            baseline_packages: vec![],
-            baseline_skills: vec![],
-            runtime_resume_args: "resume".into(),
-            deployment_id: "chrono-bot".into(),
-            adopts_untagged_runtimes: true,
-            upstream_base_url: "http://u".into(),
-            upstream_model: "m".into(),
-            upstream_wire_api: "responses".into(),
-            platform_base_url: "http://p".into(),
-            mongodb_uri: "mongodb://h/db".into(),
-            mongodb_database: "db".into(),
-            activity_retention: std::time::Duration::from_secs(90 * 86_400),
-            context_bucket: "bkt".into(),
-            storage_client_id: "sa-id".into(),
-            storage_client_secret: "sa-secret".into(),
-            auth_mode: AuthMode::Trusted {
-                subject: "s".into(),
-            },
-        };
+        let c = Config::sample();
         assert_eq!(c.auth_mode_name(), "trusted");
 
         let c = Config {

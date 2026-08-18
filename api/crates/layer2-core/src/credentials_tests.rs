@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use layer3_adapter::{KernelAdapter, TerminalInput};
+use layer3_adapter::KernelAdapter;
 
 use crate::authz::{Authorization, Caller, Capability};
 use crate::ids::{KernelId, SubjectId};
@@ -12,16 +12,29 @@ use crate::session::SessionSpec;
 use crate::terminal::ScreenModel;
 use crate::test_support::{await_settled, FakeStore, NullScreen};
 
-/// A runtime that records what it was asked to do, so the service's behaviour
-/// is observable without a real sandbox.
+/// A runtime that records the credentials it was handed, so the service's
+/// behaviour is observable without a real sandbox.
+///
+/// It records them at `refresh_credential` rather than by watching terminal
+/// input, which is the point of these tests now: a credential reaches a
+/// runtime because the adapter was asked for it, not because it happened to
+/// share a channel with keystrokes.
 struct RecordingAdapter {
-    sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>,
+    sent: Arc<tokio::sync::Mutex<Vec<String>>>,
 }
 
 #[async_trait::async_trait]
 impl KernelAdapter for RecordingAdapter {
     fn kernel_name(&self) -> &'static str {
         "recording"
+    }
+
+    fn capabilities(&self) -> layer3_adapter::KernelCapabilities {
+        layer3_adapter::KernelCapabilities {
+            terminal: true,
+            snapshot: true,
+            ..Default::default()
+        }
     }
 
     async fn provision(
@@ -35,25 +48,25 @@ impl KernelAdapter for RecordingAdapter {
         &self,
         _handle: &layer3_adapter::RuntimeHandle,
     ) -> Result<layer3_adapter::TerminalChannel, layer3_adapter::AdapterError> {
-        let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<TerminalInput>(16);
+        // Drained rather than inspected: what this adapter is watched for now
+        // travels through `refresh_credential`, and an unread receiver would
+        // make the service's terminal writes fail for reasons unrelated to
+        // what is under test.
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<layer3_adapter::TerminalInput>(16);
         let (_out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
-        let sent = Arc::clone(&self.sent);
-        tokio::spawn(async move {
-            while let Some(i) = in_rx.recv().await {
-                sent.lock().await.push(i);
-            }
-        });
+        tokio::spawn(async move { while in_rx.recv().await.is_some() {} });
         Ok(layer3_adapter::TerminalChannel {
             output: out_rx,
             input: in_tx,
         })
     }
 
-    async fn resize(
+    async fn refresh_credential(
         &self,
         _handle: &layer3_adapter::RuntimeHandle,
-        _size: layer3_adapter::TermSize,
+        credential: &str,
     ) -> Result<(), layer3_adapter::AdapterError> {
+        self.sent.lock().await.push(credential.to_string());
         Ok(())
     }
 
@@ -78,7 +91,7 @@ fn caller(id: &str) -> Caller {
     )
 }
 
-fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionService> {
+fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
         KernelId::new("recording"),
@@ -96,20 +109,18 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Arc<SessionServ
             Arc::new(crate::test_support::FakeProfileStore::default()),
             crate::environment::Baseline::default(),
             None,
+            None,
+            crate::environment::AgentConfiguration {
+                kernel: KernelId::new("recording"),
+                ..Default::default()
+            },
         ),
         crate::test_support::owned(),
     )
 }
 
-async fn credentials_seen(sent: &Arc<tokio::sync::Mutex<Vec<TerminalInput>>>) -> Vec<String> {
-    sent.lock()
-        .await
-        .iter()
-        .filter_map(|i| match i {
-            TerminalInput::Credential(v) => Some(v.clone()),
-            _ => None,
-        })
-        .collect()
+async fn credentials_seen(sent: &Arc<tokio::sync::Mutex<Vec<String>>>) -> Vec<String> {
+    sent.lock().await.clone()
 }
 
 #[tokio::test]
@@ -121,7 +132,6 @@ async fn the_owner_credential_reaches_the_runtime_at_creation() {
         &owner,
         SessionSpec {
             environment_profile: None,
-            kernel: KernelId::new("recording"),
             geometry: None,
             options: Default::default(),
             subject_credential: Some("first-token".into()),
@@ -149,7 +159,6 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
             &owner,
             SessionSpec {
                 environment_profile: None,
-                kernel: KernelId::new("recording"),
                 geometry: None,
                 options: Default::default(),
                 subject_credential: Some("first-token".into()),
@@ -189,7 +198,6 @@ async fn a_renewal_does_not_leak_across_subjects() {
         &owner,
         SessionSpec {
             environment_profile: None,
-            kernel: KernelId::new("recording"),
             geometry: None,
             options: Default::default(),
             subject_credential: Some("a-token".into()),
@@ -219,7 +227,6 @@ async fn a_terminated_session_is_not_renewed() {
             &owner,
             SessionSpec {
                 environment_profile: None,
-                kernel: KernelId::new("recording"),
                 geometry: None,
                 options: Default::default(),
                 subject_credential: Some("token".into()),
@@ -246,7 +253,6 @@ async fn a_session_created_without_a_credential_is_still_usable() {
         &owner,
         SessionSpec {
             environment_profile: None,
-            kernel: KernelId::new("recording"),
             geometry: None,
             subject_credential: None,
             options: Default::default(),
