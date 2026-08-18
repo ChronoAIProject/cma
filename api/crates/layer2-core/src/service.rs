@@ -425,38 +425,6 @@ impl SessionService {
         Ok(record.session)
     }
 
-    /// Persist a session's current state and any events buffered against it.
-    ///
-    /// Called after every state change. Failures are logged rather than
-    /// propagated where the caller has already acted: the runtime really did
-    /// change, and losing the record is a storage problem to surface, not a
-    /// reason to tell the caller their action failed.
-    pub(crate) async fn flush(&self, id: &SessionId) {
-        let (record, events) = {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return;
-            };
-            let events = std::mem::take(&mut entry.events);
-            let mut session = entry.session.clone();
-            // The position of the log, not of this entry's copy of it. Other
-            // paths number events for the same session off the record, and a
-            // record written behind them is what a restarted process would
-            // start from — too low, onto sequences already taken.
-            session.last_seq = entry.sequences.issued(id, session.last_seq);
-            let mut record = SessionRecord::new(session);
-            record.runtime_id = entry.runtime.as_ref().map(|h| h.0.clone());
-            record.context_ref = entry.context_ref.clone();
-            (record, events)
-        };
-        if let Err(e) = self.store.upsert(&record).await {
-            tracing::error!(session_id = %id, error = %e, "cannot persist session");
-        }
-        if let Err(e) = self.store.append_events(&events).await {
-            tracing::error!(session_id = %id, error = %e, "cannot persist events");
-        }
-    }
-
     /// Fail unless the caller owns this live session and it is still running.
     ///
     /// Scoped to live sessions on purpose: this guards the terminal-driving
@@ -494,22 +462,6 @@ impl SessionService {
 /// tell a client their work was gone when it is merely unreachable.
 pub(crate) fn store_failed(e: StoreError) -> CoreError {
     CoreError::RuntimeUnavailable(format!("session store: {e}"))
-}
-
-/// Append a durable event, allocating the next per-session sequence.
-///
-/// Buffers on the entry; `flush` is what makes it durable. Split so a caller
-/// holding the entries lock does not perform I/O while holding it.
-pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
-    let seq = entry
-        .sequences
-        .take(&entry.session.id, entry.session.last_seq, 1);
-    entry.session.last_seq = seq;
-    entry.events.push(Event {
-        session_id: entry.session.id.clone(),
-        seq,
-        kind,
-    });
 }
 
 /// Pump runtime output into the screen model and out to any live subscriber.

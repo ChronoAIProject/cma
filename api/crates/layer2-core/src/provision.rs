@@ -285,7 +285,7 @@ impl SessionService {
             captured_len,
         };
         entry.session.status = SessionStatus::Ready;
-        crate::service::append(
+        crate::log::append(
             &mut entry,
             EventKind::StatusChanged {
                 status: SessionStatus::Ready,
@@ -311,10 +311,7 @@ impl SessionService {
             if let Some(conversation_id) = named_conversation {
                 let mut entries = self.entries.write().await;
                 if let Some(entry) = entries.get_mut(&id) {
-                    crate::service::append(
-                        entry,
-                        EventKind::ConversationOpened { conversation_id },
-                    );
+                    crate::log::append(entry, EventKind::ConversationOpened { conversation_id });
                 }
             }
             crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
