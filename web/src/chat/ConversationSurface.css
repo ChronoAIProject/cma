@@ -22,18 +22,24 @@
  */
 .conversation__refusal {
   flex: none;
-  height: var(--band-foot);
-  color: var(--fail);
-  border-bottom: 1px solid var(--fail);
+  margin: var(--space-3) var(--page-gutter) 0;
 }
 
-.conversation__refusal .band__value {
-  overflow: hidden;
-  color: var(--fail);
-  text-overflow: ellipsis;
-}
-
-/* Where usage sits (§18.5), in the surface's own foot band. */
+/*
+ * The foot of the reading column — the composer card and, beneath it and
+ * outside it, usage (§18.4, §18.5). Centred to the same column as the stream.
+ */
 .conversation__foot {
-  justify-content: flex-end;
+  display: flex;
+  flex: none;
+  justify-content: center;
+  padding: 0 var(--page-gutter) var(--space-4);
+}
+
+.conversation__footcolumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: var(--read-column);
 }

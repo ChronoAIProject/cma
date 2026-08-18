@@ -161,7 +161,7 @@ describe('what the chat surface can drive', () => {
     // into is what they will believe.
     expect(await screen.findByRole('log', { name: /conversation/i })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getAllByText('Agent').length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/chronobot · /).length).toBeGreaterThan(0);
     });
   });
 
