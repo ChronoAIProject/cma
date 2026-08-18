@@ -153,7 +153,9 @@ impl SessionService {
         retired.session.status = SessionStatus::Terminated;
         retired.session.stop_reason = Some(StopReason::UserTerminated);
         retired.session.recovery_state = RecoveryState::Retired;
-        retired.session.last_seq += 1;
+        retired.session.last_seq =
+            self.sequences
+                .take(&retired.session.id, retired.session.last_seq, 1);
         // The runtime is being torn down, so the record must stop pointing at
         // it or a later sweep would try to reclaim a sandbox that is gone.
         retired.runtime_id = None;
@@ -265,7 +267,9 @@ impl SessionService {
         let mut resting = record.clone();
         resting.session.status = SessionStatus::Idle;
         resting.session.stop_reason = Some(StopReason::UserTerminated);
-        resting.session.last_seq += 1;
+        resting.session.last_seq =
+            self.sequences
+                .take(&resting.session.id, resting.session.last_seq, 1);
         // Nothing is running for it any more, so nothing should claim to be.
         resting.runtime_id = None;
         self.store.upsert(&resting).await.map_err(store_failed)?;
@@ -315,6 +319,11 @@ impl SessionService {
         }
         self.entries.write().await.remove(id);
         self.store.delete(id).await.map_err(store_failed)?;
+        // The events go with the session, so the position kept for it is a
+        // number held for something nothing can read. Only here: a session
+        // that merely stopped keeps its position, because it can be revived
+        // and its log continues rather than starting again.
+        self.sequences.forget(id);
 
         // The transcript goes with the session. Leaving it behind would keep a
         // record of work its owner asked to be removed, and orphan a blob

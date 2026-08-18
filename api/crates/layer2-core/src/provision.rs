@@ -268,6 +268,7 @@ impl SessionService {
 
         let mut entry = SessionEntry {
             session: seeded,
+            sequences: Arc::clone(&self.sequences),
             subject_credential: spec.subject_credential.clone(),
             events: Vec::new(),
             screen: Arc::clone(&screen),
@@ -363,8 +364,8 @@ impl SessionService {
         let Ok(Some(mut record)) = self.store.get(id).await else {
             return;
         };
-        record.session.last_seq += 1;
-        let seq = record.session.last_seq;
+        let seq = self.sequences.take(id, record.session.last_seq, 1);
+        record.session.last_seq = seq;
         if let Err(e) = self.store.upsert(&record).await {
             tracing::warn!(session_id = %id, error = %e, "cannot record progress");
             return;

@@ -176,8 +176,8 @@ impl SessionService {
                 record.session.status = SessionStatus::Terminated;
                 record.session.stop_reason = Some(StopReason::Error);
                 record.session.recovery_state = RecoveryState::Retired;
-                record.session.last_seq += 1;
-                let seq = record.session.last_seq;
+                let seq = self.sequences.take(id, record.session.last_seq, 1);
+                record.session.last_seq = seq;
                 let session_id = record.session.id.clone();
                 if let Err(e) = self.store.upsert(&record).await {
                     tracing::error!(session_id = %id, error = %e, "cannot record the failure");
