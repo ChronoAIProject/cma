@@ -117,6 +117,34 @@ export interface Conversation {
   readonly usage?: Usage;
   /** Why the last run failed, when one did. */
   readonly error?: { readonly message: string; readonly capability?: string };
+  /**
+   * What the agent is saying right now, before it has committed to it.
+   *
+   * **Deliberately not an entry.** §18.1 requires a turn drawn from history
+   * and a turn watched arriving to produce the same result, and history has
+   * no in-flight message: a reload folds no live frames at all and therefore
+   * has no live slot, so the two agree by construction. Making it an entry
+   * and remembering to remove it would be the same rule enforced by
+   * discipline, which is weaker.
+   *
+   * Replaced, not appended to, by the committed message. They are two
+   * identities — the in-flight one has no sequence, because it has no place
+   * in the log yet — so the turn is never drawn twice.
+   */
+  readonly live?: { readonly text: string };
+  /**
+   * What the agent is reasoning about, while it reasons — §18.8.
+   *
+   * Held outside `entries` for the same reason `live` is, and more
+   * emphatically: a message is eventually committed and a thought never is.
+   * Nothing here is in the durable log, so a reload draws none of it and the
+   * equivalence rule holds without anything having to be remembered.
+   *
+   * A reader who saw reasoning and reloaded to find it gone will otherwise
+   * report data loss, which is why §18.8 says so on the surface rather than
+   * only here.
+   */
+  readonly reasoning?: { readonly text: string };
 }
 
 export interface Usage {
@@ -138,13 +166,28 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
     case 'RUN_STARTED':
       // A new run clears the answered approval and the last failure; both
       // belonged to the run that ended.
-      return { ...state, turnInFlight: true, pending: undefined, error: undefined };
+      return {
+        ...state,
+        turnInFlight: true,
+        pending: undefined,
+        error: undefined,
+        live: undefined,
+        reasoning: undefined,
+      };
 
     case 'RUN_FINISHED': {
       const pending = event.outcome?.type === 'interrupt' ? event.outcome.interrupts[0] : undefined;
       return {
         ...state,
         turnInFlight: false,
+        // The turn is over, so nothing is in flight. A message that was being
+        // typed has been committed by now and is in the stream; one that was
+        // not is gone with the turn, and history has no record of it either —
+        // which is the equivalence §18.1 asks for.
+        live: undefined,
+        // And the thinking that led to it. §18.8: it is liveness, it is
+        // removed when the turn ends, and a reload shows none of it.
+        reasoning: undefined,
         // Committed on the way out: a message whose turn ended is settled
         // whether or not its own end frame arrived.
         entries: state.entries.map((entry) =>
@@ -165,11 +208,13 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
        * the boundary itself is drawn. The turn really has ended either way.
        */
       if (event.returns) {
-        return { ...state, turnInFlight: false };
+        return { ...state, turnInFlight: false, live: undefined, reasoning: undefined };
       }
       return {
         ...state,
         turnInFlight: false,
+        live: undefined,
+        reasoning: undefined,
         error: { message: event.message, capability: event.capability },
         // Also an entry, so it is drawn where it happened. `error` alone is
         // what this client had, and nothing read it.
@@ -185,16 +230,33 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
     }
 
     case 'TEXT_MESSAGE_START':
-      return upsertMessage(state, {
-        kind: 'message',
-        id: event.messageId,
-        role: event.role,
-        text: '',
-        committed: false,
-        seq: event.seq,
-      });
+      /*
+       * The committed message arriving is what clears the live slot. The two
+       * are different identities, so leaving it would draw the turn twice —
+       * once as it was typed and once as it was recorded.
+       */
+      return upsertMessage(
+        { ...state, live: undefined },
+        {
+          kind: 'message',
+          id: event.messageId,
+          role: event.role,
+          text: '',
+          committed: false,
+          seq: event.seq,
+        },
+      );
 
     case 'TEXT_MESSAGE_CONTENT': {
+      /*
+       * A piece of a message still being typed. It goes to the live slot
+       * rather than into the stream, and never touches an entry: the message
+       * it belongs to has no sequence yet, so there is nothing in the stream
+       * for it to belong to.
+       */
+      if (event.ephemeral === true) {
+        return { ...state, live: { text: (state.live?.text ?? '') + event.delta } };
+      }
       const existing = state.entries.find(
         (entry): entry is MessageEntry => entry.kind === 'message' && entry.id === event.messageId,
       );
@@ -238,6 +300,15 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
             : entry,
         ),
       };
+
+    case 'REASONING_MESSAGE_CONTENT':
+      /*
+       * Never an entry, and never cleared by anything except the run ending.
+       * A thought is not committed, so there is no committed counterpart for
+       * it to be replaced by — which is the one way it differs from the
+       * message being typed.
+       */
+      return { ...state, reasoning: { text: (state.reasoning?.text ?? '') + event.delta } };
 
     case 'STATE_DELTA':
       return applyPatches(state, event);

@@ -22,7 +22,22 @@ pub(super) async fn declare() -> Json<serde_json::Value> {
             "RUN_STARTED": true, "RUN_FINISHED": true, "RUN_ERROR": true,
             "TEXT_MESSAGE_START": true, "TEXT_MESSAGE_CONTENT": true, "TEXT_MESSAGE_END": true,
             "TOOL_CALL_START": true, "TOOL_CALL_ARGS": false, "TOOL_CALL_END": true,
-            "TOOL_CALL_RESULT": false, "THINKING_START": false, "THINKING_END": false,
+            "TOOL_CALL_RESULT": false,
+            // The agent's reasoning, on the live lane. Only the content event:
+            // this service sees a stream of thoughts and not where one begins
+            // or ends, so `REASONING_START` and `REASONING_END` would be a
+            // guess. A client brackets on the run's own lifecycle events,
+            // which are exact.
+            "REASONING_MESSAGE_CONTENT": true,
+            "REASONING_START": false, "REASONING_END": false,
+            "REASONING_MESSAGE_START": false, "REASONING_MESSAGE_END": false,
+            "REASONING_MESSAGE_CHUNK": false, "REASONING_ENCRYPTED_VALUE": false,
+            // The deprecated spelling of the family above. Declared false
+            // rather than omitted, so a client written against the older names
+            // is told they are not coming rather than left waiting on them.
+            "THINKING_START": false, "THINKING_END": false,
+            "THINKING_TEXT_MESSAGE_START": false, "THINKING_TEXT_MESSAGE_CONTENT": false,
+            "THINKING_TEXT_MESSAGE_END": false,
             "STATE_SNAPSHOT": false, "STATE_DELTA": true
         },
         "features": {
@@ -51,7 +66,14 @@ pub(super) async fn declare() -> Json<serde_json::Value> {
                 "chrono:terminal": false,
                 "chrono:usage": true,
                 "chrono:changePlane": false,
-                "chrono:planeChangeObserved": true
+                "chrono:planeChangeObserved": true,
+                // The run stream also carries what is happening right now, not
+                // only what has happened. Those frames are marked
+                // `chrono:live` and carry no SSE id: they are not in the
+                // durable log and a client must never resume from one.
+                // Declared so a client can size its handling rather than
+                // discover the marker on a frame it has already mishandled.
+                "chrono:liveFrames": true
             }
         },
         "conformsTo": [
