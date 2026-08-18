@@ -130,6 +130,34 @@ impl MongoSessionStore {
     }
 }
 
+/// The duplicate-key code, which is the unique index on `(session_id, seq)`
+/// doing its job.
+const DUPLICATE_KEY: i32 = 11000;
+
+/// Read a failed insert as a sequence collision, if that is what it was.
+///
+/// `None` for anything else, so a store that is merely unreachable is still
+/// reported as unreachable. Only the compound unique index can produce this
+/// code on this collection, so a duplicate key here means one thing.
+///
+/// The batch is inserted ordered, so the first failing position is also the
+/// number of events the database accepted before it stopped — which is what a
+/// caller re-numbering the remainder needs, and the reason this returns a
+/// count rather than a bare marker.
+fn sequence_taken(error: &mongodb::error::Error, total: usize) -> Option<StoreError> {
+    let mongodb::error::ErrorKind::InsertMany(ref failed) = *error.kind else {
+        return None;
+    };
+    let written = failed
+        .write_errors
+        .as_ref()?
+        .iter()
+        .filter(|w| w.code == DUPLICATE_KEY)
+        .map(|w| w.index)
+        .min()?;
+    Some(StoreError::SequenceTaken { written, total })
+}
+
 fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
     let s = &r.session;
     Ok(SessionDoc {
@@ -276,10 +304,11 @@ impl SessionStore for MongoSessionStore {
         }
         let docs: Result<Vec<Document>, StoreError> =
             events.iter().map(event_doc::to_document).collect();
-        self.events
-            .insert_many(docs?)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("append events: {e}")))?;
+        let total = events.len();
+        self.events.insert_many(docs?).await.map_err(|e| {
+            sequence_taken(&e, total)
+                .unwrap_or_else(|| StoreError::Unavailable(format!("append events: {e}")))
+        })?;
         Ok(())
     }
 
@@ -354,5 +383,73 @@ mod tests {
     #[test]
     fn an_unknown_stored_value_is_rejected_rather_than_guessed() {
         assert!(parse_plain::<SessionStatus>("not-a-status").is_err());
+    }
+
+    /// Build the failure the database returns for a duplicate sequence.
+    ///
+    /// Deserialised from the server's own shape rather than assembled, because
+    /// that shape is the contract being read: a driver that renamed a field
+    /// would break this the same way it breaks production.
+    fn insert_failure(errors: serde_json::Value) -> mongodb::error::Error {
+        let failed: mongodb::error::InsertManyError =
+            serde_json::from_value(serde_json::json!({ "writeErrors": errors }))
+                .expect("the driver's own shape");
+        mongodb::error::ErrorKind::InsertMany(failed).into()
+    }
+
+    #[test]
+    fn a_duplicate_sequence_is_named_rather_than_reported_as_an_outage() {
+        // The production failure this exists for. Reported as `Unavailable`,
+        // it read as a storage problem and the batch was dropped; the turn had
+        // run and no interface could say what it did.
+        let error = insert_failure(serde_json::json!([{
+            "index": 0,
+            "code": 11000,
+            "errmsg": "E11000 duplicate key error collection: chrono-bot.session_events \
+                       index: session_id_1_seq_1"
+        }]));
+
+        assert!(matches!(
+            sequence_taken(&error, 4),
+            Some(StoreError::SequenceTaken {
+                written: 0,
+                total: 4
+            })
+        ));
+    }
+
+    #[test]
+    fn the_count_is_what_the_database_accepted_before_it_stopped() {
+        // Inserts are ordered, so the first failing position is the number
+        // already written. A caller re-numbering from zero would write those
+        // twice, under sequences nothing would reject.
+        let error = insert_failure(serde_json::json!([
+            { "index": 2, "code": 11000, "errmsg": "dup" },
+            { "index": 3, "code": 11000, "errmsg": "dup" }
+        ]));
+
+        assert!(matches!(
+            sequence_taken(&error, 5),
+            Some(StoreError::SequenceTaken {
+                written: 2,
+                total: 5
+            })
+        ));
+    }
+
+    #[test]
+    fn any_other_failure_is_left_alone() {
+        // Retrying a collision means re-numbering. Doing that to a store that
+        // is merely unreachable would renumber a batch that was never refused,
+        // so anything but the duplicate-key code must fall through.
+        let other = insert_failure(serde_json::json!([{
+            "index": 0, "code": 121, "errmsg": "document failed validation"
+        }]));
+        assert!(sequence_taken(&other, 1).is_none());
+
+        let unreachable: mongodb::error::Error =
+            mongodb::error::ErrorKind::Io(std::sync::Arc::new(std::io::Error::other("gone")))
+                .into();
+        assert!(sequence_taken(&unreachable, 1).is_none());
     }
 }

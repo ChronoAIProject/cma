@@ -37,7 +37,8 @@ use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::service::{append, SessionService};
+use crate::log::append;
+use crate::service::SessionService;
 use crate::session::SessionStatus;
 
 /// What a session has used, as its runtime reports it.
