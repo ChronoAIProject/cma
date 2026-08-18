@@ -286,3 +286,208 @@ async fn what_a_session_records_as_its_position_is_never_behind_its_log() {
          from that record would hand out numbers the log already has"
     );
 }
+
+#[tokio::test]
+async fn a_message_being_typed_is_watchable_while_it_is_typed() {
+    // The gap this closes: between a turn starting and its message being
+    // committed the log says nothing at all, so anything reading only the log
+    // draws a working agent and a dead one identically. A turn takes as long
+    // as the agent takes.
+    let (svc, alice, id, adapter) = conversation().await;
+    let mut watching = svc
+        .subscribe_live(&alice, &id)
+        .await
+        .expect("a conversation session can be watched");
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        for piece in ["Hel", "lo ", "there"] {
+            kernel
+                .updates
+                .send(chunk(piece))
+                .await
+                .expect("the core is listening");
+        }
+    }
+
+    let mut seen = String::new();
+    for _ in 0..3 {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), watching.recv()).await {
+            Ok(Ok(crate::event::LiveFrame::MessageDelta(text))) => seen.push_str(&text),
+            other => panic!("expected a piece of the message, got {other:?}"),
+        }
+    }
+    assert_eq!(seen, "Hello there");
+}
+
+#[tokio::test]
+async fn nothing_watchable_reaches_the_durable_log() {
+    // The other half, and the one that matters more. A piece of a message
+    // given a sequence would punch a permanent hole in what a resuming client
+    // cursors on, and replaying it would show somebody their conversation
+    // being typed a second time.
+    let (svc, alice, id, adapter) = conversation().await;
+    let before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("readable")
+        .len();
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        for piece in ["one ", "two ", "three"] {
+            kernel
+                .updates
+                .send(chunk(piece))
+                .await
+                .expect("the core is listening");
+        }
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let after = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("readable")
+        .len();
+    assert_eq!(
+        before, after,
+        "a message being typed is liveness; the log must not have grown"
+    );
+}
+
+#[tokio::test]
+async fn a_session_that_holds_no_conversation_is_refused_by_name() {
+    // Rather than handed a receiver that stays silent forever, which a caller
+    // cannot tell from an agent that has not started talking yet.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let refused = svc.subscribe_live(&alice, &created.id).await;
+
+    assert!(
+        matches!(
+            refused,
+            Err(crate::error::CoreError::CapabilityUnsupported(ref what))
+                if what == "conversation"
+        ),
+        "got {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn somebody_elses_session_cannot_be_watched() {
+    let (svc, _alice, id, _adapter) = conversation().await;
+    let mallory = user("mallory");
+
+    assert!(matches!(
+        svc.subscribe_live(&mallory, &id).await,
+        Err(crate::error::CoreError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn the_agents_reasoning_is_watchable_and_is_never_recorded() {
+    // A turn spent thinking looks exactly like a turn spent stuck. The
+    // reasoning crosses Layer 3 today — `AgentThoughtChunk` is an ACP v1
+    // variant and the bridge forwards `SessionUpdate` whole — and the fold
+    // dropped it on the floor.
+    //
+    // It must be watchable *and* absent from the log. §18.1 requires a turn
+    // drawn from history and a turn watched arriving to produce the same
+    // result, so a durable thought is a thought that gets replayed: somebody
+    // reloading to check what the agent decided would watch it think again.
+    let (svc, alice, id, adapter) = conversation().await;
+    let mut watching = svc.subscribe_live(&alice, &id).await.expect("watchable");
+    let before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("readable")
+        .len();
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::AgentThoughtChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
+                    "the file is probably under src/",
+                )),
+            )))
+            .await
+            .expect("the core is listening");
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(2), watching.recv()).await {
+        Ok(Ok(crate::event::LiveFrame::ThoughtDelta(text))) => {
+            assert_eq!(text, "the file is probably under src/");
+        }
+        other => panic!("expected the agent's reasoning, got {other:?}"),
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let after = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("readable")
+        .len();
+    assert_eq!(before, after, "reasoning must not reach the durable log");
+}
+
+#[tokio::test]
+async fn reasoning_does_not_become_part_of_the_message_the_agent_commits() {
+    // The one way this could go quietly wrong. If a thought accumulated into
+    // the message being assembled, the committed message — which *is*
+    // durable, and is what a reload shows — would contain the agent's
+    // reasoning, permanently, having never been said out loud.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::AgentThoughtChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
+                    "I should not say this part",
+                )),
+            )))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(chunk("Found it."))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::MessageCommitted { content } if content == "Found it."
+        ))
+        .await,
+        "the committed message must be exactly what the agent said"
+    );
+    let logged = svc.events_since(&alice, &id, None).await.expect("readable");
+    assert!(
+        !logged.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::MessageCommitted { content } if content.contains("should not say")
+        )),
+        "no part of the reasoning may be in the record: {logged:?}"
+    );
+}

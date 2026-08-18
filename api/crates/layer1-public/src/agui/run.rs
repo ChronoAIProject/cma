@@ -45,6 +45,7 @@ use serde::Deserialize;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 
+use super::live;
 use super::project::project;
 use super::Problem;
 
@@ -200,7 +201,17 @@ pub(super) async fn run(
         }
     }
 
-    Ok(Sse::new(events(service, caller, id, body.run_id, from)).keep_alive(KeepAlive::default()))
+    // Subscribed after the prompt is sent, so the turn is already underway and
+    // the receiver exists before the runtime has anything to say. A session
+    // whose kernel offers no liveness — or whose entry has gone — simply has
+    // none, and the durable stream is unaffected: that is the difference
+    // between a turn nobody can watch and a turn nobody can read.
+    let watching = service.subscribe_live(&caller, &id).await.ok();
+
+    Ok(
+        Sse::new(events(service, caller, id, body.run_id, from, watching))
+            .keep_alive(KeepAlive::default()),
+    )
 }
 
 /// What the owner decided, read from the protocol's own vocabulary.
@@ -220,12 +231,23 @@ fn decision_of(item: &ResumeItem) -> ApprovalDecision {
 }
 
 /// The run's event stream, from `after` until the turn ends.
+///
+/// Two lanes on one stream. The durable one is polled from the log and is what
+/// a client resumes on; the live one carries what is happening right now and
+/// carries no cursor at all. They are merged here rather than offered as two
+/// connections because they describe one turn, and a client holding two would
+/// have to decide for itself how to interleave them — which is exactly the
+/// ordering question §18.1 of `Web_Style.md` says must have one answer.
+///
+/// The durable lane is drained first on every pass. A committed message must
+/// not arrive behind a piece of itself.
 fn events(
     service: Arc<SessionService>,
     caller: layer2_core::Caller,
     id: SessionId,
     run_id: String,
     after: u64,
+    watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
 ) -> impl Stream<Item = Result<SseEvent, std::convert::Infallible>> {
     struct Open {
         service: Arc<SessionService>,
@@ -234,6 +256,8 @@ fn events(
         run_id: String,
         seq: u64,
         pending: std::collections::VecDeque<super::project::AguiEvent>,
+        /// What is happening right now, when anything is watching for it.
+        watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
         /// Set once something has ended the run, so the last event is still
         /// delivered before the stream closes.
         ended: bool,
@@ -247,22 +271,65 @@ fn events(
             run_id,
             seq: after,
             pending: Default::default(),
+            watching,
             ended: false,
         },
         |mut open| async move {
             loop {
                 if let Some(event) = open.pending.pop_front() {
                     let frame = SseEvent::default()
-                        .id(event.seq.to_string())
                         .event(event.kind)
                         .json_data(&event)
                         .unwrap_or_else(|_| SseEvent::default().event("RUN_ERROR"));
+                    // Only where there is one. A liveness frame carries no
+                    // cursor, and stamping it with an id would make a client
+                    // reconnect from a number the log has never held.
+                    let frame = match event.cursor() {
+                        Some(id) => frame.id(id),
+                        None => frame,
+                    };
                     return Some((Ok(frame), open));
                 }
                 if open.ended {
                     return None;
                 }
-                tokio::time::sleep(POLL_INTERVAL).await;
+                // Wait for whichever lane speaks first. Sleeping the poll
+                // interval unconditionally would hold a piece of a message for
+                // up to that long, which on a fast agent is most of what makes
+                // the difference between watching a turn and waiting on one.
+                if let Some(live) = open.watching.as_mut() {
+                    match tokio::time::timeout(POLL_INTERVAL, live.recv()).await {
+                        Ok(Ok(frame)) => {
+                            open.pending.extend(live::project_live(
+                                &frame,
+                                &open.run_id,
+                                &open.id.0,
+                            ));
+                            if !open.pending.is_empty() {
+                                continue;
+                            }
+                        }
+                        // Behind, and what was missed was liveness. The log
+                        // still holds everything that happened, so the poll
+                        // below is what makes it good.
+                        Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(frames))) => {
+                            tracing::debug!(
+                                session_id = %open.id,
+                                frames,
+                                "a watcher fell behind; the durable log still carries the turn"
+                            );
+                        }
+                        // The session's runtime went away. The status change
+                        // that says so is durable and arrives on the poll, so
+                        // this lane just stops.
+                        Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                            open.watching = None;
+                        }
+                        Err(_) => {}
+                    }
+                } else {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
                 let read = open
                     .service
                     .events_since(&open.caller, &open.id, Some(open.seq))
