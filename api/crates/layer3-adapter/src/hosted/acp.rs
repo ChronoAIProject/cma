@@ -302,7 +302,11 @@ impl Bridge {
                 // blocking here would stop the caller cancelling it.
                 let params = serde_json::json!({ "sessionId": session, "prompt": content });
                 let updates = updates.clone();
-                match self.begin(params) {
+                // Not through `call`, which is otherwise the way to ask this
+                // bridge something: that one waits under a deadline meant for a
+                // question with a quick answer, and a prompt takes as long as
+                // the model takes.
+                match self.begin("session/prompt", params) {
                     Ok(waiting) => {
                         tokio::spawn(async move {
                             let ended = match waiting.await {
@@ -360,7 +364,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, AdapterError> {
-        let waiting = self.begin(serde_json::json!({ "method": method, "params": params }))?;
+        let waiting = self.begin(method, params)?;
         let frame = tokio::time::timeout(CALL_DEADLINE, waiting)
             .await
             .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
@@ -376,17 +380,28 @@ impl Bridge {
 
     /// Send a request and hand back what will hold its answer.
     ///
+    /// Takes the method rather than accepting a pre-built object, so a request
+    /// without one cannot be constructed. It could before, and one was: the
+    /// prompt passed its parameters straight in, and what went on the wire was
+    /// a JSON-RPC request carrying an id and no method — undispatchable, so
+    /// the agent was never asked anything and every conversation turn opened
+    /// and hung.
+    ///
     /// Registered before it is sent, because the answer can arrive on the read
     /// loop before this function returns.
     fn begin(
         &self,
-        request: serde_json::Value,
+        method: &str,
+        params: serde_json::Value,
     ) -> Result<tokio::sync::oneshot::Receiver<serde_json::Value>, AdapterError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (answer, waiting) = tokio::sync::oneshot::channel();
-        let mut framed = request;
-        framed["jsonrpc"] = serde_json::Value::String("2.0".to_string());
-        framed["id"] = serde_json::Value::from(id);
+        let framed = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
 
         let pending = Arc::clone(&self.pending);
         let sink = Arc::clone(&self.sink);
