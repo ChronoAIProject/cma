@@ -59,7 +59,7 @@
   margin: auto;
   padding: var(--space-6);
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   color: var(--ink-3);
   text-align: center;
 }
@@ -86,7 +86,7 @@
   }
 
   .console__drawer .rail {
-    box-shadow: var(--press-card-rest);
+    box-shadow: var(--lift-plate);
   }
 
   /*

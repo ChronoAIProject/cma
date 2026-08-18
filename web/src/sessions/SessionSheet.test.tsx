@@ -153,7 +153,7 @@ describe('the details sheet', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/sessions/SessionDetails.css'), 'utf8');
     expect(css).toMatch(/\.details__list\s*\{[^}]*grid-template-columns: repeat\(auto-fill/);
     expect(css).toMatch(/\.details__body\s*\{[^}]*overflow-y: auto/);
-    expect(css).toMatch(/\.details\s*\{[^}]*height: var\(--sheet-height\)/);
+    expect(css).toMatch(/\.details\s*\{[^}]*height: var\(--drawer-width\)/);
     expect(css).toMatch(/\.details--closed\s*\{[^}]*height: var\(--band-foot\)/);
   });
 });

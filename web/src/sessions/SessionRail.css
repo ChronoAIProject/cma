@@ -104,7 +104,7 @@
 .rail__time {
   grid-area: time;
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
@@ -112,7 +112,7 @@
 .rail__meta {
   grid-area: meta;
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   color: var(--ink-3);
 }
 
@@ -124,7 +124,7 @@
 .rail__activity {
   grid-area: activity;
   overflow: hidden;
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   color: var(--ink-2);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -174,7 +174,7 @@
 
 .rail__summarycount {
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
   color: var(--ink-3);
 }
@@ -183,6 +183,6 @@
   margin: 0;
   padding: var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   color: var(--ink-3);
 }

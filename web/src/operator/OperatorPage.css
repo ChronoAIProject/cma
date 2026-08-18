@@ -37,7 +37,7 @@
   padding-inline: var(--space-3);
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
   cursor: pointer;
@@ -81,14 +81,14 @@
 .operator__waiting,
 .operator__summary {
   color: var(--ink-3);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
 
 /* The same treatment `field__error` gives a failure elsewhere in the product. */
 .operator__error {
   color: var(--fail);
-  font-size: var(--text-sm);
-  line-height: var(--leading-sm);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
 }
 
 /* Filters — ordinary selects that narrow without reordering. */
@@ -107,14 +107,14 @@
 
 .operator__filter-label {
   color: var(--ink-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
 
 .operator__confirm {
   color: var(--ink-2);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
 
 /*
@@ -148,7 +148,7 @@
   flex: none;
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
 }
 
@@ -162,7 +162,7 @@
 
 .record__primary {
   color: var(--ink);
-  font-size: var(--text-base);
+  font-size: var(--text-note);
 }
 
 .record__meta {
@@ -171,7 +171,7 @@
   gap: var(--space-1) var(--space-3);
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
 }
 
 .record__actions {
@@ -188,7 +188,7 @@
 .record__identifier {
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
 }
 
 .record__anonymous {
@@ -197,5 +197,5 @@
 
 .record__empty {
   color: var(--ink-3);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
