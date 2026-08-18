@@ -32,11 +32,29 @@ use serde::Deserialize;
 /// Where keys are minted, relative to the platform root.
 const KEYS_PATH: &str = "/api/v1/api-keys";
 
-/// Where services are listed, relative to the platform root.
+/// Where the platform's whole catalogue of services is listed.
 ///
-/// Needed because a profile names services the way a person reads them and the
-/// minting call wants the platform's own identifiers.
+/// What a person choosing among services is shown: it carries the names and
+/// descriptions that make a service recognisable, which the per-owner listing
+/// below does not.
 const SERVICES_PATH: &str = "/api/v1/services";
+
+/// Where *this owner's connected* services are listed.
+///
+/// **Deliberately a different route from the catalogue above, and the
+/// difference is why minting never once succeeded.** The two are separate id
+/// spaces for the same service — `chrono-llm` is one identifier in the
+/// catalogue and another here — and `allowed_service_ids` on the minting call
+/// means this one. Sending a catalogue identifier is refused with
+/// `UserService '…' not found or not permitted for this API key`, every time,
+/// for every profile, which is what production had been doing since the
+/// feature shipped.
+///
+/// It is the correct source on its own terms too: a profile naming something
+/// its owner has never connected resolves to nothing here, where against the
+/// catalogue it resolves happily and mints a key claiming reach the owner does
+/// not have.
+const USER_SERVICES_PATH: &str = "/api/v1/user-services";
 
 /// What the minted key may do, beyond reaching its services.
 ///
@@ -64,6 +82,14 @@ struct ServiceRow {
     name: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    /// Whether this owner's connection to the service is usable.
+    ///
+    /// Only the per-owner listing carries it; the catalogue does not, and an
+    /// absent value is read as usable so the catalogue is unaffected. A key
+    /// minted with reach to an inactive connection would fail at first use,
+    /// which is a failure nobody could interpret.
+    #[serde(default)]
+    is_active: Option<bool>,
 }
 
 /// The name a key carries, which is how it is found again.
@@ -113,7 +139,7 @@ impl KeyIssuer {
         if wanted.is_empty() {
             return Vec::new();
         }
-        let url = format!("{}{SERVICES_PATH}", self.base_url);
+        let url = format!("{}{USER_SERVICES_PATH}", self.base_url);
         let rows: Vec<ServiceRow> = match self
             .http
             .get(&url)
@@ -139,6 +165,7 @@ impl KeyIssuer {
         for want in wanted {
             let found = rows
                 .iter()
+                .filter(|r| r.is_active.unwrap_or(true))
                 .find(|r| r.id == want.0 || r.slug.as_deref() == Some(want.0.as_str()));
             match found {
                 Some(row) => {
@@ -445,5 +472,61 @@ mod tests {
         let wrapped: KeyListing =
             serde_json::from_str(r#"{"keys":[{"id":"k1","name":"n"}]}"#).expect("wrapped");
         assert_eq!(wrapped.into_rows().len(), 1);
+    }
+
+    #[test]
+    fn the_mint_reads_the_owners_own_services_and_the_picker_reads_the_catalogue() {
+        // These are two different id spaces for the same service, and confusing
+        // them is why minting never once succeeded in production: every call
+        // was refused with `UserService '…' not found or not permitted`, for
+        // every profile, from the day the feature shipped.
+        //
+        // Pinned as constants rather than as behaviour because the failure was
+        // silent — `mint` returns `None`, the session is left without a
+        // credential, and the sweep retries every five minutes forever.
+        assert_eq!(
+            USER_SERVICES_PATH, "/api/v1/user-services",
+            "`allowed_service_ids` means UserService identifiers, which only this route returns"
+        );
+        assert_eq!(
+            SERVICES_PATH, "/api/v1/services",
+            "the picker needs names and descriptions, which only the catalogue carries"
+        );
+        assert_ne!(
+            SERVICES_PATH, USER_SERVICES_PATH,
+            "one route cannot answer both questions"
+        );
+    }
+
+    #[test]
+    fn a_per_owner_row_is_readable_without_the_fields_only_the_catalogue_has() {
+        // The owner's listing carries neither `name` nor `description` — it has
+        // `label` and `catalog_service_name` instead — so a reader that
+        // required them would drop every row and mint nothing, which reads
+        // exactly like the bug being fixed.
+        let listing: ServiceListing = serde_json::from_str(
+            r#"{"services":[{"id":"5a8b8724","slug":"chrono-llm","is_active":true}]}"#,
+        )
+        .expect("the owner's own listing");
+        let rows = listing.into_rows();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "5a8b8724");
+        assert_eq!(rows[0].slug.as_deref(), Some("chrono-llm"));
+        assert_eq!(rows[0].is_active, Some(true));
+    }
+
+    #[test]
+    fn a_catalogue_row_still_reads_although_it_names_no_activity() {
+        // `is_active` belongs to a connection, not to a service, so the
+        // catalogue omits it. Absent must read as usable or the picker empties.
+        let listing: ServiceListing = serde_json::from_str(
+            r#"{"services":[{"id":"90b07c84","slug":"llm-anthropic","name":"Anthropic API","description":"d"}]}"#,
+        )
+        .expect("the catalogue");
+        let rows = listing.into_rows();
+
+        assert_eq!(rows[0].is_active, None);
+        assert_eq!(rows[0].name.as_deref(), Some("Anthropic API"));
     }
 }
