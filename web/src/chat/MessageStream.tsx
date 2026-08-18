@@ -43,12 +43,7 @@ interface MessageStreamProps {
 /** How close to the bottom still counts as "following the conversation". */
 const PINNED_WITHIN_PX = 48;
 
-export function MessageStream({
-  entries,
-  turnInFlight = false,
-  live,
-  footer,
-}: MessageStreamProps) {
+export function MessageStream({ entries, turnInFlight = false, live, footer }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
   /** How much had arrived the last time somebody was looking at the bottom. */
