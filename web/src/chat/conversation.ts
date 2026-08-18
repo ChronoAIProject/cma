@@ -235,14 +235,17 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
        * are different identities, so leaving it would draw the turn twice —
        * once as it was typed and once as it was recorded.
        */
-      return upsertMessage({ ...state, live: undefined }, {
-        kind: 'message',
-        id: event.messageId,
-        role: event.role,
-        text: '',
-        committed: false,
-        seq: event.seq,
-      });
+      return upsertMessage(
+        { ...state, live: undefined },
+        {
+          kind: 'message',
+          id: event.messageId,
+          role: event.role,
+          text: '',
+          committed: false,
+          seq: event.seq,
+        },
+      );
 
     case 'TEXT_MESSAGE_CONTENT': {
       /*
