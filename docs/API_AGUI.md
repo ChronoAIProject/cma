@@ -121,7 +121,30 @@ The consequence for a chat UI is worth stating plainly: this stream gives you th
 
 `snapshotAt` is the moment the conversation was captured, and it is where history stops being continuous: anything the agent did after it did not travel. Draw the boundary — a client that skips it silently leaves its reader to conclude the agent forgot something.
 
-**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted carrying the reason and the fact that the session returns. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
+**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
+
+### `RUN_ERROR` covers two different things, and says which
+
+The protocol has one event for a run ending badly, and two things end one: the agent's work failed, and the session is being carried onto another runtime. **Do not draw them the same way.**
+
+```json
+{
+  "type":            "RUN_ERROR",
+  "message":         "this session's runtime can no longer be what it is",
+  "code":            "error",
+  "capability":      "conversation",
+  "chrono:returns":  false
+}
+```
+
+| Field | |
+|---|---|
+| `message` | what happened, in the kernel's own words. Always present. |
+| `code` | the stop reason as this API spells it. Absent where the session did not stop for a reason it names. |
+| `capability` | **the ability the session lacked**, present only when the failure was a refusal. Named rather than described: rule 4 of `API_Overview.md` asks errors to name what is missing, and a sentence that happens to contain the word does not satisfy that, because nothing downstream can read a sentence. Most failures lack nothing and carry no `capability` — a provider that was unreachable is not a session missing an ability. |
+| `chrono:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
+
+A client that ignores `chrono:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
 
 ### Tool kinds are the runtime's own word
 
