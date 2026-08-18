@@ -72,7 +72,8 @@ describe('the card', () => {
     // Rewording it into a category loses the one detail the decision turns on.
     render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
     expect(screen.getByText('Run `rm -rf build/`?')).toBeInTheDocument();
-    expect(screen.getByText('chrono:command_execution')).toBeInTheDocument();
+    // The reason rides the eyebrow — approval · <the kernel's own reason>.
+    expect(screen.getByText(/chrono:command_execution/)).toBeInTheDocument();
   });
 
   it('spends the surface primary key on the affirmative answer', () => {
@@ -183,6 +184,7 @@ describe('in the stream', () => {
     const { conversation } = await conversationFrom('approval-granted', { upTo: 2 });
     const { container } = render(
       <MessageStream
+        kernel="codex"
         entries={conversation.entries}
         footer={
           conversation.pending === undefined ? null : (
