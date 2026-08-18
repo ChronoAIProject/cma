@@ -33,7 +33,7 @@
  */
 .actions__question {
   color: var(--fail);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   white-space: nowrap;
 }
 
