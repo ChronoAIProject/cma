@@ -94,18 +94,57 @@ chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative l
 |---|---|---|
 | Run lifecycle | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | turn boundaries and outcome |
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
+| Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
 | State | `STATE_DELTA` | usage, boundaries where conversation was lost, and plane changes |
 
-Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `THINKING_START`, `THINKING_END`, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
+Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
 
-### Text arrives whole, not as tokens
+### The run stream has two lanes, and one of them is not history
 
-`TEXT_MESSAGE_CONTENT` carries the finished message rather than a stream of deltas. The token-level pieces exist — they travel as liveness on the interfaces that hold a live connection — but they are deliberately not part of the durable log: numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time.
+Everything above is the **durable** lane: projected from the log, carrying an SSE `id`, and what a client resumes from.
 
-The consequence for a chat UI is worth stating plainly: this stream gives you the message when the agent commits to it, not while it is being written.
+The run stream also carries a **live** lane — what is happening right now. Those frames are marked and carry **no `id` at all**:
+
+```json
+{
+  "type":         "TEXT_MESSAGE_CONTENT",
+  "messageId":    "msg_live",
+  "delta":        "Hel",
+  "chrono:live":  true
+}
+```
+
+**Never resume from one.** It has no place in the log, so a cursor taken from it points at a position the log has never held, and everything between there and the real position is skipped on the next reconnect.
+
+The marker is sent because you cannot otherwise see the absence. `EventSource` reports `lastEventId` as the last id it was *given*, so a frame sent without one is indistinguishable from a frame repeating the previous id — and a client deduplicating on that drops every live frame in silence. **A client must exclude `chrono:live` frames from whatever it deduplicates and cursors on**, and only from that.
+
+The lane also carries the agent's reasoning:
+
+```json
+{
+  "type":         "REASONING_MESSAGE_CONTENT",
+  "messageId":    "reasoning_live",
+  "delta":        "the file is probably under src/",
+  "chrono:live":  true
+}
+```
+
+**`REASONING_START` and `REASONING_END` are not emitted, and their absence is deliberate.** This service sees a stream of thoughts and has no view of where one begins or ends, so a bracket sent from here would be a guess. Bracket on the run's own lifecycle events instead — they are exact — and clear reasoning when the run ends. Nothing of it survives, which is the point: reasoning is never committed, so a reload shows none of it and must not.
+
+`THINKING_START`, `THINKING_END` and `THINKING_TEXT_MESSAGE_*` are AG-UI's deprecated spelling of this family. They are declared `false` in the capability document rather than omitted, so a client written against the older names is told they are not coming rather than left waiting on them.
+
+`msg_live` is the in-flight message's identity, and it is deliberately not the committed message's. The committed one arrives under `msg_<seq>`, and a client **replaces** the in-flight message with it rather than appending — otherwise the turn is drawn twice, once as it was typed and once as it was recorded.
+
+Declared as `chrono:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
+
+### Committed text arrives whole, not as tokens
+
+On the durable lane, `TEXT_MESSAGE_CONTENT` carries the finished message rather than a stream of deltas. The token-level pieces are the live lane above, and they are deliberately not part of the durable log: numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time.
+
+The consequence for a chat UI is worth stating plainly: **the log** gives you the message when the agent commits to it. If you want it while it is being written, read the live lane and expect nothing from it to survive a reload.
 
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
