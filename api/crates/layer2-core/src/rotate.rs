@@ -372,7 +372,14 @@ impl SessionService {
         let session = moved.session.clone();
         tokio::spawn(async move {
             service
-                .bring_up(session, spec, adapter, geometry, restore)
+                .bring_up(
+                    session,
+                    spec,
+                    adapter,
+                    geometry,
+                    restore,
+                    crate::provision_failure::Abandonment::Keep,
+                )
                 .await;
         });
         Ok(moved.session)
