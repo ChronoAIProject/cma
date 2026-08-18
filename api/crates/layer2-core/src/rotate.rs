@@ -366,6 +366,7 @@ impl SessionService {
             options: moved.session.options.clone(),
             environment_profile: moved.session.environment_profile.clone(),
             subject_credential: None,
+            requested_mode: None,
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();
