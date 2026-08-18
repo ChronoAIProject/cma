@@ -131,6 +131,74 @@ fn a_kind_from_a_newer_writer_is_carried_back_rather_than_refused() {
 }
 
 #[test]
+fn a_field_a_newer_writer_added_does_not_make_an_event_unreadable() {
+    // `CLAUDE.md` §5: no deployment may interrupt a session its owner has not
+    // stopped, and a deployment is a rolling one — a replica on the older
+    // build reads events the newer build has already written.
+    //
+    // A tag this build has never heard of is already handled, and tested
+    // above. This is the other direction, and it is quieter: a tag this build
+    // *owns*, carrying a field it does not. It takes the strict path, so if
+    // the vocabulary ever gained `deny_unknown_fields` every session's history
+    // would become unreadable to the replica that had not been replaced yet —
+    // and it would look like corruption rather than like a version skew.
+    //
+    // `capability` on `status_changed` is the field that occasioned this; the
+    // property is about any field, and this test is here so adding the
+    // attribute fails loudly rather than in production during a deploy.
+    let read = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 9_i64,
+        "kind": {
+            "type": "status_changed",
+            "status": "terminated",
+            "stop_reason": "error",
+            "detail": "this session's runtime can no longer be what it is",
+            "capability": "conversation",
+            "something_a_later_build_added": "and this build has never heard of",
+        },
+    })
+    .expect("a known tag with an unfamiliar field is still history, not damage");
+
+    match read.kind {
+        StoredEventKind::Known(EventKind::StatusChanged {
+            capability, detail, ..
+        }) => {
+            assert_eq!(capability.as_deref(), Some("conversation"));
+            assert!(detail.is_some(), "and everything it does know still reads");
+        }
+        other => panic!("expected a status change, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_event_written_before_a_field_existed_still_reads() {
+    // The same property from the other side of a deploy: the newer build
+    // reading what the older one wrote. Every session in production has a log
+    // full of these, and §5 makes losing them as severe as losing the data.
+    let read = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 4_i64,
+        "kind": {
+            "type": "status_changed",
+            "status": "idle",
+            "stop_reason": "user_terminated",
+        },
+    })
+    .expect("an event from before the field existed is ordinary history");
+
+    match read.kind {
+        StoredEventKind::Known(EventKind::StatusChanged {
+            capability, detail, ..
+        }) => {
+            assert!(capability.is_none());
+            assert!(detail.is_none());
+        }
+        other => panic!("expected a status change, got {other:?}"),
+    }
+}
+
+#[test]
 fn a_document_missing_its_sequence_is_still_damage() {
     let error = from_document(doc! {
         "session_id": "s-1",
