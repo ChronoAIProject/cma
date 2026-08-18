@@ -148,6 +148,14 @@ pub(super) async fn run(
                             mode: layer2_core::SessionMode::Conversation,
                             ..Default::default()
                         },
+                        // Said explicitly, because `options` is filled in from
+                        // the profile or the deployment and what is set above
+                        // is discarded. This interface holds conversations and
+                        // nothing else, so a thread it creates has to be one —
+                        // and without this it created a terminal session on a
+                        // deployment defaulting to terminal, then refused it
+                        // for lacking the ability it had just asked for.
+                        requested_mode: Some(layer2_core::SessionMode::Conversation),
                         subject_credential: credential.map(|axum::Extension(c)| c.0),
                     },
                 )
@@ -277,17 +285,7 @@ fn events(
         |mut open| async move {
             loop {
                 if let Some(event) = open.pending.pop_front() {
-                    let frame = SseEvent::default()
-                        .event(event.kind)
-                        .json_data(&event)
-                        .unwrap_or_else(|_| SseEvent::default().event("RUN_ERROR"));
-                    // Only where there is one. A liveness frame carries no
-                    // cursor, and stamping it with an id would make a client
-                    // reconnect from a number the log has never held.
-                    let frame = match event.cursor() {
-                        Some(id) => frame.id(id),
-                        None => frame,
-                    };
+                    let frame = super::project::sse_frame(&event);
                     return Some((Ok(frame), open));
                 }
                 if open.ended {

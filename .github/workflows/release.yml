@@ -38,6 +38,32 @@ jobs:
             exit 1
           fi
 
+  ancestry:
+    name: develop contains main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: main is an ancestor of develop
+        # Every release leaves a merge commit on main that develop does not
+        # have, so main ends one commit ahead and the next release PR reads
+        # BEHIND. publish.yml now opens the back-merge itself; this says so
+        # early and in words when something has gone wrong anyway, rather than
+        # letting an author find out from a merge button after every gate has
+        # already run.
+        run: |
+          set -euo pipefail
+          if git merge-base --is-ancestor origin/main origin/develop; then
+            exit 0
+          fi
+          echo "::error::develop does not contain main, so this cannot merge."
+          echo "::error::Merge origin/main into develop first — it carries no content,"
+          echo "::error::only the merge commit from the last release."
+          git log --oneline origin/develop..origin/main
+          exit 1
+
   release-declaration:
     name: Release declaration
     runs-on: ubuntu-latest

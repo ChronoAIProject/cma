@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use axum::{
     extract::{Query, State},
-    response::sse::{Event as SseEvent, Sse},
+    response::sse::{Event as SseEvent, KeepAlive, Sse},
 };
 use futures_util::stream::{self, Stream};
 use layer2_core::SessionId;
@@ -51,6 +51,21 @@ pub(super) struct Replay {
     /// everything on every reconnect, which is what happened here.
     #[serde(default, alias = "after")]
     starting_after: Option<u64>,
+    /// Whether to keep the stream open once the log has been drained.
+    ///
+    /// Absent means yes, because that is what a client watching a session
+    /// wants and what every existing caller expects.
+    ///
+    /// `follow=false` makes this a **bounded** read that ends when it reaches
+    /// the end of the log, and a caller that needs history as a value rather
+    /// than as a subscription has no other way to get it: reading an endless
+    /// stream to completion never completes. The reference client did exactly
+    /// that — `await response.text()` against this route — so its history read
+    /// could only ever settle by failing, and everything downstream of it,
+    /// including every live frame, waited behind a promise that never
+    /// resolved.
+    #[serde(default)]
+    follow: Option<bool>,
 }
 
 impl Replay {
@@ -62,11 +77,16 @@ impl Replay {
     pub(super) fn starting_after(&self) -> Option<u64> {
         self.starting_after
     }
+
+    /// Whether this client wants the stream held open past the end of the log.
+    pub(super) fn follows(&self) -> bool {
+        self.follow.unwrap_or(true)
+    }
 }
 
-/// Read a session's history and keep following it.
+/// Read a session's history, and keep following it unless asked not to.
 ///
-/// Unlike a run, this never ends on its own: it is the session's stream rather
+/// Followed, this never ends on its own: it is the session's stream rather
 /// than one turn's, so a client holds it open across turns and the run
 /// lifecycle events arrive on it like any other.
 pub(super) async fn replay(
@@ -75,6 +95,7 @@ pub(super) async fn replay(
     Query(query): Query<Replay>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, Problem> {
     let seq = query.starting_after().unwrap_or(0);
+    let follows = query.follows();
     let id = SessionId(query.thread_id);
 
     // Read once before answering, so a caller who may not see this session is
@@ -116,6 +137,8 @@ pub(super) async fn replay(
         /// than the log is polled, because attaching costs a read and the
         /// window it covers is a session starting rather than anything urgent.
         since_attempt: u8,
+        /// Whether to hold the stream open once the log has been drained.
+        follows: bool,
     }
 
     /// Poll cycles between attempts to attach to a session's live lane.
@@ -129,6 +152,7 @@ pub(super) async fn replay(
         pending: Default::default(),
         watching,
         since_attempt: 0,
+        follows,
     };
     for event in first {
         opening.seq = event.seq;
@@ -142,18 +166,14 @@ pub(super) async fn replay(
     Ok(Sse::new(stream::unfold(opening, |mut open| async move {
         loop {
             if let Some(event) = open.pending.pop_front() {
-                let frame = SseEvent::default()
-                    .event(event.kind)
-                    .json_data(&event)
-                    .unwrap_or_else(|_| SseEvent::default().event("RUN_ERROR"));
-                // Everything replayed comes from the log, so every frame here
-                // has one. Read through the same accessor as the run stream so
-                // the two cannot come to differ about it.
-                let frame = match event.cursor() {
-                    Some(id) => frame.id(id),
-                    None => frame,
-                };
+                let frame = super::project::sse_frame(&event);
                 return Some((Ok(frame), open));
+            }
+            // Everything the log held has been sent. A bounded read is done,
+            // and ending it is what lets a caller await this route as a value
+            // rather than as a subscription.
+            if !open.follows {
+                return None;
             }
             // Whichever lane speaks first. Sleeping the poll interval
             // unconditionally would hold a piece of a message for up to that
@@ -216,7 +236,12 @@ pub(super) async fn replay(
                 open.pending.extend(project(&event, &id, &id).events);
             }
         }
-    })))
+    }))
+    // The run stream has always carried one and this did not, so an idle
+    // session's stream was torn down by an intermediary after roughly two
+    // minutes and the surface silently stopped updating. This is the stream a
+    // client holds open across turns, so idle is its normal state.
+    .keep_alive(KeepAlive::default()))
 }
 
 #[cfg(test)]

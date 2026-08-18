@@ -43,7 +43,8 @@ jobs:
             infra/api/gcpbackendpolicy.yaml \
             infra/runtime/Dockerfile \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
-            infra/web/secret.yaml infra/web/service.yaml | sort)
+            infra/web/secret.yaml infra/web/service.yaml \
+            infra/web/gcpbackendpolicy.yaml | sort)
           actual=$(find infra -type f | sort)
           if [ "$expected" != "$actual" ]; then
             echo "::error::infra/ contents differ from the fixed list"

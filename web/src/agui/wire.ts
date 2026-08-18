@@ -1,3 +1,4 @@
+import { KNOWN_EVENTS } from './events';
 import type { AguiTransport } from './connection';
 
 /**
@@ -31,7 +32,7 @@ export const wireTransport: AguiTransport = {
   open(session, onFrame, onDrop) {
     const source = new EventSource(streamUrl(session), { withCredentials: true });
 
-    source.onmessage = (message: MessageEvent) => {
+    const deliver = (message: MessageEvent) => {
       try {
         const frame = JSON.parse(String(message.data)) as Record<string, unknown>;
         // Put the sequence back where everything above expects to find it.
@@ -44,6 +45,33 @@ export const wireTransport: AguiTransport = {
         // it — which is the whole point of resuming on a cursor.
       }
     };
+
+    /*
+     * Unnamed frames, which is what the service sends. `onmessage` fires only
+     * for these — a frame carrying an `event:` name is delivered to a listener
+     * registered for that exact name and to nothing else, which is why this
+     * handler alone received nothing at all when the service was naming them.
+     */
+    source.onmessage = deliver;
+
+    /*
+     * And named ones, for as long as any control plane still sends them.
+     * A rolling deploy runs both builds at once and §5 of `CLAUDE.md` does not
+     * allow that to interrupt a session, so this client reads either shape.
+     *
+     * A frame has one name or none, so the two paths are mutually exclusive
+     * and nothing arrives twice — which matters, because a liveness frame
+     * deliberately bypasses the deduplication upstream and would otherwise be
+     * appended to the message being typed a second time.
+     *
+     * This is bounded by what this build knows, and that is the whole reason
+     * the service stopped naming them: an `EventSource` cannot listen for a
+     * name it has not heard of, so a kind added by a newer control plane can
+     * only reach a client through the unnamed path above.
+     */
+    for (const kind of KNOWN_EVENTS) {
+      source.addEventListener(kind, deliver as EventListener);
+    }
 
     source.onerror = () => {
       onDrop('the event stream closed');
@@ -63,7 +91,18 @@ export const wireTransport: AguiTransport = {
      * arriving must produce the same result (§18.1), and one code path is how
      * that stays true.
      */
-    const url = `${streamUrl(session)}&starting_after=${String(cursor)}`;
+    /*
+     * `follow=false` is what makes this finish. Without it the route holds the
+     * stream open across turns — which is right for the live path above and
+     * fatal here: `text()` settles only when the stream ends, so a history
+     * read against a following stream could resolve only by failing.
+     *
+     * That is not a hypothetical. The connection awaits this before it
+     * delivers anything, so every live frame sat in a buffer behind a promise
+     * that never resolved, and the surface stayed empty however well the rest
+     * of the path worked.
+     */
+    const url = `${streamUrl(session)}&starting_after=${String(cursor)}&follow=false`;
     const response = await fetch(url, {
       credentials: 'same-origin',
       headers: { accept: 'text/event-stream' },

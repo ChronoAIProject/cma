@@ -102,6 +102,27 @@ Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, 
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
 
+### Reading history is a different request from watching
+
+`GET /api/v1/agui/events` **holds the stream open across turns** — it is the session's stream, not one turn's, so it does not end on its own. That is what you want to watch a session, and it is a deadlock if you want history as a value: awaiting the response body settles only when the stream ends, so it never settles.
+
+Send **`follow=false`** for a bounded read. It drains the log from your cursor and closes.
+
+```
+GET /api/v1/agui/events?thread_id=…&starting_after=41&follow=false   # history, ends
+GET /api/v1/agui/events?thread_id=…                                  # watch, stays open
+```
+
+Absent means follow, so nothing written against the earlier behaviour changes.
+
+### Frames are unnamed; the kind is in the body
+
+Every frame on both streams arrives as the default SSE `message` type, with **no `event:` name**. The kind is `type` in the body, and that is what to dispatch on.
+
+This is deliberate and it matters for an `EventSource` client: a named frame is delivered only to a listener registered for that exact name, and `EventSource` has no wildcard. Since the emitted set grows additively — see the rule above about tolerating unknown types — naming the frames would make every kind added after your client was written silently unreceivable. Unnamed frames are the only shape that keeps that rule true.
+
+An older control plane may still name them. A client that registers both `onmessage` and a listener per kind it knows reads either, and a frame has one name or none, so nothing arrives twice.
+
 ### The session stream carries the live lane too
 
 Both `GET /api/v1/agui/events` and the run stream carry it, and a client needs only one of them. **The session stream is the one to use**: it is held open across turns, so a client that posts a run and does not consume its response — which is the ordinary shape of a chat client — still sees everything happening.
