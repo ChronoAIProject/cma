@@ -228,3 +228,57 @@ describe('the plane-change boundary', () => {
     expect(boundary).not.toHaveTextContent(/moved to/i);
   });
 });
+
+describe('a run that failed, §18.9', () => {
+  /** Fold a failure as the projection sends one, through the real parser. */
+  const failure = (body: Record<string, unknown>) =>
+    fold([toEvent({ type: 'RUN_ERROR', seq: 9, message: 'the run failed', ...body })]);
+
+  it('says what failed, in the stream rather than in place of it', () => {
+    const state = fold([
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 1, messageId: 'm1', role: 'assistant' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 2, messageId: 'm1', delta: 'reading a file' }),
+      toEvent({ type: 'RUN_ERROR', seq: 3, message: 'the model endpoint refused' }),
+    ]);
+    render(<MessageStream entries={state.entries} />);
+
+    expect(screen.getByText('the model endpoint refused')).toBeTruthy();
+    expect(
+      screen.getByText('reading a file'),
+      'what the agent already did stays readable',
+    ).toBeTruthy();
+  });
+
+  it('says the word as well as wearing the ink', () => {
+    // §2: colour is never the only carrier. A reader who cannot distinguish
+    // the ink must still be able to read what happened.
+    render(<MessageStream entries={failure({}).entries} />);
+
+    expect(screen.getByText('Run failed')).toBeTruthy();
+  });
+
+  it('names the ability when the failure was a refusal', () => {
+    render(<MessageStream entries={failure({ capability: 'conversation' }).entries} />);
+
+    const named = screen.getByText(/This session cannot/);
+    expect(named.textContent).toContain('conversation');
+  });
+
+  it('names nothing when there was nothing to name', () => {
+    render(<MessageStream entries={failure({}).entries} />);
+
+    expect(screen.queryByText(/This session cannot/)).toBeNull();
+  });
+
+  it('draws nothing at all for a session being carried onto another runtime', () => {
+    // §11: a rotating session never takes the failure ink. It arrives on the
+    // same frame as a failure, so this is the only thing keeping them apart.
+    const state = failure({
+      message: 'moving this session to the other plane',
+      'chrono:returns': true,
+    });
+    render(<MessageStream entries={state.entries} />);
+
+    expect(screen.queryByText('Run failed')).toBeNull();
+  });
+});
