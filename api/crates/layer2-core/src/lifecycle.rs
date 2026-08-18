@@ -107,6 +107,7 @@ impl SessionService {
                             status: SessionStatus::Terminated,
                             stop_reason: Some(StopReason::UserTerminated),
                             detail: None,
+                            capability: None,
                         },
                     );
                     entry.input = None;
@@ -170,6 +171,7 @@ impl SessionService {
                     status: SessionStatus::Terminated,
                     stop_reason: Some(StopReason::UserTerminated),
                     detail: None,
+                    capability: None,
                 },
             }],
         )
@@ -228,6 +230,7 @@ impl SessionService {
                             status: SessionStatus::Idle,
                             stop_reason: Some(StopReason::UserTerminated),
                             detail: None,
+                            capability: None,
                         },
                     );
                     Some(taken)
@@ -285,6 +288,7 @@ impl SessionService {
                     status: SessionStatus::Idle,
                     stop_reason: Some(StopReason::UserTerminated),
                     detail: None,
+                    capability: None,
                 },
             }],
         )

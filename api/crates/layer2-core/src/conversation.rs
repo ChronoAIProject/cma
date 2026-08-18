@@ -104,6 +104,7 @@ impl SessionService {
                     status: SessionStatus::Running,
                     stop_reason: None,
                     detail: None,
+                    capability: None,
                 },
             );
         }
@@ -186,6 +187,7 @@ impl SessionService {
                         status: SessionStatus::Running,
                         stop_reason: None,
                         detail: None,
+                        capability: None,
                     },
                 );
             }
