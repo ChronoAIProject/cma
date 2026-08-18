@@ -102,6 +102,11 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
     });
     assert_eq!(kinds(&p), vec!["TOOL_CALL_START"]);
     assert_eq!(p.events[0].body["toolCallId"], "call-1");
+    // `toolCallName` is the protocol's own field, and this assertion was
+    // always right. What nothing checked was whether the *client* read it —
+    // it read `target`, a name nothing sends, so every tool call reached the
+    // surface without the one thing that identifies it. The seam is held from
+    // the other side too, in `web/src/agui/wire.test.ts`.
     assert_eq!(p.events[0].body["toolCallName"], "read notes");
     assert_eq!(
         p.events[0].body["chrono:toolKind"],

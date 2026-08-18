@@ -391,3 +391,103 @@ async fn somebody_elses_session_cannot_be_watched() {
         Err(crate::error::CoreError::Forbidden)
     ));
 }
+
+#[tokio::test]
+async fn the_agents_reasoning_is_watchable_and_is_never_recorded() {
+    // A turn spent thinking looks exactly like a turn spent stuck. The
+    // reasoning crosses Layer 3 today — `AgentThoughtChunk` is an ACP v1
+    // variant and the bridge forwards `SessionUpdate` whole — and the fold
+    // dropped it on the floor.
+    //
+    // It must be watchable *and* absent from the log. §18.1 requires a turn
+    // drawn from history and a turn watched arriving to produce the same
+    // result, so a durable thought is a thought that gets replayed: somebody
+    // reloading to check what the agent decided would watch it think again.
+    let (svc, alice, id, adapter) = conversation().await;
+    let mut watching = svc.subscribe_live(&alice, &id).await.expect("watchable");
+    let before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("readable")
+        .len();
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::AgentThoughtChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
+                    "the file is probably under src/",
+                )),
+            )))
+            .await
+            .expect("the core is listening");
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(2), watching.recv()).await {
+        Ok(Ok(crate::event::LiveFrame::ThoughtDelta(text))) => {
+            assert_eq!(text, "the file is probably under src/");
+        }
+        other => panic!("expected the agent's reasoning, got {other:?}"),
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let after = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("readable")
+        .len();
+    assert_eq!(before, after, "reasoning must not reach the durable log");
+}
+
+#[tokio::test]
+async fn reasoning_does_not_become_part_of_the_message_the_agent_commits() {
+    // The one way this could go quietly wrong. If a thought accumulated into
+    // the message being assembled, the committed message — which *is*
+    // durable, and is what a reload shows — would contain the agent's
+    // reasoning, permanently, having never been said out loud.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::AgentThoughtChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
+                    "I should not say this part",
+                )),
+            )))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(chunk("Found it."))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::MessageCommitted { content } if content == "Found it."
+        ))
+        .await,
+        "the committed message must be exactly what the agent said"
+    );
+    let logged = svc.events_since(&alice, &id, None).await.expect("readable");
+    assert!(
+        !logged.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::MessageCommitted { content } if content.contains("should not say")
+        )),
+        "no part of the reasoning may be in the record: {logged:?}"
+    );
+}
