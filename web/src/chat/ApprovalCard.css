@@ -1,22 +1,28 @@
 /*
- * The approval card — docs/Web_Style.md §18.3.
+ * The approval card — docs/Web_Style.md §18.3, amended.
  *
- * The highest-stakes control in the product, and it reads as one: the raised
- * ground inside the panel radius with a 1px accent border, resting. It sits
- * in the stream where the turn stopped. Not a plate and not a modal: a plate
- * floats over the page, and a session can wait on this while its owner reads
- * something else.
+ * The highest-stakes control in the product, and it takes the composer's own
+ * seat: an approval in the stream scrolls away, and the one thing somebody
+ * must answer is the one thing they can scroll past. It replaces the field
+ * because typing is not what the session is waiting for.
+ *
+ * Still not a modal. The section's binding constraint is that a session
+ * waiting on an answer leaves every other session reachable, and this sits
+ * inside one session's surface with the sidebar untouched.
+ *
+ * The border is the warning tone rather than the business one: this is a
+ * decision with a cost, and blue reads as information.
  */
 
 .approval {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--raised);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-rest);
+  gap: 12px;
+  padding: 16px;
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  border-radius: 20px;
+  box-shadow: var(--dsw-shadow-lv2);
 }
 
 /* The eyebrow: approval · the kernel's own reason, on the accent wash. */
