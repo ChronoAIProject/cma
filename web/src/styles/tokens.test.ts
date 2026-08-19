@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { resolveToken, themes } from '../test/palette';
 
 /**
  * The token layer, checked against docs/Web_Style.md.
@@ -15,7 +16,22 @@ import { describe, expect, it } from 'vitest';
  */
 
 const SRC = resolve(process.cwd(), 'src');
-const TOKENS = join(SRC, 'styles', 'tokens.css');
+
+/**
+ * The sheets that may define a token — §2 and §3.
+ *
+ * The palette moved out of `tokens.css` into vendored sheets, and it declares
+ * on `body` rather than `:root` because the scrollbar sheet resolves against
+ * the element the tokens sit on. So a definition is looked for across all of
+ * these and under any selector, rather than in one file under one.
+ */
+const TOKEN_SHEETS = [
+  'tokens.css',
+  'design-platform.css',
+  'effects-typography.css',
+  'scrollbar.css',
+  'shiki.css',
+].map((name) => join(SRC, 'styles', name));
 const COMPONENTS = join(SRC, 'styles', 'components.css');
 
 function stylesheets(dir: string): string[] {
@@ -32,7 +48,13 @@ function stylesheets(dir: string): string[] {
 }
 
 const ALL = stylesheets(SRC);
-const COMPONENT_SHEETS = ALL.filter((path) => path !== TOKENS);
+/*
+ * Everything that is not a token sheet. The palette sheets are full of literal
+ * colours by definition — that is what a palette is — so the no-literals rule
+ * applies to the sheets that consume them, which is where a literal would
+ * actually be unable to follow the theme.
+ */
+const COMPONENT_SHEETS = ALL.filter((path) => !TOKEN_SHEETS.includes(path));
 
 /**
  * Custom properties a stylesheet may reference without defining.
@@ -64,34 +86,54 @@ function referenced(css: string): Set<string> {
 
 describe('the token layer', () => {
   it('holds custom properties and nothing else', () => {
-    // Every rule in tokens.css is a :root block. A class selector here would
-    // mean component styling had leaked back into the file whose whole value
-    // is that checking §2 against it is a single-file review.
-    const withoutComments = readFileSync(TOKENS, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-    const selectors = [...withoutComments.matchAll(/([^{};]*)\{/g)]
-      .map((match) => (match[1] ?? '').trim().split('\n').pop()?.trim() ?? '')
-      .filter((selector) => selector.length > 0 && !selector.startsWith('@'));
-    for (const selector of selectors) {
-      expect(selector, `unexpected selector in tokens.css: ${selector}`).toMatch(/^:root/);
+    // A class selector here would mean component styling had leaked back into
+    // the sheets whose whole value is that checking §2 against them is a
+    // single-place review. `@font-face` is allowed: the one face this product
+    // downloads is declared beside the stack that names it.
+    for (const sheet of TOKEN_SHEETS) {
+      const withoutComments = readFileSync(sheet, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      const selectors = [...withoutComments.matchAll(/([^{};]*)\{/g)]
+        .map((match) => (match[1] ?? '').trim().split('\n').pop()?.trim() ?? '')
+        .filter((selector) => selector.length > 0 && !selector.startsWith('@'));
+      for (const selector of selectors) {
+        expect(selector, `unexpected selector in ${relative(SRC, sheet)}: ${selector}`).toMatch(
+          /^(:root|body|html|::?-?[a-z-]|\*)/,
+        );
+      }
     }
   });
 
-  it('defines every colour on bare :root before any theme block', () => {
-    // Web_Style.md §2: a colour whose only definition lives inside a media
-    // query or a [data-theme] block is a bug — it renders as `unset` under a
-    // combination of theme settings nobody tested.
-    const css = readFileSync(TOKENS, 'utf8');
-    const bare = declared(/^:root\s*\{([^}]*)\}/m.exec(css)?.[1] ?? '');
-    const themed = declared(/:root\[data-theme='dark'\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '');
+  it('defines every themed colour in the light theme too', () => {
+    // §3: a colour whose only definition lives in the dark block renders as
+    // `unset` for every light reader — the same failure the old bare-`:root`
+    // rule guarded, checked where the palette actually lives now.
+    const { light, darkOverrides } = themes();
 
-    expect(themed.size).toBeGreaterThan(0);
-    for (const name of themed) {
-      expect(bare, `--${name} is defined only in the dark block`).toContain(name);
+    expect(darkOverrides.size).toBeGreaterThan(0);
+    for (const name of darkOverrides.keys()) {
+      expect([...light.keys()], `--${name} is defined only in the dark theme`).toContain(name);
+    }
+  });
+
+  it('resolves every token in both themes', () => {
+    // A token whose chain ends on a name nothing defines renders as `unset`,
+    // and does so only in the theme where the chain breaks — which is how one
+    // survives review. Both themes are walked, every tier, to the literal.
+    const palette = themes();
+    for (const name of ['light', 'dark'] as const) {
+      for (const token of palette[name].keys()) {
+        expect(() => resolveToken(token, palette[name]), `--${token} in ${name}`).not.toThrow();
+      }
     }
   });
 
   it('resolves every var() reference in every stylesheet', () => {
-    const defined = new Set([...declared(readFileSync(TOKENS, 'utf8'))]);
+    const defined = new Set<string>();
+    for (const sheet of TOKEN_SHEETS) {
+      for (const name of declared(readFileSync(sheet, 'utf8'))) {
+        defined.add(name);
+      }
+    }
     const missing: string[] = [];
 
     for (const path of ALL) {
