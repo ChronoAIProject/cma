@@ -19,6 +19,12 @@ use layer3_adapter::{
 };
 use tokio::sync::{broadcast, Mutex};
 
+/// How many updates may queue between a kernel and the folder.
+///
+/// The folder writes to the durable log, so it is slower than a kernel that is
+/// streaming; this is the slack that keeps a fast turn from blocking on it.
+pub(crate) const CONVERSATION_BUFFER: usize = 64;
+
 use crate::capabilities::SessionCapabilities;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
@@ -222,18 +228,40 @@ impl SessionService {
             })?),
             true => None,
         };
+        /*
+         * Folding starts before the conversation is open, not after it.
+         *
+         * Opening one is not instantaneous and is not silent: an own-account
+         * session stops inside the open to ask its owner to sign in, and waits
+         * there for as long as a person takes. Draining only afterwards meant
+         * that request reached the log after the sign-in it was asking for,
+         * which is to say never — the session simply sat in `provisioning`
+         * with nothing to show for it.
+         *
+         * Nothing is lost if the open then fails: the sender drops, the folder
+         * closes the session's open turn and ends, and what it recorded on the
+         * way is what actually happened.
+         */
         let conversation = match conversing {
-            true => Some(
-                adapter
-                    .open_conversation(&handle, &options)
-                    .await
-                    .map_err(|e| {
-                        // A kernel that advertised a conversation and cannot open one
-                        // will not start being able to. Refused permanently so the
-                        // owner is told now rather than after the backoff.
-                        StartFailure::permanent(format!("could not open the conversation: {e}"))
-                    })?,
-            ),
+            true => {
+                let (updates_tx, updates_rx) = tokio::sync::mpsc::channel(CONVERSATION_BUFFER);
+                crate::conversation_log::spawn_folder(
+                    Arc::clone(self),
+                    session.id.clone(),
+                    updates_rx,
+                );
+                Some(
+                    adapter
+                        .open_conversation(&handle, &options, updates_tx)
+                        .await
+                        .map_err(|e| {
+                            // A kernel that advertised a conversation and cannot open one
+                            // will not start being able to. Refused permanently so the
+                            // owner is told now rather than after the backoff.
+                            StartFailure::permanent(format!("could not open the conversation: {e}"))
+                        })?,
+                )
+            }
             false => None,
         };
 
@@ -325,7 +353,7 @@ impl SessionService {
         if let Some(output) = terminal_output {
             spawn_relay(id.clone(), output, screen, live);
         }
-        if let Some(channel) = conversation {
+        if conversation.is_some() {
             // Recorded before anything is said on it. What this is for is a
             // control plane that has not started yet: the one replacing this
             // process reads the log to learn what the runtime calls the
@@ -337,7 +365,6 @@ impl SessionService {
                     crate::log::append(entry, EventKind::ConversationOpened { conversation_id });
                 }
             }
-            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
         }
 
         // Handed over before the agent can need it, so the first turn is
