@@ -10,16 +10,16 @@ afterEach(() => {
 
 describe('arrangement preference', () => {
   it('defaults to tabs when nothing is stored', () => {
-    expect(loadArrangement()).toBe('tabs');
-    expect(DEFAULT_ARRANGEMENT).toBe('tabs');
+    expect(loadArrangement()).toBe('list');
+    expect(DEFAULT_ARRANGEMENT).toBe('list');
   });
 
   it('round-trips a stored choice', () => {
     saveArrangement('canvas');
     expect(loadArrangement()).toBe('canvas');
 
-    saveArrangement('tabs');
-    expect(loadArrangement()).toBe('tabs');
+    saveArrangement('list');
+    expect(loadArrangement()).toBe('list');
   });
 
   it('ignores a value it does not recognise', () => {

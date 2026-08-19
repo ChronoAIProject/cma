@@ -30,12 +30,7 @@ interface UsageProps {
 
 export function Usage({ granted, usage }: UsageProps) {
   if (!granted) {
-    return (
-      <span className="usage usage--absent">
-        <span className="band__label">Usage</span>
-        <span className="band__value">not reported</span>
-      </span>
-    );
+    return <span className="usage">Usage not reported for this session</span>;
   }
 
   /*
@@ -44,23 +39,15 @@ export function Usage({ granted, usage }: UsageProps) {
    * total, for the same reason as above.
    */
   if (usage?.tokens === undefined && usage?.cost === undefined) {
-    return (
-      <span className="usage">
-        <span className="band__label">Usage</span>
-        <span className="band__value">waiting</span>
-      </span>
-    );
+    return <span className="usage">Usage · waiting</span>;
   }
 
   return (
     <span className="usage">
-      <span className="band__label">Usage</span>
       {usage.tokens === undefined ? null : (
-        <span className="band__value usage__tokens">
-          {usage.tokens.toLocaleString('en')} tokens
-        </span>
+        <span className="usage__tokens">{usage.tokens.toLocaleString('en')} tokens</span>
       )}
-      {usage.cost === undefined ? null : <span className="band__value">{usage.cost}</span>}
+      {usage.cost === undefined ? null : <span>{usage.cost}</span>}
     </span>
   );
 }
