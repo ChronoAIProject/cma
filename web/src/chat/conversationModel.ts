@@ -118,13 +118,27 @@ export interface UnknownEntry {
   readonly seq: number;
 }
 
+/** An approval, and when the run that raised it stopped. */
+export interface PendingApproval extends Interrupt {
+  /** RFC 3339, from the frame that carried it. Absent on an older log. */
+  readonly askedAt?: string;
+}
+
 /** Everything a surface needs to draw the conversation. */
 export interface Conversation {
   readonly entries: readonly Entry[];
   /** True between `RUN_STARTED` and the `RUN_FINISHED` that closes it. */
   readonly turnInFlight: boolean;
-  /** The approval the session is parked on, when it is parked on one. */
-  readonly pending?: Interrupt;
+  /**
+   * The approval the session is parked on, when it is parked on one.
+   *
+   * Carries the time it was asked alongside the kernel's own question, which
+   * §18.3 requires the eyebrow to show. The kernel does not put a time on the
+   * question; the frame that delivered it does, so it is taken from there
+   * rather than read off a clock here — a session reopened tomorrow must say
+   * when the agent stopped, not when somebody looked.
+   */
+  readonly pending?: PendingApproval;
   /**
    * What the session has cost, when it reports it.
    *
