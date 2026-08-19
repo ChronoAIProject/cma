@@ -666,6 +666,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 focusedId={activeId}
                 focusHistory={focusHistory}
                 onFocus={select}
+                onOpenToReply={(id) => {
+                  /*
+                   * §13: the recap hands the reply to the surface that can
+                   * hold a reading column — the list arrangement, with this
+                   * session selected.
+                   */
+                  select(id);
+                  changeArrangement('list');
+                }}
               />
             ) : active === null ? (
               <p className="console__empty">No session open. Start one from the left.</p>

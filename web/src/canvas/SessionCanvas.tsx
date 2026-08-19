@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { CanvasNode } from './CanvasNode';
 import { gridColumns, isCanvasArrow, nextNodeIndex, selectLiveWindow } from './layout';
+import type { AguiTransport } from '../agui';
 import type { LiveSession } from '../sessions/live';
 import { tabLabel } from '../sessions/sessionTime';
 import './SessionCanvas.css';
@@ -23,6 +24,10 @@ interface SessionCanvasProps {
   /** Every listed session and its driver, in display order. */
   readonly nodes: readonly LiveSession[];
   readonly focusedId: string | null;
+  /** Opens a conversation session on the list arrangement — §13's recap key. */
+  readonly onOpenToReply: (id: string) => void;
+  /** Where a recap's frames come from. The wire unless a driver is injected. */
+  readonly transport?: AguiTransport;
   /**
    * Session ids, most recently focused first. The canvas spends its attachment
    * budget from this rather than from display order: the sessions somebody is
@@ -32,10 +37,43 @@ interface SessionCanvasProps {
   readonly onFocus: (id: string) => void;
 }
 
-export function SessionCanvas({ nodes, focusedId, focusHistory, onFocus }: SessionCanvasProps) {
+export function SessionCanvas({
+  nodes,
+  focusedId,
+  focusHistory,
+  onFocus,
+  onOpenToReply,
+  transport,
+}: SessionCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const handles = useRef(new Map<string, HTMLButtonElement>());
   const [panning, setPanning] = useState(false);
+  /*
+   * §13: the surface overflows on purpose and says so. Measured rather than
+   * guessed, so a viewport wide enough for the grid gets neither the fade
+   * nor the pill.
+   */
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null) {
+      return;
+    }
+    const measure = () => {
+      setOverflowing(viewport.scrollWidth > viewport.clientWidth);
+    };
+    measure();
+    // jsdom has no ResizeObserver; without one the mount-time measure stands.
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    return () => {
+      observer.disconnect();
+    };
+  }, [nodes.length]);
   const panOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
   const columns = gridColumns(nodes.length);
@@ -172,10 +210,25 @@ export function SessionCanvas({ nodes, focusedId, focusHistory, onFocus }: Sessi
               registerHandle={(element) => {
                 registerHandle(node.session.id, element);
               }}
+              onOpenToReply={() => {
+                onOpenToReply(node.session.id);
+              }}
+              transport={transport}
             />
           ))}
         </div>
+        {/*
+         * §13: a fade at the trailing edge and a pill with the session count,
+         * so a viewport narrower than the grid reads as pannable rather than
+         * clipped. Both are drawn only while the grid actually overflows.
+         */}
+        {overflowing ? <div className="canvas__fade" aria-hidden="true" /> : null}
       </div>
+      {overflowing ? (
+        <span className="canvas__pan">
+          drag or → to pan · {nodes.length} session{nodes.length === 1 ? '' : 's'}
+        </span>
+      ) : null}
 
       {/*
        * What the budget cost is said in the status band, not here (§13). It
