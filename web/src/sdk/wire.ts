@@ -30,7 +30,15 @@ export const PATHS = {
   outputTokens: '/usage/outputTokens',
   /** How full the context is, as the runtime reports it. */
   contextUsed: '/usage/contextUsed',
-  /** What the session has spent, where the runtime reports a figure. */
+  /**
+   * What the session has spent.
+   *
+   * Declared and unwritten: no interface emits this today. Kept because the
+   * surface that reads it draws nothing when it is absent, and because the
+   * absence is the fact worth recording — a reader wondering why no cost ever
+   * appears should find the answer here rather than in a git log. Verified
+   * against the service on 2026-08-19 by listing every path it patches.
+   */
   cost: '/usage/cost',
   /** The permission mode the agent is running under. */
   mode: '/mode',
@@ -38,6 +46,13 @@ export const PATHS = {
   plan: '/plan',
   /** The settings this session may change, in the kernel's own words. */
   configOptions: '/configOptions',
+  /**
+   * The actions the owner may invoke right now.
+   *
+   * Liveness rather than history: a stale list replayed from the log would
+   * offer actions that no longer exist.
+   */
+  availableCommands: '/availableCommands',
   /** Where a plane change is appended. */
   planeChanges: '/planeChanges/-',
   /** Where a stretch of lost conversation is appended. */

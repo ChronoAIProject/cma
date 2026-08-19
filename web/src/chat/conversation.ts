@@ -359,7 +359,7 @@ function applyPatches(
           return id === '' ? [] : [{ id, name, kind }];
         }),
       };
-    } else if (patch.path === '/availableCommands' && Array.isArray(patch.value)) {
+    } else if (patch.path === PATHS.availableCommands && Array.isArray(patch.value)) {
       next = {
         ...next,
         availableCommands: patch.value.flatMap((entry): AvailableCommand[] => {
