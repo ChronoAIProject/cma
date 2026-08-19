@@ -95,16 +95,15 @@ export function terminalTheme(name: ThemeName): ITheme {
 }
 
 /**
- * Resolve the theme the same way the stylesheet does: an explicit data-theme
- * wins over the system preference in either direction.
+ * Resolve the theme the same way the palette does — by reading the mark the
+ * palette itself selects on.
+ *
+ * That mark is already resolved: whoever set it turned "system" into an answer
+ * first. Asking the media query here as well would give a different answer to
+ * the same question the moment somebody chose light on a dark machine, and the
+ * terminal is the one surface where that would be visible as a mismatch rather
+ * than as a theme.
  */
 export function activeThemeName(): ThemeName {
-  const explicit = document.documentElement.getAttribute('data-theme');
-  if (explicit === 'dark' || explicit === 'light') {
-    return explicit;
-  }
-  if (typeof window.matchMedia === 'function') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  }
-  return 'light';
+  return document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light';
 }
