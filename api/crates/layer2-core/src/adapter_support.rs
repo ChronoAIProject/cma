@@ -225,6 +225,7 @@ impl KernelAdapter for FakeAdapter {
         &self,
         _handle: &RuntimeHandle,
         options: &layer3_adapter::RuntimeOptions,
+        updates: tokio::sync::mpsc::Sender<layer3_adapter::ConversationUpdate>,
     ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
         if !self.capabilities.conversation {
             return Err(AdapterError::Unsupported(
@@ -238,7 +239,7 @@ impl KernelAdapter for FakeAdapter {
             .lock()
             .await
             .push(options.resume_conversation.clone());
-        let (channel, held) = crate::conversation_support::FakeConversation::open();
+        let (channel, held) = crate::conversation_support::FakeConversation::open(updates);
         *self.conversation.lock().await = Some(held);
         Ok(channel)
     }

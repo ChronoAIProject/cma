@@ -30,6 +30,8 @@ pub use runtime::{
     RuntimePermission, RuntimeSpec, TermSize, TerminalChannel, TerminalInput,
 };
 
+use tokio::sync::mpsc;
+
 pub use conversation::{
     ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
     ConversationUpdate, MessageId, PermissionDecision, PermissionOption, PermissionOptionId,
@@ -157,10 +159,18 @@ pub trait KernelAdapter: Send + Sync {
     /// without it never reaches here. The default refusal is the backstop for
     /// the case that check cannot cover: an adapter whose capabilities say one
     /// thing and whose implementation has not caught up.
+    ///
+    /// The caller supplies the sink rather than receiving one back, because
+    /// opening a conversation is not instantaneous and things worth recording
+    /// happen inside it. An own-account session stops mid-open to ask its
+    /// owner to sign in, and a receiver handed over afterwards could not carry
+    /// that request until the sign-in it was asking for had already happened.
+    /// A caller that is draining before it calls hears everything.
     async fn open_conversation(
         &self,
         _handle: &RuntimeHandle,
         _options: &RuntimeOptions,
+        _updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
         Err(AdapterError::Unsupported(
             "this kernel does not hold a conversation".to_string(),
@@ -301,7 +311,7 @@ mod tests {
             bare.attach_terminal(&handle)
                 .await
                 .expect_err("no terminal"),
-            bare.open_conversation(&handle, &RuntimeOptions::default())
+            bare.open_conversation(&handle, &RuntimeOptions::default(), mpsc::channel(1).0)
                 .await
                 .expect_err("no conversation"),
             bare.snapshot(&handle).await.expect_err("no snapshot"),
