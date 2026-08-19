@@ -108,6 +108,41 @@ fn a_missing_ability_is_unprocessable_rather_than_missing() {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+#[tokio::test]
+async fn a_refusal_names_the_missing_ability_as_a_field() {
+    // §3 requires a refusal to name what is missing "in words a caller can act
+    // on". The name used to reach a caller only inside `detail`, as the tail
+    // of "capability not supported: conversation" — so acting on it meant
+    // parsing an English sentence, which every client would do slightly
+    // differently and which breaks the first time the wording is improved.
+    let (status, body) = rendered(CoreError::CapabilityUnsupported("conversation".into())).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["capability"], "conversation");
+    assert_eq!(body["code"], "capability_unsupported");
+    // The prose keeps saying it too: a caller that only shows `detail` to a
+    // person must not start showing them less.
+    assert!(
+        body["detail"]
+            .as_str()
+            .expect("detail is a string")
+            .contains("conversation"),
+        "the sentence should still name it: {}",
+        body["detail"]
+    );
+}
+
+#[tokio::test]
+async fn a_failure_with_no_ability_to_name_carries_no_field() {
+    // Absent rather than null. A field present on every failure invites a
+    // caller to branch on its emptiness instead of on the code, and the two
+    // disagree the first time a refusal arrives without a name.
+    let (_, body) = rendered(CoreError::SessionTerminated).await;
+    assert!(
+        body.get("capability").is_none(),
+        "nothing to name, so nothing should be there: {body}"
+    );
+}
+
 #[test]
 fn a_view_carries_geometry_as_plain_integers() {
     let s = Session {
