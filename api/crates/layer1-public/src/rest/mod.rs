@@ -335,17 +335,32 @@ impl IntoResponse for Problem {
                 "service-catalogue-unavailable",
             ),
         };
-        (
-            status,
-            Json(serde_json::json!({
-                "type": format!("{PROBLEM_BASE}/{slug}"),
-                "title": slug.replace('-', " "),
-                "status": status.as_u16(),
-                "detail": rendered.to_string(),
-                "code": rendered.code(),
-            })),
-        )
-            .into_response()
+        // The ability a session lacks, as a field rather than only as prose.
+        //
+        // CLAUDE.md §3 requires a refusal to name what is missing "in words a
+        // caller can act on". The name was reaching callers only inside
+        // `detail`, as the tail of "capability not supported: conversation",
+        // so acting on it meant parsing an English sentence — which every
+        // client would do slightly differently and which breaks the moment the
+        // wording is improved. The conversation projection already sends this
+        // as its own field; this makes the two interfaces agree.
+        let mut body = serde_json::json!({
+            "type": format!("{PROBLEM_BASE}/{slug}"),
+            "title": slug.replace('-', " "),
+            "status": status.as_u16(),
+            "detail": rendered.to_string(),
+            "code": rendered.code(),
+        });
+        if let CoreError::CapabilityUnsupported(name) = rendered {
+            // Inserted rather than always present and usually null: a field
+            // there on every failure invites a caller to branch on its
+            // emptiness instead of on the code, and the two disagree the first
+            // time a refusal arrives without a name.
+            if let Some(object) = body.as_object_mut() {
+                object.insert("capability".into(), serde_json::Value::String(name.clone()));
+            }
+        }
+        (status, Json(body)).into_response()
     }
 }
 
