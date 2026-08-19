@@ -524,17 +524,24 @@ function applyPatches(
        * §18.6: drawn as a rule across the stream at the snapshot moment, not
        * as a status chip. Anything the agent did after that moment did not
        * travel, and a gap somebody can see is one they can recognise.
+       *
+       * An in-place switch carries no snapshot timestamp because nothing was
+       * carried, and draws no boundary: a boundary drawn where nothing was lost
+       * teaches an owner to distrust boundaries that mean something.
        */
       const value = (
         typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
       ) as Record<string, unknown>;
-      next = append(next, {
-        kind: 'gap',
-        id: `plane-${String(event.seq)}`,
-        rotatedAt: typeof value.snapshotAt === 'string' ? value.snapshotAt : undefined,
-        movedTo: typeof value.to === 'string' ? value.to : undefined,
-        seq: event.seq,
-      });
+      const snapshotAt = typeof value.snapshotAt === 'string' ? value.snapshotAt : undefined;
+      if (snapshotAt !== undefined && snapshotAt !== '') {
+        next = append(next, {
+          kind: 'gap',
+          id: `plane-${String(event.seq)}`,
+          rotatedAt: snapshotAt,
+          movedTo: typeof value.to === 'string' ? value.to : undefined,
+          seq: event.seq,
+        });
+      }
     } else if (patch.path.startsWith('/gaps')) {
       const value = (
         typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
