@@ -1,31 +1,74 @@
 /*
- * The details drawer — docs/Web_Style.md §12 and §16.
+ * The details column — `docs/Web_Style.md` §12.
  *
- * 360px on the right, taking width the surface can spare rather than height
- * it cannot. Its body scrolls inside itself: the page does not scroll, and a
- * drawer that grew with its contents would push the foot's two destructive
- * keys off the window.
+ * It fills the column the frame gives it: §9 moved the width decision into
+ * the solver, which is what makes the column draggable, so a width declared
+ * here would be one the solver cannot honour.
+ *
+ * Its body scrolls inside itself. The page does not scroll, and a column that
+ * grew with its contents would push the foot's destructive keys off the
+ * window.
  */
 
 .drawer {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1;
   flex-direction: column;
-  width: var(--drawer-width);
   min-height: 0;
-  font-family: var(--font-ui);
-  background: var(--surface);
-  border-left: 1px solid var(--rule);
+  height: 100%;
+  font-family: var(--dsw-font-family);
+  background: var(--dsw-alias-bg-base);
 }
 
 .drawer__head {
-  gap: var(--space-2);
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.drawer__title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer__close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.drawer__close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.drawer__close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .drawer__body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: var(--space-4);
+  padding: 12px 16px;
   overflow-y: auto;
 }
 
@@ -42,19 +85,23 @@
   gap: var(--space-1);
 }
 
+/*
+ * Labels in sentence case at the reading size, not uppercase mono. A column
+ * of shouted abbreviations is harder to scan than the values under it, which
+ * is the wrong way round for a panel that exists to be read.
+ */
 .drawer__row dt {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
 }
 
 .drawer__row dd {
   margin: 0;
-  color: var(--ink);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .drawer__creator {
@@ -168,11 +215,11 @@
 .drawer__foot {
   display: flex;
   flex: none;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   justify-content: flex-end;
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--rule);
+  padding: 12px 16px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
 }
 
 .drawer__question {
@@ -184,12 +231,3 @@
  * §16: between 60 and 75rem the drawer becomes an overlay rather than
  * narrowing the surface. It floats, so it takes the plate depth.
  */
-@media (max-width: 74.999rem) {
-  .drawer {
-    position: absolute;
-    inset-block: 0;
-    right: 0;
-    z-index: 15;
-    box-shadow: var(--lift-plate);
-  }
-}
