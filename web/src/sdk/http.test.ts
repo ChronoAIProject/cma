@@ -189,18 +189,56 @@ describe('what comes back', () => {
 
   it('names the ability when the service refused one', async () => {
     // §3: a refusal that does not name what is missing has thrown away the
-    // only part a caller could act on.
+    // only part a caller could act on. Keyed on the code the service actually
+    // sends — checked against `layer1-public`'s problem document rather than
+    // guessed, after the first version of this read a field REST does not
+    // send and so could never have fired.
     const { impl } = recorder({
       ok: false,
-      status: 400,
+      status: 422,
       json: () =>
-        Promise.resolve({ detail: 'capability not supported', capability: 'conversation' }),
+        Promise.resolve({
+          detail: 'capability not supported: conversation',
+          code: 'capability_unsupported',
+          capability: 'conversation',
+        }),
     });
     const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
       (cause: unknown) => cause,
     );
     expect(failure).toBeInstanceOf(CapabilityRefused);
     expect((failure as CapabilityRefused).capability).toBe('conversation');
+  });
+
+  it('does not read a malformed request as a refusal', async () => {
+    // Both are 422. One is worth fixing and resending; the other never
+    // succeeds however many times it is sent, which is why the code decides
+    // and the status does not.
+    const { impl } = recorder({
+      ok: false,
+      status: 422,
+      json: () => Promise.resolve({ detail: 'cols must be positive', code: 'invalid_request' }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).not.toBeInstanceOf(CapabilityRefused);
+  });
+
+  it('still reports a refusal that named nothing', async () => {
+    // An interface may send the code without the name. Losing the refusal
+    // entirely because one field was missing would be the worse failure.
+    const { impl } = recorder({
+      ok: false,
+      status: 422,
+      json: () => Promise.resolve({ detail: 'not supported', code: 'capability_unsupported' }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(CapabilityRefused);
+    expect((failure as CapabilityRefused).capability).toBeUndefined();
   });
 
   it('reports an unreachable service as status zero', async () => {
