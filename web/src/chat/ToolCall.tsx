@@ -1,6 +1,7 @@
 import type { ToolCallEntry } from './conversation';
 import type { DetailsSection } from './DetailsPanel';
 import './ToolCall.css';
+import { StateDot } from '../ui/StateDot';
 
 /**
  * A tool call, as structure — `Web_Style.md` §18.2.
@@ -141,31 +142,27 @@ export function ToolCall({ call, onInspect, inspecting = false }: ToolCallProps)
         }}
       >
         {/*
-         * The status glyph — §18.2: a tick for finished, a cross for failed,
-         * a pulsing dot while it runs. Reinforced by the word at the row's
-         * end, because §2 forbids colour carrying meaning alone.
+         * The state as a dot, in the same vocabulary the session list uses.
+         * A row that spelled its own state in a word did it in a face and a
+         * case nothing else on the surface uses, and said it twice — once as
+         * a glyph and once as RUNNING.
          */}
-        {tone === 'running' ? (
-          <span className="toolcall__glyph toolcall__glyph--running pulse" aria-hidden="true" />
-        ) : (
-          <span className="toolcall__glyph" aria-hidden="true">
-            {tone === 'failed' ? '×' : '✓'}
+        <span className="toolcall__glyph">
+          <StateDot state={tone === 'failed' ? 'error' : tone === 'running' ? 'ongoing' : 'done'} />
+          <span className="sr-only">
+            {tone === 'running' ? 'running' : (call.status ?? 'done')}
           </span>
-        )}
+        </span>
 
         <span className="toolcall__kind">{call.toolKind}</span>
-        {call.target === undefined ? null : <span className="toolcall__target">{call.target}</span>}
+        {call.target === undefined ? null : (
+          <>
+            <span className="toolcall__sep" aria-hidden="true" />
+            <span className="toolcall__target">{call.target}</span>
+          </>
+        )}
 
         {duration === undefined ? null : <span className="toolcall__duration">{duration}</span>}
-
-        {/*
-         * The status word, drawn for a failed or a running call. A finished
-         * call's word is its glyph and its stillness; §18.2 spends the words
-         * where the state needs one.
-         */}
-        {tone === 'done' && call.status === undefined ? null : (
-          <span className="toolcall__status">{tone === 'running' ? 'running' : call.status}</span>
-        )}
       </button>
     </div>
   );
