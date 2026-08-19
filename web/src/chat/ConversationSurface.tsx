@@ -145,6 +145,8 @@ export function ConversationSurface({
         turnInFlight={conversation.turnInFlight}
         live={conversation.live}
         reasoning={conversation.reasoning}
+        plan={conversation.plan}
+        mode={conversation.mode}
         footer={
           pending === undefined ? null : (
             <ApprovalCard

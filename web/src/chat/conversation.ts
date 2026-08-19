@@ -138,6 +138,20 @@ export interface Conversation {
   /** Why the last run failed, when one did. */
   readonly error?: { readonly message: string; readonly capability?: string };
   /**
+   * The session's permission mode, when the kernel reported a change to it.
+   *
+   * The kernel's own word, carried verbatim. A safety fact about the session,
+   * not agent content, so it is drawn as state rather than as a message.
+   */
+  readonly mode?: string;
+  /**
+   * The agent's plan, when it set one.
+   *
+   * A full revision, replaced on each set — the agent sends the complete list
+   * each time, so the latest is the whole plan rather than an accumulation.
+   */
+  readonly plan?: readonly PlanStep[];
+  /**
    * What the agent is saying right now, before it has committed to it.
    *
    * **Deliberately not an entry.** §18.1 requires a turn drawn from history
@@ -170,6 +184,12 @@ export interface Conversation {
 export interface Usage {
   readonly tokens?: number;
   readonly cost?: string;
+}
+
+/** One step of the agent's plan, in the kernel's own words. */
+export interface PlanStep {
+  readonly title: string;
+  readonly status: string;
 }
 
 export const EMPTY: Conversation = { entries: [], turnInFlight: false };
@@ -430,6 +450,21 @@ function applyPatches(
       next = { ...next, usage: { ...next.usage, tokens: patch.value } };
     } else if (patch.path === '/usage/cost' && typeof patch.value === 'string') {
       next = { ...next, usage: { ...next.usage, cost: patch.value } };
+    } else if (patch.path === '/mode' && typeof patch.value === 'string') {
+      next = { ...next, mode: patch.value };
+    } else if (patch.path === '/plan' && Array.isArray(patch.value)) {
+      next = {
+        ...next,
+        plan: patch.value.flatMap((entry): PlanStep[] => {
+          if (typeof entry !== 'object' || entry === null) {
+            return [];
+          }
+          const value = entry as Record<string, unknown>;
+          const title = typeof value.title === 'string' ? value.title : '';
+          const status = typeof value.status === 'string' ? value.status : '';
+          return title === '' ? [] : [{ title, status }];
+        }),
+      };
     } else if (patch.path.startsWith('/planeChanges')) {
       /*
        * §18.6: drawn as a rule across the stream at the snapshot moment, not
