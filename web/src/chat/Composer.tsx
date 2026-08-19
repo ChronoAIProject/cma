@@ -5,6 +5,7 @@ import type { AvailableCommand } from './conversation';
 import { CommandMenu } from './CommandMenu';
 import './Composer.css';
 import { Pill } from '../ui/Pill';
+import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 
 /**
  * Where a prompt is written and sent — `Web_Style.md` §18.4.
@@ -263,23 +264,56 @@ export function Composer({
             </Button>
           ) : null}
 
-          <Button
-            variant="primary"
-            disabled={!canSend}
-            onClick={() => {
-              void send();
-            }}
-          >
-            Send
-            <kbd className="composer__hint" aria-hidden="true">
-              ↵
-            </kbd>
-          </Button>
+          {/*
+           * One seat, and what sits in it follows what the session can
+           * actually do right now.
+           *
+           * Where a turn is running and the policy refuses input, sending is
+           * impossible and stopping is the only useful act — so the seat is
+           * Stop rather than a Send that cannot fire beside a second key.
+           *
+           * Where the policy accepts input mid-turn, sending is a real act
+           * and stays in the seat; interrupt is then its own smaller key
+           * beside it, because the two do different things and §18.4 lets
+           * both happen at once.
+           */}
+          {turnInFlight && capabilities.interrupt && !heldByTurn ? (
+            <button
+              type="button"
+              className="composer__interrupt"
+              aria-label="Stop generating"
+              disabled={busy}
+              onClick={onInterrupt}
+            >
+              <IconStopFill16 />
+            </button>
+          ) : null}
+
+          {heldByTurn && capabilities.interrupt ? (
+            <button
+              type="button"
+              className="composer__send composer__send--stop"
+              aria-label="Stop generating"
+              disabled={busy}
+              onClick={onInterrupt}
+            >
+              <IconStopFill16 />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="composer__send"
+              aria-label="Send message"
+              disabled={!canSend}
+              onClick={() => {
+                void send();
+              }}
+            >
+              <IconSendOutline16 />
+            </button>
+          )}
         </div>
       </div>
-
-      {/* Stated once, beneath the card — §18.4. */}
-      <p className="composer__keys">Enter sends; Shift+Enter opens a line.</p>
     </div>
   );
 }

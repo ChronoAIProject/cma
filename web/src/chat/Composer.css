@@ -13,15 +13,20 @@
   gap: var(--space-1);
 }
 
+/*
+ * A capsule rather than a card. The radius is what makes it read as one
+ * control holding a field and its keys, rather than a panel with things
+ * arranged in it.
+ */
 .composer {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  background: var(--raised);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-rest);
+  gap: 12px;
+  padding: 10px 0 0;
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 22px;
+  box-shadow: var(--dsw-shadow-lv2);
 }
 
 /*
@@ -41,22 +46,30 @@
   position: relative;
 }
 
+/*
+ * The field grows with what is typed and then scrolls inside itself, capped
+ * at fourteen lines. The cap is in line heights rather than pixels so it
+ * holds if the type scale moves.
+ */
 .composer__field {
-  min-height: calc(var(--control-h) * 2);
-  max-height: calc(6lh + var(--space-2) * 2);
-  padding: var(--space-2);
+  min-height: 24px;
+  max-height: calc(14 * 24px);
+  padding: 4px 12px 0 16px;
   overflow-y: auto;
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-body);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 16px;
+  line-height: 24px;
   resize: none;
   background: none;
   border: 0;
+  outline: none;
+  /* The caret is the one blue thing in the field, and it marks where you are. */
+  caret-color: var(--dsw-alias-state-business-primary);
 }
 
 .composer__field::placeholder {
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-dimmed);
 }
 
 .composer__field:focus-visible {
@@ -93,21 +106,6 @@
   min-width: 0;
 }
 
-.composer__hint {
-  color: var(--on-accent);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  opacity: 0.7;
-}
-
-/* Stated once, beneath the card. */
-.composer__keys {
-  margin: 0;
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  text-align: right;
-}
-
 /*
  * The refusal — §18.4: a dashed-border card carrying the reason and what to
  * do instead. Never merely inert.
@@ -124,4 +122,71 @@
   color: var(--ink-2);
   font-size: var(--text-note);
   line-height: var(--leading-ui);
+}
+
+/*
+ * One key whose meaning follows the turn. A 34px circle, because it is the
+ * only thing on this row that is pressed often enough to be aimed at without
+ * looking.
+ */
+.composer__send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-info-fill);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.composer__send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.composer__send:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Stop keeps the same seat and the same size. Moving it would mean aiming
+ * somewhere new at exactly the moment somebody wants to stop something.
+ */
+.composer__send--stop {
+  background: var(--dsw-alias-label-primary);
+}
+
+/*
+ * Interrupt, where sending is still possible. Smaller than the send seat and
+ * beside it: they do different things, and the one that ends something should
+ * not be the one that is easiest to hit.
+ */
+.composer__interrupt {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.composer__interrupt:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.composer__interrupt:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
