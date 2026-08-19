@@ -1,5 +1,8 @@
-import type { Interrupt, InterruptOption } from '../agui';
+import type { InterruptOption } from '../agui';
 import { Button } from '../ui/Button';
+import { inline } from './AgentContent';
+import type { PendingApproval } from './conversationModel';
+import { timeOfDay } from '../sessions/sessionTime';
 import './ApprovalCard.css';
 
 /**
@@ -25,7 +28,7 @@ import './ApprovalCard.css';
  */
 
 interface ApprovalCardProps {
-  readonly interrupt: Interrupt;
+  readonly interrupt: PendingApproval;
   readonly onAnswer: (decision: string) => void;
   readonly busy?: boolean;
 }
@@ -43,6 +46,18 @@ const PROTOCOL_ANSWERS: readonly InterruptOption[] = [
   { decision: 'deny', label: 'Deny' },
 ];
 
+/**
+ * The time the question was asked, or nothing when it cannot be read.
+ *
+ * An unparseable timestamp draws no time rather than "Invalid Date": §18.1's
+ * rule for an event that predates timestamps is that no time is rendered, and
+ * a broken one is the same fact arriving differently.
+ */
+function askedAtLabel(at: string): string | null {
+  const parsed = Date.parse(at);
+  return Number.isNaN(parsed) ? null : timeOfDay(parsed);
+}
+
 export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCardProps) {
   const answers =
     interrupt.options === undefined || interrupt.options.length === 0
@@ -51,8 +66,22 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
 
   return (
     <section className="approval" aria-label="Approval requested">
-      {/* The eyebrow — §18.3: approval, then the kernel's own reason. */}
-      <p className="approval__eyebrow">approval · {interrupt.reason}</p>
+      {/*
+       * The eyebrow — §18.3: approval, the kernel's own reason, and the time
+       * it was asked. The time was required from the day the section was
+       * written and never drawn; on a session picked up later it is the
+       * difference between "the agent is waiting on me" and "the agent has
+       * been waiting on me since this morning".
+       *
+       * Omitted rather than guessed where the log carried none, on §18.1's
+       * rule for a message whose event predates timestamps.
+       */}
+      <p className="approval__eyebrow">
+        approval · {interrupt.reason}
+        {interrupt.askedAt === undefined ? null : (
+          <span className="approval__asked"> · {askedAtLabel(interrupt.askedAt)}</span>
+        )}
+      </p>
 
       {/*
        * What the kernel wants, in the kernel's own words, as the largest type
@@ -61,7 +90,18 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
        * command, and rewording it into a category loses the one detail the
        * decision turns on.
        */}
-      <p className="approval__question">{interrupt.message}</p>
+      {/*
+       * Run through the inline pass, because §18.3 says "A command inside it
+       * takes inline code" and the service really does send them: a kernel
+       * asking "Run `rm -rf build/`?" was showing its backticks as
+       * punctuation, on the one sentence in the product where the exact
+       * command is the whole decision.
+       *
+       * The inline pass only, never the block renderer: §18.3 fixes this line
+       * at `--text-title` + 1, and `AgentContent` would impose its own
+       * paragraph typography over it.
+       */}
+      <p className="approval__question">{inline(interrupt.message)}</p>
 
       {/*
        * The answers the kernel offered, rendered from what arrived. A kernel
