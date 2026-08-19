@@ -111,14 +111,20 @@
  * §15: the panel's 40px chrome strip. Height set on the strip (§5), sticky so
  * the panel still reads as a panel once its scrollback grows.
  */
+/*
+ * The panel's own chrome strip. Its own classes rather than the band
+ * vocabulary: §9 retired the bands with the app bar, and a strip borrowing
+ * their names would be borrowing an alignment nothing holds it to.
+ */
 .intro__chrome {
   position: sticky;
   top: 0;
   display: flex;
   flex: none;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
-  height: var(--band-foot);
+  justify-content: space-between;
+  height: 40px;
   margin: 0 calc(-1 * var(--space-6));
   padding-inline: var(--space-4);
   background: var(--surface);
@@ -285,4 +291,14 @@
   padding-inline: 20px;
   font-size: 15px;
   font-weight: 600;
+}
+
+.intro__chromename,
+.intro__chromewho {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
