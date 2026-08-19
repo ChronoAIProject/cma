@@ -621,6 +621,14 @@ A failed row takes a `--fail`-tinted border. **Disclosure, not truncation:** exp
 code-block treatment and scrolls inside itself, capped at 120px in the stack; nothing is silently
 shortened.
 
+**Each body the log carried is its own region.** What the call was asked to do and what it produced
+are two bodies, and putting them in one window with one scroll position means a long argument
+payload pushes the result out of sight — so the reader scrolls past what they already knew to reach
+the thing they opened the row for, which is the scrollback this section exists to replace. Each takes
+its own scrollport under the same cap, its own gutter label, in the order the log holds them. A body
+that did not arrive draws nothing, never an empty labelled region: §18.5's rule that absence is a
+fact and not a zero. Truncation is reported per body, because the log bounds them separately.
+
 **The collapsed row carries enough to identify the call without opening it.** An unrecognised kind is
 rendered as it arrived rather than mapped onto a set this document invented.
 
@@ -656,6 +664,18 @@ A card at the foot of the reading column, on `--raised` inside `--radius-lg` wit
 field, then a row carrying what the session's own policy means, `Interrupt` while a turn is in flight,
 and the primary `Send` with its `↵` hint. The field grows to six lines and then scrolls inside itself.
 Enter sends; Shift+Enter opens a line, stated once beneath the card.
+
+**The commands the kernel offers are reachable from the field.** Typing `/` at the head of an empty
+draft opens a filtered list built from what the kernel advertised and from nothing else — no command
+this document invented, on §18.2's rule for a tool's kind. Arrow keys move, Enter or a click inserts
+the command and leaves the caret after it, Escape closes and returns focus to the field: the plate
+behaviour §3 already defines, reused rather than reinvented. A kernel that advertises none opens
+nothing at all, on the same reasoning that keeps an ungranted affordance off the surface entirely.
+
+They are liveness and not history. A kernel's command list arrives on the live lane and is absent
+after a reload until the kernel says again, which is why it cannot be drawn in the stream: §18.1
+requires a turn replayed to match a turn watched, and a stale list replayed from the log would offer
+commands that no longer exist.
 
 **What it does while a turn is in flight is not a style choice.** It reads the session's
 `concurrent_input` policy and behaves accordingly:
@@ -737,6 +757,119 @@ frame. What distinguishes them is stated by the API rather than guessed from wor
 distinction is absent the frame is drawn as a failure, that being the safer of the two to be wrong
 about. A new run clears it.
 
+### 18.10 A stage, a mode change, and the commands a kernel offers
+
+Announced in the changelog on 2026-08-19 and never written. The surface has been drawing all
+three since, which put them outside this document's authority — the thing §7 exists to prevent.
+Written now against what the kernel already sends.
+
+**A stage is the agent's plan, drawn as structure.** A `--sunken` list of steps inside `--radius-md`,
+each step the kernel's own words verbatim and its own status word beside it, sitting **above** the
+in-flight content: a plan is what the agent is doing now, not a thing it said, and placing it in the
+stream would date it the moment the next step began. It arrives as a full revision and replaces the
+one before it, because the kernel sends the whole list each time and merging two revisions would
+invent a plan neither of them described.
+
+**A mode change is a safety fact about the session, not agent content.** One mono `--text-label` line
+in `--ink-3` carrying the kernel's own word — `unrestricted`, `on-request`, whatever that kernel
+calls it — never mapped onto a set this document invented, on the rule §18.2 already holds for a
+tool's kind. It is drawn where state is drawn and never in the reading column, because a reader
+scanning the agent's words must not meet a sentence the agent did not write.
+
+**The commands a kernel offers are liveness and belong in the composer, not the stream.** They were
+printed as a static list at the foot of the message column, below every turn, where they could be
+read and not used: the reader retyped what they had just read. They move to §18.4, and the stream
+draws none of them.
+
+**Both the stage and the mode ride the durable log**, so a reload shows what a turn watched arriving
+showed — §18.1's equivalence rule, which the command list cannot satisfy and is why it is liveness.
+
+### 18.11 What a reader can take away
+
+An answer that cannot leave the surface has not finished being useful. This plane exists to drive a
+coding agent, and the two things somebody does with what an agent produced are run it and quote it —
+both of which mean getting the characters out intact.
+
+**Every fenced block carries a header.** A row on the block's own frame: the fence's info string on
+the left in mono `--text-label` `--ink-3`, rendered **verbatim** and uppercased by `text-transform`
+only — casing is typography, but mapping `py` to `Python` is naming, and §18.2 and §18.10 both forbid
+this document inventing a set the kernel did not use. A fence carrying no info string draws no label,
+never an invented one. A copy control sits at the right, following §12's existing pattern.
+
+The header is `position: sticky` against the stream's scrollport, on the wrapper's own background, so
+a long listing scrolls beneath its own label rather than out from under it. That means the header
+cannot live inside the `<pre>`: the `<pre>` owns the horizontal overflow, and a sticky child of a
+horizontally scrolling box slides away sideways. The block becomes a wrapper carrying the header and
+an inner `<pre>` that keeps the scrolling.
+
+**Every settled turn carries a copy control** — the agent's and the owner's alike. It writes the
+turn's **markdown source**, not the rendered tree, and that is the whole point rather than an
+implementation note: selection-copy already works and already yields degraded text, because the
+renderer strips heading hashes, list markers, fences and backticks before drawing. Somebody pasting
+an agent's numbered steps into an issue, or its backticked command into a shell, gets something the
+agent did not write.
+
+Persistently drawn and labelled, never revealed on hover: §3 permits no hover-gated affordance and
+says nothing in this interface moves on hover. While the turn is still in flight the control is
+**disabled with its reason stated**, not removed — §7 and §19 — because copying half an answer is the
+thing to prevent and removing the control is the wrong instrument for it.
+
+**Copy is a claim about the clipboard and is made only after the write resolves.** The guarded
+`navigator.clipboard?.writeText`, the word changing on the control itself, and a refusal swallowed
+in silence because the text remains selectable — the pattern §12 already sets.
+
+### 18.12 What an agent wrote, and what the surface can draw of it
+
+§18.1 fixes the treatment of code, lists, headings and emphasis. It says nothing about the rest of
+what an agent writes, and the renderer draws none of it: a link arrives as `[label](url)`, a table as
+a wall of pipes, every nesting level flattens to one, and a wrapped list of steps runs together into
+a paragraph.
+
+**Links are drawn, and carry no colour.** Underline and cursor distinguish them and nothing else —
+§18.1 forbids colour on agent content without exception, and a blue link is that exception arriving
+by habit. The href is rendered as the agent wrote it; §9's rule for the terminal's OSC 8 sequences is
+the precedent, and the same reasoning applies here: this surface does not decide where an agent's
+link points.
+
+**Tables take the structure they were written in**, on the same hairline-and-ground treatment §16
+uses for a record list, scrolling horizontally inside their own frame rather than widening the
+reading column. **Nested lists keep their nesting**, because a plan with sub-steps flattened to one
+level is a different plan. **Blockquotes** take a `--rule` left border and no ink of their own: quoting is the agent's own
+emphasis, and drawing it fainter than the words around it is this surface deciding the quote matters
+less than the agent did. **A soft line
+break is a line break**: an agent that wrote its steps on separate lines meant them to be on separate
+lines, and joining them into a paragraph rewrites the shape of the answer.
+
+None of this takes colour, and none of it takes a syntax highlighter. The rule is unchanged: the
+frame is styled and the content is not.
+
+### 18.13 When the surface cannot hear the session
+
+**The failure mode is asserting liveness that is false, not failing to narrate the transport.**
+
+While the stream is down mid-turn the surface goes on drawing the §11 wave and the word beside it,
+and goes on blinking the caret on a message that has stopped growing — because nothing but the run
+ending clears the in-flight state. The one affordance built to distinguish a working agent from a
+dead stream is therefore the one that lies, which is worse than drawing nothing.
+
+**A transient reconnect says nothing.** The terminal plane already holds this line and it holds here:
+a blip announced as a fault teaches a reader to distrust the next notice, and §11 forbids drawing a
+recovering session as a failed one.
+
+**The moment the link is not live, the liveness claim is withdrawn** — the pulse stops and the caret
+stops — because withdrawing a false assertion is quieter and cheaper than adding a true one, and it
+is correct at every point in between.
+
+**Only a link that has stayed down past a bounded threshold is named**, once, in words, where the
+turn is: this surface is not hearing the session, and what is on screen is what arrived before it
+stopped. Not a banner across the head — the reader is looking at the turn, and §12 already puts a
+failed action at the head of the column for actions, which this is not.
+
+Nothing here is a failed run. §18.9 draws a run the agent could not finish; this draws a surface that
+cannot hear one, and conflating them tells an owner their work broke when their network did.
+
+---
+
 ---
 
 ## 19. What this revision did not change
@@ -784,3 +917,5 @@ Append-only. Never edit or delete an entry.
 | 2026-08-19 | §18.2 records tool bodies, and says when it does not have them. A tool call's row now discloses what it was asked to do and what it produced when the session was granted the recording, drawn from the durable log — never estimated, never reconstructed from the terminal. A body cut to fit the log's bound is marked `(truncated)` rather than silently shortened, the same rule the section already holds for output: disclosure is a frame decision, dropping the tail without saying so is not. Recording tool bodies makes §18.7's "it never renders a credential" non-trivial for the first time, so the core redacts the values it handed the session before a body is written, and the surface renders nothing it was not given. |
 | 2026-08-19 | Added §18.10 A stage and a mode change. The conversation surface now says what the agent is at and what it is waiting for, because the kernel already said so. A stage is the agent's plan drawn as structure rather than prose — a `--sunken` list of steps, each the kernel's own words verbatim, a full revision that replaces the one before it — and it sits above the in-flight content, since a plan is what the agent is doing now rather than a thing it said. A mode change is a safety fact about the session, drawn as a mono `--text-label` `--ink-3` line carrying the kernel's own word, never mapped onto a set this document invented. Both ride the durable log through `STATE_DELTA`, so a reload shows the same stage and the same mode as a turn watched arriving, on §18.1's equivalence rule. |
 | 2026-08-19 | Amended §18.6 for a plane change that keeps its sandbox. A plane change that replaces the pod still draws the boundary, because something really did not travel; a plane change that restarts the program inside the same pod draws no boundary, because nothing moved. A boundary drawn where nothing was lost teaches an owner to distrust boundaries that mean something, so the surface draws one only where the record carries a snapshot timestamp, and none where it does not. |
+| 2026-08-19 | Wrote §18.10, which the changelog announced on this date and nobody wrote. The surface had been drawing a stage, a mode change and a kernel's command list ever since, which put all three outside this document's authority — the thing §7 exists to prevent, arriving through a changelog entry rather than through code. Written against what the kernel already sends: a stage is the agent's plan as a `--sunken` list of steps in the kernel's own words, above the in-flight content because a plan is what the agent is doing now rather than a thing it said, replaced whole on each revision since merging two would invent a plan neither described; a mode change is one mono `--text-label` `--ink-3` line carrying the kernel's own word, drawn where state is drawn and never in the reading column, because a reader scanning the agent's words must not meet a sentence the agent did not write. Moved the command list out of the stream, where it was printed below every turn and could be read but not used — the reader retyped what they had just read. Added §18.11 What a reader can take away: every fenced block carries a header with the fence's info string rendered verbatim and uppercased by `text-transform` only, since casing is typography and mapping `py` to `Python` is naming, which §18.2 and §18.10 both forbid; a fence with no info string draws no label rather than an invented one; the header is sticky against the stream's scrollport on a wrapper outside the `<pre>`, because the `<pre>` owns the horizontal overflow and a sticky child of a horizontally scrolling box slides away sideways. Every settled turn carries a copy control that writes the turn's **markdown source** rather than the rendered tree, which is the point and not an implementation note: selection-copy already works and already yields degraded text, because the renderer strips heading hashes, list markers, fences and backticks before drawing, so somebody pasting an agent's steps into an issue or its command into a shell gets something the agent did not write. Persistently drawn and labelled rather than revealed on hover, since §3 permits no hover-gated affordance and nothing in this interface moves on hover; disabled with its reason stated while the turn is in flight rather than removed, because copying half an answer is the thing to prevent and removal is the wrong instrument for it. Added §18.12 What an agent wrote: links drawn but carrying **no colour** — underline and cursor and nothing else, since §18.1 forbids colour on agent content without exception and a blue link is that exception arriving by habit — with §9's OSC 8 rule as the precedent for not deciding where an agent's link points; tables in the structure they were written in, scrolling inside their own frame rather than widening the reading column; nested lists keeping their nesting, because a plan with sub-steps flattened to one level is a different plan; blockquotes on a `--rule` left border in `--ink-2`; and a soft line break drawn as a line break, because an agent that wrote its steps on separate lines meant them on separate lines and joining them rewrites the shape of the answer. Added §18.13 When the surface cannot hear the session, whose finding is that the failure mode is **asserting liveness that is false** rather than failing to narrate the transport: while the stream is down mid-turn nothing but the run ending clears the in-flight state, so the surface goes on drawing the §11 wave and blinking the caret on a message that has stopped growing, and the one affordance built to tell a working agent from a dead stream is the one that lies. A transient reconnect says nothing, on the line the terminal plane already holds; the moment the link is not live the liveness claim is withdrawn, because withdrawing a false assertion is quieter than adding a true one and is correct at every point in between; and only a link down past a bounded threshold is named, once, where the turn is rather than in a band across the head. None of it is a failed run — §18.9 draws a run the agent could not finish, this draws a surface that cannot hear one, and conflating them tells an owner their work broke when their network did. Amended §18.2 so each body the log carried is its own region with its own scrollport under the existing cap: what a call was asked to do and what it produced are two bodies, and one window with one scroll position means a long argument payload pushes the result out of sight, so the reader scrolls past what they already knew to reach the thing they opened the row for — which is the scrollback the section exists to replace. Amended §18.4 so the kernel's commands are reachable from the field: `/` at the head of an empty draft opens a filtered list built from what the kernel advertised and nothing else, reusing §3's existing plate behaviour, and a kernel advertising none opens nothing. They stay liveness rather than history, which is why they may not be drawn in the stream: a stale list replayed from the log would offer commands that no longer exist, against §18.1's equivalence rule. |
+| 2026-08-19 | Corrected §18.12's blockquote rule before it shipped. The section as first written gave a blockquote `--ink-2`, which §18.1 forbids without exception — "no colour is applied to agent content, ever" — and which the test enforcing that rule caught on the first implementation. It takes the `--rule` left border and no ink of its own. The reasoning is the section's own: quoting is the agent's emphasis, and drawing it fainter than the words around it is this surface deciding the quote matters less than the agent did. |
