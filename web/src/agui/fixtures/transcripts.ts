@@ -261,8 +261,8 @@ export const REPORTS_USAGE: Transcript = {
       type: 'STATE_DELTA',
       runId: 'run_9',
       seq: 2,
-      patch: [
-        { op: 'replace', path: '/usage/tokens', value: 1840 },
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 1840 },
         { op: 'replace', path: '/usage/cost', value: '0.014' },
       ],
     }),
@@ -285,8 +285,8 @@ export const REPORTS_USAGE: Transcript = {
       type: 'STATE_DELTA',
       runId: 'run_9',
       seq: 6,
-      patch: [
-        { op: 'replace', path: '/usage/tokens', value: 2310 },
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 2310 },
         { op: 'replace', path: '/usage/cost', value: '0.019' },
       ],
     }),
@@ -358,7 +358,7 @@ export const ROTATES: Transcript = {
       type: 'STATE_DELTA',
       runId: 'run_11',
       seq: 5,
-      patch: [
+      delta: [
         {
           op: 'add',
           path: '/gaps/-',

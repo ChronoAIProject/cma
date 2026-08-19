@@ -1,3 +1,4 @@
+import { frameKey } from '../sdk/wire';
 import { toEvent, type AguiEvent } from './events';
 
 /**
@@ -68,6 +69,11 @@ export class AguiConnection {
    * siblings were dropped as duplicates: every agent message opened and then
    * received none of its own text. No projection emits the same kind twice
    * for one event, so this pair is exact.
+   *
+   * The kind is the one that arrived on the wire, not the one this build
+   * normalised it to: everything unfamiliar normalises to UNKNOWN, so two
+   * different unfamiliar kinds at one sequence would collide precisely where
+   * a client can least afford to drop something it does not understand.
    */
   #seen = new Set<string>();
   #closed = false;
@@ -209,7 +215,8 @@ export class AguiConnection {
       onEvent(event);
       return;
     }
-    const delivered = `${String(event.seq)}:${event.type}`;
+    const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    const delivered = frameKey(event.seq, wireKind);
     if (this.#seen.has(delivered)) {
       return;
     }
