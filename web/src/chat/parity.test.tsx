@@ -160,8 +160,10 @@ describe('what the chat surface can drive', () => {
     // the reconnect order is open, read, dedupe, and what a person reloads
     // into is what they will believe.
     expect(await screen.findByRole('log', { name: /conversation/i })).toBeInTheDocument();
+    // What the agent actually said, rather than a label above it: the label
+    // is chrome and the words are the history this is proving arrived.
     await waitFor(() => {
-      expect(screen.getAllByText(/chronobot · /).length).toBeGreaterThan(0);
+      expect(document.querySelectorAll('.turn[data-role="assistant"]').length).toBeGreaterThan(0);
     });
   });
 
