@@ -25,7 +25,13 @@ use crate::upstream::{CredentialHolder, UpstreamState};
 #[derive(Clone)]
 pub(crate) struct AppState {
     registry: PtyRegistry,
-    command: String,
+    /// The program this pod supervises, swappable in place so a plane change
+    /// can restart the program without replacing the pod.
+    command: std::sync::Arc<std::sync::Mutex<String>>,
+    /// The programs this pod was told at boot it may run. A switch names one
+    /// of these and is refused by name otherwise — an arbitrary program is
+    /// remote execution.
+    commands: Vec<String>,
     /// The owner's credential, swappable while the agent runs.
     credential: CredentialHolder,
     /// This pod's home directory, where the agent keeps its conversation.
@@ -102,12 +108,16 @@ impl AppState {
 
     /// The command to start the agent with, given what this pod has been told.
     fn agent_command(&self) -> String {
+        let command = match self.command.lock() {
+            Ok(held) => held.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
         let carried = match self.resuming.lock() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         };
         let Some(conversation) = carried else {
-            return self.command.clone();
+            return command;
         };
         // Configuration rather than a constant: how a conversation is
         // continued is the agent's decision, it differs between kernels, and
@@ -115,13 +125,34 @@ impl AppState {
         // correctable without shipping a new binary.
         let Some(resume) = self.resume_args.as_deref() else {
             // This kernel finds its own history; there is nothing to append.
-            return self.command.clone();
+            return command;
         };
         // Named, never "the latest". The agent selects among conversations
         // recorded in the current working directory, and one carried from
         // another pod was recorded somewhere else — so "the latest" finds
         // nothing, starts a fresh conversation, and reports success.
-        format!("{} {resume} {conversation}", self.command)
+        format!("{command} {resume} {conversation}")
+    }
+
+    /// Switch to a different supervised program, if it is one this pod was
+    /// told at boot it may run.
+    ///
+    /// The allowlist is the whole defence: an arbitrary program named here is
+    /// remote execution, so anything not handed to this pod at boot is refused
+    /// by name rather than started.
+    fn switch_command(&self, requested: &str) -> bool {
+        if !self.commands.iter().any(|c| c == requested) {
+            tracing::warn!(command = %requested, "switch refused: not a command this pod was told to run");
+            return false;
+        }
+        match self.command.lock() {
+            Ok(mut held) => {
+                *held = requested.to_string();
+                tracing::info!(command = %requested, "switching the supervised program");
+                true
+            }
+            Err(_) => false,
+        }
     }
 }
 
@@ -147,6 +178,16 @@ async fn main() {
     // kernel, and so a shell can stand in when no kernel is installed.
     let command =
         std::env::var("CHRONO_RUNTIME_COMMAND").unwrap_or_else(|_| "/bin/bash -l".to_string());
+
+    // The programs this pod may be switched to, named at boot. A switch names
+    // one of these and is refused otherwise.
+    let commands: Vec<String> = std::env::var("CHRONO_RUNTIME_COMMANDS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .collect();
 
     // Where this kernel records its conversation, and how it is told to
     // continue one. Both are the kernel's business and neither is known here;
@@ -226,7 +267,8 @@ async fn main() {
 
     let state = AppState {
         registry: PtyRegistry::new(),
-        command: command.clone(),
+        command: std::sync::Arc::new(std::sync::Mutex::new(command.clone())),
+        commands,
         credential,
         home: home.clone(),
         snapshot_dir,
