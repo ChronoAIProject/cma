@@ -81,7 +81,7 @@ describe('the session header', () => {
 
   it('carries the status pill beside the subject', () => {
     const { container } = render(<SessionHeader session={session('running')} />);
-    const pill = container.querySelector('.sessionheader .status');
+    const pill = container.querySelector('.sessionheader .pill');
     expect(pill).not.toBeNull();
     expect(pill?.textContent).toContain('running');
   });

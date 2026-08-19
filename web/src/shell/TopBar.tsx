@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Mark } from './Mark';
 import './TopBar.css';
+import { StateDot } from '../ui/StateDot';
 
 /**
  * The app bar — docs/Web_Style.md §6.
@@ -66,7 +67,7 @@ export function TopBar({ views, onCommand, live, compact = false, children }: To
 
       {live === undefined ? null : (
         <span className="tag topbar__live">
-          <span className="status__dot tone-bg-live" aria-hidden="true" />
+          <StateDot state="ongoing" />
           {live} live
         </span>
       )}

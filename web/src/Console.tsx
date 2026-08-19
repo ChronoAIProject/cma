@@ -681,7 +681,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 )}
                 <button
                   type="button"
-                  className="button button--sm console__noticedismiss"
+                  className="button button--ghost button--sm console__noticedismiss"
                   onClick={() => {
                     setNotice(null);
                   }}
