@@ -107,7 +107,17 @@ describe('a turn', () => {
     const doneHtml = done.container.innerHTML;
 
     // The only difference is the caret.
-    expect(liveHtml.replace(/<b class="turn__caret"[^>]*><\/b>/, '')).toBe(doneHtml);
+    //
+    // Compared on the message itself rather than the whole container, which is
+    // what the rule governs: §18.1 is about a *message* restyling on commit.
+    // The turn's copy control is refused while the turn is being written and
+    // available once it settles (§18.11), which is an affordance becoming
+    // usable rather than the message reporting that it was provisional — a
+    // whole-container comparison cannot tell those apart.
+    const bodyOf = (html: string) => /<div class="turn__body">.*?<\/div>/s.exec(html)?.[0] ?? html;
+    expect(bodyOf(liveHtml).replace(/<b class="turn__caret"[^>]*><\/b>/, '')).toBe(
+      bodyOf(doneHtml),
+    );
     expect(liveHtml).toContain('turn__caret');
     expect(doneHtml).not.toContain('turn__caret');
   });
@@ -554,5 +564,76 @@ describe('what a screen reader hears', () => {
       'aria-live',
       'off',
     );
+  });
+});
+
+describe('what a reader can take away', () => {
+  /*
+   * §18.11. An answer that cannot leave the surface has not finished being
+   * useful, and the two things somebody does with what an agent produced are
+   * run it and quote it — both of which mean getting the characters out.
+   */
+  const settledTurn = () =>
+    fold([
+      toEvent({ type: 'RUN_STARTED', seq: 1 }),
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 2, messageId: 'm1', role: 'assistant' }),
+      toEvent({
+        type: 'TEXT_MESSAGE_CONTENT',
+        seq: 3,
+        messageId: 'm1',
+        delta: '# Steps\n\n1. Run `npm ci`\n',
+      }),
+      toEvent({ type: 'TEXT_MESSAGE_END', seq: 4, messageId: 'm1' }),
+    ]).entries;
+
+  it('copies the markdown the agent wrote, not the tree it was drawn as', () => {
+    // The whole reason this exists. Selection-copy already works and already
+    // yields degraded text: the renderer strips heading hashes, list markers
+    // and backticks before drawing, so pasting into an issue or a shell gives
+    // something the agent did not write.
+    // `fireEvent` rather than `userEvent`, which installs a clipboard stub of
+    // its own and would be the thing under test instead of the component.
+    const written = vi.fn().mockResolvedValue(undefined);
+    const real = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: written },
+    });
+
+    render(<MessageStream kernel="codex" entries={settledTurn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect(written).toHaveBeenCalledWith('# Steps\n\n1. Run `npm ci`\n');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: real });
+  });
+
+  it('refuses while the turn is still being written, rather than vanishing', () => {
+    // §7 and §19: copying half an answer is the thing to prevent, and removing
+    // the control is the wrong instrument for it.
+    const arriving = fold([
+      toEvent({ type: 'RUN_STARTED', seq: 1 }),
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 2, messageId: 'm1', role: 'assistant' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 3, messageId: 'm1', delta: 'half' }),
+    ]).entries;
+
+    const { container } = render(
+      <MessageStream kernel="codex" entries={arriving} turnInFlight={true} />,
+    );
+    const key = container.querySelector('.turn__actions .copykey');
+    expect(key).toBeDisabled();
+    expect(key).toHaveAttribute('title');
+  });
+
+  it('gives a fenced block its language and a way to take it', () => {
+    const { container } = render(<AgentContent text={'```python\nprint(1)\n```'} />);
+    // Verbatim, uppercased by type rather than mapped onto a name this client
+    // invented — §18.2 and §18.10 forbid that in identical words.
+    expect(container.querySelector('.codeblock__lang')?.textContent).toBe('python');
+    expect(container.querySelector('.codeblock .copykey')).not.toBeNull();
+  });
+
+  it('draws no label where the agent named no language', () => {
+    const { container } = render(<AgentContent text={'```\nplain\n```'} />);
+    expect(container.querySelector('.codeblock__lang')?.textContent).toBe('');
   });
 });

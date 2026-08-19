@@ -1,0 +1,50 @@
+/*
+ * The copy control — §18.11.
+ *
+ * Persistently drawn and labelled, never revealed on hover: §3 permits no
+ * hover-gated affordance and says nothing in this interface moves on hover. It
+ * is quiet instead — the label ink of a piece of metadata, on no ground of its
+ * own until it is pointed at — which is how the surface carries a control that
+ * is always there without it competing with the words beside it.
+ *
+ * No colour of its own, and none on the word "Copied" either. §18.1 forbids
+ * colour on agent content, and while this control is frame rather than content,
+ * a green flash beside an agent's code is the exception arriving by habit.
+ */
+.copykey {
+  flex: none;
+  padding: 2px var(--space-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--motion-colour),
+    color var(--motion-colour);
+}
+
+.copykey:hover:not(:disabled) {
+  color: var(--ink-2);
+  background: var(--raised);
+}
+
+.copykey:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Disabled and stated, not removed — §7. The reason rides `title`, which is
+ * what the control's own tooltip is for; the surface says it in words beside
+ * the composer, and repeating it here would be two voices for one fact.
+ */
+.copykey:disabled {
+  color: var(--ink-3);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
