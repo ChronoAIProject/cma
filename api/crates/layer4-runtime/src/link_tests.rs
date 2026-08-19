@@ -113,3 +113,48 @@ fn a_switch_names_the_program_to_restart() {
         ControlFrame::SwitchPlane { command } if command == "codex-acp"
     ));
 }
+
+#[tokio::test]
+async fn a_switch_is_answered_either_way() {
+    // #289: the frame reaching the socket says nothing about the program
+    // being swapped, so the supervisor answers — and the control plane
+    // records an in-place switch only on a positive answer.
+    let state = AppState::for_test(&["codex-acp", "codex"]);
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    control(
+        r#"{"t":"switch_plane","command":"codex-acp"}"#,
+        "sbx_1",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+    // Asserted on the serialised frame rather than on a Rust value: the two
+    // ends agree on what goes over the wire. Key order is not part of that
+    // agreement — a workspace build turns on serde_json's preserve_order and
+    // a crate build does not — so the frame is parsed and its fields read.
+    let accepted: serde_json::Value =
+        serde_json::from_str(&answers.recv().await.expect("the switch was answered"))
+            .expect("the answer is JSON");
+    assert_eq!(accepted["t"], "switch_plane_result");
+    assert_eq!(accepted["command"], "codex-acp");
+    assert_eq!(accepted["accepted"], true);
+
+    // A command this pod was never told it may run is refused by name, and
+    // the refusal is on the wire rather than only in a log line.
+    control(
+        r#"{"t":"switch_plane","command":"rm"}"#,
+        "sbx_1",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+    let refused: serde_json::Value =
+        serde_json::from_str(&answers.recv().await.expect("the refusal was answered"))
+            .expect("the refusal is JSON");
+    assert_eq!(refused["t"], "switch_plane_result");
+    assert_eq!(refused["command"], "rm");
+    assert_eq!(refused["accepted"], false);
+}

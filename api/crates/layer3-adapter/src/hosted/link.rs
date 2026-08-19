@@ -38,6 +38,31 @@ const INPUT_BUFFER: usize = 64;
 /// holding an attach open indefinitely.
 pub(crate) const DIALECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How long a runtime has to say whether it switched plane.
+///
+/// The work is a process restart the supervisor has already been told to
+/// make, so an answer is quick or is not coming. The bound is paid only by a
+/// runtime too old to know the frame, and paying it once buys the rotation
+/// that carries such a session correctly.
+const SWITCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The tag a supervisor answers a plane switch with, matching the runtime's
+/// own constant. One word, agreed at both ends.
+pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
+
+/// Read a runtime's answer to a plane switch, if that is what this frame is.
+///
+/// `None` for anything else, including a frame from a runtime that speaks a
+/// dialect this build has never seen: an unreadable answer is not an answer,
+/// and the caller's timeout carries it to a rotation.
+pub(crate) fn switch_answer(text: &str) -> Option<bool> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("t")?.as_str()? != SWITCH_RESULT {
+        return None;
+    }
+    value.get("accepted")?.as_bool()
+}
+
 /// A socket to a runtime's link.
 pub(crate) type Link = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -117,6 +142,7 @@ impl HostedKernel {
         let (in_tx, mut in_rx) = mpsc::channel::<TerminalInput>(INPUT_BUFFER);
 
         let sandbox = handle.0.clone();
+        let answers = self.switch_waiters();
         tokio::spawn(async move {
             // Output that arrived while the wire was being settled. Sent
             // first, because it is the top of somebody's screen.
@@ -147,8 +173,16 @@ impl HostedKernel {
                             break; // consumer went away
                         }
                     }
+                    Ok(Message::Text(text)) => {
+                        // The only control frame a runtime sends back after
+                        // its declaration. Anything else is ignored, as it
+                        // always was.
+                        if let Some(accepted) = switch_answer(&text) {
+                            answers.settle(&sandbox, accepted).await;
+                        }
+                    }
                     Ok(Message::Close(_)) => break,
-                    Ok(_) => {} // control frames beyond the declaration are not used yet
+                    Ok(_) => {} // other control frames are not used yet
                     Err(e) => {
                         tracing::warn!(%sandbox, error = %e, "sandbox terminal read failed");
                         break;
@@ -233,6 +267,9 @@ impl HostedKernel {
                 handle.0
             )));
         };
+        // Registered before the frame goes out, so an answer that arrives
+        // immediately has somebody to reach.
+        let answer = self.switch_waiters().expect(&handle.0).await;
         if link
             .send(TerminalInput::SwitchPlane {
                 command: command.to_string(),
@@ -246,8 +283,33 @@ impl HostedKernel {
                 handle.0
             )));
         }
-        tracing::info!(sandbox = %handle.0, command, "plane switch delivered to the runtime");
-        Ok(())
+
+        // Delivery is not performance. A supervisor that predates #217 has no
+        // word for this frame and ignores it in silence, so waiting is the
+        // only thing that tells the two apart — and the caller turns an error
+        // here into a rotation, which is what such a runtime needs anyway.
+        match tokio::time::timeout(SWITCH_DEADLINE, answer).await {
+            Ok(Ok(true)) => {
+                tracing::info!(sandbox = %handle.0, command, "the runtime switched plane in place");
+                Ok(())
+            }
+            Ok(Ok(false)) => Err(AdapterError::Unsupported(format!(
+                "runtime {} refused the command {command}",
+                handle.0
+            ))),
+            // The link closed under the waiter.
+            Ok(Err(_)) => Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link ended before it answered the switch",
+                handle.0
+            ))),
+            Err(_) => {
+                self.switch_waiters().forget(&handle.0).await;
+                Err(AdapterError::Unavailable(format!(
+                    "runtime {} did not answer the switch",
+                    handle.0
+                )))
+            }
+        }
     }
 
     /// Learn which wire this pod speaks, from the first thing it says.
