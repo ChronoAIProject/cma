@@ -1,43 +1,128 @@
 /**
- * The control plane's REST surface, as the browser sees it.
+ * The dashboard's own chrono-bot client.
  *
- * Every request is same-origin and cookie-authenticated. The bundle is served
- * by a proxy that forwards /api/ and /auth/ to the control plane, so no host is
- * configured here and none should be: a build that knows the API's address
- * would need rebuilding to move it, and a cross-origin path would mean handling
- * a token in the browser, which the auth contract forbids.
+ * Everything below is the SDK (`web/src/sdk/`) bound to one configuration: the
+ * empty one. That means same-origin paths authenticated by the cookie the
+ * browser attaches, which is exactly what this deployment needs — the bundle
+ * is served by a proxy that forwards `/api/` and `/auth/` onward, so no host
+ * is compiled in and no token is ever handled in the browser. A build that
+ * knew the API's address would need rebuilding to move it, and a token in
+ * script gives up the one property an http-only cookie has.
  *
- * Responses are validated rather than trusted. This is a trust boundary, and a
- * malformed payload should surface as a clear failure rather than propagate as
- * undefined through the UI.
+ * The binding is the point rather than an implementation detail. `CLAUDE.md`
+ * §1 makes this the reference client for the public interfaces, and a
+ * reference client that reached the service through its own private code path
+ * would demonstrate nothing about the path somebody else has to use. Anything
+ * the dashboard needs and the SDK does not export is a gap in the SDK, and it
+ * surfaces here as a build failure rather than as a discovery made by whoever
+ * integrates next.
+ *
+ * A second client with a different address or credential is a `createClient`
+ * call away; this module is only the one this app happens to hold.
  */
 
-import type {
-  Kernel,
-  KernelOffer,
-  Session,
-  SessionCreator,
-  SessionLifecycle,
-  SessionPlane,
-  SessionService,
-} from '../sessions/types';
+import { createClient, type CreateSession } from '../sdk';
+import type { KernelOffer, Session, SessionLifecycle, SessionPlane } from '../sdk';
 import { isStage, type Stage } from '../sessions/progress';
-import { toCapabilities } from '../agui';
 
-/** A request that failed, carrying enough to tell the user why. */
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
+export { ApiError, CapabilityRefused, toSession } from '../sdk';
 
-  /** Whether this means "not signed in" rather than "went wrong". */
-  get isUnauthenticated(): boolean {
-    return this.status === 401;
-  }
+/**
+ * The one client this app holds.
+ *
+ * Same-origin and cookie-authenticated, which is every default — so this
+ * configures nothing, and the defaults being right for the reference client is
+ * not a coincidence but the reason they are the defaults.
+ */
+const bot = createClient();
+
+/** Sessions belonging to the signed-in subject, newest first. */
+export function listSessions(): Promise<readonly Session[]> {
+  return bot.listSessions();
+}
+
+/**
+ * The runtimes this deployment can start a session on, and what each can be.
+ *
+ * Asked once and passed down, rather than asked wherever a form needs it: the
+ * answer describes the deployment and does not change while somebody fills a
+ * form in.
+ */
+export function listKernels(): Promise<readonly KernelOffer[]> {
+  return bot.listKernels();
+}
+
+/**
+ * Provision a session on the given kernel.
+ *
+ * Positional here and named in the SDK, deliberately: this is the call the
+ * console already makes, and changing thirty call sites to prove a point about
+ * argument style would be a worse commit than this adapter.
+ */
+export function createSession(
+  cols: number,
+  rows: number,
+  environmentProfile?: string | null,
+): Promise<Session> {
+  const options: CreateSession = { cols, rows, environmentProfile };
+  return bot.createSession(options);
+}
+
+/**
+ * Move a session onto the other plane.
+ *
+ * A rotation, and answered as one: the session comes back `rotating`, which is
+ * the window in which it takes no input. What it costs — the turn in flight,
+ * and the pause — is stated before this is called, never after.
+ *
+ * A refusal arrives as a `CapabilityRefused` carrying the control plane's own
+ * sentence and the name of the missing ability. It is shown rather than
+ * flattened: an API that names what is absent is worth nothing if the
+ * interface renders it as "something went wrong".
+ */
+export function changePlane(id: string, plane: SessionPlane): Promise<Session> {
+  return bot.changePlane(id, plane);
+}
+
+/**
+ * End a session, leaving it listed.
+ *
+ * Distinct from removing it: a finished conversation is still worth reading,
+ * and the control plane keeps it until its owner deletes it.
+ */
+export function terminateSession(id: string): Promise<void> {
+  return bot.terminateSession(id);
+}
+
+/**
+ * Release a session's sandbox, keeping the session.
+ *
+ * The reversible half of ending something: nothing is running and nothing is
+ * being paid for, while the history stays readable and the session can be
+ * picked up again with `reviveSession`.
+ */
+export function stopSession(id: string): Promise<void> {
+  return bot.stopSession(id);
+}
+
+/** Give a stopped session a sandbox again, under the same id. */
+export function reviveSession(id: string): Promise<Session> {
+  return bot.reviveSession(id);
+}
+
+/**
+ * Everything a session's terminal has shown.
+ *
+ * How a session with no sandbox is read. Bytes rather than text, because it is
+ * an escape-sequence stream that only a terminal knows how to interpret.
+ */
+export function fetchTranscript(id: string): Promise<Uint8Array> {
+  return bot.fetchTranscript(id);
+}
+
+/** Remove a session and its history permanently. */
+export function deleteSession(id: string): Promise<void> {
+  return bot.deleteSession(id);
 }
 
 const LIFECYCLES: readonly SessionLifecycle[] = [
@@ -49,341 +134,19 @@ const LIFECYCLES: readonly SessionLifecycle[] = [
   'terminated',
 ];
 
-// Deliberately no allowlist of kernel identifiers. This build does not decide
-// which runtimes a deployment offers, and a session naming one it has not
-// heard of is still that owner's session: it is drawn under its own
-// identifier (kernels.ts), never refused. Refusing it here failed the entire
-// list read, so one session on an unfamiliar runtime hid every other.
-
-/** Shape the control plane sends for a session. */
-interface SessionPayload {
-  id?: unknown;
-  kernel?: unknown;
-  status?: unknown;
-  created_at?: unknown;
-  stop_reason?: unknown;
-  runtime_version?: unknown;
-  rotations?: unknown;
-  rotated_at?: unknown;
-  creator?: unknown;
-  reach?: unknown;
-  conforms_to?: unknown;
-}
-
-/**
- * Convert a payload into the model the UI renders.
- *
- * Unknown lifecycles and kernels are rejected rather than coerced: showing a
- * session in a state the frontend does not model would misreport what the
- * control plane actually said.
- */
-export function toSession(raw: unknown): Session {
-  const p = raw as SessionPayload;
-  if (typeof p?.id !== 'string' || p.id === '') {
-    throw new ApiError(0, 'session payload carried no id');
-  }
-  if (typeof p.status !== 'string' || !LIFECYCLES.includes(p.status as SessionLifecycle)) {
-    throw new ApiError(0, `session ${p.id} has an unrecognised status`);
-  }
-  if (typeof p.kernel !== 'string' || p.kernel === '') {
-    throw new ApiError(0, `session ${p.id} names no kernel`);
-  }
-  // The wire carries RFC 3339; the tab strip counts age in milliseconds. An
-  // unparseable date falls back to now rather than rendering "NaN ago".
-  const parsed = typeof p.created_at === 'string' ? Date.parse(p.created_at) : Number.NaN;
-  return {
-    id: p.id,
-    kernel: p.kernel as Kernel,
-    lifecycle: p.status as SessionLifecycle,
-    createdAt: Number.isNaN(parsed) ? Date.now() : parsed,
-    // Narrowed to the one distinction the interface acts on. Carrying the
-    // control plane's full vocabulary here would invite the frontend to
-    // reason about reasons it has no behaviour for.
-    stopReason: p.stop_reason === 'error' ? 'error' : p.stop_reason ? 'other' : undefined,
-    runtimeVersion: typeof p.runtime_version === 'string' ? p.runtime_version : undefined,
-    rotations: typeof p.rotations === 'number' ? p.rotations : undefined,
-    // Absent until a session has actually been moved, so an unparseable value
-    // becomes absent rather than a date nobody can interpret.
-    rotatedAt: rotatedAt(p.rotated_at),
-    creator: creator(p.creator),
-    reach: reach(p.reach),
-    plane: plane(p.conforms_to),
-    // Read once at the boundary, so components ask what a session may do
-    // rather than trying and handling a refusal.
-    capabilities: toCapabilities(raw),
-  };
-}
-
-/**
- * Which plane a session is drawn on, read from what it conforms to.
- *
- * The control plane reports a session's granted classes as URIs ending
- * `/conf/<name>`; `conversation` and `terminal` are two of them and are
- * exclusive by construction. Read from the session rather than assumed,
- * because it is the session's own answer and no interface chooses one.
- *
- * A session that declares neither falls back to the terminal — what every
- * session was before the conversation plane existed. That is the safe
- * direction: a terminal drawn for a conversation session shows an empty
- * screen, and a conversation drawn for a terminal session shows nothing.
- */
-function plane(raw: unknown): SessionPlane | undefined {
-  const granted = toCapabilities({ conforms_to: raw });
-  if (granted.conversation) {
-    return 'conversation';
-  }
-  return granted.terminal ? 'terminal' : undefined;
-}
-
-/**
- * What this session's credential may reach, as the control plane reported it.
- *
- * `undefined` when the field is absent — an older control plane, or one that
- * does not project it — and an empty array when it is present and empty. The
- * two are different facts: "we were not told" is not "this session reaches
- * nothing", and drawing them alike would answer a question nobody asked.
- *
- * An entry with no usable identifier is dropped rather than rendered blank. An
- * entry carrying anything that looks like credential material is not filtered
- * here, because the projection carries none — see `docs/API_REST.md`.
- */
-function reach(raw: unknown): readonly SessionService[] | undefined {
-  if (!Array.isArray(raw)) {
-    return undefined;
-  }
-  return raw.flatMap((entry): SessionService[] => {
-    if (typeof entry !== 'object' || entry === null) {
-      return [];
-    }
-    const service = entry as Record<string, unknown>;
-    if (typeof service.id !== 'string' || service.id === '') {
-      return [];
-    }
-    return [
-      {
-        id: service.id,
-        name: typeof service.name === 'string' ? service.name : undefined,
-        description: typeof service.description === 'string' ? service.description : undefined,
-        // Absent reads as not mandated, which is the safe direction: drawing a
-        // chosen service as fixed would tell somebody they cannot remove
-        // something they can.
-        mandated: service.mandated === true,
-      },
-    ];
-  });
-}
-
-/** The person who started a session, when the control plane named them. */
-function creator(raw: unknown): SessionCreator | undefined {
-  if (typeof raw !== 'object' || raw === null) {
-    return undefined;
-  }
-  const c = raw as Record<string, unknown>;
-  const displayName = typeof c.display_name === 'string' ? c.display_name : undefined;
-  const avatarUrl = typeof c.avatar_url === 'string' ? c.avatar_url : undefined;
-  // Both absent is the same as no creator at all: an object with nothing in it
-  // would have the panel draw a heading over blank space.
-  return displayName === undefined && avatarUrl === undefined
-    ? undefined
-    : { displayName, avatarUrl };
-}
-
-/** The snapshot time a session was carried across from, if it was. */
-function rotatedAt(raw: unknown): number | undefined {
-  if (typeof raw !== 'string') {
-    return undefined;
-  }
-  const parsed = Date.parse(raw);
-  return Number.isNaN(parsed) ? undefined : parsed;
-}
-
-async function request(path: string, init?: RequestInit): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(path, {
-      ...init,
-      // The session cookie is the credential. Without this the browser omits
-      // it and every call reads as anonymous.
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch (cause) {
-    throw new ApiError(0, `cannot reach the control plane: ${String(cause)}`);
-  }
-
-  if (!response.ok) {
-    // The control plane reports failures as a problem document; fall back to
-    // the status when the body is not one.
-    let detail = `request failed with ${response.status}`;
-    try {
-      const body = (await response.json()) as { detail?: unknown; title?: unknown };
-      const text = body?.detail ?? body?.title;
-      if (typeof text === 'string' && text !== '') {
-        detail = text;
-      }
-    } catch {
-      // A non-JSON error body is not itself an error worth reporting over the
-      // status code that produced it.
-    }
-    throw new ApiError(response.status, detail);
-  }
-
-  if (response.status === 204) {
-    return null;
-  }
-  return (await response.json()) as unknown;
-}
-
-/** Sessions belonging to the signed-in subject, newest first. */
-export async function listSessions(): Promise<readonly Session[]> {
-  const body = await request('/api/v1/sessions');
-  const items = (body as { sessions?: unknown })?.sessions ?? body;
-  if (!Array.isArray(items)) {
-    throw new ApiError(0, 'session list was not a list');
-  }
-  return items.map(toSession);
-}
-
-/**
- * The runtimes this deployment can start a session on, and what each can be.
- *
- * Asked once and passed down, rather than asked wherever a form needs it: the
- * answer describes the deployment and does not change while somebody fills a
- * form in.
- */
-export async function listKernels(): Promise<readonly KernelOffer[]> {
-  const body = await request('/api/v1/kernels');
-  const items = (body as { kernels?: unknown })?.kernels;
-  if (!Array.isArray(items)) {
-    throw new ApiError(0, 'the kernel list was not a list');
-  }
-  return items.map(toKernelOffer);
-}
-
-/**
- * Read one runtime's offer.
- *
- * A plane this client cannot draw is dropped rather than carried: offering it
- * would put a choice on screen that ends in a surface nobody has written. A
- * runtime left with no planes is still listed, because it exists and saying
- * otherwise is a different claim.
- */
-function toKernelOffer(raw: unknown): KernelOffer {
-  const k = raw as { id?: unknown; modes?: unknown };
-  if (typeof k?.id !== 'string' || k.id === '') {
-    throw new ApiError(0, 'a runtime arrived with no identifier');
-  }
-  const modes = Array.isArray(k.modes) ? k.modes : [];
-  return { id: k.id, modes: modes.filter(isPlane) };
-}
-
-function isPlane(value: unknown): value is SessionPlane {
-  return value === 'terminal' || value === 'conversation';
-}
-
-/**
- * Provision a session on the given kernel.
- *
- * The profile is the whole description of the session — which agent, which
- * model, how freely it acts, and what it carries — so nothing else about the
- * agent is sent. Omitting it is meaningful: the control plane starts the
- * session the way this deployment says an unqualified session should start.
- */
-export async function createSession(
-  cols: number,
-  rows: number,
-  environmentProfile?: string | null,
-): Promise<Session> {
-  const body = await request('/api/v1/sessions', {
-    method: 'POST',
-    body: JSON.stringify({
-      cols,
-      rows,
-      // Omitted rather than sent as null when nothing was chosen: absent means
-      // "this deployment's answer", which is not the same as a caller naming a
-      // bundle that does not exist.
-      environment_profile: environmentProfile ?? undefined,
-    }),
-  });
-  return toSession(body);
-}
-
-/**
- * Move a session onto the other plane.
- *
- * A rotation, and answered as one: the session comes back `rotating`, which is
- * the window in which it takes no input. What it costs — the turn in flight,
- * and the pause — is stated before this is called, never after.
- *
- * A refusal arrives as an `ApiError` carrying the control plane's own sentence,
- * which names the capability that is missing. It is shown rather than
- * flattened: an API that names what is absent is worth nothing if the
- * interface renders it as "something went wrong".
- */
-export async function changePlane(id: string, plane: SessionPlane): Promise<Session> {
-  const body = await request(`/api/v1/sessions/${encodeURIComponent(id)}/plane`, {
-    method: 'POST',
-    body: JSON.stringify({ plane }),
-  });
-  return toSession(body);
-}
-
-/**
- * End a session, leaving it listed.
- *
- * Distinct from removing it: a finished conversation is still worth reading,
- * and the control plane keeps it until its owner deletes it.
- */
-export async function terminateSession(id: string): Promise<void> {
-  await request(`/api/v1/sessions/${encodeURIComponent(id)}/terminate`, { method: 'POST' });
-}
-
-/**
- * Release a session's sandbox, keeping the session.
- *
- * The reversible half of ending something: nothing is running and nothing is
- * being paid for, while the history stays readable and the session can be
- * picked up again with `reviveSession`.
- */
-export async function stopSession(id: string): Promise<void> {
-  await request(`/api/v1/sessions/${encodeURIComponent(id)}/stop`, { method: 'POST' });
-}
-
-/** Give a stopped session a sandbox again, under the same id. */
-export async function reviveSession(id: string): Promise<Session> {
-  const body = await request(`/api/v1/sessions/${encodeURIComponent(id)}/revive`, {
-    method: 'POST',
-  });
-  return toSession(body);
-}
-
-/**
- * Everything a session's terminal has shown.
- *
- * How a session with no sandbox is read. Bytes rather than text, because it is
- * an escape-sequence stream that only a terminal knows how to interpret.
- */
-export async function fetchTranscript(id: string): Promise<Uint8Array> {
-  const response = await fetch(`/api/v1/sessions/${encodeURIComponent(id)}/transcript`, {
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new ApiError(response.status, `could not read the session transcript`);
-  }
-  return new Uint8Array(await response.arrayBuffer());
-}
-
-/** Remove a session and its history permanently. */
-export async function deleteSession(id: string): Promise<void> {
-  await request(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
-
 /**
  * Follow a session's events until it stops provisioning.
  *
  * Creating a session returns before its runtime exists, so this is how the UI
  * learns what happened next. Resumes from a cursor and reconnects on its own,
  * which is why it is a stream of server-sent events rather than polling.
+ *
+ * Not in the SDK yet, and the reason is worth stating: `EventSource` cannot
+ * carry an `Authorization` header, so this works only for a caller whose
+ * credential is a cookie. Moving it as it stands would put an interface in the
+ * SDK that silently fails for every cross-origin consumer, which is worse than
+ * its absence — `CLAUDE.md` §9: declare what cannot be done rather than
+ * offering it and dropping the request.
  *
  * Returns a cancel function; calling it closes the stream.
  */
