@@ -445,3 +445,20 @@
 .turn[data-role='user'] .turn__actions {
   justify-content: flex-end;
 }
+
+/*
+ * The surface cannot hear the session — §18.13.
+ *
+ * Deliberately not `--fail`. §18.9 draws a run the agent could not finish;
+ * this draws a link that stopped, and giving it the failure ink would tell an
+ * owner their work broke when their network did. Metadata ink, one line, in
+ * the reading column where the turn is.
+ */
+.stream__unheard {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-3);
+  font-size: var(--text-meta);
+  background: var(--inset);
+  border-radius: var(--radius-sm);
+}

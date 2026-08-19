@@ -684,3 +684,63 @@ describe('what the agent wrote reaches the reader as written', () => {
     expect(c.querySelector('h1')).toBeNull();
   });
 });
+
+describe('when the surface cannot hear the session', () => {
+  /*
+   * §18.13. The failure mode is asserting liveness that is false, not failing
+   * to narrate the transport: nothing but the run ending clears the in-flight
+   * state, so a dead stream kept the pulse going and the caret blinking on a
+   * message that had stopped growing — the one affordance built to tell a
+   * working agent from a dead stream was the one that lied.
+   */
+  it('stops claiming the agent is working the moment the link is not live', () => {
+    const { container, rerender } = render(
+      <MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={true} />,
+    );
+    expect(container.querySelector('.stream__waiting')).not.toBeNull();
+
+    rerender(<MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={false} />);
+    expect(container.querySelector('.stream__waiting')).toBeNull();
+  });
+
+  it('stops the caret too, on the message that has stopped growing', () => {
+    const { container } = render(
+      <MessageStream
+        kernel="codex"
+        entries={[]}
+        turnInFlight={true}
+        linkLive={false}
+        live={{ text: 'half a sen' }}
+      />,
+    );
+    expect(container.querySelector('.turn__caret')).toBeNull();
+  });
+
+  it('says nothing at all during an ordinary reconnect', () => {
+    // A blip announced as a fault teaches a reader to distrust the next
+    // notice, and §11 forbids drawing a recovering session as a failed one.
+    const { container } = render(
+      <MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={false} />,
+    );
+    expect(container.querySelector('.stream__unheard')).toBeNull();
+  });
+
+  it('names it once the link has stayed down, and not as a failure', () => {
+    const { container } = render(
+      <MessageStream
+        kernel="codex"
+        entries={[]}
+        turnInFlight={true}
+        linkLive={false}
+        linkLost={true}
+      />,
+    );
+    const notice = container.querySelector('.stream__unheard');
+    expect(notice).not.toBeNull();
+    // §18.9 draws a run the agent could not finish; this draws a link that
+    // stopped. Conflating them tells an owner their work broke when their
+    // network did.
+    expect(container.querySelector('.failure')).toBeNull();
+    expect(notice?.textContent).toMatch(/nothing has been lost/i);
+  });
+});
