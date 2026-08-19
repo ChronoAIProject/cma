@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::Bridge;
 use crate::supervisor;
+use crate::AdapterError;
 
 /// What the fake bridge did during one handshake.
 struct Handshake {
@@ -38,6 +39,16 @@ async fn bridging(
     resuming: Option<&str>,
     refuse: Option<&'static str>,
     calls: Option<usize>,
+) -> (String, tokio::task::JoinHandle<Handshake>) {
+    bridging_offering(resuming, refuse, calls, serde_json::json!([])).await
+}
+
+/// The same fixture, with control over which sign-ins the bridge advertises.
+async fn bridging_offering(
+    resuming: Option<&str>,
+    refuse: Option<&'static str>,
+    calls: Option<usize>,
+    auth_methods: serde_json::Value,
 ) -> (String, tokio::task::JoinHandle<Handshake>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -76,6 +87,18 @@ async fn bridging(
                     "jsonrpc": "2.0",
                     "id": call["id"],
                     "error": { "code": -32000, "message": "no" },
+                }),
+                // `initialize` answers with the sign-ins this bridge offers,
+                // because that is what an own-account session chooses from.
+                // Every other call keeps the one-size answer: these tests are
+                // about which calls are made and in what order.
+                _ if method == "initialize" => serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": call["id"],
+                    "result": {
+                        "sessionId": "conv-1",
+                        "authMethods": auth_methods.clone(),
+                    },
                 }),
                 _ => serde_json::json!({
                     "jsonrpc": "2.0",
@@ -501,5 +524,96 @@ async fn a_pod_whose_agent_never_answers_fails_the_handshake_quickly() {
     assert!(
         super::TURN_DEADLINE < std::time::Duration::from_secs(24 * 3600),
         "but it is still bounded"
+    );
+}
+
+/// The device-code method a bridge offers a client that can show a URL.
+fn device_code_offer() -> serde_json::Value {
+    serde_json::json!([
+        { "id": "browser", "name": "Browser" },
+        { "id": "chat-gpt-device-code", "name": "ChatGPT (device code)" }
+    ])
+}
+
+#[tokio::test]
+async fn an_own_account_session_signs_in_before_opening_a_conversation() {
+    // Found in production, not here: the session provisioned, reached the
+    // bridge, and died on `session/new` with "Authentication required". An
+    // unauthenticated kernel has no account to open a conversation against, so
+    // the sign-in cannot wait for somebody's first message.
+    //
+    // Deleting the call this guards left 171 tests green, which is why it
+    // exists.
+    let (url, served) = bridging_offering(None, None, Some(3), device_code_offer()).await;
+    let stream = connect(&url).await;
+    Bridge::open(stream, "/home/chrono".into(), None, None, None, true)
+        .await
+        .expect("an own-account session opens");
+    // Bounded, because the failure this guards against is a call that never
+    // arrives — and waiting forever for it is not a test result. Unbounded,
+    // deleting the sign-in made this hang instead of fail, which tells whoever
+    // broke it nothing and stalls CI rather than reporting.
+    let done = tokio::time::timeout(std::time::Duration::from_secs(10), served)
+        .await
+        .expect("the sign-in call never arrived")
+        .expect("the fixture finished");
+
+    let at = |m: &str| done.asked.iter().position(|a| a == m);
+    assert_eq!(at("initialize"), Some(0));
+    assert_eq!(
+        at("authenticate"),
+        Some(1),
+        "the sign-in comes before the conversation, got {:?}",
+        done.asked
+    );
+    assert!(
+        at("authenticate") < at("session/new"),
+        "a conversation opened before signing in is refused by the kernel, got {:?}",
+        done.asked
+    );
+}
+
+#[tokio::test]
+async fn a_delegated_session_never_signs_in() {
+    // The platform's credential is attached by the proxy; asking a kernel to
+    // sign in to an account nobody named would stall the session on a prompt
+    // its owner has no way to answer.
+    let (url, served) = bridging_offering(None, None, Some(2), device_code_offer()).await;
+    let stream = connect(&url).await;
+    Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
+        .await
+        .expect("a delegated session opens");
+    let done = tokio::time::timeout(std::time::Duration::from_secs(10), served)
+        .await
+        .expect("the handshake never finished")
+        .expect("the fixture finished");
+
+    assert!(
+        !done.asked.iter().any(|a| a == "authenticate"),
+        "a delegated session must not sign in, got {:?}",
+        done.asked
+    );
+}
+
+#[tokio::test]
+async fn a_bridge_offering_no_reachable_sign_in_is_refused_by_name() {
+    // §9: an absence is declared rather than discovered. A browser method is
+    // useless here — this pod has none, and a kernel that opened one would
+    // hang — so a session that cannot sign in must not appear to start.
+    let only_browser = serde_json::json!([{ "id": "browser", "name": "Browser" }]);
+    let (url, served) = bridging_offering(None, None, Some(1), only_browser).await;
+    let stream = connect(&url).await;
+    let err = Bridge::open(stream, "/home/chrono".into(), None, None, None, true)
+        .await
+        .expect_err("a session that cannot sign in must not open");
+    drop(served);
+
+    assert!(
+        matches!(err, AdapterError::Unsupported(_)),
+        "the refusal is a missing ability, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("own account"),
+        "and it names what cannot be done, got {err}"
     );
 }
