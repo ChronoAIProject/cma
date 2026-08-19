@@ -199,6 +199,13 @@ pub enum EventKind {
         /// it: the set differs between runtimes and grows without warning, and
         /// a session must not fail because a kernel invented a tool category.
         kind: String,
+        /// What it was asked to do, when this session records tool bodies.
+        ///
+        /// Absent both when the session was not granted the recording and when
+        /// the runtime offered none, and the two are deliberately not told
+        /// apart here: a client renders what it is given, never an estimate.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arguments: Option<ToolBody>,
     },
     /// A tool call moved on.
     ToolCallUpdated {
@@ -206,6 +213,12 @@ pub enum EventKind {
         call_id: String,
         /// Where it has got to, in the runtime's own words.
         status: String,
+        /// What it produced, when this session records tool bodies.
+        ///
+        /// Never `ToolCallContent`: a terminal identifier is a terminal fact
+        /// and has no place in the conversation core.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<ToolBody>,
     },
     /// What this session has used, as its runtime reports it.
     ///
@@ -267,6 +280,23 @@ pub enum EventKind {
         /// Whether the action was permitted.
         allowed: bool,
     },
+}
+
+/// What a tool call was asked to do, or what it produced.
+///
+/// A bounded, redacted copy of a runtime's own words. Bounded because a tool's
+/// arguments or output can be enormous and the durable log is not a file store;
+/// redacted because a tool's output can contain a value the session was handed,
+/// and the core knows which values those are and replaces them before they are
+/// written. The bound is stated rather than silently applied — §18.2 forbids
+/// dropping the tail of a thing without saying so.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolBody {
+    /// The body, as text.
+    pub text: String,
+    /// Whether the body was cut to fit the cap.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 /// Every discriminator this build owns, exactly as serde spells it.
@@ -405,10 +435,12 @@ mod tests {
                 call_id: "call-1".into(),
                 title: "read a file".into(),
                 kind: "read".into(),
+                arguments: None,
             },
             EventKind::ToolCallUpdated {
                 call_id: "call-1".into(),
                 status: "completed".into(),
+                result: None,
             },
             EventKind::UsageReported {
                 input_tokens: 1234,

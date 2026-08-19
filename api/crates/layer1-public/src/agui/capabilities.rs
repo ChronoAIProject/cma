@@ -21,8 +21,8 @@ pub(super) async fn declare() -> Json<serde_json::Value> {
         "events": {
             "RUN_STARTED": true, "RUN_FINISHED": true, "RUN_ERROR": true,
             "TEXT_MESSAGE_START": true, "TEXT_MESSAGE_CONTENT": true, "TEXT_MESSAGE_END": true,
-            "TOOL_CALL_START": true, "TOOL_CALL_ARGS": false, "TOOL_CALL_END": true,
-            "TOOL_CALL_RESULT": false,
+            "TOOL_CALL_START": true, "TOOL_CALL_ARGS": true, "TOOL_CALL_END": true,
+            "TOOL_CALL_RESULT": true,
             // The agent's reasoning, on the live lane. Only the content event:
             // this service sees a stream of thoughts and not where one begins
             // or ends, so `REASONING_START` and `REASONING_END` would be a

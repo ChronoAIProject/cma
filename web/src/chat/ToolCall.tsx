@@ -75,7 +75,10 @@ export function ToolCall({ call }: ToolCallProps) {
   const bodyId = useId();
   const tone = toneOf(call.status);
   const duration = durationOf(call);
-  const hasDetail = call.output !== undefined && call.output !== '';
+  const hasDetail =
+    (call.output !== undefined && call.output !== '') ||
+    call.arguments !== undefined ||
+    call.result !== undefined;
 
   return (
     <div className="toolcall" data-tone={tone}>
@@ -125,7 +128,13 @@ export function ToolCall({ call }: ToolCallProps) {
        */}
       {open && hasDetail ? (
         <pre className="toolcall__output" id={bodyId}>
-          {call.output}
+          {call.arguments === undefined
+            ? null
+            : `arguments${call.arguments.truncated ? ' (truncated)' : ''}:\n${call.arguments.text}\n`}
+          {call.result === undefined
+            ? null
+            : `result${call.result.truncated ? ' (truncated)' : ''}:\n${call.result.text}\n`}
+          {call.output ?? ''}
         </pre>
       ) : null}
     </div>
