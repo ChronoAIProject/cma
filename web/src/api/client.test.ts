@@ -60,8 +60,21 @@ describe('toSession', () => {
     expect(() => toSession({ ...valid, status: 'exploded' })).toThrow(ApiError);
   });
 
-  it('rejects an unrecognised kernel', () => {
-    expect(() => toSession({ ...valid, kernel: 'something-else' })).toThrow(ApiError);
+  it('keeps a session on a runtime this build has never heard of', () => {
+    // The defect this replaces: an allowlist of kernel identifiers threw on
+    // anything else, and one such session failed the whole list read — so a
+    // single session on an unfamiliar runtime hid every other session the
+    // owner had. Which runtimes a deployment offers is a fact about that
+    // deployment; the client draws an unfamiliar one under its own name.
+    expect(toSession({ ...valid, kernel: 'dsh' }).kernel).toBe('dsh');
+    expect(toSession({ ...valid, kernel: 'claude_code' }).kernel).toBe('claude_code');
+    expect(toSession({ ...valid, kernel: 'something-else' }).kernel).toBe('something-else');
+  });
+
+  it('still refuses a session that names no runtime at all', () => {
+    // Absent is not unfamiliar: nothing can be drawn for it.
+    expect(() => toSession({ ...valid, kernel: '' })).toThrow(ApiError);
+    expect(() => toSession({ ...valid, kernel: undefined })).toThrow(ApiError);
   });
 
   it('rejects a payload with no id', () => {
