@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
 import { TerminalSurface } from '../terminal/TerminalSurface';
 import type { TerminalHandle } from '../terminal/TerminalSurface';
-import { ConversationSurface } from '../chat/ConversationSurface';
-import { toCapabilities } from '../agui';
+import { ConversationRecap } from './ConversationRecap';
+import type { AguiTransport } from '../agui';
 import type { TerminalDriver } from '../terminal/types';
 import type { Session } from '../sessions/types';
-import { labelFor } from '../sessions/types';
+import { labelFor, toneFor } from '../sessions/types';
 import { abilitiesFor } from '../sessions/availability';
 import { tabLabel } from '../sessions/sessionTime';
 import { MAX_LIVE_NODES } from './layout';
@@ -48,6 +48,14 @@ interface CanvasNodeProps {
   readonly onFocus: () => void;
   readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   readonly registerHandle: (element: HTMLButtonElement | null) => void;
+  /**
+   * Opens this session on the list arrangement's surface — §13: a
+   * conversation node draws a recap and hands the reply to the surface that
+   * can hold a reading column.
+   */
+  readonly onOpenToReply: () => void;
+  /** Where the recap's frames come from, when this node holds a conversation. */
+  readonly transport?: AguiTransport;
 }
 
 export function CanvasNode({
@@ -60,6 +68,8 @@ export function CanvasNode({
   onFocus,
   onKeyDown,
   registerHandle,
+  onOpenToReply,
+  transport,
 }: CanvasNodeProps) {
   const handleRef = useRef<HTMLButtonElement | null>(null);
   const terminalRef = useRef<TerminalHandle>(null);
@@ -154,6 +164,8 @@ export function CanvasNode({
           /* Keyboard activation, which produces a click and no pointer event. */
           onClick={onFocus}
         >
+          {/* §13's header: dot, start time, kernel and state in mono. */}
+          <span className={`node__dot tone-bg-${toneFor(session.lifecycle)}`} aria-hidden="true" />
           <span className="node__started tabular">{started}</span>
           <span className="node__meta">
             {session.kernel} · {state}
@@ -169,6 +181,8 @@ export function CanvasNode({
          * nearby saying why.
          */}
         {can.interactive ? null : <span className="node__readonly">read-only</span>}
+        {/* §13: the focused node says so in words as well as in hue. */}
+        {focused ? <span className="node__typinghere">typing here</span> : null}
       </header>
 
       {/*
@@ -184,27 +198,29 @@ export function CanvasNode({
          * driver is the one that would carry a keystroke out of a node that
          * does not have focus.
          */}
-        {gate === null ? (
+        {session.plane === 'conversation' ? (
+          /*
+           * §13: a conversation node draws a recap — the last thing the agent
+           * said, what is running, and one key that opens the surface which
+           * can hold a reading column. Never the surface itself: a composer
+           * inside 420×280 clipped its placeholder mid-word, and a
+           * conversation needs a reading column a node cannot give it.
+           *
+           * Decided before the terminal branches: a recap needs no terminal
+           * driver and spends none of the attachment budget.
+           */
+          <ConversationRecap
+            session={session}
+            onOpenToReply={onOpenToReply}
+            transport={transport}
+          />
+        ) : gate === null ? (
           <p className="node__note">{can.reason}</p>
         ) : !attached ? (
           <p className="node__note">
             Not attached. The canvas keeps at most {MAX_LIVE_NODES} terminals connected and holds
             the ones most recently worked in. Select this node to attach it.
           </p>
-        ) : session.plane === 'conversation' ? (
-          /*
-           * §13's sharp edge: every listed session is a framed node with its
-           * own surface, so a canvas of mixed sessions draws chats and
-           * terminals side by side. The node must not assume a terminal — this
-           * component and the input gate below it were both written when it
-           * could.
-           *
-           * The gate is not wrapped around this one. It exists to stop a
-           * keystroke reaching an unfocused terminal, and a conversation has
-           * no keystroke path: what it sends is a turn, from a composer, on a
-           * surface somebody has to be looking at to type into.
-           */
-          <ConversationSurface session={session} capabilities={toCapabilities(session)} />
         ) : (
           <TerminalSurface
             ref={terminalRef}
