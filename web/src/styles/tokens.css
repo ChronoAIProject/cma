@@ -133,7 +133,13 @@
   --rail-width: 320px;
   --rail-collapsed: 56px;
   --drawer-width: 360px;
-  --read-column: 760px;
+  /*
+   * The measure — §20.3. Wide enough for code to sit unwrapped, narrow enough
+   * that a line of prose does not tire the eye. The chrome around it is tight
+   * and this is deliberately not: the reading surface is the one place in the
+   * product allowed to breathe.
+   */
+  --read-column: 748px;
 
   /* Radius — §3. Five steps: control, row, card, panel, pill. */
   /*
