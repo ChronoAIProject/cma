@@ -161,14 +161,24 @@ describe('it is not a modal', () => {
   });
 
   it('is a card rather than a plate', () => {
-    // §3 and §18.3: a plate floats over the page. This sits in the stream
-    // where the turn stopped, so it rests — --lift-rest — with no fixed
-    // position.
+    /*
+     * §18.3's binding constraint: never a modal. A plate floats over the
+     * page and makes every other session unreachable while one waits; this
+     * takes the composer's seat inside one session's own surface, so it
+     * neither floats nor stacks.
+     */
     const css = readFileSync(resolve(process.cwd(), 'src/chat/ApprovalCard.css'), 'utf8');
     const rule = /\.approval\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(rule).toContain('box-shadow: var(--lift-rest)');
     expect(rule).not.toContain('position: fixed');
+    expect(rule).not.toContain('position: absolute');
     expect(rule).not.toContain('z-index');
+  });
+
+  it('warns rather than informs', () => {
+    // Blue reads as information. This is a decision with a cost.
+    const css = readFileSync(resolve(process.cwd(), 'src/chat/ApprovalCard.css'), 'utf8');
+    const rule = /\.approval\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(rule).toMatch(/border: 1px solid var\(--dsw-alias-state-warn/);
   });
 });
 
