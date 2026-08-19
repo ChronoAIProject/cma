@@ -25,9 +25,9 @@
   width: 100%;
   /* The dialog's own body scrolls; the page never does. */
   max-height: 80dvh;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  background: var(--raised);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-lg);
   box-shadow: var(--lift-plate);
 }
 
