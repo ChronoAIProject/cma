@@ -142,11 +142,11 @@ describe('a state delta', () => {
     const event = toEvent({
       ...base,
       type: 'STATE_DELTA',
-      patch: [{ op: 'replace', path: '/usage/tokens', value: 4820 }, { nonsense: true }],
+      delta: [{ op: 'replace', path: '/usage/inputTokens', value: 4820 }, { nonsense: true }],
     });
     if (event.type !== 'STATE_DELTA') {
       throw new Error('expected a state delta');
     }
-    expect(event.patch).toEqual([{ op: 'replace', path: '/usage/tokens', value: 4820 }]);
+    expect(event.patch).toEqual([{ op: 'replace', path: '/usage/inputTokens', value: 4820 }]);
   });
 });

@@ -11,6 +11,8 @@
  * payload intact, which is the same property the durable log holds server-side.
  */
 
+import { STATE_DELTA_PATCHES } from '../sdk/wire';
+
 /** Every kind this build renders. The set grows; the handling does not break. */
 export const KNOWN_EVENTS = [
   'RUN_STARTED',
@@ -388,7 +390,18 @@ export function toEvent(raw: unknown): AguiEvent {
         delta: str(frame.delta),
       };
     case 'STATE_DELTA':
-      return { ...base, type: 'STATE_DELTA', patch: patches(frame.patch) };
+      /*
+       * Read from the name the service actually uses. This said `frame.patch`
+       * and the service sends `delta`, so every STATE_DELTA arrived carrying
+       * an empty patch list and was applied to nothing: no session ever
+       * showed what it had spent. The name lives in sdk/wire.ts now, spelled
+       * once.
+       */
+      return {
+        ...base,
+        type: 'STATE_DELTA',
+        patch: patches(frame[STATE_DELTA_PATCHES]),
+      };
     default:
       return { ...base, type: 'UNKNOWN', kind, raw: frame };
   }
