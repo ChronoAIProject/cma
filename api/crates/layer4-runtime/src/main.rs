@@ -97,6 +97,9 @@ impl AppState {
             resume_args: None,
             snapshot_named: false,
             resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            // Nothing has been refused, which is the honest state for a pod
+            // that has made no upstream call.
+            model_fault: upstream::UpstreamFault::default(),
             conversation: std::sync::Arc::new(Mutex::new(None)),
         }
     }
