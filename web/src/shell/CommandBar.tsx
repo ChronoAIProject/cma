@@ -164,7 +164,7 @@ export function CommandBar({
               <li key={command.id} role="option" aria-selected={index === active}>
                 <button
                   type="button"
-                  className={`menu__item${index === active ? ' menu__item--active' : ''}`}
+                  className={`commandbar__item${index === active ? ' commandbar__item--active' : ''}`}
                   onClick={command.run}
                   onPointerEnter={() => {
                     setActiveIndex(index);
@@ -172,7 +172,7 @@ export function CommandBar({
                 >
                   {command.label}
                   {command.detail === undefined ? null : (
-                    <span className="menu__kind">{command.detail}</span>
+                    <span className="commandbar__detail">{command.detail}</span>
                   )}
                 </button>
               </li>
