@@ -137,6 +137,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
             self.hosted.workspace().to_string(),
             Some(permission::mode_for(options.permission).to_string()),
             options.resume_conversation.clone(),
+            Some((self.hosted.switch_waiters(), handle.0.clone())),
         )
         .await?;
         // Recorded here so a credential can reach a session that never attaches
