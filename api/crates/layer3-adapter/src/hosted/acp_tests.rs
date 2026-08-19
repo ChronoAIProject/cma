@@ -134,6 +134,7 @@ async fn a_fresh_conversation_is_started_and_held_to_its_mode() {
         "/home/chrono".into(),
         Some("read-only".into()),
         None,
+        None,
     )
     .await
     .expect("the bridge answered everything");
@@ -152,9 +153,15 @@ async fn a_carried_conversation_is_loaded_rather_than_started_again() {
     // identifier, so its owner's history is still there after a rotation.
     let (url, served) = bridging(Some("conv-carried"), None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
-        .await
-        .expect("the bridge answered everything");
+    Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        Some("agent".into()),
+        None,
+        None,
+    )
+    .await
+    .expect("the bridge answered everything");
     let done = served.await.expect("the fixture finished");
     assert_eq!(
         done.asked,
@@ -170,7 +177,7 @@ async fn a_bridge_with_no_modes_is_not_asked_to_set_one() {
     // names none and this step is skipped rather than defaulted.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), None, None)
+    Bridge::open(stream, "/home/chrono".into(), None, None, None)
         .await
         .expect("a bridge without modes still opens");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -189,6 +196,7 @@ async fn a_session_whose_mode_did_not_take_is_refused_rather_than_started() {
         "/home/chrono".into(),
         Some("read-only".into()),
         None,
+        None,
     )
     .await
     .expect_err("a mode that did not take must fail the session");
@@ -205,9 +213,15 @@ async fn a_conversation_that_could_not_be_resumed_fails_loudly() {
     // here would lose somebody's history with nothing said about it.
     let (url, served) = bridging(Some("conv-carried"), Some("session/load"), Some(3)).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
-        .await
-        .expect_err("a conversation that did not resume must not look resumed");
+    let err = Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        Some("agent".into()),
+        None,
+        None,
+    )
+    .await
+    .expect_err("a conversation that did not resume must not look resumed");
     assert!(
         matches!(err, crate::AdapterError::Rejected(_)),
         "got {err:?}"
@@ -230,7 +244,7 @@ async fn a_link_that_declares_nothing_is_not_a_conversation() {
         let _ = ws.close(None).await;
     });
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), None, None)
+    let err = Bridge::open(stream, "/home/chrono".into(), None, None, None)
         .await
         .expect_err("a silent link is not a conversation");
     assert!(
@@ -257,6 +271,7 @@ async fn a_conversation_the_bridge_still_holds_is_adopted_rather_than_loaded() {
         "/home/chrono".into(),
         Some("read-only".into()),
         Some("conv-already-running".into()),
+        None,
     )
     .await
     .expect("a held conversation is adopted");
@@ -280,6 +295,7 @@ async fn rejoining_wins_over_what_the_pod_says_it_was_handed() {
         "/home/chrono".into(),
         Some("agent".into()),
         Some("conv-already-running".into()),
+        None,
     )
     .await
     .expect("adopted");
@@ -304,7 +320,7 @@ async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
     // is where it was wrong. Every existing test here passed throughout.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    let (channel, _control) = Bridge::open(stream, "/home/chrono".into(), None, None)
+    let (channel, _control) = Bridge::open(stream, "/home/chrono".into(), None, None, None)
         .await
         .expect("the bridge answered the handshake");
 
@@ -347,10 +363,15 @@ async fn every_request_this_bridge_sends_is_dispatchable() {
     // and the failure is silent at both ends.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    let (channel, _control) =
-        Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
-            .await
-            .expect("the bridge answered the handshake");
+    let (channel, _control) = Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        Some("agent".into()),
+        None,
+        None,
+    )
+    .await
+    .expect("the bridge answered the handshake");
     channel
         .input
         .send(crate::ConversationInput::Prompt(vec![
