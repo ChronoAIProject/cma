@@ -90,9 +90,20 @@ impl Deployment {
             ("TERM".to_string(), "xterm-256color".to_string()),
             // The supervisor forwards here and attaches the owner's credential.
             // The credential itself never travels as environment.
+            //
+            // Empty for a session spending its owner's own account, which
+            // stops the supervisor starting the credential proxy at all. That
+            // is a safety property rather than tidiness: with a proxy running
+            // and a configuration that no longer points at it, the platform's
+            // credential would be sitting one configuration mistake away from
+            // paying for a session its owner was told they were funding
+            // themselves. Nothing to point at is the stronger guarantee.
             (
                 "CHRONO_UPSTREAM_BASE_URL".to_string(),
-                self.upstream_base_url.clone(),
+                match spec.options.own_credential {
+                    true => String::new(),
+                    false => self.upstream_base_url.clone(),
+                },
             ),
             (
                 "CHRONO_UPSTREAM_MODEL".to_string(),
