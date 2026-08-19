@@ -465,6 +465,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             <SessionHeader
               session={active}
               waiting={active !== null && active.id === waitingId}
+              kernels={kernels}
+              onChangePlane={
+                active === null ? undefined : (to) => void changeSessionPlane(active.id, to)
+              }
               actions={
                 active === null ? undefined : (
                   <SessionActions
