@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageStream } from './MessageStream';
 import { ApprovalCard } from './ApprovalCard';
+import { SignInCard } from './SignInCard';
 import { Composer } from './Composer';
 import { Usage } from './Usage';
 import { EMPTY, reduce, type Conversation } from './conversation';
@@ -210,7 +211,15 @@ export function ConversationSurface({
         linkLive={link === 'live'}
         linkLost={linkLost}
         footer={
-          pending === undefined ? null : (
+          /*
+           * Two things can be waiting at the foot of the stream, and only one
+           * at a time: an approval belongs to a turn in flight, a sign-in to a
+           * session that cannot start one yet. The sign-in is drawn first
+           * because nothing else can proceed until it is done.
+           */
+          conversation.signIn !== undefined ? (
+            <SignInCard signIn={conversation.signIn} />
+          ) : pending === undefined ? null : (
             <ApprovalCard
               interrupt={pending}
               busy={busy}
