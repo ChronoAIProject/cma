@@ -27,10 +27,15 @@
 /*
  * The field grows to six lines and then scrolls inside itself. Borderless
  * inside the card: the card is the field's edge.
+ *
+ * The cap counts both paddings. `border-box` includes them, so `6lh` plus one
+ * `--space-2` left room for about five and a half lines of text — the rule
+ * said six and the box delivered fewer, which is the kind of disagreement
+ * nobody reports and everybody feels.
  */
 .composer__field {
   min-height: calc(var(--control-h) * 2);
-  max-height: calc(6lh + var(--space-2));
+  max-height: calc(6lh + var(--space-2) * 2);
   padding: var(--space-2);
   overflow-y: auto;
   color: var(--ink);
