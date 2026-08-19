@@ -103,16 +103,32 @@ export interface ServiceCatalogue {
  */
 export const DEFAULT_AGENT: AgentConfiguration = {
   kernel: 'codex',
-  // What every session was before the conversation plane existed, and what
-  // the core still defaults to. Reading a profile back as something else
-  // would change what an existing profile starts.
-  mode: 'terminal',
+  // The conversation plane is the default surface: it is where approvals are
+  // answered, where tool calls read as structure, and where a failure can be
+  // explained rather than printed. A terminal is the escape hatch. This
+  // mirrors the deployment's own default, so a new profile starts where an
+  // unqualified session would.
+  //
+  // Only a *new* draft starts here. A stored profile is read back exactly as
+  // it was written (`draftOf`), so nothing anybody already saved changes.
+  mode: 'conversation',
   model: undefined,
   reasoningEffort: 'high',
   permission: 'guarded',
   credential: 'delegated',
   skills: [],
 };
+
+/**
+ * What an unstated plane means on a profile that was already stored.
+ *
+ * Deliberately NOT `DEFAULT_AGENT.mode`. That is what a *new* draft starts
+ * as and it moved to conversation; this is what a record written before the
+ * field existed already meant, and it is terminal — the same answer the
+ * core's own wire format gives. Reading an old profile through the new
+ * default would silently change what it starts.
+ */
+export const PLANE_BEFORE_PLANES_EXISTED: SessionPlane = 'terminal';
 
 /** What a caller supplies when creating or replacing a profile. */
 export interface ProfileDraft {
