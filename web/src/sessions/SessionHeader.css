@@ -1,13 +1,15 @@
 /*
- * The session header — docs/Web_Style.md §5 and §12.
+ * The centre column's header — `docs/Web_Style.md` §11.
  *
- * Height comes from .band--head. Nothing here adds padding to the block axis:
- * a band's height is set on the band, never accumulated, or two columns whose
- * headers should share a rule drift apart the moment one gains a longer label.
+ * Its own padding rather than a shared band height: it belongs to this column
+ * and no longer has to line up with a list beside it, since §9 gave the
+ * sidebar its own proportions.
  */
 
 .sessionheader {
-  gap: var(--space-3);
+  gap: 12px;
+  padding: 12px 28px 0 20px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
   /*
    * Deliberately NOT `overflow: hidden`, and this is load-bearing. The header
    * carries §7's overflow menu, which opens downward past the band's own 56px
@@ -26,4 +28,61 @@
    */
   position: relative;
   z-index: 1;
+}
+
+/*
+ * The crumb: which session the column is showing. Not a heading — the surface
+ * beneath is the content, and a heading here would make the page's outline
+ * claim this row is what somebody came to read.
+ */
+.sessionheader__crumb {
+  padding: 4px 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  border-radius: 12px;
+}
+
+/*
+ * The plane strip. Drawn only when there are two, so it is never a control
+ * that cannot do anything.
+ */
+.sessionheader__tabs {
+  display: flex;
+  gap: 36px;
+  align-items: flex-end;
+  padding-left: 8px;
+}
+
+.sessionheader__tab {
+  padding: 0 0 11px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.sessionheader__tab[aria-selected='true'] {
+  color: var(--dsw-alias-state-business-primary);
+  border-bottom-color: var(--dsw-alias-state-business-primary);
+}
+
+/*
+ * A plane that cannot be moved to right now is dimmed and says why on hover,
+ * rather than vanishing: what can never work is absent, and this can.
+ */
+.sessionheader__tab[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sessionheader__tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
