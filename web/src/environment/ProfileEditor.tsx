@@ -3,7 +3,7 @@ import { useId, useState } from 'react';
 import { ServicePicker } from './ServicePicker';
 import { SkillPicker } from './SkillPicker';
 import { Pill } from '../ui/Pill';
-import { Select } from '../ui/Select';
+import { Picker } from '../ui/Picker';
 import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
 import { kernelLabel, modesOf, planeRefusal, PLANES } from '../sessions/kernels';
 import type { KernelOffer, SessionPlane } from '../sessions/types';
@@ -133,7 +133,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={kernelId}>
           Agent
         </label>
-        <Select
+        <Picker
           id={kernelId}
           label="Agent"
           value={draft.agent.kernel}
@@ -153,7 +153,7 @@ export function ProfileEditor({
          * cannot be moved onto the other plane without being rotated, so two
          * sessions started from one profile must agree about which they are.
          */}
-        <Select
+        <Picker
           id={planeId}
           label="Plane"
           value={draft.agent.mode}
@@ -199,7 +199,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={effortId}>
           Thinking effort
         </label>
-        <Select
+        <Picker
           id={effortId}
           label="Thinking effort"
           value={draft.agent.reasoningEffort}
@@ -217,7 +217,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={permissionId}>
           Permissions
         </label>
-        <Select
+        <Picker
           id={permissionId}
           label="Permissions"
           value={draft.agent.permission}
@@ -232,7 +232,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={credentialId}>
           Model access
         </label>
-        <Select
+        <Picker
           id={credentialId}
           label="Model access"
           value={draft.agent.credential}
