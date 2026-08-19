@@ -70,7 +70,7 @@ Content-Type: application/json
   ],
   "tools": [],
   "context": [],
-  "forwardedProps": { "kernel": "codex", "llmSource": "chrono" }
+  "forwardedProps": { "environmentProfile": "envp_7dec1b0ca73c46b88121b259577bbe96" }
 }
 ```
 
@@ -82,7 +82,13 @@ Content-Type: application/json
 | `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the profile it names or from what the deployment configured, and no interface chooses one |
 | `resume` | Present only when answering an interrupt — see §4 |
 
-`forwardedProps` is ignored on an existing thread because `kernel` and `llmSource` are frozen at session creation. Changing them requires a new thread.
+`forwardedProps` is ignored on an existing thread because what it sets is frozen at session creation. Changing it requires a new thread.
+
+`environmentProfile` is the one property in it this service reads. `kernel` is accepted and ignored, as the table above says; `llmSource` was named here as though it were honoured and frozen, and has never existed anywhere in the service — the same phantom `docs/API_REST.md` carried as `llm_source`. Both are gone from the example above, so it now shows only what sending actually does something.
+
+Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is chrono-bot's own, so an unknown field there is refused by name.
+
+One consequence worth stating, because a client cannot discover it here: **this interface never reports which kernel a session ended up on.** No event and no state patch carries it. Over REST the created session echoes its `kernel` back, so a caller could notice; here there is nothing to notice, which is what makes the declaration above the only signal there is. `GET /api/v1/sessions/{id}` is where to look.
 
 ---
 

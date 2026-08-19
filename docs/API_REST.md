@@ -38,7 +38,7 @@ A request with neither credential is `401`. A request whose credential is valid 
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
-| Idempotency | `Idempotency-Key` required on every side-effecting `POST` |
+| Idempotency | **Not implemented.** No route reads `Idempotency-Key`; sending one is harmless and does nothing. This row previously said it was required on every side-effecting `POST`, which was never true — §9 asks for an absence to be declared rather than discovered |
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
@@ -52,43 +52,68 @@ Every response carries `X-Request-Id`. Include it in any support report.
 
 ```http
 POST /api/v1/sessions
-Idempotency-Key: <client-generated-uuid>
 Content-Type: application/json
 
 {
-  "llm_source": "chrono",
-  "environment": "default",
-  "workspace": { "type": "git", "url": "https://github.com/org/repo", "ref": "main" },
-  "concurrent_input": "enqueue",
-  "metadata": { "origin": "nyxid-chat" }
+  "cols": 120,
+  "rows": 32,
+  "environment_profile": "envp_7dec1b0ca73c46b88121b259577bbe96"
 }
 ```
 
-| Field | Required | Notes |
-|---|---|---|
-| `llm_source` | yes | `chrono` (brokered through NyxID) or `own` (the user's own account) |
-| `environment` | no | Name of a pre-provisioned environment profile. **Never carries secret values** — it selects a profile provisioned out of band |
-| `workspace` | no | Omit for an empty workspace |
-| `concurrent_input` | no | `reject` \| `enqueue` \| `interrupt` \| `rollback`. Default `enqueue`. Immutable for the session's life |
-| `metadata` | no | Opaque to chrono-bot; echoed back |
+| Field                 | Required | Notes                                                                                                                                         |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
+| `rows`                | no       | Initial terminal height                                                                                                                         |
+| `environment_profile` | no       | Id of a profile from `GET /api/v1/environment-profiles`. **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
+
+**These three are the whole body.** An earlier version of this section
+documented `llm_source` as required, along with `environment`, `workspace`,
+`concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
+side-effecting `POST`. None of them has ever existed in the service. They were
+accepted and discarded in silence, so a caller who built to that contract got a
+working session and no indication that most of what they sent went nowhere.
+They are now refused by name, which is why the list above is exact rather than
+aspirational.
+
+The profile is the whole description of the session — which agent, which model,
+how freely it acts, whose access it spends, and what it carries — so nothing
+else about the agent is sent here.
 
 **A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
 
-`llm_source` and `environment` are **frozen at creation**, as is the kernel they resolve to. Changing any of them means a new session.
+**A field this endpoint does not know is refused, not ignored.** Sending `"kernel"` is the obvious thing to try, because `GET /api/v1/kernels` enumerates them — so it answers `422` with `invalid_request`, naming the field and listing what it would have accepted. It used to be discarded, and the session came back `201` on whichever kernel the profile actually resolved to, which is a request answered differently from how it was asked. To choose a kernel, name an environment profile whose `agent.kernel` is the one you want; `GET /api/v1/environment-profiles` shows each profile's.
 
-**`201 Created`**
+A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
+
+The profile is **frozen at creation**, as is the kernel it resolves to. Changing either means a new session.
+
+**`201 Created`** — the shape below was read off a live deployment rather than
+composed here, because the previous example carried an `llm_source` field the
+service does not send and spelled `recovery_state` as an object it does not use.
 
 ```json
 {
-  "id": "sesn_01JD8Z3K7",
+  "id": "sesn_1c83fa5f89e84f2da092398e669a12f6",
   "status": "provisioning",
-  "recovery_state": { "state": "normal", "reason": null },
+  "recovery_state": "normal",
   "kernel": "codex",
-  "llm_source": "chrono",
+  "cols": 120,
+  "rows": 32,
   "last_seq": 0,
-  "created_at": "2026-08-12T09:14:22Z"
+  "created_at": "2026-08-19T11:38:12Z",
+  "conforms_to": [
+    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
+    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation"
+  ],
+  "reach": []
 }
 ```
+
+`conforms_to` is what this session was granted, and is how a client learns what
+it may ask for without trying. `runtime_version`, `rotations` and `rotated_at`
+appear once a session has been moved, and are absent before that because a
+session that has never been rotated has nothing to explain.
 
 ### Read, list, stop, revive, delete
 
