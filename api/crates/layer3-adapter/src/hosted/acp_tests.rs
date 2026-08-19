@@ -130,6 +130,117 @@ async fn bridging_offering(
     (url, served)
 }
 
+/// A bridge that asks its owner to sign in, and waits there.
+///
+/// The other fixtures answer `authenticate` immediately, which is the one
+/// thing a real device sign-in never does — it is a person walking to another
+/// machine. This one reproduces the wait: it sends `elicitation/create` and
+/// holds the `authenticate` answer until the client has replied, so anything
+/// the client is expected to do *during* the sign-in is observable.
+async fn bridging_that_waits_for_a_sign_in() -> (String, tokio::task::JoinHandle<Handshake>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let declared = declaration(None);
+
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declared))
+            .await
+            .expect("the declaration is sent");
+
+        let mut asked = Vec::new();
+        let mut frames = Vec::new();
+        let mut authenticate_id = None;
+        async fn send(
+            ws: &mut WebSocketStream<tokio::net::TcpStream>,
+            value: serde_json::Value,
+        ) -> bool {
+            let body = value.to_string();
+            let framed = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
+            ws.send(Message::Binary(framed)).await.is_ok()
+        }
+
+        while let Some(Ok(frame)) = ws.next().await {
+            let Message::Binary(bytes) = frame else {
+                continue;
+            };
+            let Some((supervisor::LANE_CONVERSATION, payload)) = supervisor::unframe(&bytes) else {
+                continue;
+            };
+            let call: serde_json::Value = serde_json::from_slice(payload).expect("json-rpc");
+            frames.push(call.clone());
+
+            // The client's answer to the sign-in. Only now does the kernel
+            // consider itself authenticated, which is the whole point.
+            if call.get("method").is_none() {
+                if let Some(id) = authenticate_id.take() {
+                    if !send(
+                        &mut ws,
+                        serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
+                    )
+                    .await
+                    {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            let method = call["method"].as_str().unwrap_or_default().to_string();
+            asked.push(method.clone());
+
+            if method == "authenticate" {
+                authenticate_id = Some(call["id"].clone());
+                let elicit = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 9001,
+                    "method": "elicitation/create",
+                    "params": {
+                        "message": "Sign in to continue",
+                        "url": "https://auth.example.invalid/device",
+                        "userCode": "ABCD-1234",
+                    },
+                });
+                if !send(&mut ws, elicit).await {
+                    break;
+                }
+                continue;
+            }
+
+            let answer = match method.as_str() {
+                "initialize" => serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": call["id"],
+                    "result": { "sessionId": "conv-1", "authMethods": device_code_offer() },
+                }),
+                _ => serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": call["id"],
+                    "result": { "sessionId": "conv-1" },
+                }),
+            };
+            if !send(&mut ws, answer).await {
+                break;
+            }
+            if asked.len() == 3 {
+                break;
+            }
+        }
+        Handshake {
+            asked,
+            mode: None,
+            frames,
+        }
+    });
+
+    (url, served)
+}
+
 /// The declaration a pod serving a conversation lane opens with.
 fn declaration(resuming: Option<&str>) -> String {
     serde_json::json!({
@@ -609,6 +720,60 @@ async fn an_own_account_session_signs_in_before_opening_a_conversation() {
         "a conversation opened before signing in is refused by the kernel, got {:?}",
         done.asked
     );
+}
+
+#[tokio::test]
+async fn a_sign_in_request_is_reported_while_the_kernel_is_still_waiting() {
+    /*
+     * Found in production, and invisible to every test above.
+     *
+     * The kernel asks its owner to sign in from inside the handshake and then
+     * blocks there until they have. When the update sink was created by this
+     * function and handed back at the end, the request could only be delivered
+     * after the open returned — after the sign-in it was asking for. The
+     * session sat in `provisioning` showing nothing, the log had no
+     * `sign_in_required` in it, and no client could draw the card that exists
+     * to answer it.
+     *
+     * So the assertion is specifically about *when*: the update is read before
+     * the open is awaited, with the fixture still holding the handshake.
+     */
+    let (url, served) = bridging_that_waits_for_a_sign_in().await;
+    let stream = connect(&url).await;
+
+    let (updates_tx, mut updates_rx) = mpsc::channel(64);
+    let opening = tokio::spawn(Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        None,
+        true,
+        updates_tx,
+    ));
+
+    let reported = tokio::time::timeout(std::time::Duration::from_secs(10), updates_rx.recv())
+        .await
+        .expect("the sign-in was never reported while the kernel waited for it")
+        .expect("the sink is still open");
+
+    match reported {
+        crate::ConversationUpdate::SignInRequired { url, .. } => {
+            assert!(
+                url.starts_with("https://"),
+                "an address somebody can open, got {url:?}"
+            );
+        }
+        other => {
+            panic!("the first thing an own-account session reports is its sign-in, got {other:?}")
+        }
+    }
+
+    opening
+        .await
+        .expect("the open task ran")
+        .expect("an own-account session opens");
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), served).await;
 }
 
 #[tokio::test]
