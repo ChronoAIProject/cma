@@ -3,7 +3,7 @@ import { AgentContent } from './AgentContent';
 import { CopyKey } from './CopyKey';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
-import type { AvailableCommand, ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
+import type { ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 
@@ -63,7 +63,6 @@ interface MessageStreamProps {
   /** The settings the kernel says are settable, when it reported them. */
   readonly configOptions?: readonly ConfigOption[];
   /** The actions the owner may invoke right now — liveness, not history. */
-  readonly availableCommands?: readonly AvailableCommand[];
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
 }
@@ -81,7 +80,6 @@ export function MessageStream({
   plan,
   mode,
   configOptions,
-  availableCommands,
 }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
@@ -212,16 +210,6 @@ export function MessageStream({
                 <li key={option.id} className="stage__step">
                   <span className="stage__title">{option.name}</span>
                   <span className="stage__status">{option.kind}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {availableCommands === undefined || availableCommands.length === 0 ? null : (
-            <ul className="stage">
-              {availableCommands.map((command) => (
-                <li key={command.name} className="stage__step">
-                  <span className="stage__title">{command.name}</span>
-                  <span className="stage__status">{command.description}</span>
                 </li>
               ))}
             </ul>

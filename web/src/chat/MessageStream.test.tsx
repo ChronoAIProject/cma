@@ -635,6 +635,9 @@ describe('what a reader can take away', () => {
   it('draws no label where the agent named no language', () => {
     const { container } = render(<AgentContent text={'```\nplain\n```'} />);
     expect(container.querySelector('.codeblock__lang')?.textContent).toBe('');
+  });
+});
+
 describe('what the agent wrote reaches the reader as written', () => {
   /*
    * §18.1's Fidelity rule: "Lists, headings and emphasis take the scale §4

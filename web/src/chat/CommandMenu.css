@@ -1,0 +1,74 @@
+/*
+ * The kernel's commands, over the composer — §18.4 and §3's plate.
+ *
+ * It floats, so it takes the plate lift rather than the resting one: §3 has
+ * two levels and no others, one for a thing resting on the page and one for a
+ * thing floating over it. Anchored above the field rather than below, because
+ * the field sits at the foot of the column and a list opening downward would
+ * leave the surface.
+ */
+.cmdmenu {
+  position: absolute;
+  bottom: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 2;
+  max-height: 240px;
+  width: 100%;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  box-shadow: var(--lift-plate);
+}
+
+.cmdmenu__item {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/*
+ * The highlight is a ground change, not a colour: §2 reserves the semantic
+ * inks for session and system state, and which row the arrow keys are on is
+ * neither.
+ */
+.cmdmenu__item[data-active='true'],
+.cmdmenu__item:hover {
+  background: var(--inset);
+}
+
+.cmdmenu__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The kernel's own word for the command, in the face commands are written in. */
+.cmdmenu__name {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-note);
+}
+
+/*
+ * The kernel's own description. Truncates rather than wrapping: the name is
+ * what the reader is choosing between, and a two-line row would push the rest
+ * of the list off a menu that already has a cap.
+ */
+.cmdmenu__what {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
