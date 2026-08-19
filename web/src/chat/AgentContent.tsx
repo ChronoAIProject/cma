@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { CopyKey } from './CopyKey';
 
 /**
  * Agent-emitted content, rendered as the agent meant it — `Web_Style.md` §1
@@ -138,11 +139,30 @@ export function AgentContent({ text }: AgentContentProps) {
         switch (block.kind) {
           case 'code':
             return (
-              // The language is carried as data rather than used to colour
-              // anything: a client that highlighted would be styling content.
-              <pre className="agent__block" data-language={block.language} key={index}>
-                {block.body}
-              </pre>
+              /*
+               * A wrapper, a header, and the `<pre>` that keeps the scrolling
+               * — §18.11.
+               *
+               * The header cannot live inside the `<pre>`: that element owns
+               * the horizontal overflow, and a sticky child of a horizontally
+               * scrolling box slides away sideways instead of staying put. So
+               * the frame moves out and the `<pre>` keeps its one job.
+               *
+               * The label is the fence's own info string, verbatim. Uppercased
+               * by `text-transform`, which is typography; mapping `py` onto
+               * "Python" would be naming, and §18.2 and §18.10 both forbid this
+               * client inventing a set the kernel did not use. A fence with no
+               * info string draws no label rather than an invented one.
+               */
+              <div className="codeblock" key={index}>
+                <div className="codeblock__head">
+                  <span className="codeblock__lang">{block.language ?? ''}</span>
+                  <CopyKey text={block.body} />
+                </div>
+                <pre className="agent__block" data-language={block.language}>
+                  {block.body}
+                </pre>
+              </div>
             );
           case 'heading':
             return (
