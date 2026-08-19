@@ -48,16 +48,35 @@ describe('where the client points', () => {
     expect(urlOf(config, '/api/v1/sessions')).toBe('https://bot-api.example/api/v1/sessions');
   });
 
-  it('says so when there is no fetch anywhere to use', () => {
-    // Better than a TypeError from inside the first request, which reads as a
-    // bug in the SDK rather than as a missing argument. Driven by taking the
-    // global away, because that — not an explicit `undefined` — is the case:
-    // an older runtime, or a bundle running somewhere without one.
+  it('says so when there is no fetch anywhere to use', async () => {
+    // Better than a bare TypeError from inside the request, which reads as a
+    // bug in the SDK rather than as a missing argument.
     const real = globalThis.fetch;
     try {
       (globalThis as { fetch?: unknown }).fetch = undefined;
-      expect(() => resolveConfig()).toThrow(TypeError);
-      expect(() => resolveConfig()).toThrow(/pass one as .fetch./);
+      await expect(request(resolveConfig(), '/x')).rejects.toThrow(/pass one as .fetch./);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('reads the platform fetch when it is called, not when it is configured', async () => {
+    // A client is usually built at module scope. Captured at construction, a
+    // `fetch` installed afterwards — a retry wrapper, a tracing shim, a test
+    // stub — was silently ignored for the life of the process.
+    const config = resolveConfig();
+    const real = globalThis.fetch;
+    try {
+      const later = vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: 1 }),
+        } as Response),
+      );
+      globalThis.fetch = later as unknown as typeof fetch;
+      await expect(request(config, '/x')).resolves.toEqual({ ok: 1 });
+      expect(later).toHaveBeenCalled();
     } finally {
       globalThis.fetch = real;
     }
