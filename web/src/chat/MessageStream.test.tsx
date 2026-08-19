@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { resizeObserved } from '../test/setup';
 import { MessageStream } from './MessageStream';
 import { AgentContent, blocksOf } from './AgentContent';
+import { summaryOf } from './Thinking';
 import { EMPTY, fold, reduce, type Conversation, type Entry } from './conversation';
 import { AguiConnection, MockSession, toEvent, transcriptNamed, type AguiEvent } from '../agui';
 
@@ -384,9 +385,15 @@ describe('what the agent is working through, §18.8', () => {
     );
 
     const key = screen.getByRole('button', { name: /not kept after this turn/i });
-    expect(screen.queryByText('checking src/')).toBeNull();
+    /*
+     * The row shows the newest line while it is shut — that is its reason to
+     * exist, since "it is doing something" is what a spinner says and this
+     * says what. The body is what stays closed.
+     */
+    expect(key.textContent).toContain('checking src/');
+    expect(document.querySelector('.thinking__body')).toBeNull();
     await user.click(key);
-    expect(screen.getByText('checking src/')).toBeInTheDocument();
+    expect(document.querySelector('.thinking__body')?.textContent).toBe('checking src/');
   });
 
   it('draws nothing at all when there is no reasoning', () => {
@@ -892,5 +899,25 @@ describe('following the newest turn', () => {
     const control = screen.getByRole('button', { name: /newer/i });
     expect(control.getAttribute('aria-label')).toMatch(/go to the newest/i);
     expect(control.textContent).toBe('');
+  });
+});
+
+describe('the reasoning summary', () => {
+  it('shows the newest line, which is what the agent is on now', () => {
+    // A row that showed the first line would say what the agent set out to
+    // do and keep saying it for the whole turn, which is a spinner with
+    // words on it.
+    expect(summaryOf('first thought\nsecond thought\nthird thought')).toBe('third thought');
+  });
+
+  it('ignores the blank lines a stream leaves behind', () => {
+    // Reasoning arrives a delta at a time and routinely ends mid-newline, so
+    // the last line is empty about as often as not.
+    expect(summaryOf('reading the config\n\n')).toBe('reading the config');
+  });
+
+  it('says nothing rather than something wrong when there is nothing yet', () => {
+    expect(summaryOf('')).toBe('');
+    expect(summaryOf('\n  \n')).toBe('');
   });
 });
