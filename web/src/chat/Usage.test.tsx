@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Usage } from './Usage';
+import { Usage, formatTokens } from './Usage';
 import { fold } from './conversation';
 import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
 
@@ -31,7 +31,7 @@ describe('a session that reports usage', () => {
     render(<Usage granted usage={conversation.usage} />);
 
     // The last figure the session reported, not the first.
-    expect(screen.getByText('2,310 tokens')).toBeInTheDocument();
+    expect(screen.getByText('2.3K tokens')).toBeInTheDocument();
     expect(screen.getByText('0.019')).toBeInTheDocument();
   });
 
@@ -91,10 +91,44 @@ describe('leaving the plane', () => {
     const { rerender, container } = render(
       <Usage granted usage={{ tokens: 4820, cost: '0.041' }} />,
     );
-    expect(container.textContent).toContain('4,820');
+    expect(container.textContent).toContain('4.8K');
 
     rerender(<Usage granted={false} usage={{ tokens: 4820, cost: '0.041' }} />);
-    expect(container.textContent).not.toContain('4,820');
+    expect(container.textContent).not.toContain('4.8K');
     expect(screen.getByText(/not reported for this session/i)).toBeInTheDocument();
+  });
+});
+
+describe('the token figure', () => {
+  it('prints a small count in full, because it is readable', () => {
+    expect(formatTokens(0)).toBe('0');
+    expect(formatTokens(999)).toBe('999');
+  });
+
+  it('abbreviates past a thousand, keeping one decimal where it matters', () => {
+    /*
+     * The question being answered is "how much of this have I spent", and
+     * 128K answers it where 128,431 does not. The decimal survives under a
+     * hundred thousand because the difference between 1.2K and 1.9K is worth
+     * seeing, and stops after it because 128K to 129K is not.
+     */
+    expect(formatTokens(1000)).toBe('1.0K');
+    expect(formatTokens(1240)).toBe('1.2K');
+    expect(formatTokens(99_900)).toBe('99.9K');
+    expect(formatTokens(128_431)).toBe('128K');
+  });
+
+  it('groups the digits it does print', () => {
+    // A six-figure K value is still six figures to read.
+    expect(formatTokens(250_000)).toBe('250K');
+    expect(formatTokens(2_400_000)).toBe('2.4M');
+  });
+
+  it('never rounds a real count to nothing', () => {
+    // A session that has spent something must never read as having spent
+    // zero — §18.5's rule that an absence is a fact, applied to the figure.
+    for (const tokens of [1, 12, 999, 1000, 1_000_000]) {
+      expect(formatTokens(tokens)).not.toBe('0');
+    }
   });
 });
