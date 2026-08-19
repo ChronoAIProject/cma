@@ -145,6 +145,14 @@ pub struct AgentOptions {
     pub permission: PermissionMode,
     #[serde(default)]
     pub credential: CredentialMode,
+    /// Whether a session's tool bodies — the arguments and results a tool call
+    /// carries — are recorded in its durable log.
+    ///
+    /// Off by default, and deliberately: a tool's output can contain a value
+    /// the session was handed, so recording it is a choice the owner makes at
+    /// creation rather than something they get by omission.
+    #[serde(default)]
+    pub record_tool_bodies: bool,
 }
 
 #[cfg(test)]
@@ -202,6 +210,7 @@ mod tests {
             reasoning_effort: ReasoningEffort::High,
             permission: PermissionMode::Unrestricted,
             credential: CredentialMode::Own,
+            record_tool_bodies: true,
         };
         let json = serde_json::to_string(&o).expect("serialises");
         let back: AgentOptions = serde_json::from_str(&json).expect("deserialises");

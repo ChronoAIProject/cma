@@ -61,6 +61,11 @@ pub(crate) struct SessionEntry {
     /// Owner-delegated credential last handed to the runtime. Held so a refresh
     /// can be pushed without the caller tracking which sessions exist.
     pub(crate) subject_credential: Option<String>,
+    /// The values the session was handed as environment, kept so a tool body
+    /// can be redacted of them before it is written. Values only: the core
+    /// needs to replace an exact value wherever a tool echoes one, and the key
+    /// is not what leaks.
+    pub(crate) environment_values: Vec<String>,
     pub(crate) events: Vec<Event>,
     pub(crate) screen: Arc<Mutex<Box<dyn ScreenModel>>>,
     pub(crate) runtime: Option<RuntimeHandle>,
@@ -335,6 +340,7 @@ impl SessionService {
             reasoning_effort: agent.reasoning_effort,
             permission: agent.permission,
             credential: agent.credential,
+            record_tool_bodies: agent.record_tool_bodies,
         };
 
         // Resolved before the record is written: a profile naming a kernel this

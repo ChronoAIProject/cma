@@ -91,6 +91,8 @@ struct AgentDoc {
     #[serde(default)]
     credential: CredentialMode,
     #[serde(default)]
+    record_tool_bodies: bool,
+    #[serde(default)]
     skills: Vec<String>,
 }
 
@@ -127,6 +129,7 @@ fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
             reasoning_effort: p.agent.reasoning_effort,
             permission: p.agent.permission,
             credential: p.agent.credential,
+            record_tool_bodies: p.agent.record_tool_bodies,
             skills: p.agent.skills.iter().map(|s| s.0.clone()).collect(),
         }),
         created_at: p.created_at.clone(),
@@ -164,6 +167,7 @@ fn from_doc(d: ProfileDoc) -> EnvironmentProfile {
                 reasoning_effort: a.reasoning_effort,
                 permission: a.permission,
                 credential: a.credential,
+                record_tool_bodies: a.record_tool_bodies,
                 skills: a.skills.into_iter().map(SkillId::new).collect(),
             },
             None => AgentConfiguration {
