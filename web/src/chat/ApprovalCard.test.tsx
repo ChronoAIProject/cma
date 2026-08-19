@@ -70,10 +70,36 @@ describe('the card', () => {
 
   it('carries the kernel wording verbatim', () => {
     // Rewording it into a category loses the one detail the decision turns on.
-    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
-    expect(screen.getByText('Run `rm -rf build/`?')).toBeInTheDocument();
+    // Every word survives; only the backticks become a frame around the
+    // command, which is §18.3's "a command inside it takes inline code".
+    const { container } = render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
+    const question = container.querySelector('.approval__question');
+    expect(question?.textContent).toBe('Run rm -rf build/?');
     // The reason rides the eyebrow — approval · <the kernel's own reason>.
     expect(screen.getByText(/chrono:command_execution/)).toBeInTheDocument();
+  });
+
+  it('draws the command as code rather than as punctuation', () => {
+    // §18.3 requires it, and this is the one sentence in the product where the
+    // exact command is the whole decision. It was rendering its backticks.
+    const { container } = render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
+    const code = container.querySelector('.approval__question code');
+    expect(code?.textContent).toBe('rm -rf build/');
+  });
+
+  it('says when the question was asked, and stays quiet when it cannot', () => {
+    // §18.3 requires the time in the eyebrow. On a session picked up later it
+    // is the difference between "the agent is waiting on me" and "the agent
+    // has been waiting since this morning".
+    const asked = { ...THREE_ANSWERS, askedAt: '2026-08-19T09:14:00Z' };
+    const { container } = render(<ApprovalCard interrupt={asked} onAnswer={vi.fn()} />);
+    expect(container.querySelector('.approval__asked')?.textContent).toMatch(/\d{1,2}[:.]\d{2}/);
+
+    // A log written before timestamps draws no time rather than a wrong one.
+    const { container: without } = render(
+      <ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />,
+    );
+    expect(without.querySelector('.approval__asked')).toBeNull();
   });
 
   it('spends the surface primary key on the affirmative answer', () => {
