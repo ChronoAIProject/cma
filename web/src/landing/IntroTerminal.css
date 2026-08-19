@@ -46,10 +46,15 @@
   text-wrap: balance;
 }
 
+.intro__tag {
+  flex: none;
+}
+
 .intro__lede {
   max-width: 30rem;
   color: var(--ink-2);
-  font-size: var(--text-subject);
+  /* §15's own step: the lede sits four above the interface body. */
+  font-size: calc(var(--text-body) + 4px);
   line-height: var(--leading-ui);
   text-wrap: pretty;
 }
@@ -86,11 +91,13 @@
   min-height: 0;
   gap: var(--space-1);
   padding: var(--space-6);
+  padding-top: 0;
   overflow-x: auto;
   overflow-y: auto;
-  background: var(--surface);
+  /* §9: the viewport sits on the sunken ground inside the card radius. */
+  background: var(--sunken);
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   /*
    * Not `text` across the whole frame. Clicking anywhere still focuses the
    * prompt, but an I-beam over the transcript and over the prompt's own label
@@ -98,6 +105,24 @@
    * sitting before the prompt.
    */
   cursor: default;
+}
+
+/*
+ * §15: the panel's 40px chrome strip. Height set on the strip (§5), sticky so
+ * the panel still reads as a panel once its scrollback grows.
+ */
+.intro__chrome {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  align-items: center;
+  height: var(--band-foot);
+  margin: 0 calc(-1 * var(--space-6));
+  padding-inline: var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
 }
 
 .intro__out {
