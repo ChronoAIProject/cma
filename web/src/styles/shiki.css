@@ -1,0 +1,44 @@
+/*
+ * Vendored from deepseek-harness (deepseek-ai/deepseek-harness),
+ * packages/client/ui-theme/src/styles/shiki.css, at the commit current on
+ * 2026-08-20. Copied under its MIT licence, whose full text and copyright
+ * notice are in ./vendor/LICENSE-deepseek-harness.txt as that licence
+ * requires.
+ *
+ * Kept verbatim on purpose — `docs/Web_Style.md` §7 says why. Restyling a
+ * palette chosen against a hundred languages, or a scrollbar sheet whose
+ * selectors are load-bearing, produces a worse result than adopting it whole.
+ * Changes belong upstream, or in a sheet of ours that overrides this one.
+ */
+
+/* Syntax-highlight token palette: the values behind shiki's css-variables
+   theme (--shiki-* custom properties emitted by the ui-primitives CodeBlock).
+   Light values on :root, dark overrides on the body attribute — the same
+   cascade as every other token sheet. Background/foreground deliberately
+   alias the markdown code-block tokens so highlighted and plain blocks agree. */
+
+:root {
+  --shiki-foreground: var(--dsw-alias-label-primary);
+  --shiki-background: var(--dsw-alias-markdown-code-block);
+  --shiki-token-constant: #1c7ed6;
+  --shiki-token-string: #2f9e44;
+  --shiki-token-comment: #868e96;
+  --shiki-token-keyword: #d6336c;
+  --shiki-token-parameter: #e8590c;
+  --shiki-token-function: #6741d9;
+  --shiki-token-string-expression: #2b8a3e;
+  --shiki-token-punctuation: #495057;
+  --shiki-token-link: #1971c2;
+}
+
+body[data-ds-dark-theme] {
+  --shiki-token-constant: #4dabf7;
+  --shiki-token-string: #69db7c;
+  --shiki-token-comment: #adb5bd;
+  --shiki-token-keyword: #faa2c1;
+  --shiki-token-parameter: #ffa94d;
+  --shiki-token-function: #b197fc;
+  --shiki-token-string-expression: #8ce99a;
+  --shiki-token-punctuation: #ced4da;
+  --shiki-token-link: #74c0fc;
+}

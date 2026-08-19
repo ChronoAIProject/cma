@@ -111,22 +111,3 @@ button {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
-
-/*
- * The two platform faces, vendored under the SIL Open Font License alongside
- * each face's licence text in src/assets/fonts/.
- *
- * Self-hosted rather than fetched from a third party: a font request to
- * someone else's host is a request that can be logged, blocked, or slow.
- *
- * The variable cut of each, rather than a file per weight. §4 uses 400, 500
- * and 600, and three static files would cost more bytes than the whole
- * weight axis does in one.
- */
-@font-face {
-  font-family: 'JetBrains Mono';
-  src: url('../assets/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
-  font-weight: 100 800;
-  font-style: normal;
-  font-display: swap;
-}
