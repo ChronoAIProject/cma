@@ -768,3 +768,86 @@ async fn a_terminal_session_nobody_moves_is_untouched() {
     assert!(settled.rotated_at.is_none());
     assert!(settled.capabilities.terminal && !settled.capabilities.conversation);
 }
+
+#[tokio::test]
+async fn a_rotation_whose_replacement_cannot_start_does_not_end_the_session() {
+    // CLAUDE.md §5: no deployment may interrupt a session its owner has not
+    // stopped, and losing one is as severe as losing the data. A rotation is
+    // caused by a deployment — moving the runtime image makes every live
+    // session due for one — so its replacement failing is a fact about a
+    // provider at a moment, not about the session.
+    //
+    // Four sessions were lost exactly this way during the v0.3.0 deploy. Their
+    // logs read "moving this session to an updated runtime; it will come back
+    // where it left off", then "the runtime did not become usable within
+    // 600s", then nothing: terminated and retired. Each promised in its own
+    // record that it would come back, and did not come back at all.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    drop(old);
+
+    // The provider stops giving out runtimes, which is what a burst of
+    // rotations does to one, and the deployment happens anyway.
+    let refusing = Arc::new(FakeAdapter {
+        refuse_provision: true,
+        ..FakeAdapter::default()
+    });
+    let new = service_on_version(Arc::clone(&store), Arc::clone(&refusing), "runtime:2");
+    new.reconcile().await;
+    let settled = await_settled(&new, &alice, &created.id).await;
+
+    assert_ne!(
+        settled.status,
+        SessionStatus::Terminated,
+        "a rotation its owner did not ask for must not end their session"
+    );
+    assert_ne!(
+        settled.recovery_state,
+        crate::session::RecoveryState::Retired,
+        "and it must stay recoverable, or nothing will ever bring it back"
+    );
+    assert!(
+        new.list_sessions(&alice)
+            .await
+            .iter()
+            .any(|s| s.id == created.id),
+        "it keeps its place in its owner's list"
+    );
+}
+
+#[tokio::test]
+async fn a_rotation_refused_for_good_still_ends_the_session() {
+    // Keeping a session only makes sense while another attempt could go
+    // differently. A kernel that no longer offers what this session *is* will
+    // not start offering it, so a session kept against that answer would rest
+    // forever, be retried forever by the sweep, and tell its owner it was
+    // coming back when it was not.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    drop(old);
+
+    // The same kernel, rebuilt without the ability this session was granted.
+    let lesser = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities::default(),
+        ..FakeAdapter::default()
+    });
+    let new = service_on_version(Arc::clone(&store), Arc::clone(&lesser), "runtime:2");
+    new.reconcile().await;
+    let settled = await_settled(&new, &alice, &created.id).await;
+
+    assert_eq!(
+        settled.status,
+        SessionStatus::Terminated,
+        "an answer that cannot change is told, not retried"
+    );
+}

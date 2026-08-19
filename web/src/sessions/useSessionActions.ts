@@ -9,6 +9,21 @@ import {
 import type { Session, SessionLifecycle, SessionPlane } from './types';
 
 /**
+ * A failed action, as §12 reports it: what failed, what was not changed, and
+ * the API's own code in identifier style. One at a time — the card above the
+ * surface describes the most recent attempt, and every action clears it as
+ * it starts.
+ */
+export interface FailureNotice {
+  /** What failed, ending with the API's own words where it gave any. */
+  readonly failed: string;
+  /** What was not changed by the failure. */
+  readonly unchanged?: string;
+  /** The API's own code, in identifier style. */
+  readonly code?: string;
+}
+
+/**
  * The geometry a session is asked for before a terminal has measured itself.
  *
  * A session has to be created with some size, and the surface that will render
@@ -38,10 +53,11 @@ interface SessionActionHandles {
   readonly setSessions: React.Dispatch<React.SetStateAction<readonly Session[]>>;
   readonly setActiveId: React.Dispatch<React.SetStateAction<string | null>>;
   readonly setOpeningForId: React.Dispatch<React.SetStateAction<string | null>>;
-  readonly setNotice: (notice: string | null) => void;
+  readonly setNotice: (notice: FailureNotice | null) => void;
   readonly setActing: (acting: boolean) => void;
   readonly select: (id: string) => void;
-  readonly report: (cause: unknown) => void;
+  /** Report a failed attempt: the cause, what failed, what was not changed. */
+  readonly report: (cause: unknown, failed: string, unchanged: string) => void;
   readonly applyLifecycle: (id: string, lifecycle: SessionLifecycle) => void;
   readonly setFocusHistory: React.Dispatch<React.SetStateAction<readonly string[]>>;
 }
@@ -83,7 +99,7 @@ export function useSessionActions({
         select(session.id);
         setOpeningForId((prev) => prev ?? session.id);
       } catch (cause) {
-        report(cause);
+        report(cause, 'Starting a session failed.', 'No session was created.');
       }
     },
     [report, select, setNotice, setOpeningForId, setSessions],
@@ -104,7 +120,7 @@ export function useSessionActions({
         await stopSession(id);
         applyLifecycle(id, 'idle');
       } catch (cause) {
-        report(cause);
+        report(cause, 'Ending the session failed.', 'The session keeps running.');
       } finally {
         setActing(false);
       }
@@ -123,7 +139,7 @@ export function useSessionActions({
         // progress of a revive is the progress of a start, because it is one.
         setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...revived } : s)));
       } catch (cause) {
-        report(cause);
+        report(cause, 'Reviving the session failed.', 'The session stays stopped.');
       } finally {
         setActing(false);
       }
@@ -151,7 +167,7 @@ export function useSessionActions({
         const moving = await changePlane(id, to);
         setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...moving } : s)));
       } catch (cause) {
-        report(cause);
+        report(cause, 'Moving the session failed.', 'The session stays on its plane.');
       } finally {
         setActing(false);
       }
@@ -188,7 +204,7 @@ export function useSessionActions({
           }
         }
       } catch (cause) {
-        report(cause);
+        report(cause, 'Deleting the session failed.', 'The session and its history are untouched.');
       } finally {
         setActing(false);
       }

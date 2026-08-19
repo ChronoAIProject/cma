@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SessionRail } from './sessions/SessionRail';
-import { SessionDetails } from './sessions/SessionDetails';
+import { SessionDrawer } from './sessions/SessionDrawer';
 import { PageFrame } from './shell/PageFrame';
 import { ViewSwitch } from './shell/ViewSwitch';
 import type { SortOrder } from './sessions/sessionTime';
@@ -22,11 +22,12 @@ import { loadCollapsed, saveCollapsed } from './shell/collapse';
 import { canvasFits, railIsColumn, useWidth } from './shell/widths';
 import type { Arrangement } from './sessions/arrangement';
 import { ProfileMenu } from './profile/ProfileMenu';
+import { CommandBar } from './shell/CommandBar';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
 import { ApiError, followSession, listKernels, listSessions } from './api/client';
 import { abilitiesFor, listable } from './sessions/availability';
-import { useSessionActions } from './sessions/useSessionActions';
+import { useSessionActions, type FailureNotice } from './sessions/useSessionActions';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
 import { createRestProfileStore } from './environment/rest';
 import type { EnvironmentProfile, EnvironmentProfileStore } from './environment/types';
@@ -51,8 +52,8 @@ import './Console.css';
  * remember.
  *
  * The two arrangements are two arrangements of one state. `activeId` means the
- * session the keyboard is talking to in both of them — in tabs that is the
- * one visible terminal, on the canvas it is the focused node — so switching
+ * session the keyboard is talking to in both of them — in the list that is
+ * the one visible terminal, on the canvas it is the focused node — so switching
  * arrangement never asks anyone where they were.
  */
 
@@ -83,7 +84,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
   const [sessions, setSessions] = useState<readonly Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<FailureNotice | null>(null);
   /*
    * Bumped when the terminal palette changes. xterm reads its theme when the
    * terminal is constructed, so remounting is what applies a new one — and
@@ -140,13 +141,41 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // tabs shows that session's progress rather than another's.
   const [stages, setStages] = useState<Record<string, Stage>>({});
   const [order, setOrder] = useState<SortOrder>('newest');
-  // Open by default: someone arriving wants to know what they are looking at,
-  // and the panel is the only place that says.
   /*
-   * Open by default: somebody arriving wants to know what they are looking at.
-   * Validated on read (§7), because web storage is untrusted input.
+   * The details drawer — §12: closed by default, opened from the header's
+   * Details key. Not persisted: it is reference material opened on demand,
+   * not a layout choice to carry across visits.
    */
-  const [detailsOpen, setDetailsOpen] = useState(() => !loadCollapsed('sheet'));
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  /*
+   * Which session is parked on an answerable approval — §18.3: it says so in
+   * the rail, the header and at the composer. Only the conversation surface
+   * folds the log, so it reports the fact up and this is where it lands.
+   */
+  const [waitingId, setWaitingId] = useState<string | null>(null);
+  /*
+   * The command bar plate — §6. Opened from the bar's trigger and by ⌘K;
+   * closing returns focus to whatever opened it via the plate machinery.
+   */
+  const [commandOpen, setCommandOpen] = useState(false);
+
+  /*
+   * §6: ⌘K opens and closes the command bar. On the document, because the
+   * shortcut has to work wherever the caret is — that is the whole point of
+   * having one.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
   // Validated on read: web storage is untrusted input, and an unrecognised
   // value reaching the layout would be a rail nobody can draw (§7).
   const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
@@ -178,8 +207,21 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     );
   }, []);
 
-  const report = useCallback((cause: unknown) => {
-    setNotice(cause instanceof ApiError ? cause.message : `something went wrong: ${String(cause)}`);
+  /*
+   * §12: the card carries what failed — ending with the API's own words
+   * where it gave any — what was not changed, and the API's code in
+   * identifier style. A client-side failure has no code to show.
+   */
+  const report = useCallback((cause: unknown, failed: string, unchanged: string) => {
+    if (cause instanceof ApiError) {
+      setNotice({
+        failed: `${failed} ${cause.message}`,
+        unchanged,
+        code: cause.status > 0 ? `HTTP ${String(cause.status)}` : undefined,
+      });
+      return;
+    }
+    setNotice({ failed: `${failed} ${String(cause)}`, unchanged });
   }, []);
 
   /** Replace a session's lifecycle wherever it is listed. */
@@ -208,7 +250,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         }
       } catch (cause) {
         if (!cancelled) {
-          report(cause);
+          report(cause, 'Loading your sessions failed.', 'Nothing was changed.');
         }
       } finally {
         if (!cancelled) {
@@ -260,7 +302,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         }
       },
       (message) => {
-        setNotice(message);
+        setNotice({ failed: message });
       },
       (stage) => {
         setStages((prev) => ({ ...prev, [id]: stage }));
@@ -318,7 +360,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, []);
 
   /*
-   * §16: between 60rem and 75rem "the rail arrives collapsed to its 48px
+   * §16: between 60rem and 75rem "the rail arrives collapsed to its 56px
    * strip". Arrives, not is locked — crossing the boundary collapses it and
    * the handle still opens it, because somebody working at 70rem who wants
    * their list should not have to widen the window to see it.
@@ -345,7 +387,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * on the canvas when the window narrows goes back to tabs rather than being
    * drawn at a size it cannot be read at.
    */
-  const arrangementShown: Arrangement = canvasFits(width) ? arrangement : 'tabs';
+  const arrangementShown: Arrangement = canvasFits(width) ? arrangement : 'list';
   const compact = width === 'compact';
 
   /*
@@ -396,6 +438,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * control plane returned: an ended session leaves the list, and a band
    * naming a session nobody can see would send its owner looking for it.
    */
+  /*
+   * Counted from what is actually drawn rather than from everything the
+   * control plane returned, for the same reason as `showing` below.
+   */
+  const liveCount = useMemo(
+    () => listed.filter((session) => abilitiesFor(session).interactive).length,
+    [listed],
+  );
+
   const showing = useMemo(() => {
     if (view === 'operations') {
       return 'Operations';
@@ -406,27 +457,18 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     if (listed.length === 0) {
       return 'No sessions';
     }
-    const running = listed.filter((session) => abilitiesFor(session).interactive).length;
     const count = `${String(listed.length)} session${listed.length === 1 ? '' : 's'}`;
-    return `${count} · ${String(running)} live`;
-  }, [view, loading, listed]);
+    return `${count} · ${String(liveCount)} live`;
+  }, [view, loading, listed, liveCount]);
 
   return (
     <PageFrame
       showing={showing}
       note={note}
-      /*
-       * Operations has no rail, so the band has no leading column to align its
-       * first rule with. Passing the sessions view's width there would draw a
-       * vertical line under nothing.
-       */
-      leadingColumn={
-        view === 'operations'
-          ? undefined
-          : railCollapsed
-            ? 'var(--rail-collapsed)'
-            : 'var(--rail-width)'
-      }
+      live={loading ? undefined : liveCount}
+      onCommand={() => {
+        setCommandOpen(true);
+      }}
       views={compact ? undefined : viewSwitch}
       account={
         <ProfileMenu
@@ -473,6 +515,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               collapsed={railCollapsed}
               onToggleCollapsed={toggleRail}
               stages={stages}
+              waitingId={waitingId}
             />
           ) : drawerOpen ? (
             <>
@@ -492,20 +535,26 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               <div className="console__drawer">
                 {/*
                  * §16: below 30rem the app bar gives the switch and the
-                 * command field to the drawer. They are placed here rather
-                 * than dropped, because a view somebody can no longer reach is
-                 * worse than one they have to open a drawer for.
+                 * command trigger to the drawer — a view somebody can no
+                 * longer reach is worse than one they have to open a drawer
+                 * for. Both are real controls here, never dead fields (§6).
                  */}
                 {compact ? (
                   <div className="band console__drawerchrome">
                     {viewSwitch}
-                    <input
-                      className="field__control"
-                      type="text"
-                      disabled
-                      aria-label="Command"
-                      placeholder="Command — not yet available"
-                    />
+                    <button
+                      type="button"
+                      className="topbar__trigger"
+                      onClick={() => {
+                        setDrawerOpen(false);
+                        setCommandOpen(true);
+                      }}
+                    >
+                      <span className="topbar__triggerlabel">
+                        Find a session, or type a command
+                      </span>
+                      <kbd className="topbar__triggerkey">⌘K</kbd>
+                    </button>
                   </div>
                 ) : null}
                 <SessionRail
@@ -535,7 +584,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                   /*
                    * Always expanded in the drawer. Collapsing is what a column
                    * does to give the terminal its width back; a drawer has
-                   * already given all of it, so a 48px strip inside one is a
+                   * already given all of it, so a 56px strip inside one is a
                    * drawer holding nothing.
                    */
                   collapsed={false}
@@ -543,6 +592,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                     setDrawerOpen(false);
                   }}
                   stages={stages}
+                  waitingId={waitingId}
                 />
               </div>
             </>
@@ -551,6 +601,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           <main className="console__surface">
             <SessionHeader
               session={active}
+              waiting={active !== null && active.id === waitingId}
               /*
                * §16 takes the rail out of the layout below 60rem, so the way
                * to the list goes here, at the head of the column the drawer
@@ -594,7 +645,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                     }}
                     onRevive={() => void reviveSessionById(active.id)}
                     onStop={() => void endSession(active.id)}
-                    onDelete={() => void removeSession(active.id)}
+                    onDetails={() => {
+                      setDetailsOpen((open) => !open);
+                    }}
+                    detailsOpen={detailsOpen}
                     kernels={kernels}
                     onChangePlane={(to) => void changeSessionPlane(active.id, to)}
                   />
@@ -616,8 +670,25 @@ export function Console({ user, onSignOut }: ConsoleProps) {
              * is the terminal, and it does.
              */}
             {notice !== null ? (
-              <div className="band console__notice" role="alert">
-                <span className="band__value console__noticetext">{notice}</span>
+              <div className="notice notice--fail console__notice" role="alert">
+                <div className="console__noticebody">
+                  <p className="notice__title">{notice.failed}</p>
+                  {notice.unchanged === undefined ? null : (
+                    <p className="notice__detail">{notice.unchanged}</p>
+                  )}
+                </div>
+                {notice.code === undefined ? null : (
+                  <span className="console__noticecode">{notice.code}</span>
+                )}
+                <button
+                  type="button"
+                  className="button button--sm console__noticedismiss"
+                  onClick={() => {
+                    setNotice(null);
+                  }}
+                >
+                  Dismiss
+                </button>
               </div>
             ) : null}
 
@@ -637,6 +708,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 focusedId={activeId}
                 focusHistory={focusHistory}
                 onFocus={select}
+                onOpenToReply={(id) => {
+                  /*
+                   * §13: the recap hands the reply to the surface that can
+                   * hold a reading column — the list arrangement, with this
+                   * session selected.
+                   */
+                  select(id);
+                  changeArrangement('list');
+                }}
               />
             ) : active === null ? (
               <p className="console__empty">No session open. Start one from the left.</p>
@@ -659,7 +739,13 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                * does. There is no toggle here; moving a session between planes
                * is a deliberate act with a cost, and it is #128.
                */
-              <ConversationSurface session={active} capabilities={toCapabilities(active)} />
+              <ConversationSurface
+                session={active}
+                capabilities={toCapabilities(active)}
+                onWaitingChange={(waiting) => {
+                  setWaitingId(waiting ? active.id : null);
+                }}
+              />
             ) : driver === null ? (
               <p className="console__empty">Attaching…</p>
             ) : (
@@ -676,30 +762,51 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 interactive={abilitiesFor(active).interactive}
               />
             )}
-
-            {/*
-             * The sheet sits beneath the terminal, inside the same column and
-             * after it, so opening and closing it changes the terminal's height
-             * and nothing else. Rendered as a sibling rather than around it,
-             * because a component that wrapped the terminal would remount it on
-             * every toggle and take the scrollback with it.
-             */}
-            {active !== null ? (
-              <SessionDetails
-                session={active}
-                open={detailsOpen}
-                ending={endings[active.id]}
-                onToggle={() => {
-                  setDetailsOpen((v) => {
-                    saveCollapsed('sheet', v);
-                    return !v;
-                  });
-                }}
-              />
-            ) : null}
           </main>
+
+          {/*
+           * The details drawer — §12: 360px on the right, closed by default,
+           * opened from the header's Details key. A sibling of the surface
+           * rather than a wrapper around it, because a component that wrapped
+           * the terminal would remount it on every toggle and take the
+           * scrollback with it; opening the drawer changes the surface's
+           * width and nothing else.
+           */}
+          {active !== null && detailsOpen ? (
+            <SessionDrawer
+              session={active}
+              ending={endings[active.id]}
+              busy={acting}
+              onClose={() => {
+                setDetailsOpen(false);
+              }}
+              onStop={() => void endSession(active.id)}
+              onDelete={() => void removeSession(active.id)}
+            />
+          ) : null}
         </div>
       )}
+
+      {commandOpen ? (
+        <CommandBar
+          sessions={listed}
+          canvasAvailable={canvasFits(width)}
+          onClose={() => {
+            setCommandOpen(false);
+          }}
+          onSelectSession={(id) => {
+            setView('sessions');
+            select(id);
+          }}
+          onArrange={(next) => {
+            setView('sessions');
+            changeArrangement(next);
+          }}
+          onNewSession={() => {
+            setChoosing(true);
+          }}
+        />
+      ) : null}
 
       <NewSessionDialog
         open={choosing}

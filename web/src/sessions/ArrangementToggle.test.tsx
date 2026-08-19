@@ -5,10 +5,10 @@ import { ArrangementToggle } from './ArrangementToggle';
 
 describe('ArrangementToggle', () => {
   it('offers both arrangements', () => {
-    render(<ArrangementToggle arrangement="tabs" onChange={vi.fn()} />);
+    render(<ArrangementToggle arrangement="list" onChange={vi.fn()} />);
 
     expect(screen.getByRole('group', { name: /arrangement/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tabs' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'List' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Canvas' })).toBeInTheDocument();
   });
 
@@ -16,13 +16,13 @@ describe('ArrangementToggle', () => {
     render(<ArrangementToggle arrangement="canvas" onChange={vi.fn()} />);
 
     expect(screen.getByRole('button', { name: 'Canvas' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Tabs' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('reports a change', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<ArrangementToggle arrangement="tabs" onChange={onChange} />);
+    render(<ArrangementToggle arrangement="list" onChange={onChange} />);
 
     await user.click(screen.getByRole('button', { name: 'Canvas' }));
 
@@ -30,21 +30,21 @@ describe('ArrangementToggle', () => {
   });
 
   it('still reports a press on the mode already showing', async () => {
-    // Idempotent rather than a toggle: pressing "Tabs" while in tabs mode must
+    // Idempotent rather than a toggle: pressing "List" while in the list must
     // not flip to canvas.
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<ArrangementToggle arrangement="tabs" onChange={onChange} />);
+    render(<ArrangementToggle arrangement="list" onChange={onChange} />);
 
-    await user.click(screen.getByRole('button', { name: 'Tabs' }));
+    await user.click(screen.getByRole('button', { name: 'List' }));
 
-    expect(onChange).toHaveBeenCalledWith('tabs');
+    expect(onChange).toHaveBeenCalledWith('list');
   });
 
   it('is reachable by keyboard', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<ArrangementToggle arrangement="tabs" onChange={onChange} />);
+    render(<ArrangementToggle arrangement="list" onChange={onChange} />);
 
     await user.tab();
     await user.tab();

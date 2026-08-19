@@ -127,11 +127,11 @@ describe('the dialog shell', () => {
     expect(css.match(/max-width: \d+px/g)).toHaveLength(3);
   });
 
-  it('is a plate: it takes the card impression and never moves', () => {
-    // §3 lists a plate among the things that carry the 5px impression and
-    // among the things that do not press in on hover.
+  it('is a plate: it floats over the page and never moves', () => {
+    // §3: a thing floating over the page takes --lift-plate, and nothing in
+    // the interface moves on hover.
     const css = readFileSync(resolve(process.cwd(), 'src/ui/Dialog.css'), 'utf8');
-    expect(css).toMatch(/\.dialog\s*\{[^}]*box-shadow: var\(--press-card-rest\)/);
+    expect(css).toMatch(/\.dialog\s*\{[^}]*box-shadow: var\(--lift-plate\)/);
     expect(css).not.toMatch(/\.dialog[^_{]*:hover/);
     expect(css).not.toMatch(/\.dialog[\s\S]*?transform:/);
   });

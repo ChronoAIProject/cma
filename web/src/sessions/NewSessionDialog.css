@@ -1,0 +1,52 @@
+/*
+ * The new-session dialog's own pieces — docs/Web_Style.md §7.
+ *
+ * The plane choice is two labelled cards in a grid. The card shell is the
+ * shared .card vocabulary; what lives here is the choosing.
+ */
+
+.planecard {
+  gap: var(--space-1);
+  align-items: flex-start;
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.planecard:disabled {
+  cursor: not-allowed;
+  background: var(--inset);
+}
+
+.planecard:not(:disabled):hover {
+  background: var(--raised);
+  border-color: var(--rule-2);
+}
+
+.planecard:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Chosen is marked by the accent edge and by aria-checked — never colour alone. */
+.planecard--chosen {
+  border-color: var(--accent);
+}
+
+.planecard__name {
+  color: var(--ink);
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.planecard--chosen .planecard__name::after {
+  margin-left: var(--space-2);
+  color: var(--accent);
+  content: '✓';
+}
+
+.planecard__what {
+  color: var(--ink-2);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
+}
