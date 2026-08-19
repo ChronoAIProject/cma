@@ -89,7 +89,17 @@ impl InterfaceProfile for RestInterface {
 }
 
 /// Request body for creating a session.
+///
+/// Unknown fields are refused rather than ignored. A caller who sends
+/// `{"kernel": "claude_code"}` — which `GET /api/v1/kernels` gives them every
+/// reason to try — was getting a session on a different runtime and a 201
+/// saying it had worked. Which runtime a session runs is decided by the
+/// environment profile it names, and a request that tries to decide it any
+/// other way has to be told so, at creation, by name. §9: a session refused by
+/// name is one somebody can plan around; one accepted and silently altered is
+/// not.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
     /// Initial terminal width.
     #[serde(default)]
@@ -344,13 +354,7 @@ impl IntoResponse for Problem {
         // client would do slightly differently and which breaks the moment the
         // wording is improved. The conversation projection already sends this
         // as its own field; this makes the two interfaces agree.
-        let mut body = serde_json::json!({
-            "type": format!("{PROBLEM_BASE}/{slug}"),
-            "title": slug.replace('-', " "),
-            "status": status.as_u16(),
-            "detail": rendered.to_string(),
-            "code": rendered.code(),
-        });
+        let mut body = problem_document(status, slug, &rendered.to_string(), rendered.code());
         if let CoreError::CapabilityUnsupported(name) = rendered {
             // Inserted rather than always present and usually null: a field
             // there on every failure invites a caller to branch on its
@@ -360,6 +364,95 @@ impl IntoResponse for Problem {
                 object.insert("capability".into(), serde_json::Value::String(name.clone()));
             }
         }
+        (status, Json(body)).into_response()
+    }
+}
+
+/// One RFC 9457 problem document, however the failure arose.
+///
+/// Shared so a request this interface could not read produces the same shape as
+/// one the core refused. A caller meeting two different error formats from one
+/// endpoint, depending on which half of their request was wrong, has to write
+/// two parsers to find out what happened.
+pub(crate) fn problem_document(
+    status: StatusCode,
+    slug: &str,
+    detail: &str,
+    code: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": format!("{PROBLEM_BASE}/{slug}"),
+        "title": slug.replace('-', " "),
+        "status": status.as_u16(),
+        "detail": detail,
+        "code": code,
+    })
+}
+
+/// Why a request did not succeed: the body could not be read, or the operation
+/// was refused.
+///
+/// Both halves of a request can be wrong, and until now only one of them
+/// answered in this API's own vocabulary. This lets a handler use `?` on a core
+/// failure while still rendering a bad body as a problem document.
+pub enum RequestFailure {
+    /// The body did not parse, or carried something this interface cannot take.
+    Body(BodyProblem),
+    /// The body was fine and the core would not do it.
+    Refused(Problem),
+}
+
+impl From<CoreError> for RequestFailure {
+    fn from(e: CoreError) -> Self {
+        Self::Refused(Problem(e))
+    }
+}
+
+impl From<BodyProblem> for RequestFailure {
+    fn from(e: BodyProblem) -> Self {
+        Self::Body(e)
+    }
+}
+
+impl IntoResponse for RequestFailure {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Body(e) => e.into_response(),
+            Self::Refused(e) => e.into_response(),
+        }
+    }
+}
+
+/// A request body this interface could not read, rendered like every other
+/// refusal.
+///
+/// Axum answers a bad body with its own plain text, which is the only place in
+/// this API that does not speak problem documents. Wrapping it keeps the shape
+/// and — the part worth the code — keeps axum's own status, which carries real
+/// information: a syntax error is 400, a wrong `Content-Type` is 415, and a
+/// body that parsed but could not be honoured is 422. Collapsing all three into
+/// one status would send somebody whose header is wrong to go and stare at
+/// their JSON.
+pub struct BodyProblem(pub(crate) axum::extract::rejection::JsonRejection);
+
+impl IntoResponse for BodyProblem {
+    fn into_response(self) -> Response {
+        use axum::extract::rejection::JsonRejection;
+        let status = self.0.status();
+        let slug = match &self.0 {
+            JsonRejection::JsonDataError(_) => "invalid-request",
+            JsonRejection::JsonSyntaxError(_) => "malformed-json",
+            JsonRejection::MissingJsonContentType(_) => "unsupported-media-type",
+            // Axum's rejection is non-exhaustive, so anything added later
+            // reads as a body we could not take rather than as a panic.
+            _ => "unreadable-request-body",
+        };
+        // Axum's own sentence. For the unknown-field case it carries serde's
+        // message, which names the field and lists what was expected — more
+        // than this could say by hand, and it stays correct when a field is
+        // added.
+        let detail = self.0.body_text();
+        let body = problem_document(status, slug, &detail, &slug.replace('-', "_"));
         (status, Json(body)).into_response()
     }
 }
@@ -496,8 +589,14 @@ async fn create(
     // Optional on purpose: a deployment with no delegation configured still
     // creates sessions, they simply cannot call out as the owner.
     credential: Option<axum::Extension<DelegatedCredential>>,
-    Json(body): Json<CreateSessionRequest>,
-) -> Result<(StatusCode, Json<SessionView>), Problem> {
+    // Taken as a `Result` so a body this interface cannot honour is rendered
+    // as the same problem document as every other refusal. Left to axum, a
+    // rejection returns its own plain body, and a caller would meet two
+    // different error shapes from one endpoint depending on which half of the
+    // request was wrong.
+    body: Result<Json<CreateSessionRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<(StatusCode, Json<SessionView>), RequestFailure> {
+    let Json(body) = body.map_err(BodyProblem)?;
     let geometry = match (body.cols, body.rows) {
         (Some(c), Some(r)) => Some(TerminalGeometry::new(c, r).map_err(CoreError::from)?),
         _ => None,
