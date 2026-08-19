@@ -19,6 +19,7 @@ fn logged(seq: u64, kind: EventKind) -> Event {
         session_id: SessionId("sesn_1".into()),
         seq,
         kind,
+        appended_at: String::new(),
     }
 }
 

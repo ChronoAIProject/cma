@@ -92,6 +92,14 @@
   text-transform: uppercase;
 }
 
+/* The time a finished call took, §18.2 — from the log, never estimated. */
+.toolcall__duration {
+  flex: none;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+}
+
 .toolcall[data-tone='failed'] .toolcall__status {
   color: var(--fail);
 }

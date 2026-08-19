@@ -393,6 +393,7 @@ impl SessionService {
                     session_id: id.clone(),
                     seq,
                     kind: EventKind::Progress { stage },
+                    appended_at: String::new(),
                 }],
             )
             .await
