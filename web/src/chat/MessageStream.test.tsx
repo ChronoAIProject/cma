@@ -744,3 +744,67 @@ describe('when the surface cannot hear the session', () => {
     expect(notice?.textContent).toMatch(/nothing has been lost/i);
   });
 });
+
+describe('what an agent wrote, beyond code and lists', () => {
+  /*
+   * §18.12. The renderer drew none of this: a link arrived as `[label](url)`,
+   * a table as a wall of pipes, every nesting level flattened to one, and a
+   * wrapped list of steps ran together into a paragraph.
+   */
+  const drawn = (markdown: string) => render(<AgentContent text={markdown} />).container;
+
+  it('draws a link, and decides nothing about where it points', () => {
+    const c = drawn('See [the release notes](https://example.com/r) first');
+    const link = c.querySelector('a.agent__link');
+    expect(link?.textContent).toBe('the release notes');
+    expect(link).toHaveAttribute('href', 'https://example.com/r');
+    // Untrusted by construction: this came from an agent running the owner's
+    // own code.
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('leaves a bare bracket alone', () => {
+    // Not everything in square brackets is a link, and rewriting prose that
+    // merely looks like one would corrupt what the agent wrote.
+    const c = drawn('The array is [1, 2, 3] here');
+    expect(c.querySelector('a')).toBeNull();
+    expect(c.textContent).toContain('[1, 2, 3]');
+  });
+
+  it('keeps a list nested where the agent nested it', () => {
+    // A plan with sub-steps flattened to one level is a different plan.
+    const c = drawn('- build\n  - install\n  - compile\n- ship');
+    const items = [...c.querySelectorAll('li')];
+    expect(items.map((li) => li.getAttribute('data-depth'))).toEqual([null, '1', '1', null]);
+  });
+
+  it('draws a table as a table', () => {
+    const c = drawn('| step | who |\n| --- | --- |\n| build | ci |\n| ship | you |');
+    expect(c.querySelectorAll('th')).toHaveLength(2);
+    expect(c.querySelectorAll('tbody tr')).toHaveLength(2);
+    // Scrolls inside its own frame rather than widening the reading column.
+    expect(c.querySelector('.agent__tablewrap')).not.toBeNull();
+  });
+
+  it('does not turn a sentence with pipes into a table', () => {
+    // Recognised only where a head is followed by its rule; without that
+    // check, prose containing pipes becomes a table.
+    const c = drawn('Run `a | b | c` to see it');
+    expect(c.querySelector('table')).toBeNull();
+  });
+
+  it('draws a blockquote with a rule and no ink of its own', () => {
+    // §18.1 forbids ink on agent content without exception. Drawing a quote
+    // fainter would be this surface deciding it matters less than the agent
+    // did.
+    const c = drawn('> the agent quoted this');
+    expect(c.querySelector('blockquote')?.textContent).toBe('the agent quoted this');
+  });
+
+  it('keeps a soft line break as a line break', () => {
+    // An agent that wrote its steps on separate lines meant them on separate
+    // lines; joining them rewrites the shape of the answer.
+    const c = drawn('first line\nsecond line');
+    expect(c.querySelector('.agent__paragraph')?.textContent).toBe('first line\nsecond line');
+  });
+});
