@@ -100,3 +100,16 @@ fn the_control_vocabulary_still_parses_from_its_tag() {
     assert!(matches!(signal, ControlFrame::Signal { .. }));
     assert!(serde_json::from_str::<ControlFrame>(r#"{"t":"nope"}"#).is_err());
 }
+
+#[test]
+fn a_switch_names_the_program_to_restart() {
+    // The command is the kernel's own front-end name, carried verbatim; the
+    // allowlist check happens when it is acted on, not when it is parsed.
+    let switch: ControlFrame =
+        serde_json::from_str(r#"{"t":"switch_plane","command":"codex-acp"}"#)
+            .expect("a switch parses");
+    assert!(matches!(
+        switch,
+        ControlFrame::SwitchPlane { command } if command == "codex-acp"
+    ));
+}

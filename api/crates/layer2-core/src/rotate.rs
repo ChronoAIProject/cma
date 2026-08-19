@@ -174,6 +174,62 @@ impl SessionService {
         // a kernel that does not advertise the plane is refused here, with the
         // plane's own name, rather than after its sandbox is gone.
         let capabilities = SessionCapabilities::granted(mode, adapter.capabilities())?;
+
+        // Prefer the in-place switch: it keeps the sandbox, its filesystem and
+        // its conversation exactly where they are. A kernel that cannot switch
+        // in place says so, and the rotation below is the fallback.
+        if let Some(old) = record.runtime_id.clone() {
+            let runtime_mode = match mode {
+                crate::options::SessionMode::Terminal => layer3_adapter::RuntimeMode::Terminal,
+                crate::options::SessionMode::Conversation => {
+                    layer3_adapter::RuntimeMode::Conversation
+                }
+            };
+            match adapter
+                .switch_plane(&RuntimeHandle(old), runtime_mode)
+                .await
+            {
+                Ok(()) => {
+                    // The surface changed under its owner, recorded with no
+                    // snapshot timestamp because nothing was carried.
+                    let mut moved = record.clone();
+                    moved.session.options.mode = mode;
+                    moved.session.capabilities = capabilities;
+                    moved.session.last_seq = self.sequences.take(id, moved.session.last_seq, 1);
+                    if let Err(e) = self.store.upsert(&moved).await {
+                        tracing::error!(session_id = %id, error = %e, "cannot record the in-place switch");
+                        return Err(CoreError::RuntimeUnavailable(
+                            "this session's move could not be recorded".into(),
+                        ));
+                    }
+                    if self
+                        .append_durably(
+                            id,
+                            vec![Event {
+                                session_id: id.clone(),
+                                seq: moved.session.last_seq,
+                                kind: EventKind::PlaneChanged {
+                                    from: record.session.options.mode,
+                                    to: mode,
+                                    snapshot_at: String::new(),
+                                },
+                                appended_at: String::new(),
+                            }],
+                        )
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!(session_id = %id, "cannot record the plane change");
+                    }
+                    return Ok(moved.session);
+                }
+                Err(layer3_adapter::AdapterError::Unsupported(_)) => {}
+                Err(e) => {
+                    tracing::warn!(session_id = %id, error = %e, "in-place switch failed; rotating instead");
+                }
+            }
+        }
+
         if !record.session.capabilities.snapshot {
             // The fail-safe. Both front-ends of the one kernel that serves
             // both planes read each other's conversations — established
