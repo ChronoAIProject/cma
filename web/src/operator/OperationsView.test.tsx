@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { Console } from '../Console';
@@ -26,54 +26,52 @@ function renderConsole(capabilities: readonly Capability[]) {
 describe('the operations view', () => {
   it('is not offered to a caller who holds nothing it can act on', async () => {
     renderConsole(DAILY);
-    const views = await screen.findByRole('group', { name: 'View' });
+    await screen.findByRole('button', { name: /new session/i });
 
-    expect(within(views).queryByRole('button', { name: 'Operations' })).toBeNull();
-    expect(within(views).getByRole('button', { name: 'Sessions' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Operations' })).toBeNull();
   });
 
   it('is offered to a caller the control plane says may operate', async () => {
     renderConsole(OPERATOR);
-    const views = await screen.findByRole('group', { name: 'View' });
 
-    expect(within(views).getByRole('button', { name: 'Operations' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Operations' })).toBeInTheDocument();
   });
 
   it('swaps the middle of the page rather than opening over it', async () => {
     // §14: a page, not a dialog. A 560px dialog was why its rows truncated.
     const userEvents = userEvent.setup();
     const { container } = renderConsole(OPERATOR);
-    await screen.findByRole('group', { name: 'View' });
+    await screen.findByRole('button', { name: 'Operations' });
 
     await userEvents.click(screen.getByRole('button', { name: 'Operations' }));
 
     await waitFor(() => {
       expect(screen.getByRole('region', { name: 'Operations' })).toBeInTheDocument();
     });
-    // No plate over the page, and the sessions columns are gone rather than
-    // sitting behind a scrim.
-    expect(container.querySelector('.dialog__scrim')).toBeNull();
-    expect(container.querySelector('.console__body')).toBeNull();
-    // Still one bar and one band: the window's edges do not move.
-    expect(container.querySelectorAll('.topbar')).toHaveLength(1);
-    expect(container.querySelectorAll('.statusband')).toHaveLength(1);
+    // No plate over the page, and the session surface is gone rather than
+    // sitting behind a mask.
+    expect(container.querySelector('.modal__mask')).toBeNull();
+    expect(container.querySelector('.console__surface')).toBeNull();
+    // One frame, and the sidebar has not moved: the window's edges hold.
+    expect(container.querySelectorAll('.frame')).toHaveLength(1);
+    expect(container.querySelectorAll('.sidebar')).toHaveLength(1);
   });
 
   it('says which view is showing, and goes back', async () => {
+    // One row that is either showing or not. A separate way back would imply
+    // the sidebar itself had gone somewhere.
     const userEvents = userEvent.setup();
     renderConsole(OPERATOR);
-    await screen.findByRole('group', { name: 'View' });
+    const row = await screen.findByRole('button', { name: 'Operations' });
 
-    await userEvents.click(screen.getByRole('button', { name: 'Operations' }));
-    expect(screen.getByRole('button', { name: 'Operations' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await userEvents.click(row);
+    expect(row).toHaveAttribute('aria-pressed', 'true');
 
-    await userEvents.click(screen.getByRole('button', { name: 'Sessions' }));
+    await userEvents.click(row);
     await waitFor(() => {
       expect(screen.queryByRole('region', { name: 'Operations' })).toBeNull();
     });
+    expect(row).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('does not persist, because a view is where somebody is', async () => {
@@ -82,13 +80,12 @@ describe('the operations view', () => {
     // route, and §1 says the frame is not navigation.
     const userEvents = userEvent.setup();
     const first = renderConsole(OPERATOR);
-    await screen.findByRole('group', { name: 'View' });
-    await userEvents.click(screen.getByRole('button', { name: 'Operations' }));
+    await userEvents.click(await screen.findByRole('button', { name: 'Operations' }));
     await screen.findByRole('region', { name: 'Operations' });
     first.unmount();
 
     renderConsole(OPERATOR);
-    await screen.findByRole('group', { name: 'View' });
+    await screen.findByRole('button', { name: 'Operations' });
     expect(screen.queryByRole('region', { name: 'Operations' })).toBeNull();
   });
 });
