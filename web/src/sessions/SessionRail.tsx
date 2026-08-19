@@ -65,6 +65,8 @@ interface SessionRailProps {
   readonly onToggleCollapsed: () => void;
   /** The step each starting session has reached, for its activity line. */
   readonly stages?: Readonly<Record<string, Stage>>;
+  /** The session parked on an answerable approval, when one is — §18.3. */
+  readonly waitingId?: string | null;
 }
 
 export function SessionRail({
@@ -78,6 +80,7 @@ export function SessionRail({
   collapsed,
   onToggleCollapsed,
   stages = {},
+  waitingId = null,
 }: SessionRailProps) {
   const [filter, setFilter] = useState<RailFilter>('all');
   const filtered =
@@ -247,7 +250,7 @@ export function SessionRail({
                  * makes the list a different height every time it reloads.
                  */}
                 <span className="row-item__activity">
-                  {lastActivity(session, stages[session.id])}
+                  {lastActivity(session, stages[session.id], session.id === waitingId)}
                 </span>
               </button>
             </li>

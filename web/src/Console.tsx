@@ -146,6 +146,12 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * not a layout choice to carry across visits.
    */
   const [detailsOpen, setDetailsOpen] = useState(false);
+  /*
+   * Which session is parked on an answerable approval — §18.3: it says so in
+   * the rail, the header and at the composer. Only the conversation surface
+   * folds the log, so it reports the fact up and this is where it lands.
+   */
+  const [waitingId, setWaitingId] = useState<string | null>(null);
   // Validated on read: web storage is untrusted input, and an unrecognised
   // value reaching the layout would be a rail nobody can draw (§7).
   const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
@@ -482,6 +488,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               collapsed={railCollapsed}
               onToggleCollapsed={toggleRail}
               stages={stages}
+              waitingId={waitingId}
             />
           ) : drawerOpen ? (
             <>
@@ -543,6 +550,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                     setDrawerOpen(false);
                   }}
                   stages={stages}
+                  waitingId={waitingId}
                 />
               </div>
             </>
@@ -551,6 +559,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           <main className="console__surface">
             <SessionHeader
               session={active}
+              waiting={active !== null && active.id === waitingId}
               /*
                * §16 takes the rail out of the layout below 60rem, so the way
                * to the list goes here, at the head of the column the drawer
@@ -679,7 +688,13 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                * does. There is no toggle here; moving a session between planes
                * is a deliberate act with a cost, and it is #128.
                */
-              <ConversationSurface session={active} capabilities={toCapabilities(active)} />
+              <ConversationSurface
+                session={active}
+                capabilities={toCapabilities(active)}
+                onWaitingChange={(waiting) => {
+                  setWaitingId(waiting ? active.id : null);
+                }}
+              />
             ) : driver === null ? (
               <p className="console__empty">Attaching…</p>
             ) : (
