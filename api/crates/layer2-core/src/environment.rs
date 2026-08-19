@@ -74,6 +74,14 @@ pub struct AgentConfiguration {
     /// Whose model access it spends.
     #[serde(default)]
     pub credential: CredentialMode,
+    /// Whether a session's tool bodies are recorded in its durable log.
+    ///
+    /// Off by default for the same reason it is on the session's own options:
+    /// a tool's output can contain a value the session was handed, so recording
+    /// it is a choice the profile makes rather than something it gets by
+    /// omission.
+    #[serde(default)]
+    pub record_tool_bodies: bool,
     /// Skills loaded into the session.
     #[serde(default)]
     pub skills: Vec<SkillId>,

@@ -20,7 +20,9 @@ export const KNOWN_EVENTS = [
   'TEXT_MESSAGE_CONTENT',
   'TEXT_MESSAGE_END',
   'TOOL_CALL_START',
+  'TOOL_CALL_ARGS',
   'TOOL_CALL_END',
+  'TOOL_CALL_RESULT',
   'REASONING_MESSAGE_CONTENT',
   'STATE_DELTA',
 ] as const;
@@ -213,6 +215,24 @@ export interface ToolCallEnd extends EventBase {
   readonly output?: string;
 }
 
+/** A tool call's arguments, when the session records tool bodies. */
+export interface ToolCallArgs extends EventBase {
+  readonly type: 'TOOL_CALL_ARGS';
+  readonly toolCallId: string;
+  readonly delta: string;
+  /** Whether the body was cut to fit the log's bound. */
+  readonly truncated: boolean;
+}
+
+/** A tool call's result, when the session records tool bodies. */
+export interface ToolCallResult extends EventBase {
+  readonly type: 'TOOL_CALL_RESULT';
+  readonly toolCallId: string;
+  readonly content: string;
+  /** Whether the body was cut to fit the log's bound. */
+  readonly truncated: boolean;
+}
+
 /**
  * An RFC 6902 patch against the run's state.
  *
@@ -252,7 +272,9 @@ export type AguiEvent =
   | TextMessageContent
   | TextMessageEnd
   | ToolCallStart
+  | ToolCallArgs
   | ToolCallEnd
+  | ToolCallResult
   | ReasoningContent
   | StateDelta
   | UnknownEvent;
@@ -334,6 +356,14 @@ export function toEvent(raw: unknown): AguiEvent {
         toolKind: str(frame['chrono:toolKind'] ?? frame.toolKind, 'tool'),
         target: firstString(frame.toolCallName, frame.target),
       };
+    case 'TOOL_CALL_ARGS':
+      return {
+        ...base,
+        type: 'TOOL_CALL_ARGS',
+        toolCallId: str(frame.toolCallId),
+        delta: str(frame.delta),
+        truncated: frame['chrono:truncated'] === true,
+      };
     case 'TOOL_CALL_END':
       return {
         ...base,
@@ -341,6 +371,14 @@ export function toEvent(raw: unknown): AguiEvent {
         toolCallId: str(frame.toolCallId),
         status: str(frame['chrono:status'] ?? frame.status, 'finished'),
         output: typeof frame.output === 'string' ? frame.output : undefined,
+      };
+    case 'TOOL_CALL_RESULT':
+      return {
+        ...base,
+        type: 'TOOL_CALL_RESULT',
+        toolCallId: str(frame.toolCallId),
+        content: str(frame.content),
+        truncated: frame['chrono:truncated'] === true,
       };
     case 'REASONING_MESSAGE_CONTENT':
       return {
