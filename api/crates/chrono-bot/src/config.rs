@@ -164,7 +164,16 @@ impl Config {
         // and typed it wrong must be told, not quietly made autonomous.
         let default_agent = layer2_core::AgentConfiguration {
             kernel: layer2_core::KernelId::new(var_or("CHRONO_DEFAULT_AGENT_KERNEL", "codex")),
-            mode: parse_enum("CHRONO_DEFAULT_AGENT_MODE", "terminal")?,
+            // Conversation, not terminal. The conversation plane is the
+            // surface this product is for: it is where approvals are answered,
+            // where tool calls read as structure, and where a failure can be
+            // explained rather than printed. A terminal is the escape hatch.
+            //
+            // Only the deployment default moves. `SessionMode`'s serde default
+            // stays Terminal deliberately — it is what every record written
+            // before the field existed means, and reading those back as
+            // conversations would silently change what they are.
+            mode: parse_enum("CHRONO_DEFAULT_AGENT_MODE", "conversation")?,
             model: Some(var_or("CHRONO_DEFAULT_AGENT_MODEL", "gpt-5.6-sol"))
                 .filter(|m| !m.trim().is_empty()),
             reasoning_effort: parse_enum("CHRONO_DEFAULT_AGENT_EFFORT", "high")?,
