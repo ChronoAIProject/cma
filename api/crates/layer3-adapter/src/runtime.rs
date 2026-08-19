@@ -218,6 +218,11 @@ pub enum TerminalInput {
     /// restarting it to pick up a new credential would discard the session's
     /// context, which is the thing a terminal exists to preserve.
     Credential(String),
+    /// Restart the supervised program under a different front-end.
+    ///
+    /// The command is a kernel's own front-end name, and the supervisor only
+    /// accepts one it was told at boot it may run.
+    SwitchPlane { command: String },
 }
 
 /// A bidirectional attachment to a runtime's terminal.
