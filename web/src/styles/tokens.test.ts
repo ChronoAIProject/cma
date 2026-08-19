@@ -217,3 +217,55 @@ describe('the component layer', () => {
     );
   });
 });
+
+describe('motion', () => {
+  it('removes motion on request rather than adding it on permission', () => {
+    /*
+     * `prefers-reduced-motion: no-preference` matches only where somebody has
+     * explicitly expressed none. A platform that does not report the feature
+     * at all matches *neither* value — so gating motion on `no-preference`
+     * silently took every hover fill and every caret away from those people,
+     * which is the opposite of what the gate was for.
+     *
+     * The `reduce` override is the idiom that gets this right: motion is the
+     * default, and asking for less removes it.
+     */
+    const offences: string[] = [];
+    for (const path of ALL) {
+      const css = readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      if (css.includes('prefers-reduced-motion: no-preference')) {
+        offences.push(relative(SRC, path));
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+
+  it('gives every looping animation a way to stop', () => {
+    /*
+     * A transition happens once and is over; an `infinite` animation does
+     * not, and is exactly what a reduced-motion request is about. Every sheet
+     * that starts one has to say how it stops.
+     */
+    const offences: string[] = [];
+    for (const path of ALL) {
+      const css = readFileSync(path, 'utf8');
+      if (/animation:[^;]*infinite/.test(css) && !css.includes('prefers-reduced-motion: reduce')) {
+        offences.push(relative(SRC, path));
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+
+  it('eases on one curve, from the tokens', () => {
+    // §4: one curve, three durations. A hand-written cubic-bezier is a fourth
+    // curve nobody chose.
+    const offences: string[] = [];
+    for (const path of COMPONENT_SHEETS) {
+      const css = readFileSync(path, 'utf8');
+      if (/cubic-bezier\(/.test(css)) {
+        offences.push(relative(SRC, path));
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+});
