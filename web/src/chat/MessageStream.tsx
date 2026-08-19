@@ -6,6 +6,7 @@ import { ToolCall } from './ToolCall';
 import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from './conversation';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
+import { IconChevronDownOutline14 } from '../ui/icons';
 
 /**
  * The turn-by-turn record of the conversation — `Web_Style.md` §18.1.
@@ -310,12 +311,18 @@ export function MessageStream({
       {behind > 0 ? (
         <button
           type="button"
-          className="button button--ghost button--sm stream__behind"
+          className="stream__behind"
+          /*
+           * The count is the accessible name rather than the label: a circle
+           * with a chevron in it says "go down" to somebody who can see it,
+           * and says nothing at all otherwise.
+           */
+          aria-label={`${String(behind)} newer ${behind === 1 ? 'entry' : 'entries'}. Go to the newest.`}
           onClick={() => {
             setPinned(true);
           }}
         >
-          {behind} newer {behind === 1 ? 'entry' : 'entries'}
+          <IconChevronDownOutline14 />
         </button>
       ) : null}
     </div>
