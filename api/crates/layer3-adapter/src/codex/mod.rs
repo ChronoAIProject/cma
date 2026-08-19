@@ -15,10 +15,12 @@ pub use environment::CodexSandboxSpec;
 
 use crate::hosted::{acp, HostedKernel};
 use crate::sandbox::SandboxClient;
+use crate::ConversationUpdate;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, RuntimeHandle,
     RuntimeListing, RuntimeMode, RuntimeOptions, RuntimeSpec, TerminalChannel,
 };
+use tokio::sync::mpsc;
 
 /// Drives Codex inside a provider-managed sandbox.
 pub struct CodexAdapter {
@@ -98,6 +100,7 @@ impl KernelAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         options: &RuntimeOptions,
+        updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
@@ -108,6 +111,7 @@ impl KernelAdapter for CodexAdapter {
             options.resume_conversation.clone(),
             Some((self.hosted.switch_waiters(), handle.0.clone())),
             options.own_credential,
+            updates,
         )
         .await?;
         // Recorded here so a credential can reach a session that never attaches

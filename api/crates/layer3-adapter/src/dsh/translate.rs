@@ -92,6 +92,11 @@ impl Harness {
         cwd: String,
         spec: &DshSandboxSpec,
         rejoin: Option<String>,
+        // Supplied by the caller and already being drained. This harness has
+        // no sign-in of its own, but the contract is one contract: a kernel
+        // that reported nothing during its open would be indistinguishable
+        // from one whose open had not started.
+        updates_tx: mpsc::Sender<crate::ConversationUpdate>,
     ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -108,7 +113,6 @@ impl Harness {
             }
         }
 
-        let (updates_tx, updates_rx) = mpsc::channel(BUFFER);
         let (input_tx, mut input_rx) = mpsc::channel(BUFFER);
 
         let harness = Arc::new(Self {
@@ -169,7 +173,6 @@ impl Harness {
 
         Ok((
             ConversationChannel {
-                updates: updates_rx,
                 input: input_tx,
                 conversation_id: Some(conversation_id),
             },

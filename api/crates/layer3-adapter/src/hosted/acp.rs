@@ -117,6 +117,13 @@ impl Bridge {
     /// be prompted rather than one that may yet fail to start.
     /// Returns the conversation and the control sender for the same socket.
     ///
+    /// The update sink comes from the caller for that same reason read the
+    /// other way round. The handshake can stop and wait — an own-account
+    /// session waits there for its owner to sign in, which is a person's worth
+    /// of time — and what it is waiting for has to be shown to that person
+    /// while it waits. A sink created here and returned at the end would carry
+    /// the request only after it had been answered, which is to say never.
+    ///
     /// The second half is not optional bookkeeping. A credential reaches a
     /// runtime as a control frame on a link the adapter has recorded, and
     /// until now the only recorded links were terminal attachments — so a
@@ -137,6 +144,8 @@ impl Bridge {
         // conversation can be opened at all — an unauthenticated kernel
         // refuses `session/new` outright.
         own_credential: bool,
+        // Already being drained by the caller when this is called. See above.
+        updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -161,7 +170,6 @@ impl Bridge {
                 ))
             }
         };
-        let (updates_tx, updates_rx) = mpsc::channel(BUFFER);
         let (input_tx, mut input_rx) = mpsc::channel(BUFFER);
 
         let bridge = Arc::new(Self {
@@ -246,7 +254,6 @@ impl Bridge {
 
         Ok((
             ConversationChannel {
-                updates: updates_rx,
                 input: input_tx,
                 conversation_id,
             },

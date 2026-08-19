@@ -159,8 +159,6 @@ pub enum ConversationUpdate {
 /// other's pace.
 #[derive(Debug)]
 pub struct ConversationChannel {
-    /// Everything that happens on the conversation, in the order it happens.
-    pub updates: mpsc::Receiver<ConversationUpdate>,
     /// Input destined for the runtime.
     pub input: mpsc::Sender<ConversationInput>,
     /// What the runtime calls this conversation, when it has a name for one.
