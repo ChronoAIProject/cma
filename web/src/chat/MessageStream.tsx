@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
-import type { Entry, MessageEntry } from './conversation';
+import type { AvailableCommand, ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 
@@ -50,6 +50,19 @@ interface MessageStreamProps {
    * empty band would suggest a kernel was thinking silently.
    */
   readonly reasoning?: { readonly text: string };
+  /**
+   * The agent's plan, when it set one — drawn as a stage rather than as prose.
+   *
+   * A full revision, so the list shown is the whole current plan and never an
+   * accumulation of older ones.
+   */
+  readonly plan?: readonly PlanStep[];
+  /** The session's permission mode, when the kernel changed it. */
+  readonly mode?: string;
+  /** The settings the kernel says are settable, when it reported them. */
+  readonly configOptions?: readonly ConfigOption[];
+  /** The actions the owner may invoke right now — liveness, not history. */
+  readonly availableCommands?: readonly AvailableCommand[];
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
 }
@@ -64,6 +77,10 @@ export function MessageStream({
   live,
   reasoning,
   footer,
+  plan,
+  mode,
+  configOptions,
+  availableCommands,
 }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -127,6 +144,37 @@ export function MessageStream({
               turnInFlight={turnInFlight}
             />
           ))}
+          {plan === undefined || plan.length === 0 ? null : (
+            <ol className="stage">
+              {plan.map((step, index) => (
+                <li key={index} className="stage__step">
+                  <span className="stage__title">{step.title}</span>
+                  <span className="stage__status">{step.status}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          {mode === undefined ? null : <div className="stage__mode">Mode: {mode}</div>}
+          {configOptions === undefined || configOptions.length === 0 ? null : (
+            <ul className="stage">
+              {configOptions.map((option) => (
+                <li key={option.id} className="stage__step">
+                  <span className="stage__title">{option.name}</span>
+                  <span className="stage__status">{option.kind}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {availableCommands === undefined || availableCommands.length === 0 ? null : (
+            <ul className="stage">
+              {availableCommands.map((command) => (
+                <li key={command.name} className="stage__step">
+                  <span className="stage__title">{command.name}</span>
+                  <span className="stage__status">{command.description}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
           {live === undefined ? null : (
             /*

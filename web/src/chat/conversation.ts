@@ -138,6 +138,34 @@ export interface Conversation {
   /** Why the last run failed, when one did. */
   readonly error?: { readonly message: string; readonly capability?: string };
   /**
+   * The session's permission mode, when the kernel reported a change to it.
+   *
+   * The kernel's own word, carried verbatim. A safety fact about the session,
+   * not agent content, so it is drawn as state rather than as a message.
+   */
+  readonly mode?: string;
+  /**
+   * The agent's plan, when it set one.
+   *
+   * A full revision, replaced on each set — the agent sends the complete list
+   * each time, so the latest is the whole plan rather than an accumulation.
+   */
+  readonly plan?: readonly PlanStep[];
+  /**
+   * The settings the kernel says are settable, when it reported them.
+   *
+   * Drawn as a selection rather than a free-text box, from the kernel's own
+   * names and kinds.
+   */
+  readonly configOptions?: readonly ConfigOption[];
+  /**
+   * The actions the owner may invoke right now — liveness, not history.
+   *
+   * Absent on reload, deliberately: a stale list replayed from the log would
+   * offer actions that no longer exist, and none is better than dead ones.
+   */
+  readonly availableCommands?: readonly AvailableCommand[];
+  /**
    * What the agent is saying right now, before it has committed to it.
    *
    * **Deliberately not an entry.** §18.1 requires a turn drawn from history
@@ -170,6 +198,25 @@ export interface Conversation {
 export interface Usage {
   readonly tokens?: number;
   readonly cost?: string;
+}
+
+/** One step of the agent's plan, in the kernel's own words. */
+export interface PlanStep {
+  readonly title: string;
+  readonly status: string;
+}
+
+/** One setting the kernel says is settable, in its own words. */
+export interface ConfigOption {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: string;
+}
+
+/** One action the owner may invoke, in the kernel's own words. */
+export interface AvailableCommand {
+  readonly name: string;
+  readonly description: string;
 }
 
 export const EMPTY: Conversation = { entries: [], turnInFlight: false };
@@ -430,6 +477,48 @@ function applyPatches(
       next = { ...next, usage: { ...next.usage, tokens: patch.value } };
     } else if (patch.path === '/usage/cost' && typeof patch.value === 'string') {
       next = { ...next, usage: { ...next.usage, cost: patch.value } };
+    } else if (patch.path === '/mode' && typeof patch.value === 'string') {
+      next = { ...next, mode: patch.value };
+    } else if (patch.path === '/plan' && Array.isArray(patch.value)) {
+      next = {
+        ...next,
+        plan: patch.value.flatMap((entry): PlanStep[] => {
+          if (typeof entry !== 'object' || entry === null) {
+            return [];
+          }
+          const value = entry as Record<string, unknown>;
+          const title = typeof value.title === 'string' ? value.title : '';
+          const status = typeof value.status === 'string' ? value.status : '';
+          return title === '' ? [] : [{ title, status }];
+        }),
+      };
+    } else if (patch.path === '/configOptions' && Array.isArray(patch.value)) {
+      next = {
+        ...next,
+        configOptions: patch.value.flatMap((entry): ConfigOption[] => {
+          if (typeof entry !== 'object' || entry === null) {
+            return [];
+          }
+          const value = entry as Record<string, unknown>;
+          const id = typeof value.id === 'string' ? value.id : '';
+          const name = typeof value.name === 'string' ? value.name : '';
+          const kind = typeof value.kind === 'string' ? value.kind : '';
+          return id === '' ? [] : [{ id, name, kind }];
+        }),
+      };
+    } else if (patch.path === '/availableCommands' && Array.isArray(patch.value)) {
+      next = {
+        ...next,
+        availableCommands: patch.value.flatMap((entry): AvailableCommand[] => {
+          if (typeof entry !== 'object' || entry === null) {
+            return [];
+          }
+          const value = entry as Record<string, unknown>;
+          const name = typeof value.name === 'string' ? value.name : '';
+          const description = typeof value.description === 'string' ? value.description : '';
+          return name === '' ? [] : [{ name, description }];
+        }),
+      };
     } else if (patch.path.startsWith('/planeChanges')) {
       /*
        * §18.6: drawn as a rule across the stream at the snapshot moment, not
