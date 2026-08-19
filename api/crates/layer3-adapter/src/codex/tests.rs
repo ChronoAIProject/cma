@@ -29,7 +29,11 @@ async fn a_conversation_against_a_dead_provider_reports_unavailable() {
     // "could not reach it" from "never could".
     let a = adapter("http://127.0.0.1:1");
     let err = a
-        .open_conversation(&RuntimeHandle("sbx-1".into()), &Default::default())
+        .open_conversation(
+            &RuntimeHandle("sbx-1".into()),
+            &Default::default(),
+            tokio::sync::mpsc::channel(1).0,
+        )
         .await
         .expect_err("a dead provider has no conversation to open");
     assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");
