@@ -169,9 +169,12 @@ describe('authoring a scoped profile in place', () => {
 
     await author(user);
     await user.type(screen.getByLabelText(/^name$/i), 'Screen work');
+    // A new profile starts on the conversation plane, which Claude Code
+    // serves, so the terminal has to be asked for to provoke the refusal.
+    await user.click(screen.getByRole('radio', { name: /terminal/i }));
     await chooseOption(user, /^agent$/i, 'Claude Code');
 
-    // The default plane is the terminal, which Claude Code does not serve.
+    // Claude Code does not serve a terminal.
     expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “terminal”/i);
     expect(screen.getByRole('button', { name: /start session/i })).toBeDisabled();
     expect(create).not.toHaveBeenCalled();

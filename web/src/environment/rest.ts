@@ -1,7 +1,7 @@
 import { ApiError } from '../api/client';
 import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
 import type { CredentialMode, PermissionMode, ReasoningEffort } from '../sessions/options';
-import { DEFAULT_AGENT } from './types';
+import { DEFAULT_AGENT, PLANE_BEFORE_PLANES_EXISTED } from './types';
 import type { SessionPlane } from '../sessions/types';
 import type {
   AgentConfiguration,
@@ -133,7 +133,9 @@ function readAgent(raw: unknown): AgentConfiguration {
   const a = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   return {
     kernel: typeof a.kernel === 'string' ? a.kernel : DEFAULT_AGENT.kernel,
-    mode: isPlane(a.mode) ? a.mode : DEFAULT_AGENT.mode,
+    // An unstated or unrecognised plane is what it always was, not what a
+    // new profile would start as — see PLANE_BEFORE_PLANES_EXISTED.
+    mode: isPlane(a.mode) ? a.mode : PLANE_BEFORE_PLANES_EXISTED,
     model: typeof a.model === 'string' ? a.model : undefined,
     reasoningEffort: isEffort(a.reasoning_effort)
       ? a.reasoning_effort
