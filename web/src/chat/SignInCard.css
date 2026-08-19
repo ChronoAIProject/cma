@@ -24,13 +24,11 @@
   align-self: flex-start;
   margin: 0;
   padding: 2px var(--space-2);
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
   background: var(--accent-wash);
   border-radius: var(--radius-sm);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .signin__what {
