@@ -229,7 +229,6 @@ impl SessionService {
             ),
             true => None,
         };
-        let mut folding = None;
         let conversation = match conversing {
             true => {
                 // What the runtime calls the conversation already running in
@@ -245,9 +244,16 @@ impl SessionService {
                         "this session's conversation was never named; the runtime will be asked for a new one"
                     );
                 }
+                /*
+                 * Folding starts before the open, for the reason given at the
+                 * equivalent point in `provision.rs`: a conversation reports
+                 * things while it is being opened, and a taken-back-over
+                 * session is exactly where those reports matter — this is the
+                 * path a control-plane replacement runs.
+                 */
                 let (updates_tx, updates_rx) =
                     tokio::sync::mpsc::channel(crate::provision::CONVERSATION_BUFFER);
-                folding = Some(updates_rx);
+                crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates_rx);
                 Some(
                     adapter
                         .open_conversation(&handle, &options, updates_tx)
@@ -315,9 +321,6 @@ impl SessionService {
         self.entries.write().await.insert(id.clone(), entry);
         if let Some(channel) = terminal {
             spawn_relay(id.clone(), channel.output, screen, live);
-        }
-        if let Some(updates) = folding {
-            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates);
         }
 
         // The sandbox kept running, but the credential it was given belonged to

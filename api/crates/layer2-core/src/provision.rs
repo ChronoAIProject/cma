@@ -228,9 +228,28 @@ impl SessionService {
             })?),
             true => None,
         };
-        let (updates_tx, updates_rx) = tokio::sync::mpsc::channel(CONVERSATION_BUFFER);
+        /*
+         * Folding starts before the conversation is open, not after it.
+         *
+         * Opening one is not instantaneous and is not silent: an own-account
+         * session stops inside the open to ask its owner to sign in, and waits
+         * there for as long as a person takes. Draining only afterwards meant
+         * that request reached the log after the sign-in it was asking for,
+         * which is to say never — the session simply sat in `provisioning`
+         * with nothing to show for it.
+         *
+         * Nothing is lost if the open then fails: the sender drops, the folder
+         * closes the session's open turn and ends, and what it recorded on the
+         * way is what actually happened.
+         */
         let conversation = match conversing {
             true => {
+                let (updates_tx, updates_rx) = tokio::sync::mpsc::channel(CONVERSATION_BUFFER);
+                crate::conversation_log::spawn_folder(
+                    Arc::clone(self),
+                    session.id.clone(),
+                    updates_rx,
+                );
                 Some(
                     adapter
                         .open_conversation(&handle, &options, updates_tx)
@@ -335,7 +354,6 @@ impl SessionService {
             spawn_relay(id.clone(), output, screen, live);
         }
         if conversation.is_some() {
-            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates_rx);
             // Recorded before anything is said on it. What this is for is a
             // control plane that has not started yet: the one replacing this
             // process reads the log to learn what the runtime calls the
