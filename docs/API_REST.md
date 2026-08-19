@@ -74,6 +74,10 @@ Content-Type: application/json
 
 **A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
 
+**A field this endpoint does not know is refused, not ignored.** Sending `"kernel"` is the obvious thing to try, because `GET /api/v1/kernels` enumerates them — so it answers `422` with `invalid_request`, naming the field and listing what it would have accepted. It used to be discarded, and the session came back `201` on whichever kernel the profile actually resolved to, which is a request answered differently from how it was asked. To choose a kernel, name an environment profile whose `agent.kernel` is the one you want; `GET /api/v1/environment-profiles` shows each profile's.
+
+A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
+
 `llm_source` and `environment` are **frozen at creation**, as is the kernel they resolve to. Changing any of them means a new session.
 
 **`201 Created`**
