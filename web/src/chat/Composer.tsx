@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button } from '../ui/Button';
 import type { ConcurrentInput, SessionCapabilities } from '../agui';
 import type { AvailableCommand } from './conversation';
 import { CommandMenu } from './CommandMenu';
@@ -251,18 +250,6 @@ export function Composer({
             <Pill placement="composer__steer">steerable</Pill>
           ) : null}
           <span className="composer__spacer" />
-
-          {/*
-           * Interrupt is offered only while a turn is in flight, and only on
-           * a session granted it — a kernel that cannot withdraw a prompt is
-           * refused by name rather than left waiting for something that will
-           * not happen.
-           */}
-          {turnInFlight && capabilities.interrupt ? (
-            <Button disabled={busy} onClick={onInterrupt}>
-              Interrupt
-            </Button>
-          ) : null}
 
           {/*
            * One seat, and what sits in it follows what the session can
