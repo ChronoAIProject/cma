@@ -91,6 +91,7 @@ fn history_and_the_live_stream_are_the_same_frames() {
             call_id: "t1".into(),
             title: "cargo build".into(),
             kind: "shell".into(),
+            arguments: None,
         },
     );
 

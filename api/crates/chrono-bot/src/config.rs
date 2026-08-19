@@ -170,6 +170,7 @@ impl Config {
             reasoning_effort: parse_enum("CHRONO_DEFAULT_AGENT_EFFORT", "high")?,
             permission: parse_enum("CHRONO_DEFAULT_AGENT_PERMISSION", "guarded")?,
             credential: parse_enum("CHRONO_DEFAULT_AGENT_CREDENTIAL", "delegated")?,
+            record_tool_bodies: false,
             // The baseline skills are what every session carries anyway, so a
             // profile-less session carries exactly them and nothing else.
             skills: list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli")
