@@ -264,3 +264,121 @@ describe('the field grows with what is written in it', () => {
     expect(field.style.height).toBe('64px');
   });
 });
+
+describe('the commands the kernel offers', () => {
+  /*
+   * §18.4. They used to be printed as a static list at the foot of the message
+   * column, below every turn: readable and unusable, so the reader retyped
+   * what they had just read.
+   */
+  const OFFERED = [
+    { name: 'compact', description: 'Summarise the conversation so far' },
+    { name: 'clear', description: 'Start again with nothing carried over' },
+  ];
+
+  it('opens on a slash at the head of an empty draft', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/');
+
+    expect(screen.getByRole('listbox', { name: /commands/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /compact/ })).toBeInTheDocument();
+  });
+
+  it('offers only what the kernel advertised', async () => {
+    // §18.2 and §18.10, in identical words: a client that invented a command
+    // would be offering something the session cannot honour.
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/');
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+  });
+
+  it('filters as the reader keeps typing', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/com');
+
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option', { name: /compact/ })).toBeInTheDocument();
+  });
+
+  it('does not open on a slash inside a sentence', async () => {
+    // An agent is asked to do things in prose, and a `/` mid-sentence is a
+    // path or a date rather than a command.
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), 'look in src/chat');
+
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('opens nothing when the kernel advertised none', async () => {
+    // The same reasoning that keeps an ungranted affordance off the surface
+    // rather than drawing it empty.
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: [] });
+
+    await user.type(screen.getByRole('textbox'), '/');
+
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('takes a command and leaves the caret after it', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+    const field = screen.getByRole('textbox');
+
+    await user.type(field, '/com');
+    await user.keyboard('{Enter}');
+
+    expect(field).toHaveValue('/compact ');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('does not send the turn while the menu is choosing', async () => {
+    // The field is listening for Enter too. The menu takes it first, or
+    // choosing a command would send one instead.
+    const user = userEvent.setup();
+    const onSend = vi.fn().mockResolvedValue(true);
+    renderComposer({ availableCommands: OFFERED, onSend });
+
+    await user.type(screen.getByRole('textbox'), '/com');
+    await user.keyboard('{Enter}');
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('closes on Escape and stays closed for that draft', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).toBeNull();
+
+    // Still closed as they keep typing the same command.
+    await user.type(screen.getByRole('textbox'), 'com');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+});
+
+describe('where the keyboard lands', () => {
+  it('rests on the prompt, as §10 has always required', () => {
+    // Honoured only by the landing until now, so opening a session and typing
+    // cost a mouse click every time — on the surface whose whole purpose is
+    // typing into it.
+    renderComposer();
+    expect(screen.getByRole('textbox')).toHaveFocus();
+  });
+
+  it('takes no focus where the session refuses input', () => {
+    // There is no field to focus: a refused composer draws its reason instead.
+    renderComposer({ refusedReason: 'This session is terminated' });
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+});

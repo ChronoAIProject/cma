@@ -107,7 +107,17 @@ describe('a turn', () => {
     const doneHtml = done.container.innerHTML;
 
     // The only difference is the caret.
-    expect(liveHtml.replace(/<b class="turn__caret"[^>]*><\/b>/, '')).toBe(doneHtml);
+    //
+    // Compared on the message itself rather than the whole container, which is
+    // what the rule governs: §18.1 is about a *message* restyling on commit.
+    // The turn's copy control is refused while the turn is being written and
+    // available once it settles (§18.11), which is an affordance becoming
+    // usable rather than the message reporting that it was provisional — a
+    // whole-container comparison cannot tell those apart.
+    const bodyOf = (html: string) => /<div class="turn__body">.*?<\/div>/s.exec(html)?.[0] ?? html;
+    expect(bodyOf(liveHtml).replace(/<b class="turn__caret"[^>]*><\/b>/, '')).toBe(
+      bodyOf(doneHtml),
+    );
     expect(liveHtml).toContain('turn__caret');
     expect(doneHtml).not.toContain('turn__caret');
   });
@@ -557,6 +567,77 @@ describe('what a screen reader hears', () => {
   });
 });
 
+describe('what a reader can take away', () => {
+  /*
+   * §18.11. An answer that cannot leave the surface has not finished being
+   * useful, and the two things somebody does with what an agent produced are
+   * run it and quote it — both of which mean getting the characters out.
+   */
+  const settledTurn = () =>
+    fold([
+      toEvent({ type: 'RUN_STARTED', seq: 1 }),
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 2, messageId: 'm1', role: 'assistant' }),
+      toEvent({
+        type: 'TEXT_MESSAGE_CONTENT',
+        seq: 3,
+        messageId: 'm1',
+        delta: '# Steps\n\n1. Run `npm ci`\n',
+      }),
+      toEvent({ type: 'TEXT_MESSAGE_END', seq: 4, messageId: 'm1' }),
+    ]).entries;
+
+  it('copies the markdown the agent wrote, not the tree it was drawn as', () => {
+    // The whole reason this exists. Selection-copy already works and already
+    // yields degraded text: the renderer strips heading hashes, list markers
+    // and backticks before drawing, so pasting into an issue or a shell gives
+    // something the agent did not write.
+    // `fireEvent` rather than `userEvent`, which installs a clipboard stub of
+    // its own and would be the thing under test instead of the component.
+    const written = vi.fn().mockResolvedValue(undefined);
+    const real = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: written },
+    });
+
+    render(<MessageStream kernel="codex" entries={settledTurn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect(written).toHaveBeenCalledWith('# Steps\n\n1. Run `npm ci`\n');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: real });
+  });
+
+  it('refuses while the turn is still being written, rather than vanishing', () => {
+    // §7 and §19: copying half an answer is the thing to prevent, and removing
+    // the control is the wrong instrument for it.
+    const arriving = fold([
+      toEvent({ type: 'RUN_STARTED', seq: 1 }),
+      toEvent({ type: 'TEXT_MESSAGE_START', seq: 2, messageId: 'm1', role: 'assistant' }),
+      toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 3, messageId: 'm1', delta: 'half' }),
+    ]).entries;
+
+    const { container } = render(
+      <MessageStream kernel="codex" entries={arriving} turnInFlight={true} />,
+    );
+    const key = container.querySelector('.turn__actions .copykey');
+    expect(key).toBeDisabled();
+    expect(key).toHaveAttribute('title');
+  });
+
+  it('gives a fenced block its language and a way to take it', () => {
+    const { container } = render(<AgentContent text={'```python\nprint(1)\n```'} />);
+    // Verbatim, uppercased by type rather than mapped onto a name this client
+    // invented — §18.2 and §18.10 forbid that in identical words.
+    expect(container.querySelector('.codeblock__lang')?.textContent).toBe('python');
+    expect(container.querySelector('.codeblock .copykey')).not.toBeNull();
+  });
+
+  it('draws no label where the agent named no language', () => {
+    const { container } = render(<AgentContent text={'```\nplain\n```'} />);
+    expect(container.querySelector('.codeblock__lang')?.textContent).toBe('');
+  });
+});
+
 describe('what the agent wrote reaches the reader as written', () => {
   /*
    * §18.1's Fidelity rule: "Lists, headings and emphasis take the scale §4
@@ -601,5 +682,129 @@ describe('what the agent wrote reaches the reader as written', () => {
     expect(c.querySelector('h3')?.textContent).toBe('First step');
     // The page owns h1; an agent starting at `#` must not compete for it.
     expect(c.querySelector('h1')).toBeNull();
+  });
+});
+
+describe('when the surface cannot hear the session', () => {
+  /*
+   * §18.13. The failure mode is asserting liveness that is false, not failing
+   * to narrate the transport: nothing but the run ending clears the in-flight
+   * state, so a dead stream kept the pulse going and the caret blinking on a
+   * message that had stopped growing — the one affordance built to tell a
+   * working agent from a dead stream was the one that lied.
+   */
+  it('stops claiming the agent is working the moment the link is not live', () => {
+    const { container, rerender } = render(
+      <MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={true} />,
+    );
+    expect(container.querySelector('.stream__waiting')).not.toBeNull();
+
+    rerender(<MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={false} />);
+    expect(container.querySelector('.stream__waiting')).toBeNull();
+  });
+
+  it('stops the caret too, on the message that has stopped growing', () => {
+    const { container } = render(
+      <MessageStream
+        kernel="codex"
+        entries={[]}
+        turnInFlight={true}
+        linkLive={false}
+        live={{ text: 'half a sen' }}
+      />,
+    );
+    expect(container.querySelector('.turn__caret')).toBeNull();
+  });
+
+  it('says nothing at all during an ordinary reconnect', () => {
+    // A blip announced as a fault teaches a reader to distrust the next
+    // notice, and §11 forbids drawing a recovering session as a failed one.
+    const { container } = render(
+      <MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={false} />,
+    );
+    expect(container.querySelector('.stream__unheard')).toBeNull();
+  });
+
+  it('names it once the link has stayed down, and not as a failure', () => {
+    const { container } = render(
+      <MessageStream
+        kernel="codex"
+        entries={[]}
+        turnInFlight={true}
+        linkLive={false}
+        linkLost={true}
+      />,
+    );
+    const notice = container.querySelector('.stream__unheard');
+    expect(notice).not.toBeNull();
+    // §18.9 draws a run the agent could not finish; this draws a link that
+    // stopped. Conflating them tells an owner their work broke when their
+    // network did.
+    expect(container.querySelector('.failure')).toBeNull();
+    expect(notice?.textContent).toMatch(/nothing has been lost/i);
+  });
+});
+
+describe('what an agent wrote, beyond code and lists', () => {
+  /*
+   * §18.12. The renderer drew none of this: a link arrived as `[label](url)`,
+   * a table as a wall of pipes, every nesting level flattened to one, and a
+   * wrapped list of steps ran together into a paragraph.
+   */
+  const drawn = (markdown: string) => render(<AgentContent text={markdown} />).container;
+
+  it('draws a link, and decides nothing about where it points', () => {
+    const c = drawn('See [the release notes](https://example.com/r) first');
+    const link = c.querySelector('a.agent__link');
+    expect(link?.textContent).toBe('the release notes');
+    expect(link).toHaveAttribute('href', 'https://example.com/r');
+    // Untrusted by construction: this came from an agent running the owner's
+    // own code.
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('leaves a bare bracket alone', () => {
+    // Not everything in square brackets is a link, and rewriting prose that
+    // merely looks like one would corrupt what the agent wrote.
+    const c = drawn('The array is [1, 2, 3] here');
+    expect(c.querySelector('a')).toBeNull();
+    expect(c.textContent).toContain('[1, 2, 3]');
+  });
+
+  it('keeps a list nested where the agent nested it', () => {
+    // A plan with sub-steps flattened to one level is a different plan.
+    const c = drawn('- build\n  - install\n  - compile\n- ship');
+    const items = [...c.querySelectorAll('li')];
+    expect(items.map((li) => li.getAttribute('data-depth'))).toEqual([null, '1', '1', null]);
+  });
+
+  it('draws a table as a table', () => {
+    const c = drawn('| step | who |\n| --- | --- |\n| build | ci |\n| ship | you |');
+    expect(c.querySelectorAll('th')).toHaveLength(2);
+    expect(c.querySelectorAll('tbody tr')).toHaveLength(2);
+    // Scrolls inside its own frame rather than widening the reading column.
+    expect(c.querySelector('.agent__tablewrap')).not.toBeNull();
+  });
+
+  it('does not turn a sentence with pipes into a table', () => {
+    // Recognised only where a head is followed by its rule; without that
+    // check, prose containing pipes becomes a table.
+    const c = drawn('Run `a | b | c` to see it');
+    expect(c.querySelector('table')).toBeNull();
+  });
+
+  it('draws a blockquote with a rule and no ink of its own', () => {
+    // §18.1 forbids ink on agent content without exception. Drawing a quote
+    // fainter would be this surface deciding it matters less than the agent
+    // did.
+    const c = drawn('> the agent quoted this');
+    expect(c.querySelector('blockquote')?.textContent).toBe('the agent quoted this');
+  });
+
+  it('keeps a soft line break as a line break', () => {
+    // An agent that wrote its steps on separate lines meant them on separate
+    // lines; joining them rewrites the shape of the answer.
+    const c = drawn('first line\nsecond line');
+    expect(c.querySelector('.agent__paragraph')?.textContent).toBe('first line\nsecond line');
   });
 });
