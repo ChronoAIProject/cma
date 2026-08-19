@@ -256,7 +256,17 @@ impl Bridge {
             "initialize",
             serde_json::json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false } },
+                "clientCapabilities": {
+                    "fs": { "readTextFile": false, "writeTextFile": false },
+                    // Declared so the bridge will offer a sign-in this client
+                    // can actually complete. It advertises its device-code
+                    // method only to a client that says it can put a URL in
+                    // front of a person, and this client can: the address and
+                    // the code travel up as an update and reach a surface. Say
+                    // nothing here and the method is never offered, which is
+                    // why an own-account session had no way to sign in.
+                    "elicitation": { "url": {} },
+                },
             }),
         )
         .await?;

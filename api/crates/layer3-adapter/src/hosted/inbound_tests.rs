@@ -5,7 +5,7 @@
 //! differ per request, so every case here is about matching an intent against
 //! what was actually on offer rather than against a fixed set.
 
-use super::outcome_for;
+use super::{outcome_for, sign_in_from};
 use crate::{PermissionDecision, PermissionOption, PermissionOptionId, PermissionOptionKind};
 
 fn offering(kinds: &[PermissionOptionKind]) -> Vec<PermissionOption> {
@@ -94,4 +94,53 @@ fn allowing_with_no_option_to_allow_with_also_stops_the_turn() {
         &offering(&[PermissionOptionKind::RejectOnce]),
     );
     assert_eq!(outcome["outcome"], "cancelled");
+}
+
+/// Reading a sign-in the agent is waiting on.
+///
+/// What a client shows somebody is decided here, and getting it wrong shows
+/// them a card they cannot act on.
+#[test]
+fn a_sign_in_carries_where_to_go_and_what_to_type() {
+    let params = serde_json::json!({
+        "mode": "url",
+        "url": "https://example.invalid/activate",
+        "userCode": "ABCD-EFGH",
+        "message": "Sign in and enter this code: ABCD-EFGH",
+    });
+    let (url, code, message) = sign_in_from(Some(&params)).expect("a complete request is read");
+    assert_eq!(url, "https://example.invalid/activate");
+    assert_eq!(code.as_deref(), Some("ABCD-EFGH"));
+    assert!(message.expect("the sentence travels").contains("code"));
+}
+
+#[test]
+fn a_request_with_no_address_is_read_as_nothing() {
+    // A sign-in card with nowhere to go is worse than none: it tells somebody
+    // to act and gives them no way to. Refused here rather than drawn empty.
+    assert!(sign_in_from(Some(&serde_json::json!({ "message": "sign in" }))).is_none());
+    assert!(sign_in_from(None).is_none());
+}
+
+#[test]
+fn a_code_is_taken_only_from_where_it_is_declared() {
+    // Some bridges name it and some only put it in the sentence. Parsing it
+    // out of prose would break the first time the wording changed, and the
+    // sentence is shown whole either way.
+    let only_prose = serde_json::json!({
+        "url": "https://example.invalid/activate",
+        "message": "Enter WXYZ-1234 to continue",
+    });
+    let (_, code, message) = sign_in_from(Some(&only_prose)).expect("still readable");
+    assert!(code.is_none(), "no code was declared, so none is claimed");
+    assert!(message
+        .expect("the sentence carries it")
+        .contains("WXYZ-1234"));
+}
+
+#[test]
+fn the_alternate_spelling_of_the_code_field_is_accepted() {
+    let params = serde_json::json!({ "url": "https://example.invalid/a", "code": "ZZZZ" });
+    let (_, code, _) = sign_in_from(Some(&params)).expect("readable");
+    assert_eq!(code.as_deref(), Some("ZZZZ"));
 }
