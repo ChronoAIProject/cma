@@ -125,6 +125,30 @@ impl SessionService {
             return;
         }
 
+        // The actions the owner may invoke are liveness, not history: a
+        // stale list replayed from the log would offer actions that no longer
+        // exist. Sent on the live lane rather than recorded.
+        if let SessionUpdate::AvailableCommandsUpdate(commands) = &update {
+            let live = {
+                let entries = self.entries.read().await;
+                let Some(entry) = entries.get(id) else {
+                    return;
+                };
+                entry.live_frames.clone()
+            };
+            let _ = live.send(LiveFrame::AvailableCommands(
+                commands
+                    .available_commands
+                    .iter()
+                    .map(|command| crate::event::AvailableCommand {
+                        name: command.name.clone(),
+                        description: command.description.clone(),
+                    })
+                    .collect(),
+            ));
+            return;
+        }
+
         // Read the grant and the values to redact before folding. A tool body
         // is only recorded when the owner asked for it, and it never carries a
         // value the session was handed — the credential, or an environment

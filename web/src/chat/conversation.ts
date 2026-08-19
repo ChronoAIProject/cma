@@ -159,6 +159,13 @@ export interface Conversation {
    */
   readonly configOptions?: readonly ConfigOption[];
   /**
+   * The actions the owner may invoke right now — liveness, not history.
+   *
+   * Absent on reload, deliberately: a stale list replayed from the log would
+   * offer actions that no longer exist, and none is better than dead ones.
+   */
+  readonly availableCommands?: readonly AvailableCommand[];
+  /**
    * What the agent is saying right now, before it has committed to it.
    *
    * **Deliberately not an entry.** §18.1 requires a turn drawn from history
@@ -204,6 +211,12 @@ export interface ConfigOption {
   readonly id: string;
   readonly name: string;
   readonly kind: string;
+}
+
+/** One action the owner may invoke, in the kernel's own words. */
+export interface AvailableCommand {
+  readonly name: string;
+  readonly description: string;
 }
 
 export const EMPTY: Conversation = { entries: [], turnInFlight: false };
@@ -491,6 +504,19 @@ function applyPatches(
           const name = typeof value.name === 'string' ? value.name : '';
           const kind = typeof value.kind === 'string' ? value.kind : '';
           return id === '' ? [] : [{ id, name, kind }];
+        }),
+      };
+    } else if (patch.path === '/availableCommands' && Array.isArray(patch.value)) {
+      next = {
+        ...next,
+        availableCommands: patch.value.flatMap((entry): AvailableCommand[] => {
+          if (typeof entry !== 'object' || entry === null) {
+            return [];
+          }
+          const value = entry as Record<string, unknown>;
+          const name = typeof value.name === 'string' ? value.name : '';
+          const description = typeof value.description === 'string' ? value.description : '';
+          return name === '' ? [] : [{ name, description }];
         }),
       };
     } else if (patch.path.startsWith('/planeChanges')) {
