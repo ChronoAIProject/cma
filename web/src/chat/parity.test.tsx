@@ -282,3 +282,31 @@ describe('the table and the tests agree', () => {
     }
   });
 });
+
+describe('where an approval waits', () => {
+  it('takes the composer seat rather than sitting in the stream', async () => {
+    /*
+     * §18.3, amended. An approval in the stream scrolls away: a turn that
+     * stopped five entries ago leaves its question five entries up, and the
+     * one thing somebody must answer becomes the one thing they can scroll
+     * past. Here it is where they were already looking — and the field goes,
+     * because typing is not what the session is waiting for.
+     */
+    surface(accepted, CAPABLE, 'approval-granted', 2);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /allow/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('textbox', { name: /message/i })).toBeNull();
+  });
+
+  it('gives the field back once the question is answered', async () => {
+    // The seat is the composer's; an approval only borrows it.
+    surface(accepted, CAPABLE, 'approval-granted');
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: /message/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /^allow$/i })).toBeNull();
+  });
+});

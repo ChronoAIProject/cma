@@ -226,22 +226,11 @@ export function ConversationSurface({
         linkLost={linkLost}
         footer={
           /*
-           * Two things can be waiting at the foot of the stream, and only one
-           * at a time: an approval belongs to a turn in flight, a sign-in to a
-           * session that cannot start one yet. The sign-in is drawn first
-           * because nothing else can proceed until it is done.
+           * The sign-in stays in the stream: it is a thing to go and do
+           * somewhere else, and a person can leave it open while they read.
+           * The approval does not — see the composer seat below.
            */
-          conversation.signIn !== undefined ? (
-            <SignInCard signIn={conversation.signIn} />
-          ) : pending === undefined ? null : (
-            <ApprovalCard
-              interrupt={pending}
-              busy={busy}
-              onAnswer={(decision) => {
-                void attempt(() => client.resolveApproval(pending.id, decision, runId()));
-              }}
-            />
-          )
+          conversation.signIn === undefined ? null : <SignInCard signIn={conversation.signIn} />
         }
       />
 
@@ -252,17 +241,43 @@ export function ConversationSurface({
        */}
       <div className="conversation__foot">
         <div className="conversation__footcolumn">
-          <Composer
-            capabilities={capabilities}
-            availableCommands={conversation.availableCommands}
-            turnInFlight={conversation.turnInFlight}
-            refusedReason={state.interactive ? undefined : reason}
-            busy={busy}
-            onSend={(text) => attempt(() => client.prompt(text, runId()))}
-            onInterrupt={() => {
-              void attempt(() => client.interrupt());
-            }}
-          />
+          {/*
+           * An approval takes the composer's seat rather than sitting in the
+           * stream — §18.3, amended.
+           *
+           * The section's binding constraint was that it must never be a
+           * modal, so that a session waiting on an answer leaves every other
+           * session reachable. That still holds: this is inside one session's
+           * own surface and the sidebar is untouched.
+           *
+           * What changes is that an approval in the stream scrolls away. A
+           * turn that stopped five entries ago leaves its question five
+           * entries up, and the one thing a person must answer is the one
+           * thing they can scroll past. Here it is where they were already
+           * looking, and it replaces the field because typing is not what the
+           * session is waiting for.
+           */}
+          {pending === undefined ? (
+            <Composer
+              capabilities={capabilities}
+              availableCommands={conversation.availableCommands}
+              turnInFlight={conversation.turnInFlight}
+              refusedReason={state.interactive ? undefined : reason}
+              busy={busy}
+              onSend={(text) => attempt(() => client.prompt(text, runId()))}
+              onInterrupt={() => {
+                void attempt(() => client.interrupt());
+              }}
+            />
+          ) : (
+            <ApprovalCard
+              interrupt={pending}
+              busy={busy}
+              onAnswer={(decision) => {
+                void attempt(() => client.resolveApproval(pending.id, decision, runId()));
+              }}
+            />
+          )}
           <Usage granted={capabilities.usage} usage={conversation.usage} />
         </div>
       </div>
