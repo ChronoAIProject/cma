@@ -51,12 +51,36 @@
  * turn. Over the surface rather than in it, so arriving content never moves
  * what they are reading.
  */
+/*
+ * Back to the newest. Centred rather than in a corner: it is about the column
+ * it sits over, and a corner reads as belonging to whatever is nearest it.
+ */
 .stream__behind {
   position: absolute;
-  right: var(--space-4);
-  bottom: var(--space-4);
-  height: var(--control-h-sm);
-  box-shadow: var(--lift-rest);
+  bottom: 16px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-button-floating-fill);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 100px;
+  box-shadow: var(--dsw-shadow-lv2);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+.stream__behind:hover {
+  background: var(--dsw-alias-button-floating-hover);
+}
+
+.stream__behind:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /* ── A turn ──────────────────────────────────────────────────────────── */
@@ -64,7 +88,9 @@
 .turn {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
+  font-size: 16px;
+  line-height: 28px;
 }
 
 /*
@@ -76,12 +102,20 @@
  * ground; the agent's are long and are the thing being read, so they get the
  * whole column and nothing around them.
  */
+/*
+ * The owner's bubble is capped in both directions: a share of the column so
+ * it never runs the full measure, and a fixed ceiling so it does not keep
+ * growing on a wide screen — a bubble as wide as the agent's prose stops
+ * reading as somebody's aside.
+ */
 .turn[data-role='user'] .turn__body {
   align-self: flex-end;
-  max-width: 80%;
-  padding: var(--space-2) var(--space-4);
-  background: var(--inset);
-  border-radius: var(--radius-xl);
+  max-width: min(525px, 82%);
+  padding: 10px 16px;
+  font-size: 16px;
+  line-height: 24px;
+  background: var(--dsw-specific-bubble);
+  border-radius: 22px;
 }
 
 .turn[data-role='user'] {
