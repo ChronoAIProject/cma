@@ -43,26 +43,20 @@ export function storedAppearance(): Appearance {
 /**
  * Apply a preference to the document.
  *
- * Two attributes, deliberately, because they answer different questions. The
- * one on the root records *what was chosen* and keeps "system" distinct from
- * the value it happens to resolve to — without it, a person who never
- * expressed a preference could not be told apart from one who picked light.
- * The one on the body records *what is being shown*, because that is what the
- * palette selects on and it cannot resolve "system" itself.
+ * Only what is being *shown* is written to the DOM — the choice itself lives
+ * in storage. "System" is therefore resolved here rather than left for a
+ * selector to answer, because the palette has no `prefers-color-scheme` block
+ * to answer it with.
+ *
+ * `color-scheme` is set alongside the attribute and is not decoration: it is
+ * what makes the browser's own surfaces — form controls, the canvas behind an
+ * overscroll, the default scrollbar before ours loads — match the page. A dark
+ * page with a white scrollbar is a page that flashes at its edges.
  */
 export function applyAppearance(appearance: Appearance): void {
-  const root = document.documentElement;
-  if (appearance === 'system') {
-    delete root.dataset.theme;
-  } else {
-    root.dataset.theme = appearance;
-  }
-
-  if (effectiveAppearance(appearance) === 'dark') {
-    document.body.dataset.dsDarkTheme = '';
-  } else {
-    delete document.body.dataset.dsDarkTheme;
-  }
+  const dark = effectiveAppearance(appearance) === 'dark';
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  document.body.toggleAttribute('data-ds-dark-theme', dark);
 }
 
 /** Record a preference, and apply it. */
