@@ -28,6 +28,7 @@ use serde::Serialize;
 struct EventDoc {
     session_id: String,
     seq: i64,
+    appended_at: String,
     kind: Bson,
 }
 
@@ -36,6 +37,7 @@ pub(super) fn to_document(event: &Event) -> Result<Document, StoreError> {
     let doc = EventDoc {
         session_id: event.session_id.0.clone(),
         seq: event.seq as i64,
+        appended_at: event.appended_at.clone(),
         kind: mongodb::bson::serialize_to_bson(&event.kind)
             .map_err(|error| StoreError::Malformed(error.to_string()))?,
     };
@@ -54,6 +56,14 @@ pub(super) fn from_document(mut doc: Document) -> Result<StoredEvent, StoreError
             u64::try_from(value).map_err(|_| malformed("seq must not be negative"))?
         }
         _ => return Err(malformed("seq must be a 64-bit integer")),
+    };
+    // Absent on a document written before this field existed, and read as
+    // empty rather than as damage: a rolling deployment must read a
+    // colleague's older event without failing the stream over a time it does
+    // not have.
+    let appended_at = match doc.remove("appended_at") {
+        Some(Bson::String(value)) => value,
+        _ => String::new(),
     };
     let mut payload = match doc.remove("kind") {
         Some(Bson::Document(value)) => value,
@@ -89,6 +99,7 @@ pub(super) fn from_document(mut doc: Document) -> Result<StoredEvent, StoreError
     Ok(StoredEvent {
         session_id: SessionId(session_id),
         seq,
+        appended_at,
         kind,
     })
 }

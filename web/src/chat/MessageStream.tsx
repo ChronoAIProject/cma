@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
-import type { Entry } from './conversation';
-import { fullTimestampOrNone } from '../sessions/sessionTime';
+import type { Entry, MessageEntry } from './conversation';
+import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 
 /**
@@ -187,6 +187,19 @@ function Eyebrow({ kernel }: { readonly kernel: string }) {
   );
 }
 
+/**
+ * The owner turn's eyebrow — §18.1: `You · HH:MM`, the time read from the
+ * durable log. A turn whose time the record does not carry shows none rather
+ * than an estimated one, on the section's equivalence rule.
+ */
+function youLabel(entry: MessageEntry): string {
+  if (entry.at === undefined) {
+    return 'You';
+  }
+  const parsed = Date.parse(entry.at);
+  return Number.isNaN(parsed) ? 'You' : `You · ${timeOfDay(parsed)}`;
+}
+
 function StreamEntry({
   entry,
   kernel,
@@ -201,7 +214,7 @@ function StreamEntry({
       return (
         <article className="turn" data-role={entry.role}>
           {entry.role === 'user' ? (
-            <span className="turn__eyebrow turn__eyebrow--you">You</span>
+            <span className="turn__eyebrow turn__eyebrow--you">{youLabel(entry)}</span>
           ) : (
             <Eyebrow kernel={kernel} />
           )}

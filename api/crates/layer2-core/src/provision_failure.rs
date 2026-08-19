@@ -296,6 +296,7 @@ impl SessionService {
                                 // lacked rather than "something went wrong".
                                 capability: failure.capability.clone(),
                             },
+                            appended_at: String::new(),
                         }],
                     )
                     .await
