@@ -8,5 +8,22 @@
 
 .sessionheader {
   gap: var(--space-3);
-  overflow: hidden;
+  /*
+   * Deliberately NOT `overflow: hidden`, and this is load-bearing. The header
+   * carries §7's overflow menu, which opens downward past the band's own 56px
+   * — clipping the band clipped the menu, so the `···` key appeared to do
+   * nothing and read as the dropdown hiding behind the surface below.
+   *
+   * What the clip was guarding against is handled where it belongs: the one
+   * thing here that can run long is the row's reason line, and
+   * `.control-reason` truncates itself.
+   */
+  min-width: 0;
+  /*
+   * A stacking context above the surface, so the menu paints over whatever
+   * the column is drawing — a terminal, a canvas, a conversation — rather
+   * than depending on document order.
+   */
+  position: relative;
+  z-index: 1;
 }
