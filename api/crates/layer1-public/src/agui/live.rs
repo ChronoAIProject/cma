@@ -53,6 +53,7 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             run_id: run_id.to_string(),
             thread_id: thread_id.to_string(),
             body: serde_json::json!({ "messageId": IN_FLIGHT, "delta": text }),
+            timestamp: None,
             seq: None,
         }),
         /*
@@ -76,6 +77,7 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             run_id: run_id.to_string(),
             thread_id: thread_id.to_string(),
             body: serde_json::json!({ "messageId": REASONING, "delta": text }),
+            timestamp: None,
             seq: None,
         }),
         LiveFrame::TerminalOutput(_) | LiveFrame::Exited { .. } => None,

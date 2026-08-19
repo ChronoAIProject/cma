@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fullTimestamp, isSameDayInZone, sortSessions, tabLabel } from './sessionTime';
+import { fullTimestamp, isSameDayInZone, sortSessions, tabLabel, timeOfDay } from './sessionTime';
 
 /**
  * Session times are shown in one fixed zone, not the viewer's.
@@ -43,6 +43,12 @@ describe('session timestamps', () => {
   it('states the zone on the full timestamp', () => {
     // Reference material has to say what it is relative to.
     expect(fullTimestamp(UTC_0630)).toContain('SGT');
+  });
+
+  it('gives the time of day a turn label reads', () => {
+    // 04:00 UTC is 12:00 in Singapore — the same fixed zone, for the same
+    // reason: a turn's time must not mean a different moment per viewer.
+    expect(timeOfDay(Date.parse('2026-08-19T04:00:00Z'))).toBe('12:00');
   });
 });
 

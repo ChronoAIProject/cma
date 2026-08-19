@@ -58,6 +58,14 @@ interface EventBase {
    * deduplicating on that would drop every liveness frame in silence.
    */
   readonly ephemeral?: boolean;
+  /**
+   * When the durable event this was projected from was appended, RFC 3339.
+   *
+   * Absent for liveness (which has no log position) and for events a control
+   * plane predating timestamps wrote. §18.1 renders no time then — never an
+   * estimated one.
+   */
+  readonly timestamp?: string;
 }
 
 export interface RunStarted extends EventBase {
@@ -276,6 +284,7 @@ export function toEvent(raw: unknown): AguiEvent {
     threadId: str(frame.threadId),
     runId: str(frame.runId),
     seq: num(frame.seq),
+    timestamp: typeof frame.timestamp === 'string' ? frame.timestamp : undefined,
     ephemeral: frame['chrono:live'] === true,
   };
   const kind = str(frame.type);

@@ -21,6 +21,16 @@ pub struct Event {
     pub seq: u64,
     /// Event discriminator.
     pub kind: EventKind,
+    /// When this event was appended to the durable log, RFC 3339 in UTC.
+    ///
+    /// Minted by the log when the event is written, not by whoever noticed
+    /// it: the moment a client should be shown is the moment it became
+    /// history, and that is the same for every path that writes. Empty for an
+    /// event read from a control plane that predates this field — a rolling
+    /// deployment tolerates it and a client renders no time rather than an
+    /// invented one.
+    #[serde(default)]
+    pub appended_at: String,
 }
 
 /// An event decoded from durable storage before it is projected to callers.
@@ -35,6 +45,9 @@ pub struct StoredEvent {
     pub session_id: SessionId,
     /// Monotonic sequence as it appears in storage.
     pub seq: u64,
+    /// When this event was appended, as it was stored. Empty when a writer
+    /// predating the field produced the document.
+    pub appended_at: String,
     /// A kind understood by this build, or the future value it cannot project.
     pub kind: StoredEventKind,
 }
@@ -47,6 +60,7 @@ impl StoredEvent {
                 session_id: self.session_id,
                 seq: self.seq,
                 kind,
+                appended_at: self.appended_at,
             }),
             StoredEventKind::Unknown { .. } => None,
         }
@@ -58,6 +72,7 @@ impl From<Event> for StoredEvent {
         Self {
             session_id: event.session_id,
             seq: event.seq,
+            appended_at: event.appended_at,
             kind: StoredEventKind::Known(event.kind),
         }
     }
@@ -160,6 +175,18 @@ pub enum EventKind {
         /// What the agent said, as it committed it.
         content: String,
     },
+    /// The owner sent a message to the agent.
+    ///
+    /// Durable for the same reason the agent's committed message is: the
+    /// conversation a client replays must show both sides, and the owner's
+    /// turn is the one the surface labels with the time it was sent. Recorded
+    /// here rather than reconstructed from the runtime's transcript, so the
+    /// word this service keeps for it stays its own and no kernel's vocabulary
+    /// has to be understood to know what the owner said.
+    OwnerMessage {
+        /// What the owner sent, verbatim.
+        content: String,
+    },
     /// The agent began using a tool.
     ToolCallStarted {
         /// Correlates with every later update to the same call.
@@ -255,6 +282,7 @@ const KNOWN_TAGS: &[&str] = &[
     "turn_completed",
     "conversation_opened",
     "message_committed",
+    "owner_message",
     "tool_call_started",
     "tool_call_updated",
     "usage_reported",
@@ -370,6 +398,9 @@ mod tests {
             EventKind::MessageCommitted {
                 content: "hello".into(),
             },
+            EventKind::OwnerMessage {
+                content: "hello back".into(),
+            },
             EventKind::ToolCallStarted {
                 call_id: "call-1".into(),
                 title: "read a file".into(),
@@ -418,6 +449,7 @@ mod tests {
                 | EventKind::TurnCompleted
                 | EventKind::ConversationOpened { .. }
                 | EventKind::MessageCommitted { .. }
+                | EventKind::OwnerMessage { .. }
                 | EventKind::ToolCallStarted { .. }
                 | EventKind::ToolCallUpdated { .. }
                 | EventKind::UsageReported { .. }

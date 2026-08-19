@@ -347,3 +347,71 @@ describe('the agent reasoning, §18.8', () => {
     expect(watched).toEqual(stream(committed));
   });
 });
+
+describe('a turn and a tool call carry their time from the log', () => {
+  it('folds the owner turn time onto the message', () => {
+    const state = stream([
+      {
+        type: 'TEXT_MESSAGE_START',
+        seq: 1,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_1',
+        role: 'user',
+        timestamp: '2026-08-19T04:00:00Z',
+      },
+    ]);
+
+    expect(state.entries[0]).toMatchObject({
+      kind: 'message',
+      role: 'user',
+      at: '2026-08-19T04:00:00Z',
+    });
+  });
+
+  it('folds start and finish onto a tool call', () => {
+    const state = stream([
+      {
+        type: 'TOOL_CALL_START',
+        seq: 2,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        toolCallId: 'call-1',
+        toolKind: 'read',
+        timestamp: '2026-08-19T04:00:00Z',
+      },
+      {
+        type: 'TOOL_CALL_END',
+        seq: 3,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        toolCallId: 'call-1',
+        status: 'completed',
+        timestamp: '2026-08-19T04:00:02Z',
+      },
+    ]);
+
+    expect(state.entries[0]).toMatchObject({
+      kind: 'tool',
+      startedAt: '2026-08-19T04:00:00Z',
+      finishedAt: '2026-08-19T04:00:02Z',
+    });
+  });
+
+  it('renders no time where the log carries none', () => {
+    // A control plane predating timestamps wrote no time; that is absence and
+    // the entry must carry none, never an invented one.
+    const state = stream([
+      {
+        type: 'TEXT_MESSAGE_START',
+        seq: 1,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_1',
+        role: 'assistant',
+      },
+    ]);
+
+    expect(state.entries[0]).toMatchObject({ kind: 'message', at: undefined });
+  });
+});
