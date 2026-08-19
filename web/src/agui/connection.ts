@@ -57,6 +57,24 @@ const DEFAULT_MAX_BACKOFF = 15_000;
  */
 export class AguiConnection {
   #cursor = 0;
+  /*
+   * Frames already delivered, keyed by the durable event they came from AND
+   * the kind of frame it projected to.
+   *
+   * Not by sequence alone. One durable event legitimately projects to several
+   * frames — a committed message becomes TEXT_MESSAGE_START, then CONTENT,
+   * then END — and every one of them carries the sequence of the event it was
+   * projected from, because that sequence is the cursor a reconnect resumes
+   * on. Keyed by sequence alone, the first frame was delivered and its
+   * siblings were dropped as duplicates: every agent message opened and then
+   * received none of its own text. No projection emits the same kind twice
+   * for one event, so this pair is exact.
+   *
+   * The kind is the one that arrived on the wire, not the one this build
+   * normalised it to: everything unfamiliar normalises to UNKNOWN, so two
+   * different unfamiliar kinds at one sequence would collide precisely where
+   * a client can least afford to drop something it does not understand.
+   */
   #seen = new Set<string>();
   #closed = false;
   #stopStream: (() => void) | undefined;
@@ -177,9 +195,11 @@ export class AguiConnection {
   /**
    * Deliver one frame, once.
    *
-   * Deduplicated on `seq`, which is what the reconnect order above depends on:
-   * opening the stream before reading history guarantees an overlap, and this
-   * is what makes the overlap harmless.
+   * Deduplicated on the durable event a frame was projected from together
+   * with the kind of frame it is, which is what the reconnect order above
+   * depends on: opening the stream before reading history guarantees an
+   * overlap, and this is what makes the overlap harmless without discarding
+   * the siblings of a frame already seen.
    */
   #deliver(raw: unknown, onEvent: (event: AguiEvent) => void) {
     const event = toEvent(raw);
@@ -195,19 +215,6 @@ export class AguiConnection {
       onEvent(event);
       return;
     }
-    /*
-     * One durable event legitimately projects to several frames — a committed
-     * message becomes START, then CONTENT, then END — and every one carries
-     * the sequence of the event it came from, because that sequence is the
-     * cursor a reconnect resumes on. Keyed by sequence alone, the first was
-     * delivered and its siblings dropped as duplicates: every agent message
-     * rendered empty, and no tool call had any detail.
-     *
-     * Keyed on the kind as it arrived on the wire, not as this build
-     * normalised it: everything unfamiliar normalises to UNKNOWN, so two
-     * different unfamiliar kinds at one sequence would collide right where
-     * the client can least afford to lose something it does not understand.
-     */
     const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
     const delivered = frameKey(event.seq, wireKind);
     if (this.#seen.has(delivered)) {

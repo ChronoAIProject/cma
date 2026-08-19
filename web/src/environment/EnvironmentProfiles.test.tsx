@@ -364,9 +364,25 @@ describe('the plane a profile starts sessions on', () => {
     open();
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    // A new profile starts on the conversation plane, which Claude Code
+    // serves — so the refusal has to be provoked by asking for the plane it
+    // does not serve, rather than by arriving on it.
+    await chooseOption(user, /^plane$/i, 'Terminal');
     await chooseOption(user, /^agent$/i, 'Claude Code');
 
     expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “terminal”/i);
+  });
+
+  it('starts a new profile on the conversation plane', async () => {
+    // The conversation plane is the default surface: it is where approvals
+    // are answered and where a failure can be explained rather than printed.
+    const user = userEvent.setup();
+    open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    expect(await screen.findByRole('combobox', { name: /^plane$/i })).toHaveTextContent(
+      /conversation/i,
+    );
   });
 
   it('refuses nothing when this deployment’s runtimes could not be read', async () => {
