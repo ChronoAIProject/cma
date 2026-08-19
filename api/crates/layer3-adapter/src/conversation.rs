@@ -112,6 +112,22 @@ pub enum ConversationUpdate {
         /// How many frames went, as the runtime counted them.
         frames: u64,
     },
+    /// The turn stopped because something went wrong, and what.
+    ///
+    /// Distinct from `TurnEnded` deliberately. A turn that ends is a turn the
+    /// agent finished; this one did not, and the difference is the whole of
+    /// what a client needs to tell "the agent had nothing more to say" from
+    /// "the agent could not answer". Reported so it becomes `RUN_ERROR`
+    /// rather than a turn that quietly produced nothing — the failure
+    /// `docs/API_AGUI.md` requires a client be able to see, and the one
+    /// `CLAUDE.md` §9 forbids being discovered by whoever tried to use it.
+    Failed {
+        /// What went wrong, in the words of whatever knew: the agent's own
+        /// message, the bridge's, or the runtime's.
+        message: String,
+        /// The ability that was missing, where the failure was a refusal.
+        capability: Option<String>,
+    },
 }
 
 /// A bidirectional attachment to a runtime's conversation.

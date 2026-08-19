@@ -83,7 +83,14 @@ impl AppState {
     async fn conversation_bridge(&self) -> std::io::Result<std::sync::Arc<Bridge>> {
         let mut held = self.conversation.lock().await;
         if let Some(running) = held.as_ref() {
-            return Ok(std::sync::Arc::clone(running));
+            // A cached bridge whose process has gone is not a bridge. Handing
+            // it back gave a conversation that accepted prompts and answered
+            // none — the agent was dead and nothing said so.
+            if !running.is_ended() {
+                return Ok(std::sync::Arc::clone(running));
+            }
+            tracing::warn!("the conversation bridge had ended; starting a fresh one");
+            *held = None;
         }
         if self.registry.is_running().await {
             // One session, one plane. A pod driving a terminal and a
