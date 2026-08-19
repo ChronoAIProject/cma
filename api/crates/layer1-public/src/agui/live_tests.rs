@@ -46,6 +46,7 @@ fn a_durable_frame_does_not_claim_to_be_liveness() {
             session_id: layer2_core::SessionId("sesn_1".into()),
             seq: 4,
             kind: layer2_core::EventKind::TurnStarted,
+            appended_at: String::new(),
         },
         "run_1",
         "sesn_1",
@@ -73,6 +74,7 @@ fn the_in_flight_message_is_not_the_committed_one() {
             kind: layer2_core::EventKind::MessageCommitted {
                 content: "half a thought, finished".into(),
             },
+            appended_at: String::new(),
         },
         "run_1",
         "sesn_1",

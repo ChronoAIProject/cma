@@ -96,10 +96,12 @@ async fn a_future_event_kind_does_not_end_history_readback() {
             session_id: created.id.clone(),
             seq: 1,
             kind: EventKind::SessionCreated,
+            appended_at: String::new(),
         }),
         StoredEvent {
             session_id: created.id.clone(),
             seq: 2,
+            appended_at: String::new(),
             kind: StoredEventKind::Unknown {
                 tag: "future_event".into(),
                 payload: serde_json::json!({ "meaning": 42 }),
@@ -109,6 +111,7 @@ async fn a_future_event_kind_does_not_end_history_readback() {
             session_id: created.id.clone(),
             seq: 3,
             kind: EventKind::TurnStarted,
+            appended_at: String::new(),
         }),
     ];
 
