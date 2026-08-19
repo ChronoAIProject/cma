@@ -223,8 +223,9 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             call_id,
             title,
             kind,
-        } => Projected {
-            events: vec![make(
+            arguments,
+        } => {
+            let mut events = vec![make(
                 "TOOL_CALL_START",
                 // `kind` is the runtime's own word for what sort of tool this
                 // is. Carried through under a namespaced key rather than
@@ -235,16 +236,46 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                     "toolCallName": title,
                     "chrono:toolKind": kind,
                 }),
-            )],
-            ending: None,
-        },
-        EventKind::ToolCallUpdated { call_id, status } => Projected {
-            events: vec![make(
+            )];
+            if let Some(arguments) = arguments {
+                events.push(make(
+                    "TOOL_CALL_ARGS",
+                    serde_json::json!({
+                        "toolCallId": call_id,
+                        "delta": arguments.text,
+                        "chrono:truncated": arguments.truncated,
+                    }),
+                ));
+            }
+            Projected {
+                events,
+                ending: None,
+            }
+        }
+        EventKind::ToolCallUpdated {
+            call_id,
+            status,
+            result,
+        } => {
+            let mut events = vec![make(
                 "TOOL_CALL_END",
                 serde_json::json!({ "toolCallId": call_id, "chrono:status": status }),
-            )],
-            ending: None,
-        },
+            )];
+            if let Some(result) = result {
+                events.push(make(
+                    "TOOL_CALL_RESULT",
+                    serde_json::json!({
+                        "toolCallId": call_id,
+                        "content": result.text,
+                        "chrono:truncated": result.truncated,
+                    }),
+                ));
+            }
+            Projected {
+                events,
+                ending: None,
+            }
+        }
         // Usage arrives as a state patch rather than a separate call, so a
         // chat surface can show spend without polling. §3 of the document.
         EventKind::UsageReported {

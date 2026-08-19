@@ -32,6 +32,13 @@ export interface MessageEntry {
   readonly at?: string;
 }
 
+/** A tool call's arguments or result, as the log carried it. */
+export interface ToolBody {
+  readonly text: string;
+  /** Whether the body was cut to fit the log's bound. */
+  readonly truncated: boolean;
+}
+
 export interface ToolCallEntry {
   readonly kind: 'tool';
   readonly id: string;
@@ -41,6 +48,10 @@ export interface ToolCallEntry {
   /** Absent while it is still running, which is how §18.2 tells them apart. */
   readonly status?: string;
   readonly output?: string;
+  /** What it was asked to do, when the log carried it. */
+  readonly arguments?: ToolBody;
+  /** What it produced, when the log carried it. */
+  readonly result?: ToolBody;
   readonly seq: number;
   /** When the call started, RFC 3339. */
   readonly startedAt?: string;
@@ -302,6 +313,26 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
         seq: event.seq,
         startedAt: event.timestamp,
       });
+
+    case 'TOOL_CALL_ARGS':
+      return {
+        ...state,
+        entries: state.entries.map((entry) =>
+          entry.kind === 'tool' && entry.id === event.toolCallId
+            ? { ...entry, arguments: { text: event.delta, truncated: event.truncated } }
+            : entry,
+        ),
+      };
+
+    case 'TOOL_CALL_RESULT':
+      return {
+        ...state,
+        entries: state.entries.map((entry) =>
+          entry.kind === 'tool' && entry.id === event.toolCallId
+            ? { ...entry, result: { text: event.content, truncated: event.truncated } }
+            : entry,
+        ),
+      };
 
     case 'TOOL_CALL_END':
       return {
