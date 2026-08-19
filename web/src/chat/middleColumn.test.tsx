@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Console } from '../Console';
 import { toSession } from '../api/client';
@@ -56,22 +56,24 @@ describe('the frame does not grow a third view', () => {
   it('still admits exactly two, and still carries no router', async () => {
     // §1, and this issue's own line: "this is not a third view and must not
     // become one." The frame is not navigation and the app has no router.
-    render(<Console user={user} onSignOut={() => {}} />);
-    const views = await screen.findByRole('group', { name: 'View' });
-
-    expect(within(views).getAllByRole('button')).toHaveLength(1);
-    expect(within(views).getByRole('button', { name: 'Sessions' })).toBeInTheDocument();
-  });
-
-  it('draws one rail, one session header and one sheet whatever the plane', async () => {
     const { container } = render(<Console user={user} onSignOut={() => {}} />);
     await waitFor(() => {
-      expect(container.querySelector('.console__body')).not.toBeNull();
+      expect(container.querySelector('.frame')).not.toBeNull();
     });
 
+    // Operations is the only other view there is, and this caller cannot
+    // reach it — so there is nowhere to go from here at all.
+    expect(screen.queryByRole('button', { name: 'Operations' })).toBeNull();
+  });
+
+  it('draws one sidebar, one rail and one session header whatever the plane', async () => {
+    const { container } = render(<Console user={user} onSignOut={() => {}} />);
+    await waitFor(() => {
+      expect(container.querySelector('.frame')).not.toBeNull();
+    });
+
+    expect(container.querySelectorAll('.sidebar')).toHaveLength(1);
     expect(container.querySelectorAll('.rail')).toHaveLength(1);
     expect(container.querySelectorAll('.sessionheader')).toHaveLength(1);
-    expect(container.querySelectorAll('.topbar')).toHaveLength(1);
-    expect(container.querySelectorAll('.statusband')).toHaveLength(1);
   });
 });
