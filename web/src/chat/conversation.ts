@@ -1,4 +1,5 @@
 import type { AguiEvent, Interrupt } from '../agui';
+import { PATHS } from '../sdk/wire';
 
 /**
  * The conversation, folded out of the event stream — `Web_Style.md` §18.1.
@@ -196,8 +197,37 @@ export interface Conversation {
 }
 
 export interface Usage {
+  /**
+   * What the turn consumed in total, which is what §18.5 asks be shown.
+   *
+   * Derived from the two halves rather than reported as one: the service
+   * reports them separately and a reader watching a turn wants the figure,
+   * not a breakdown to add up themselves. Absent until at least one half has
+   * arrived — absence is a fact, never a zero.
+   */
   readonly tokens?: number;
+  /** Tokens the turn spent reading, as the service reports them. */
+  readonly inputTokens?: number;
+  /** Tokens the turn produced. */
+  readonly outputTokens?: number;
+  /** How full the context is, where the runtime says. */
+  readonly contextUsed?: number;
+  /** What it cost, where the runtime reports a figure. Never estimated. */
   readonly cost?: string;
+}
+
+/**
+ * The two halves of a turn's token count, added where both are known.
+ *
+ * `undefined` while neither has arrived: §18.5 is explicit that absence is a
+ * fact rather than a zero, and a total shown before the service reported one
+ * would be this client inventing a figure.
+ */
+function totalOf(input: number | undefined, output: number | undefined): number | undefined {
+  if (input === undefined && output === undefined) {
+    return undefined;
+  }
+  return (input ?? 0) + (output ?? 0);
 }
 
 /** One step of the agent's plan, in the kernel's own words. */
@@ -473,13 +503,42 @@ function applyPatches(
 ): Conversation {
   let next = state;
   for (const patch of event.patch) {
-    if (patch.path === '/usage/tokens' && typeof patch.value === 'number') {
-      next = { ...next, usage: { ...next.usage, tokens: patch.value } };
-    } else if (patch.path === '/usage/cost' && typeof patch.value === 'string') {
+    /*
+     * The paths the service actually writes, from sdk/wire.ts. These were
+     * spelled here as `/usage/tokens` and `/usage/cost` while the service
+     * writes `/usage/inputTokens`, `/usage/outputTokens` and
+     * `/usage/contextUsed` — so every patch fell through to the ignored
+     * branch and no session ever reported what it had spent.
+     *
+     * Tokens are summed rather than shown apart: §18.5 asks for the count and
+     * the cost, and a reader watching a turn wants what it consumed, not a
+     * breakdown they have to add up themselves.
+     */
+    if (patch.path === PATHS.inputTokens && typeof patch.value === 'number') {
+      next = {
+        ...next,
+        usage: {
+          ...next.usage,
+          inputTokens: patch.value,
+          tokens: totalOf(patch.value, next.usage?.outputTokens),
+        },
+      };
+    } else if (patch.path === PATHS.outputTokens && typeof patch.value === 'number') {
+      next = {
+        ...next,
+        usage: {
+          ...next.usage,
+          outputTokens: patch.value,
+          tokens: totalOf(next.usage?.inputTokens, patch.value),
+        },
+      };
+    } else if (patch.path === PATHS.contextUsed && typeof patch.value === 'number') {
+      next = { ...next, usage: { ...next.usage, contextUsed: patch.value } };
+    } else if (patch.path === PATHS.cost && typeof patch.value === 'string') {
       next = { ...next, usage: { ...next.usage, cost: patch.value } };
-    } else if (patch.path === '/mode' && typeof patch.value === 'string') {
+    } else if (patch.path === PATHS.mode && typeof patch.value === 'string') {
       next = { ...next, mode: patch.value };
-    } else if (patch.path === '/plan' && Array.isArray(patch.value)) {
+    } else if (patch.path === PATHS.plan && Array.isArray(patch.value)) {
       next = {
         ...next,
         plan: patch.value.flatMap((entry): PlanStep[] => {
@@ -492,7 +551,7 @@ function applyPatches(
           return title === '' ? [] : [{ title, status }];
         }),
       };
-    } else if (patch.path === '/configOptions' && Array.isArray(patch.value)) {
+    } else if (patch.path === PATHS.configOptions && Array.isArray(patch.value)) {
       next = {
         ...next,
         configOptions: patch.value.flatMap((entry): ConfigOption[] => {
