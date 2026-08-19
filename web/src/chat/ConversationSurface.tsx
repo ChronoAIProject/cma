@@ -19,6 +19,7 @@ import {
 } from '../agui';
 import type { Session } from '../sessions/types';
 import './ConversationSurface.css';
+import type { ToolCallEntry } from './conversation';
 
 /**
  * A session drawn as a conversation — `Web_Style.md` §18.
@@ -49,6 +50,15 @@ interface ConversationSurfaceProps {
    * the header are drawn by the console rather than by this surface.
    */
   readonly onWaitingChange?: (waiting: boolean) => void;
+  /**
+   * Open a tool call in the details column.
+   *
+   * The surface does not own that column — it belongs to the page — so this
+   * reports upward rather than holding a panel of its own.
+   */
+  readonly onInspect?: (call: ToolCallEntry) => void;
+  /** The call the column is showing, when it is showing one. */
+  readonly inspectingId?: string;
 }
 
 /**
@@ -65,6 +75,8 @@ export function ConversationSurface({
   transport = wireTransport,
   operations = fetchTransport,
   onWaitingChange,
+  onInspect,
+  inspectingId,
 }: ConversationSurfaceProps) {
   const [conversation, setConversation] = useState<Conversation>(EMPTY);
   const [link, setLink] = useState<LinkStatus>('reconnecting');
@@ -201,6 +213,8 @@ export function ConversationSurface({
 
       <MessageStream
         entries={conversation.entries}
+        onInspect={onInspect}
+        inspectingId={inspectingId}
         kernel={session.kernel}
         turnInFlight={conversation.turnInFlight}
         live={conversation.live}
