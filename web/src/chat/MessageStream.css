@@ -297,10 +297,67 @@
 }
 
 /*
+ * The block's frame — §18.11.
+ *
+ * Named outside the `.agent` namespace deliberately. §18.1 forbids colour on
+ * agent content, and a test enforces it by reading every `.agent*` rule; the
+ * header is frame around the content rather than content, so it carries the
+ * metadata ink every other label in the product carries. Calling it
+ * `.agent__*` would have been the wrong name, and the test that caught it was
+ * right to.
+ *
+ * The ground, the hairline and the radius move here from the `<pre>` so the
+ * header shares them: one boundary, one hairline, per §5.
+ */
+.codeblock {
+  overflow: hidden;
+  background: var(--sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+
+/*
+ * The header stays put while a long listing scrolls beneath it — §18.11.
+ *
+ * Sticky against the stream's scrollport rather than the block's, which is
+ * why it sits out here: the `<pre>` below owns the horizontal overflow, and a
+ * sticky child of a horizontally scrolling box slides away sideways. It
+ * carries the frame's own ground so the code passes under it rather than
+ * through it.
+ */
+.codeblock__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  background: var(--sunken);
+  border-bottom: 1px solid var(--rule);
+}
+
+/*
+ * The fence's own info string, uppercased by type rather than by rewriting it.
+ * Empty when the agent named no language, which draws nothing rather than a
+ * label this client invented.
+ */
+.codeblock__lang {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/*
  * A code block scrolls inside itself; the stream never does. Content length
  * is not allowed to decide the width of the surface it sits in. §18.1: the
- * mono face at half a step under the terminal size, on the sunken ground,
- * inside the card radius with a hairline.
+ * mono face at half a step under the terminal size, on the sunken ground.
  */
 .agent__block {
   margin: 0;
@@ -310,8 +367,6 @@
   font-size: calc(var(--term-size) - 0.5px);
   line-height: var(--term-leading);
   background: var(--sunken);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
 }
 
 .agent__code {
@@ -369,4 +424,143 @@
   font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
+}
+
+/*
+ * A turn's own action — §18.11.
+ *
+ * Under the body, aligned to the turn's own edge: the owner's turns are a
+ * right-aligned block and the agent's run the full column, so the control
+ * follows whichever side its turn sits on rather than floating in the middle.
+ *
+ * Always present and never revealed on hover, per §3. It is quiet enough to
+ * live there permanently — label ink, no ground of its own — which is what
+ * makes an always-on control possible without it competing with the words.
+ */
+.turn__actions {
+  display: flex;
+  margin-top: var(--space-1);
+}
+
+.turn[data-role='user'] .turn__actions {
+  justify-content: flex-end;
+}
+
+/*
+ * The surface cannot hear the session — §18.13.
+ *
+ * Deliberately not `--fail`. §18.9 draws a run the agent could not finish;
+ * this draws a link that stopped, and giving it the failure ink would tell an
+ * owner their work broke when their network did. Metadata ink, one line, in
+ * the reading column where the turn is.
+ */
+.stream__unheard {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-3);
+  font-size: var(--text-meta);
+  background: var(--inset);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * §18.12 — what an agent wrote, beyond code and lists.
+ *
+ * Nothing here takes colour. §18.1 forbids it on agent content without
+ * exception, and a link is where that exception arrives by habit: underline
+ * and cursor are what distinguish it, and they are enough.
+ */
+.agent__link {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agent__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.agent__link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * A quotation the agent set apart — §18.12.
+ *
+ * The rule carries it and nothing else does. An earlier draft dimmed it to
+ * `--ink-2`, which §18.1 forbids without exception and which the no-colour
+ * test caught: quoting is the agent's own emphasis, and drawing it fainter
+ * than the words around it is this surface deciding the quote matters less
+ * than the agent did.
+ */
+.agent__quote {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--rule);
+}
+
+/*
+ * Nesting kept, drawn as indent — §18.12. A plan with sub-steps flattened to
+ * one level is a different plan.
+ */
+.agent__list li[data-depth='1'] {
+  margin-left: var(--space-4);
+}
+
+.agent__list li[data-depth='2'] {
+  margin-left: calc(var(--space-4) * 2);
+}
+
+.agent__list li[data-depth='3'] {
+  margin-left: calc(var(--space-4) * 3);
+}
+
+.agent__list li[data-depth='4'],
+.agent__list li[data-depth='5'] {
+  margin-left: calc(var(--space-4) * 4);
+}
+
+/*
+ * A table scrolls inside its own frame rather than widening the reading
+ * column — the rule a code block follows, for the same reason: content length
+ * is not allowed to decide the width of the surface it sits in.
+ */
+.agent__tablewrap {
+  overflow-x: auto;
+  margin: var(--space-2) 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+
+.agent__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-note);
+}
+
+.agent__table th,
+.agent__table td {
+  padding: var(--space-1) var(--space-3);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* One boundary, one hairline — §5. Rows are separated, never striped. */
+.agent__table tr + tr td,
+.agent__table thead tr th {
+  border-top: 1px solid var(--rule);
+}
+
+.agent__table th {
+  font-weight: 500;
+}
+
+/*
+ * A soft line break is a line break — §18.12. An agent that wrote its steps on
+ * separate lines meant them on separate lines, and collapsing them into a
+ * paragraph rewrites the shape of the answer.
+ */
+.agent__paragraph {
+  white-space: pre-wrap;
 }

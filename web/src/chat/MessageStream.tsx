@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
+import { CopyKey } from './CopyKey';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
-import type { AvailableCommand, ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
+import type { ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 
@@ -34,6 +35,23 @@ interface MessageStreamProps {
   /** Drawn under the last entry while a turn is in flight. */
   readonly turnInFlight?: boolean;
   /**
+   * Whether the surface can currently hear the session — §18.13.
+   *
+   * While this is false the surface stops claiming the agent is working: no
+   * pulse, no caret. Nothing but the run ending used to clear the in-flight
+   * state, so a dead stream kept both going on a message that had stopped
+   * growing — the one affordance built to tell a working agent from a dead
+   * stream was the one that lied.
+   */
+  readonly linkLive?: boolean;
+  /**
+   * Whether the link has stayed down long enough to be worth naming — §18.13.
+   *
+   * A transient reconnect says nothing. This is the bounded threshold, decided
+   * by the surface that owns the connection rather than counted here.
+   */
+  readonly linkLost?: boolean;
+  /**
    * What the agent is saying right now, before it has committed to it.
    *
    * Drawn after the last entry and never as one — §18.1. It is *replaced* by
@@ -62,7 +80,6 @@ interface MessageStreamProps {
   /** The settings the kernel says are settable, when it reported them. */
   readonly configOptions?: readonly ConfigOption[];
   /** The actions the owner may invoke right now — liveness, not history. */
-  readonly availableCommands?: readonly AvailableCommand[];
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
 }
@@ -74,13 +91,14 @@ export function MessageStream({
   entries,
   kernel,
   turnInFlight = false,
+  linkLive = true,
+  linkLost = false,
   live,
   reasoning,
   footer,
   plan,
   mode,
   configOptions,
-  availableCommands,
 }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
@@ -105,7 +123,13 @@ export function MessageStream({
    * agent takes. Removed the moment anything arrives, and claiming no
    * progress — §11's reason for a wave rather than a bar.
    */
-  const waiting = turnInFlight && live === undefined && reasoning === undefined;
+  /*
+   * The claim is withdrawn the moment the link is not live — §18.13. A pulse
+   * that says "working" while nothing is arriving is worse than drawing
+   * nothing, because it is the affordance a reader trusts to tell them the
+   * difference.
+   */
+  const waiting = turnInFlight && linkLive && live === undefined && reasoning === undefined;
 
   /*
    * Follow the column while it grows, for as long as somebody is following.
@@ -192,6 +216,7 @@ export function MessageStream({
               kernel={kernel}
               key={`${entry.kind}:${entry.id}`}
               turnInFlight={turnInFlight}
+              linkLive={linkLive}
             />
           ))}
           {plan === undefined || plan.length === 0 ? null : (
@@ -215,16 +240,6 @@ export function MessageStream({
               ))}
             </ul>
           )}
-          {availableCommands === undefined || availableCommands.length === 0 ? null : (
-            <ul className="stage">
-              {availableCommands.map((command) => (
-                <li key={command.name} className="stage__step">
-                  <span className="stage__title">{command.name}</span>
-                  <span className="stage__status">{command.description}</span>
-                </li>
-              ))}
-            </ul>
-          )}
           {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
           {live === undefined ? null : (
             /*
@@ -243,10 +258,26 @@ export function MessageStream({
               <Eyebrow kernel={kernel} />
               <div className="turn__body">
                 <AgentContent text={live.text} />
-                <b className="turn__caret" aria-hidden="true" />
+                {linkLive ? <b className="turn__caret" aria-hidden="true" /> : null}
               </div>
             </article>
           )}
+          {linkLost ? (
+            /*
+             * §18.13, and not §18.9. A failed run is a run the agent could not
+             * finish; this is a surface that cannot hear one, and conflating
+             * them tells an owner their work broke when their network did — so
+             * it carries no `--fail` ink and no stop reason.
+             *
+             * Where the turn is rather than in a band across the head: the
+             * reader is looking at the turn, and §12 puts a failed *action* at
+             * the head of the column, which this is not.
+             */
+            <p className="stream__unheard" role="status">
+              Not hearing this session. What is above arrived before the connection stopped, and
+              nothing has been lost — it resumes on its own.
+            </p>
+          ) : null}
           {waiting ? (
             /* §18.1: the §8 pulse with a word, claiming no progress. */
             <p className="stream__waiting">
@@ -308,10 +339,13 @@ function StreamEntry({
   entry,
   kernel,
   turnInFlight,
+  linkLive,
 }: {
   entry: Entry;
   kernel: string;
   turnInFlight: boolean;
+  /** §18.13: the caret claims the agent is typing, so it stops when we cannot hear it. */
+  linkLive: boolean;
 }) {
   switch (entry.kind) {
     case 'message':
@@ -328,9 +362,33 @@ function StreamEntry({
              * The one difference between arriving and settled. Same ink, same
              * size, same everything else.
              */}
-            {!entry.committed && turnInFlight ? (
+            {!entry.committed && turnInFlight && linkLive ? (
               <b className="turn__caret" aria-hidden="true" />
             ) : null}
+          </div>
+          {/*
+           * What a reader can take away — §18.11.
+           *
+           * It writes `entry.text`, the markdown source the model already
+           * holds, and not the rendered tree. That is the point rather than a
+           * detail: selection-copy already works and already yields degraded
+           * text, because the renderer strips heading hashes, list markers,
+           * fences and backticks before drawing. Somebody pasting an agent's
+           * numbered steps into an issue, or its backticked command into a
+           * shell, gets something the agent did not write.
+           *
+           * Persistently drawn, never revealed on hover — §3. Disabled with a
+           * reason while the turn is still being written rather than removed:
+           * copying half an answer is the thing to prevent, and taking the
+           * control away is the wrong instrument for it.
+           */}
+          <div className="turn__actions">
+            <CopyKey
+              text={entry.text}
+              refusedReason={
+                !entry.committed && turnInFlight ? 'This turn is still being written' : undefined
+              }
+            />
           </div>
         </article>
       );

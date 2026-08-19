@@ -50,6 +50,14 @@ interface ConversationSurfaceProps {
   readonly onWaitingChange?: (waiting: boolean) => void;
 }
 
+/**
+ * How long a link may be down before the surface says so — §18.13.
+ *
+ * Long enough that an ordinary reconnect passes in silence, short enough that
+ * somebody watching a turn that has stopped is not left guessing.
+ */
+const LINK_LOST_AFTER_MS = 6000;
+
 export function ConversationSurface({
   session,
   capabilities,
@@ -60,12 +68,54 @@ export function ConversationSurface({
   const [conversation, setConversation] = useState<Conversation>(EMPTY);
   const [link, setLink] = useState<LinkStatus>('reconnecting');
   const [busy, setBusy] = useState(false);
+  /**
+   * Whether the link has been down long enough to be worth saying — §18.13.
+   *
+   * A transient reconnect says nothing at all: a blip announced as a fault
+   * teaches a reader to distrust the next notice, and §11 forbids drawing a
+   * recovering session as a failed one. Only a link that stays down past this
+   * threshold is named, and then once.
+   */
+  const [linkLost, setLinkLost] = useState(false);
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
 
   const client = useMemo(
     () => new AguiOperations(session.id, operations),
     [session.id, operations],
   );
+
+  /*
+   * §18.13. The moment the link is not live, stop claiming the agent is
+   * working; only after a bounded wait say so in words.
+   *
+   * The withdrawal is immediate and the notice is not, deliberately: the
+   * failure mode this section exists for is the surface *asserting liveness
+   * that is false* — the pulse and the caret kept going on a stream that had
+   * stopped, so the one affordance built to tell a working agent from a dead
+   * one was the one that lied. Withdrawing a false claim is quieter than
+   * adding a true one and is correct at every point in between.
+   */
+  const [lostFor, setLostFor] = useState(link);
+  if (lostFor !== link) {
+    // Adjusted during render rather than in an effect, which is React's own
+    // pattern for a value derived from a changing input: any change of status
+    // restarts the wait, so a link that drops, recovers and drops again gets
+    // the full threshold each time rather than being named instantly.
+    setLostFor(link);
+    setLinkLost(false);
+  }
+
+  useEffect(() => {
+    if (link === 'live') {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setLinkLost(true);
+    }, LINK_LOST_AFTER_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [link]);
 
   useEffect(() => {
     // One connection per session, opened on mount and closed on unmount. The
@@ -157,7 +207,8 @@ export function ConversationSurface({
         plan={conversation.plan}
         mode={conversation.mode}
         configOptions={conversation.configOptions}
-        availableCommands={conversation.availableCommands}
+        linkLive={link === 'live'}
+        linkLost={linkLost}
         footer={
           pending === undefined ? null : (
             <ApprovalCard
@@ -180,6 +231,7 @@ export function ConversationSurface({
         <div className="conversation__footcolumn">
           <Composer
             capabilities={capabilities}
+            availableCommands={conversation.availableCommands}
             turnInFlight={conversation.turnInFlight}
             refusedReason={state.interactive ? undefined : reason}
             busy={busy}
