@@ -33,7 +33,13 @@
 .stream__column {
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
+  /*
+   * §20.6: a 16px rhythm between turns. The previous spacing was set for a
+   * surface where every turn was a band separated by a rule; without the
+   * rules, that much air reads as the conversation falling apart rather than
+   * as it being airy.
+   */
+  gap: var(--space-4);
   width: 100%;
   max-width: var(--read-column);
   padding-block: var(--space-6);
@@ -59,6 +65,27 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/*
+ * The owner's turn is a bubble; the agent's runs the full measure unboxed —
+ * §20.6.
+ *
+ * Shape tells the two roles apart, which is what lets the ink stop doing it.
+ * The owner's turns are short and are theirs, so they sit right and carry a
+ * ground; the agent's are long and are the thing being read, so they get the
+ * whole column and nothing around them.
+ */
+.turn[data-role='user'] .turn__body {
+  align-self: flex-end;
+  max-width: 80%;
+  padding: var(--space-2) var(--space-4);
+  background: var(--inset);
+  border-radius: var(--radius-xl);
+}
+
+.turn[data-role='user'] {
+  align-items: flex-end;
 }
 
 /*
