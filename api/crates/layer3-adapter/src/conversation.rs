@@ -128,6 +128,26 @@ pub enum ConversationUpdate {
         /// The ability that was missing, where the failure was a refusal.
         capability: Option<String>,
     },
+    /// The agent cannot proceed until its owner signs in to their own account.
+    ///
+    /// Only ever reached by a session created with the owner's own credential.
+    /// The kernel is asking a person to complete a sign-in somewhere else, and
+    /// the two things it needs them to know — where to go and what to type —
+    /// travel here so an interface can put them on screen.
+    ///
+    /// **No credential passes this way, in either direction.** What the sign-in
+    /// produces is written inside the sandbox by the kernel itself; this
+    /// carries only the address of a page and a code that is useless without
+    /// the person's own account. That is what makes the promise in
+    /// `CredentialMode::Own` true rather than aspirational.
+    SignInRequired {
+        /// The page the owner opens, in their own browser, on their own device.
+        url: String,
+        /// The one-time code they enter there. Short-lived by construction.
+        code: Option<String>,
+        /// The kernel's own sentence about what it wants, where it gave one.
+        message: Option<String>,
+    },
 }
 
 /// A bidirectional attachment to a runtime's conversation.
