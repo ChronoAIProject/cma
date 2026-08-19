@@ -90,11 +90,19 @@ export function ConversationSurface({
    * if the interface renders it as "something went wrong", so the capability
    * name reaches the surface (§18.7).
    */
-  const attempt = useCallback(async (work: () => Promise<void>) => {
+  /**
+   * Run one thing the reader asked for, and say whether it was taken.
+   *
+   * The answer matters to the composer, which keeps the draft until the
+   * service has accepted the turn: a refusal here is reported in the banner
+   * rather than thrown, so settling is not evidence of success.
+   */
+  const attempt = useCallback(async (work: () => Promise<void>): Promise<boolean> => {
     setBusy(true);
     setRefusal(undefined);
     try {
       await work();
+      return true;
     } catch (cause) {
       setRefusal(
         cause instanceof AguiRefusal && cause.capability !== undefined
@@ -103,6 +111,7 @@ export function ConversationSurface({
             ? cause.message
             : String(cause),
       );
+      return false;
     } finally {
       setBusy(false);
     }
@@ -174,9 +183,7 @@ export function ConversationSurface({
             turnInFlight={conversation.turnInFlight}
             refusedReason={state.interactive ? undefined : reason}
             busy={busy}
-            onSend={(text) => {
-              void attempt(() => client.prompt(text, runId()));
-            }}
+            onSend={(text) => attempt(() => client.prompt(text, runId()))}
             onInterrupt={() => {
               void attempt(() => client.interrupt());
             }}
