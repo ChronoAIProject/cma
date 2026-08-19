@@ -1,0 +1,281 @@
+/*
+ * The sidebar — `docs/Web_Style.md` §10.
+ *
+ * Its own scrollbar elevation, because it sits above the surface beside it:
+ * a thumb tinted for the page reads as the wrong weight here. The properties
+ * inherit down to whichever descendant actually scrolls, which is the session
+ * list rather than this element.
+ */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 6px 12px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  background: var(--dsw-specific-sidebar-fill);
+
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* The rail: 36px controls centred in 56px, with a 10px side padding. */
+.sidebar--collapsed {
+  padding: 18px 10px 6px;
+}
+
+.sidebar__logorow {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  height: 60px;
+  margin-bottom: 8px;
+  padding: 8px 0 8px 4px;
+  overflow: hidden;
+}
+
+.sidebar--collapsed .sidebar__logorow {
+  height: 36px;
+  margin-bottom: 12px;
+  padding: 0;
+}
+
+/*
+ * A button in behaviour only. The pointer is the whole affordance — a hover
+ * fill on a wordmark reads as the product's name being a control.
+ */
+.sidebar__brand {
+  display: inline-flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.sidebar__name {
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__build {
+  flex: none;
+  align-self: flex-start;
+  height: 16px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+  color: var(--dsw-alias-label-primary-inverted);
+  font-family: var(--ds-font-family-code);
+  font-size: 8px;
+  font-weight: 500;
+  line-height: 16px;
+  background: var(--dsw-alias-label-primary);
+  border-radius: 3px;
+}
+
+.sidebar__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.sidebar__icon:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebar__icon:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sidebar--collapsed .sidebar__icon {
+  width: 36px;
+  height: 36px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidebar__new {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 38px;
+  margin: 0 2px 8px;
+  padding: 8px 16px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  background: var(--dsw-alias-button-elevated-fill);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.sidebar__new:hover {
+  background: var(--dsw-alias-button-floating-hover);
+}
+
+.sidebar--collapsed .sidebar__new {
+  align-self: flex-start;
+  gap: 0;
+  width: 36px;
+  height: 36px;
+  margin: 0 0 12px;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
+.sidebar--collapsed .sidebar__new:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebar__newlabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The command trigger is a field-shaped button rather than a field: nothing
+ * is typed here, it opens a plate.
+ */
+.sidebar__search {
+  gap: 8px;
+  justify-content: flex-start;
+  width: 100%;
+  height: 30px;
+  margin-bottom: 8px;
+  padding: 0 8px;
+  border-radius: 10px;
+}
+
+.sidebar--collapsed .sidebar__search {
+  width: 36px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.sidebar__searchlabel {
+  flex: 1;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__key {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+}
+
+/*
+ * The list is the only thing that scrolls. The column itself must not, or the
+ * foot rows scroll away with it.
+ */
+.sidebar__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar__status {
+  flex: none;
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.sidebar__foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.sidebar__footrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.sidebar__footrow[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-button-ghost-active-fill);
+}
+
+.sidebar__footrow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebar__footrow:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sidebar--collapsed .sidebar__footrow {
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+}
+
+.sidebar__account {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sidebar--collapsed .sidebar__account {
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: var(--dsw-alias-label-primary);
+}
