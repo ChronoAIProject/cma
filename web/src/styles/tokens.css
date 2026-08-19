@@ -178,13 +178,8 @@
   --term-tracking: 0;
 
   --read-column: 748px;
-  --rail-width: 320px;
-  --rail-collapsed: 56px;
-  --drawer-width: 360px;
+  /* Still read by four surfaces; retires with the last of them. */
   --page-gutter: 20px;
-  --bar-height: 60px;
-  --band-head: 56px;
-  --band-foot: 40px;
   --canvas-node-w: 420px;
   --canvas-node-h: 280px;
 
@@ -204,7 +199,6 @@
  */
 @media (max-width: 29.999rem) {
   :root {
-    --bar-height: 52px;
     --hit: 44px;
     --control-h-sm: 44px;
     --control-h: 44px;

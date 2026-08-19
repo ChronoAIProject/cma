@@ -120,7 +120,7 @@ export function SessionHeader({
         </div>
       )}
 
-      <span className="band__spacer" />
+      <span className="sessionheader__spacer" />
       {actions}
     </div>
   );
