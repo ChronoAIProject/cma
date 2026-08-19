@@ -115,11 +115,7 @@
 }
 
 .node__dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
   margin-left: var(--space-1);
-  border-radius: 50%;
 }
 
 .node__handle {

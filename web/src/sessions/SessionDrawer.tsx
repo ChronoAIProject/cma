@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Session, SessionCreator, SessionService } from './types';
-import { Chip } from '../ui/Chip';
+import { Pill } from '../ui/Pill';
 import { abilitiesFor } from './availability';
 import { labelFor } from './types';
 import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
@@ -194,7 +194,7 @@ export function SessionDrawer({
             </span>
             <button
               type="button"
-              className="button"
+              className="button button--ghost button--md"
               onClick={() => {
                 setConfirmingDelete(false);
               }}
@@ -203,7 +203,7 @@ export function SessionDrawer({
             </button>
             <button
               type="button"
-              className="button button--danger"
+              className="button button--primary button--md"
               disabled={busy}
               onClick={() => {
                 setConfirmingDelete(false);
@@ -218,7 +218,7 @@ export function SessionDrawer({
             {can.reason === undefined ? null : <span className="control-reason">{can.reason}</span>}
             <button
               type="button"
-              className="button"
+              className="button button--ghost button--md"
               disabled={busy || !can.canStop}
               onClick={onStop}
             >
@@ -226,7 +226,7 @@ export function SessionDrawer({
             </button>
             <button
               type="button"
-              className="button button--danger"
+              className="button button--primary button--md"
               disabled={busy || !can.canDelete}
               onClick={() => {
                 setConfirmingDelete(true);
@@ -274,7 +274,7 @@ function Reach({ services }: { readonly services?: readonly SessionService[] }) 
            * existing treatment and for the same stated reason: a person
            * deciding what a session may touch should see the whole answer.
            */}
-          {service.mandated ? <Chip inline>always</Chip> : null}
+          {service.mandated ? <Pill>always</Pill> : null}
         </li>
       ))}
     </ul>

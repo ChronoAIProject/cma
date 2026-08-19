@@ -1,70 +1,63 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import './Button.css';
 
 /**
- * The one button — docs/Web_Style.md §7.
+ * The one button — `docs/Web_Style.md` §7.
  *
- * One implementation rather than a class each surface hand-rolls. Height is
- * declared on the control and every control is `box-sizing: border-box`,
- * because a quiet button carries a 1px border and an accent button does not:
- * under content-box the two render 2px apart and sit a pixel out of line in
- * the same row. That is not a thing anyone notices in review, and it is
- * exactly the thing a shared component prevents.
+ * A capsule, not a rectangle. The variants are fill families rather than
+ * loudness levels: `primary` is the one action a surface exists for, `ghost`
+ * is everything else and is the default, `outline` is the answer that is not
+ * the primary one beside it, and `toolbar` is a control sitting on chrome
+ * rather than on a page.
  *
- * Heights come from §7's control scale: `sm` and the default for rows and
- * bands, `block` for a panel's one full-width primary action, and `lg` for
- * the landing's opening action, which takes the `--control-h-xl` step.
+ * Height lives on the control and every control is `box-sizing: border-box`,
+ * because `outline` carries a 1px border and the others do not: under
+ * content-box the two render 2px apart and sit a pixel out of line in the
+ * same row. That is not a thing anyone catches in review, and it is exactly
+ * what a shared component is for.
  */
 
-/** What the button is for, which decides how loudly it is drawn. */
-export type ButtonTone = 'quiet' | 'accent' | 'danger';
+/** The fill family, each backed by its own token set. */
+export type ButtonVariant = 'primary' | 'ghost' | 'outline' | 'toolbar';
 
-/** Which of §7's heights the control takes. */
-export type ButtonSize = 'default' | 'sm' | 'md' | 'block' | 'lg';
+/** `md` is the 36px capsule; `sm` the 28px one for dense rows. */
+export type ButtonSize = 'md' | 'sm';
 
 interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
-  readonly children: ReactNode;
-  readonly tone?: ButtonTone;
+  readonly children?: ReactNode;
+  readonly variant?: ButtonVariant;
   readonly size?: ButtonSize;
+  /** A leading 16px glyph. Sized by the button so callers cannot drift. */
+  readonly icon?: ReactNode;
   /** Extra classes for placement only. Never for colour, depth or size. */
   readonly placement?: string;
 }
 
-const TONE: Record<ButtonTone, string> = {
-  // A quiet control is the default. §7 spends the one primary button a
-  // surface is allowed on the action that surface exists for, so it is never
-  // the fallback.
-  quiet: '',
-  accent: 'button--primary',
-  danger: 'button--danger',
-};
-
-const SIZE: Record<ButtonSize, string> = {
-  default: '',
-  sm: 'button--sm',
-  md: 'button--md',
-  block: 'button--block',
-  lg: 'button--xl',
-};
-
 export function Button({
   children,
-  tone = 'quiet',
-  size = 'default',
+  variant = 'ghost',
+  size = 'md',
+  icon,
   placement,
   type = 'button',
-  disabled = false,
   ...rest
 }: ButtonProps) {
   /*
    * No reason prop, deliberately. §7: why a control cannot be used is stated
-   * once per row, beside the controls it explains, as a sibling
-   * `.control-reason` drawn by the row — never stacked into each key, which
-   * made every disabled control taller than its enabled neighbour.
+   * once per row, beside the controls it explains, and never stacked into
+   * each one — which made every disabled control taller than its neighbour.
    */
-  const classes = ['button', TONE[tone], SIZE[size], placement ?? ''].filter(Boolean).join(' ');
+  const classes = ['button', `button--${variant}`, `button--${size}`, placement ?? '']
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <button type={type} className={classes} disabled={disabled} {...rest}>
+    <button type={type} className={classes} {...rest}>
+      {icon === undefined ? null : (
+        <span className="button__icon" aria-hidden="true">
+          {icon}
+        </span>
+      )}
       {children}
     </button>
   );
