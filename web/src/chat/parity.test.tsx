@@ -143,7 +143,7 @@ describe('what the chat surface can drive', () => {
     const { sent } = surface(accepted);
 
     await user.type(screen.getByRole('textbox', { name: /message/i }), 'build me a web scraper');
-    await user.click(screen.getByRole('button', { name: /^send$/i }));
+    await user.click(screen.getByRole('button', { name: /send message/i }));
 
     await waitFor(() => {
       expect(sent).toHaveLength(1);
@@ -201,7 +201,7 @@ describe('what it refuses, by name, on screen', () => {
     // which is the case that separates "cannot" from "did not work".
     const { sent } = surface(refuses('interrupt'), CAPABLE, 'two-tool-calls', 3);
 
-    const key = await screen.findByRole('button', { name: /interrupt/i });
+    const key = await screen.findByRole('button', { name: /stop generating/i });
     await user.click(key);
 
     await waitFor(() => {
@@ -218,7 +218,7 @@ describe('what it refuses, by name, on screen', () => {
 
     await screen.findByRole('log', { name: /conversation/i });
     await user.type(screen.getByRole('textbox', { name: /message/i }), 'actually, do it in Rust');
-    await user.click(screen.getByRole('button', { name: /^send$/i }));
+    await user.click(screen.getByRole('button', { name: /send message/i }));
 
     await waitFor(() => {
       expect(sent).toHaveLength(1);
