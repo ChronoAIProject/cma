@@ -28,6 +28,29 @@ interface UsageProps {
   readonly usage?: UsageState;
 }
 
+/**
+ * A token count, at the size somebody reads it at.
+ *
+ * Grouped digits up to a thousand and abbreviated past it. A six-figure count
+ * printed in full is a number nobody reads — what is being answered is "how
+ * much of this have I spent", and 128K answers it where 128,431 does not.
+ *
+ * One decimal under a hundred, because the difference between 1.2K and 1.9K
+ * is worth seeing and the difference between 128K and 129K is not.
+ */
+export function formatTokens(tokens: number): string {
+  if (tokens < 1000) {
+    return tokens.toLocaleString('en');
+  }
+  if (tokens < 100_000) {
+    return `${(tokens / 1000).toFixed(1)}K`;
+  }
+  if (tokens < 1_000_000) {
+    return `${Math.round(tokens / 1000).toLocaleString('en')}K`;
+  }
+  return `${(tokens / 1_000_000).toFixed(1)}M`;
+}
+
 export function Usage({ granted, usage }: UsageProps) {
   if (!granted) {
     return <span className="usage">Usage not reported for this session</span>;
@@ -45,7 +68,7 @@ export function Usage({ granted, usage }: UsageProps) {
   return (
     <span className="usage">
       {usage.tokens === undefined ? null : (
-        <span className="usage__tokens">{usage.tokens.toLocaleString('en')} tokens</span>
+        <span className="usage__tokens">{formatTokens(usage.tokens)} tokens</span>
       )}
       {usage.cost === undefined ? null : <span>{usage.cost}</span>}
     </span>
