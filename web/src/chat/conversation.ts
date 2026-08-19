@@ -337,6 +337,31 @@ function applyPatches(
       };
     } else if (patch.path === PATHS.contextUsed && typeof patch.value === 'number') {
       next = { ...next, usage: { ...next.usage, contextUsed: patch.value } };
+    } else if (patch.path === PATHS.signIn && typeof patch.value === 'object') {
+      /*
+       * The agent is waiting for its owner to sign in somewhere else.
+       *
+       * Kept as state rather than folded into the stream: nobody said it, and
+       * putting it among the turns would mix a thing the reader must act on
+       * into the record of what the agent produced.
+       *
+       * Read defensively. A value missing its address is dropped rather than
+       * drawn, because a sign-in card with nowhere to go is worse than none —
+       * it tells somebody to act and gives them no way to.
+       */
+      const value = patch.value as { url?: unknown; code?: unknown; message?: unknown } | null;
+      const url = typeof value?.url === 'string' ? value.url : undefined;
+      next = {
+        ...next,
+        signIn:
+          url === undefined
+            ? undefined
+            : {
+                url,
+                code: typeof value?.code === 'string' ? value.code : undefined,
+                message: typeof value?.message === 'string' ? value.message : undefined,
+              },
+      };
     } else if (patch.path === PATHS.cost && typeof patch.value === 'string') {
       next = { ...next, usage: { ...next.usage, cost: patch.value } };
     } else if (patch.path === PATHS.mode && typeof patch.value === 'string') {
