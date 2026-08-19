@@ -25,7 +25,7 @@ use layer3_adapter::{
 };
 use tokio::sync::mpsc;
 
-use crate::event::{EventKind, LiveFrame, PlanStep, ToolBody};
+use crate::event::{ConfigOption, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
@@ -360,6 +360,19 @@ fn durable(
                 .map(|entry| PlanStep {
                     title: entry.content,
                     status: wire_name(&entry.status),
+                })
+                .collect(),
+        }),
+        // The settings the kernel says are settable, so a client can render a
+        // selection rather than a free-text box.
+        SessionUpdate::ConfigOptionUpdate(update) => Some(EventKind::ConfigOptionsSet {
+            options: update
+                .config_options
+                .into_iter()
+                .map(|option| ConfigOption {
+                    id: option.id.0.to_string(),
+                    name: option.name,
+                    kind: wire_name(&option.kind),
                 })
                 .collect(),
         }),
