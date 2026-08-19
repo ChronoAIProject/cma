@@ -44,7 +44,6 @@ use serde::Deserialize;
 use crate::bridge::Outbound;
 use crate::lanes::{self, Ready, LANE_CONVERSATION, LANE_CONVERSATION_GAP, LANE_TERMINAL};
 use crate::pty::PtySession;
-use crate::upstream::CredentialHolder;
 use crate::upstream::PLACEHOLDER_KEY;
 use crate::AppState;
 
@@ -103,6 +102,13 @@ pub(crate) enum ControlFrame {
     /// owner's behalf.
     Credential {
         value: String,
+    },
+    /// Restart the supervised program under a different front-end.
+    ///
+    /// The command must be one this pod was told at boot it may run; anything
+    /// else is refused by name.
+    SwitchPlane {
+        command: String,
     },
 }
 
@@ -202,7 +208,7 @@ async fn relay_terminal(
     });
 
     let session_in = std::sync::Arc::clone(&session);
-    let credential_in = state.credential.clone();
+    let state_in = state.clone();
     let runtime = id.clone();
     let mut pump_in = tokio::spawn(async move {
         while let Some(frame) = source.next().await {
@@ -229,7 +235,7 @@ async fn relay_terminal(
                     }
                 }
                 Ok(Message::Text(text)) => {
-                    control(&text, &runtime, &credential_in, Some(&session_in)).await
+                    control(&text, &runtime, &state_in, Some(&session_in)).await
                 }
                 Ok(Message::Close(_)) => break,
                 Ok(_) => {}
@@ -304,7 +310,7 @@ async fn relay_conversation(
         }
     });
 
-    let credential_in = state.credential.clone();
+    let state_in = state.clone();
     let runtime = id.clone();
     let bridge_in = std::sync::Arc::clone(&bridge);
     let mut pump_in = tokio::spawn(async move {
@@ -322,7 +328,7 @@ async fn relay_conversation(
                     }
                     None => {}
                 },
-                Ok(Message::Text(text)) => control(&text, &runtime, &credential_in, None).await,
+                Ok(Message::Text(text)) => control(&text, &runtime, &state_in, None).await,
                 Ok(Message::Close(_)) => break,
                 Ok(_) => {}
                 Err(e) => {
@@ -374,14 +380,19 @@ fn gap(frames: usize) -> Message {
 async fn control(
     text: &str,
     runtime: &str,
-    credential: &CredentialHolder,
+    state: &AppState,
     session: Option<&std::sync::Arc<PtySession>>,
 ) {
     match serde_json::from_str::<ControlFrame>(text) {
         Ok(ControlFrame::Credential { value }) => {
             // Never logged with its value; the holder reports only that a
             // replacement happened.
-            credential.set(value).await;
+            state.credential.set(value).await;
+        }
+        Ok(ControlFrame::SwitchPlane { command }) => {
+            // The program is swapped in place — the pod, its filesystem and
+            // its conversation stay. The allowlist is checked in `switch_command`.
+            state.switch_command(&command);
         }
         Ok(ControlFrame::Resize { cols, rows }) => match session {
             Some(session) => {
