@@ -156,6 +156,35 @@ describe('the session header', () => {
   });
 });
 
+describe('the header does not clip what it opens', () => {
+  it('lets the overflow menu escape the band', () => {
+    // The defect: the band carried `overflow: hidden`, so the menu — which
+    // opens downward past the band's own 56px — was clipped away entirely.
+    // Pressing `···` looked like it did nothing, or like the dropdown was
+    // hiding behind the surface below.
+    // Comments stripped first: this file explains in prose why the clip is
+    // absent, and prose is not a declaration.
+    const css = readFileSync(
+      resolve(process.cwd(), 'src/sessions/SessionHeader.css'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    const band = /\.sessionheader\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(band).not.toMatch(/overflow:\s*hidden/);
+    // And it paints above whatever the column is drawing, rather than
+    // depending on document order against a terminal or a canvas.
+    expect(band).toMatch(/position:\s*relative/);
+    expect(band).toMatch(/z-index:/);
+  });
+
+  it('still keeps the one thing that can run long inside the band', () => {
+    // What the clip was guarding against, handled where it belongs.
+    const shared = readFileSync(resolve(process.cwd(), 'src/styles/components.css'), 'utf8');
+    const reason = /\.control-reason\s*\{([^}]*)\}/.exec(shared)?.[1] ?? '';
+    expect(reason).toMatch(/text-overflow:\s*ellipsis/);
+    expect(reason).toMatch(/white-space:\s*nowrap/);
+  });
+});
+
 describe('the details drawer', () => {
   it('confirms a delete inline, in place of the foot keys', async () => {
     // §7: destructive actions confirm inline, never in a second dialog.
