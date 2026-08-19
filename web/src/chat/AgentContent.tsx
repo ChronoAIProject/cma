@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { CopyKey } from './CopyKey';
 
 /**
  * Agent-emitted content, rendered as the agent meant it — `Web_Style.md` §1
@@ -29,17 +30,52 @@ interface AgentContentProps {
   readonly text: string;
 }
 
+/** One item in a list, and how deep the agent put it. */
+export interface ListItem {
+  readonly text: string;
+  /**
+   * Nesting depth, from the indentation the agent wrote.
+   *
+   * §18.12: a plan with sub-steps flattened to one level is a different plan.
+   */
+  readonly depth: number;
+}
+
 /** One block of what the agent wrote. */
 type Block =
   | { readonly kind: 'code'; readonly language: string; readonly body: string }
   | { readonly kind: 'heading'; readonly level: number; readonly body: string }
-  | { readonly kind: 'list'; readonly items: readonly string[]; readonly ordered: boolean }
+  | { readonly kind: 'list'; readonly items: readonly ListItem[]; readonly ordered: boolean }
+  | { readonly kind: 'quote'; readonly body: string }
+  | { readonly kind: 'table'; readonly head: readonly string[]; readonly rows: readonly string[][] }
   | { readonly kind: 'paragraph'; readonly body: string };
 
 const FENCE = /^```(\w*)\s*$/;
 const HEADING = /^(#{1,6})\s+(.*)$/;
-const BULLET = /^\s*[-*]\s+(.*)$/;
-const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
+const BULLET = /^(\s*)[-*]\s+(.*)$/;
+const NUMBERED = /^(\s*)\d+[.)]\s+(.*)$/;
+const QUOTE = /^>\s?(.*)$/;
+/** A row of a pipe table: at least one `|` with something either side. */
+const ROW = /^\s*\|(.+)\|\s*$/;
+/** The rule under a table's head — dashes and optional alignment colons. */
+const RULE = /^\s*\|[\s:|-]+\|\s*$/;
+
+/** One row's cells, trimmed, from the text between its outer pipes. */
+function cellsOf(line: string): string[] {
+  return (ROW.exec(line)?.[1] ?? '').split('|').map((cell) => cell.trim());
+}
+
+/**
+ * How deep an item sits, from the spaces in front of it.
+ *
+ * Two spaces per level is the common convention and four is the other; both
+ * land on the same depth here because the depth is what matters and the exact
+ * indent an agent chose does not. Capped, so a pathological indent cannot push
+ * a list off the reading column.
+ */
+function depthOf(indent: string): number {
+  return Math.min(Math.floor(indent.replace(/\t/g, '  ').length / 2), 5);
+}
 
 /**
  * Split what the agent wrote into blocks.
@@ -51,8 +87,9 @@ export function blocksOf(text: string): Block[] {
   const lines = text.split('\n');
   const blocks: Block[] = [];
   let paragraph: string[] = [];
-  let items: string[] = [];
+  let items: ListItem[] = [];
   let ordered = false;
+  let quoted: string[] = [];
 
   const flushParagraph = () => {
     if (paragraph.length > 0) {
@@ -66,9 +103,16 @@ export function blocksOf(text: string): Block[] {
       items = [];
     }
   };
+  const flushQuote = () => {
+    if (quoted.length > 0) {
+      blocks.push({ kind: 'quote', body: quoted.join('\n') });
+      quoted = [];
+    }
+  };
   const flush = () => {
     flushParagraph();
     flushList();
+    flushQuote();
   };
 
   for (let i = 0; i < lines.length; i += 1) {
@@ -93,6 +137,31 @@ export function blocksOf(text: string): Block[] {
       continue;
     }
 
+    // A pipe table, recognised only where the head is followed by its rule.
+    // Without that check a line of prose containing pipes becomes a table.
+    if (ROW.test(line) && RULE.test(lines[i + 1] ?? '')) {
+      flush();
+      const head = cellsOf(line);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && ROW.test(lines[i] ?? '')) {
+        rows.push(cellsOf(lines[i] ?? ''));
+        i += 1;
+      }
+      i -= 1;
+      blocks.push({ kind: 'table', head, rows });
+      continue;
+    }
+
+    const quote = QUOTE.exec(line);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      quoted.push(quote[1] ?? '');
+      continue;
+    }
+    flushQuote();
+
     const bullet = BULLET.exec(line);
     const numbered = NUMBERED.exec(line);
     if (bullet ?? numbered) {
@@ -102,7 +171,10 @@ export function blocksOf(text: string): Block[] {
         flushList();
       }
       ordered = nextOrdered;
-      items.push(numbered?.[1] ?? bullet?.[1] ?? '');
+      items.push({
+        text: numbered?.[2] ?? bullet?.[2] ?? '',
+        depth: depthOf(numbered?.[1] ?? bullet?.[1] ?? ''),
+      });
       continue;
     }
 
@@ -143,7 +215,7 @@ export function inline(text: string): ReactNode[] {
       );
       return;
     }
-    out.push(...emphasis(part, index));
+    out.push(...links(part, index));
   });
   return out;
 }
@@ -156,6 +228,47 @@ export function inline(text: string): ReactNode[] {
  * text an agent writes constantly and turning their middles italic would
  * corrupt an identifier the reader may be about to copy.
  */
+/**
+ * A link, and nothing decided about where it points — §18.12.
+ *
+ * Underline and cursor distinguish it, never colour: §18.1 forbids colour on
+ * agent content without exception, and a blue link is that exception arriving
+ * by habit. The href is what the agent wrote, on §9's precedent for the
+ * terminal's OSC 8 sequences — this surface does not decide where an agent's
+ * link goes.
+ *
+ * `noreferrer` and `noopener` because the target is untrusted by construction:
+ * this content came from a coding agent running the owner's own code.
+ */
+const LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+
+function links(text: string, seed: number): ReactNode[] {
+  const out: ReactNode[] = [];
+  let at = 0;
+  for (const match of text.matchAll(LINK)) {
+    const start = match.index;
+    if (start > at) {
+      out.push(...emphasis(text.slice(at, start), seed));
+    }
+    out.push(
+      <a
+        className="agent__link"
+        key={`l${String(seed)}-${String(start)}`}
+        href={match[2]}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {match[1]}
+      </a>,
+    );
+    at = start + match[0].length;
+  }
+  if (at < text.length) {
+    out.push(...emphasis(text.slice(at), seed));
+  }
+  return out;
+}
+
 function emphasis(text: string, seed: number): ReactNode[] {
   // Typed as ReactNode[] rather than inferred: `flatMap` in the caller needs a
   // uniform element type, and a mix of strings and elements infers as neither.
@@ -186,11 +299,30 @@ export function AgentContent({ text }: AgentContentProps) {
         switch (block.kind) {
           case 'code':
             return (
-              // The language is carried as data rather than used to colour
-              // anything: a client that highlighted would be styling content.
-              <pre className="agent__block" data-language={block.language} key={index}>
-                {block.body}
-              </pre>
+              /*
+               * A wrapper, a header, and the `<pre>` that keeps the scrolling
+               * — §18.11.
+               *
+               * The header cannot live inside the `<pre>`: that element owns
+               * the horizontal overflow, and a sticky child of a horizontally
+               * scrolling box slides away sideways instead of staying put. So
+               * the frame moves out and the `<pre>` keeps its one job.
+               *
+               * The label is the fence's own info string, verbatim. Uppercased
+               * by `text-transform`, which is typography; mapping `py` onto
+               * "Python" would be naming, and §18.2 and §18.10 both forbid this
+               * client inventing a set the kernel did not use. A fence with no
+               * info string draws no label rather than an invented one.
+               */
+              <div className="codeblock" key={index}>
+                <div className="codeblock__head">
+                  <span className="codeblock__lang">{block.language ?? ''}</span>
+                  <CopyKey text={block.body} />
+                </div>
+                <pre className="agent__block" data-language={block.language}>
+                  {block.body}
+                </pre>
+              </div>
             );
           case 'heading': {
             /*
@@ -211,19 +343,61 @@ export function AgentContent({ text }: AgentContentProps) {
               </Tag>
             );
           }
-          case 'list':
-            return block.ordered ? (
-              <ol className="agent__list" key={index}>
+          case 'list': {
+            /*
+             * Nesting kept — §18.12. Carried as a depth on each item and drawn
+             * as an indent rather than rebuilt into nested `<ul>`s: the agent's
+             * markers are what they are, and re-deriving a tree from
+             * indentation invents structure where the agent only wrote
+             * spacing. A plan with sub-steps flattened to one level is a
+             * different plan, which is the thing this prevents.
+             */
+            const List = block.ordered ? 'ol' : 'ul';
+            return (
+              <List className="agent__list" key={index}>
                 {block.items.map((item, at) => (
-                  <li key={at}>{inline(item)}</li>
+                  <li key={at} data-depth={item.depth === 0 ? undefined : item.depth}>
+                    {inline(item.text)}
+                  </li>
                 ))}
-              </ol>
-            ) : (
-              <ul className="agent__list" key={index}>
-                {block.items.map((item, at) => (
-                  <li key={at}>{inline(item)}</li>
-                ))}
-              </ul>
+              </List>
+            );
+          }
+          case 'quote':
+            return (
+              <blockquote className="agent__quote" key={index}>
+                {inline(block.body)}
+              </blockquote>
+            );
+          case 'table':
+            /*
+             * §18.12: the structure the agent wrote it in, scrolling inside
+             * its own frame rather than widening the reading column — the same
+             * rule a code block follows, for the same reason.
+             */
+            return (
+              <div className="agent__tablewrap" key={index}>
+                <table className="agent__table">
+                  <thead>
+                    <tr>
+                      {block.head.map((cell, at) => (
+                        <th key={at} scope="col">
+                          {inline(cell)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, at) => (
+                      <tr key={at}>
+                        {row.map((cell, col) => (
+                          <td key={col}>{inline(cell)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             );
           case 'paragraph':
             return (
