@@ -273,6 +273,26 @@ pub enum EventKind {
         /// How many frames were dropped, as the runtime counted them.
         frames: u64,
     },
+    /// The agent is waiting for its owner to sign in to their own account.
+    ///
+    /// Recorded rather than only shown. A sign-in is the one thing on this
+    /// plane that a person must act on somewhere else, and a prompt lost to a
+    /// reload leaves a session waiting on a code its owner can no longer see.
+    /// Durable, so a reader who comes back finds it where they left it.
+    ///
+    /// **Carries no credential and cannot.** What it holds is the address of a
+    /// page and a short-lived code that is worth nothing without the person's
+    /// own account. The credential the sign-in produces is written by the
+    /// agent inside its own sandbox and never travels — which is what makes
+    /// the promise in `CredentialMode::Own` a fact rather than an intention.
+    SignInRequired {
+        /// The page the owner opens, on their own device.
+        url: String,
+        /// The one-time code entered there, where the kernel gave one.
+        code: Option<String>,
+        /// The kernel's own wording, where it gave any.
+        message: Option<String>,
+    },
     /// The runtime is blocked awaiting a decision from the client.
     ApprovalRequested {
         /// Correlates with the resolving decision.
@@ -382,6 +402,7 @@ const KNOWN_TAGS: &[&str] = &[
     "approval_requested",
     "approval_resolved",
     "plane_changed",
+    "sign_in_required",
 ];
 
 impl EventKind {
@@ -564,6 +585,11 @@ mod tests {
                 to: crate::options::SessionMode::Conversation,
                 snapshot_at: "2026-08-18T09:00:00Z".into(),
             },
+            EventKind::SignInRequired {
+                url: "https://example.invalid/activate".into(),
+                code: Some("ABCD-EFGH".into()),
+                message: Some("Open the page and enter the code".into()),
+            },
         ];
         for kind in &all {
             match kind {
@@ -587,7 +613,8 @@ mod tests {
                 | EventKind::TerminalResized { .. }
                 | EventKind::ApprovalRequested { .. }
                 | EventKind::ApprovalResolved { .. }
-                | EventKind::PlaneChanged { .. } => {}
+                | EventKind::PlaneChanged { .. }
+                | EventKind::SignInRequired { .. } => {}
             }
         }
         all
