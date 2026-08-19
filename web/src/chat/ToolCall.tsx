@@ -62,27 +62,29 @@ export function ToolCall({ call }: ToolCallProps) {
         }}
       >
         {/*
-         * The caret flips rather than rotating (§7): at this size a rotation
-         * reads as a wobble. While the call is running its place is taken by
-         * the wait animation §11 uses, so a running call is distinguishable
-         * from a finished one without reading either.
+         * The status glyph — §18.2: a tick for finished, a cross for failed,
+         * a pulsing dot while it runs. Reinforced by the word at the row's
+         * end, because §2 forbids colour carrying meaning alone.
          */}
         {tone === 'running' ? (
-          <span className="toolcall__running" aria-hidden="true" />
+          <span className="toolcall__glyph toolcall__glyph--running pulse" aria-hidden="true" />
         ) : (
-          <span className="toolcall__caret" aria-hidden="true" />
+          <span className="toolcall__glyph" aria-hidden="true">
+            {tone === 'failed' ? '×' : '✓'}
+          </span>
         )}
 
         <span className="toolcall__kind">{call.toolKind}</span>
         {call.target === undefined ? null : <span className="toolcall__target">{call.target}</span>}
 
         {/*
-         * The status as a word as well as a colour, because §2 forbids colour
-         * carrying meaning alone.
+         * The status word, drawn for a failed or a running call. A finished
+         * call's word is its glyph and its stillness; §18.2 spends the words
+         * where the state needs one.
          */}
-        <span className="toolcall__status">
-          {tone === 'running' ? 'running' : (call.status ?? 'finished')}
-        </span>
+        {tone === 'done' && call.status === undefined ? null : (
+          <span className="toolcall__status">{tone === 'running' ? 'running' : call.status}</span>
+        )}
       </button>
 
       {/*

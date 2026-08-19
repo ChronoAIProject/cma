@@ -50,7 +50,7 @@ describe('a session that cannot report it', () => {
     // cannot report usage must not read as a session that has used nothing."
     const { container } = render(<Usage granted={false} />);
 
-    expect(screen.getByText('not reported')).toBeInTheDocument();
+    expect(screen.getByText(/not reported for this session/i)).toBeInTheDocument();
     expect(container.textContent).not.toContain('0');
     expect(container.textContent).not.toMatch(/\btokens\b/);
   });
@@ -64,12 +64,12 @@ describe('a session that cannot report it', () => {
 
   it('tells "not granted" apart from "granted and nothing yet"', async () => {
     const absent = render(<Usage granted={false} />);
-    expect(absent.getByText('not reported')).toBeInTheDocument();
+    expect(absent.getByText(/not reported for this session/i)).toBeInTheDocument();
     absent.unmount();
 
     const waiting = render(<Usage granted usage={undefined} />);
-    expect(waiting.getByText('waiting')).toBeInTheDocument();
-    expect(waiting.queryByText('not reported')).toBeNull();
+    expect(waiting.getByText(/waiting/i)).toBeInTheDocument();
+    expect(waiting.queryByText(/not reported for this session/i)).toBeNull();
     // And still nothing reading as zero.
     expect(waiting.container.textContent).not.toContain('0');
   });
@@ -95,6 +95,6 @@ describe('leaving the plane', () => {
 
     rerender(<Usage granted={false} usage={{ tokens: 4820, cost: '0.041' }} />);
     expect(container.textContent).not.toContain('4,820');
-    expect(screen.getByText('not reported')).toBeInTheDocument();
+    expect(screen.getByText(/not reported for this session/i)).toBeInTheDocument();
   });
 });
