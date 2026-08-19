@@ -93,9 +93,18 @@ export function TerminalSurface({ driver, label, interactive = true, ref }: Term
     }
 
     const term = new Terminal({
-      fontFamily: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace",
-      fontSize: 14,
-      lineHeight: 1.35,
+      /*
+       * The same stack the rest of the product's code takes, so a command and
+       * its output line up whether they are read here or in a transcript.
+       * The bare `monospace` tail is deliberate and is the one place it is
+       * allowed: xterm needs a terminal font to exist even where none of the
+       * named ones do, and a terminal with no font is not a terminal.
+       */
+      fontFamily:
+        "'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, monospace",
+      fontSize: 13,
+      // 22px at 13px, which is the line height the code blocks use.
+      lineHeight: 22 / 13,
       letterSpacing: 0,
       scrollback: SCROLLBACK_LINES,
       cursorBlink: true,
