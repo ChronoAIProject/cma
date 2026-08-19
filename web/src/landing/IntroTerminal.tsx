@@ -245,9 +245,8 @@ export function IntroTerminal() {
       >
         {/* §15: the panel's 40px chrome strip. */}
         <div className="intro__chrome" aria-hidden="true">
-          <span className="band__label">chronobot</span>
-          <span className="band__spacer" />
-          <span className="band__value">guest</span>
+          <span className="intro__chromename">chronobot</span>
+          <span className="intro__chromewho">guest</span>
         </div>
         <pre className="intro__out" aria-hidden="true">
           {visible.map((line, lineIndex) => {

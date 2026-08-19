@@ -171,15 +171,15 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
   return (
     <section className="operator" aria-label="Operations">
       {/*
-       * The head band every column shares, so the page's rule lands where the
-       * sessions view's does and the window does not shift as somebody
-       * switches between them.
+       * The centre column's header, in the same idiom as a session's: a crumb
+       * saying which of the two views is showing. §9 gave every column its
+       * own proportions, so this lines up with the session header it replaces
+       * rather than with a band that no longer exists.
        */}
-      <div className="band band--head operator__head">
-        <span className="band__label">Operations</span>
+      <div className="sessionheader operator__head">
+        <span className="sessionheader__crumb">Operations</span>
       </div>
 
-      {/* §14: a --text-page title with its one-line description. */}
       <div className="operator__intro">
         <h1 className="operator__title">Operations</h1>
         <p className="operator__description">
@@ -188,7 +188,7 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
       </div>
 
       {/* The four views, as an underlined tablist — §14. */}
-      <div className="band operator__tabs" role="tablist" aria-label="Operator views">
+      <div className="operator__tabs" role="tablist" aria-label="Operator views">
         {views.map((view) => (
           <button
             key={view.id}

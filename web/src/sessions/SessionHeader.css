@@ -89,3 +89,8 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+
+/* Pushes the action cluster to the trailing edge. */
+.sessionheader__spacer {
+  flex: 1;
+}
