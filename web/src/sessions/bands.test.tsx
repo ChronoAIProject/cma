@@ -35,20 +35,11 @@ function rule(css: string, selector: string): string {
 }
 
 describe('the band grid', () => {
-  it('gives every column header the head band', () => {
-    const rail = render(
-      <SessionRail
-        sessions={[SESSION]}
-        activeId={null}
-        order="newest"
-        onSelect={() => {}}
-        onReorder={() => {}}
-        collapsed={false}
-        onToggleCollapsed={() => {}}
-      />,
-    );
-    expect(rail.container.querySelector('.rail__head')).toHaveClass('band', 'band--head');
-
+  it('keeps the centre column header on the band', () => {
+    // The centre column is the one that still shares the page's head rule.
+    // §9 gave the sidebar its own column with its own proportions, so its
+    // list no longer lines up with anything across the page and no longer
+    // pretends to.
     const header = render(<SessionHeader session={SESSION} />);
     expect(header.container.firstElementChild).toHaveClass('band', 'band--head');
   });
@@ -84,9 +75,14 @@ describe('the band grid', () => {
     expect(rule(css, '.rail')).not.toContain('width:');
   });
 
-  it('gives the rail a second band rather than a taller header', () => {
-    // §5: a column needing more chrome adds a band beneath the first. It never
-    // grows its header, or the head rule stops running straight across.
+  it('gives the rail one header row and no second band', () => {
+    /*
+     * It had two: a head band, and a second one beneath carrying the
+     * new-session key, the filters and the sort. All three moved — the key to
+     * the sidebar, the other two onto the view-options card — and what that
+     * bought is the header dropping to a single row, which is height the list
+     * gets.
+     */
     const { container } = render(
       <SessionRail
         sessions={[SESSION]}
@@ -94,13 +90,12 @@ describe('the band grid', () => {
         order="newest"
         onSelect={() => {}}
         onReorder={() => {}}
-        collapsed={false}
-        onToggleCollapsed={() => {}}
+        arrangement="list"
+        onArrange={() => {}}
       />,
     );
-    const chrome = container.querySelector('.rail__chrome');
-    expect(chrome).toHaveClass('band');
-    expect(chrome).not.toHaveClass('band--head');
+    expect(container.querySelectorAll('.rail__header')).toHaveLength(1);
+    expect(container.querySelector('.rail__chrome')).toBeNull();
 
     // The rail draws no footer of its own: the sidebar's foot carries one.
     expect(container.querySelector('.band--foot')).toBeNull();

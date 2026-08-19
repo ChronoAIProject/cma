@@ -20,132 +20,202 @@
 }
 
 /*
- * The head band. Its height comes from .band--head, so it lands on the session
- * header's rule to the pixel; nothing here may add padding to the block axis,
- * because accumulated padding is exactly what lets two aligned columns drift
- * apart when one gains a longer label.
- */
-.rail__head {
-  gap: var(--space-2);
-}
-
-/*
- * The second band — the one documented exception to the row shape (§5). It
- * stacks rather than laying out in a row, and sits below the head band so the
- * head rule still runs straight across every column.
- */
-.rail__chrome {
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: stretch;
-  padding-block: var(--space-2);
-  border-bottom: 1px solid var(--rule);
-}
-
-/*
- * The filter pills and the sort control share one row. The pills are the
- * shared .tag vocabulary with counts; the row scrolls nothing and wraps
- * nothing — a filter row that re-wraps as counts change is a row that moves.
- */
-.rail__filters {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-  min-width: 0;
-}
-
-.rail__filter {
-  cursor: pointer;
-}
-
-/*
  * Rows are the shared .row-item vocabulary — 12px-padded, 12px-radius targets
  * (§12). The list carries the side padding that lets each row's radius show.
  */
-.rail__list {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin: 0;
-  padding: var(--space-2);
-  overflow-y: auto;
-  list-style: none;
-}
-
-/* The collapsed strip's dots keep their own geometry. */
-.rail__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-/* ── Collapsed, §7 ───────────────────────────────────────────────────────
- *
- * A handle, never nothing: 48px of strip keeping both bands, so the way back
- * is exactly where the panel was and the page's rules still line up.
- */
-
-.rail--collapsed {
-  align-items: center;
-}
-
-.rail--collapsed .rail__head,
-.rail__chrome--collapsed {
-  justify-content: center;
-  width: 100%;
-  padding-inline: 0;
-}
-
 /*
- * The summary of what the strip hides: the dots in state order and a count.
- * Collapsing gives up detail, not awareness.
+ * The list is the only thing in this column that scrolls, and its gutter is
+ * reserved whether or not a thumb is showing: without that, a list crossing
+ * the scroll threshold shifts every row sideways by the bar's width.
  */
-.rail__summary {
-  display: flex;
+.rail__list {
+  position: relative;
   flex: 1 1 auto;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: center;
   min-height: 0;
   margin: 0;
-  padding: var(--space-3) 0;
+  padding: 0 0 16px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   list-style: none;
-}
-
-.rail__summaryitem {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: center;
-}
-
-.rail__summarycount {
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-3);
 }
 
 .rail__empty {
   margin: 0;
-  padding: var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  color: var(--ink-3);
+  padding: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 /*
- * The rail's one full-width action — `docs/Web_Style.md` §7.
- *
- * The width and the taller step belong to this row rather than to the button:
- * §7 gives the capsule two heights and no third, and a surface that needs its
- * own proportions says so where it needs them rather than adding a size
- * everything else can then reach for.
+ * The header — one 36px row. It had two bands; the new-session key went to
+ * the sidebar and the filters and the sort went onto the view-options card,
+ * and what that bought is this height going to the list.
  */
-.rail__newsession {
+.rail__header {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  height: 36px;
+  padding: 0 4px 0 8px;
+}
+
+.rail__label {
+  flex: 1;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail__options {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.rail__options:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rail__options:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * A row and the menu anchored to it. The actions key is drawn only on hover
+ * or focus: a column of ellipses down the list is noise, and the row itself
+ * is what somebody is aiming at.
+ */
+.rail__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.row-item__more {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.rail__row:hover .row-item__more,
+.row-item__more:focus-visible,
+.row-item__more[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.row-item__more:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.row-item__more:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * The status slot is held whether or not there is a dot in it, so an ended
+ * session's title starts where every other one does.
+ */
+.row-item__dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+}
+
+/*
+ * A row — `docs/Web_Style.md` §10.
+ *
+ * 32px when it says only what a session is, and taller when it has something
+ * to add. That second line is what makes this a list of work rather than a
+ * list of times, so the row grows for it rather than truncating it away.
+ */
+.row-item {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 0 8px;
+  align-items: center;
   width: 100%;
-  height: 38px;
-  margin: 0 2px 8px;
-  font-weight: 500;
-  border-radius: 12px;
+  min-height: 32px;
+  padding: 5px 8px;
+  font-family: var(--dsw-font-family);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.row-item:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/*
+ * Selected takes the same fill as hover, deliberately. It is the row the
+ * centre column is already showing — the surface beside it is the loud
+ * signal, and a second one here would compete with it.
+ */
+.row-item[aria-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.row-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.row-item__subject {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * What the session last did. It never wraps: a row that grows with its
+ * longest sentence makes the list a different height every time it reloads.
+ */
+.row-item__activity {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-item__activity:empty {
+  display: none;
 }
