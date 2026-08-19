@@ -215,7 +215,6 @@ export function ConversationSurface({
         entries={conversation.entries}
         onInspect={onInspect}
         inspectingId={inspectingId}
-        kernel={session.kernel}
         turnInFlight={conversation.turnInFlight}
         live={conversation.live}
         reasoning={conversation.reasoning}

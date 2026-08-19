@@ -71,9 +71,14 @@ export function SessionHeader({
 
   return (
     <div className="sessionheader">
-      <span className="sessionheader__crumb" title={session.kernel}>
-        {tabLabel(session.createdAt)}
-      </span>
+      <span className="sessionheader__crumb">{tabLabel(session.createdAt)}</span>
+      {/*
+        Which agent is answering, said once. It used to ride an eyebrow above
+        every agent turn, where it repeated identically down the whole column
+        and took a line of the reading measure each time. It is a fact about
+        the session, so it belongs with the session.
+      */}
+      <span className="sessionheader__kernel">{session.kernel}</span>
 
       {/* The state as a dot and a word — colour is never the only signal. */}
       {waiting ? (
