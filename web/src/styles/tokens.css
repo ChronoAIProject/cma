@@ -57,8 +57,18 @@
    * one for a thing floating over it. The letterpress contract is retired; an
    * inline box-shadow string in a component is still a bug.
    */
-  --lift-rest: 0 1px 2px rgb(20 22 19 / 0.06);
-  --lift-plate: 0 12px 32px rgb(20 22 19 / 0.12);
+  /*
+   * Depth is expressed by theme, not by one value — §20.1.
+   *
+   * In light, shadow does the separating and `--edge-hairline` is
+   * transparent. In dark it is the other way round: a black shadow is
+   * invisible on a dark ground, so the hairline carries the edge and the
+   * shadow only deepens it. A card declares both and each does its work in
+   * one theme, which is why no component needs a media query of its own.
+   */
+  --lift-rest: 0 1px 2px rgb(15 17 21 / 0.06);
+  --lift-plate: 0 8px 24px rgb(15 17 21 / 0.12);
+  --edge-hairline: transparent;
   --lift-none: none;
   --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
   /* §8's one documented variant, for the terminal prompt row. */
@@ -214,8 +224,9 @@
 
     --scrim: rgb(0 0 0 / 0.5);
 
-    --lift-rest: 0 1px 2px rgb(0 0 0 / 0.35);
-    --lift-plate: 0 12px 32px rgb(0 0 0 / 0.5);
+    --lift-rest: 0 1px 2px rgb(0 0 0 / 0.4);
+    --lift-plate: 0 8px 24px rgb(0 0 0 / 0.55);
+    --edge-hairline: rgb(255 255 255 / 0.08);
     --primary-fill: #f9fafb;
     --primary-fill-hover: #e4e6e9;
     --on-primary: #0f1115;
@@ -257,8 +268,9 @@
 
   --scrim: rgb(0 0 0 / 0.5);
 
-  --lift-rest: 0 1px 2px rgb(0 0 0 / 0.35);
-  --lift-plate: 0 12px 32px rgb(0 0 0 / 0.5);
+  --lift-rest: 0 1px 2px rgb(0 0 0 / 0.4);
+  --lift-plate: 0 8px 24px rgb(0 0 0 / 0.55);
+  --edge-hairline: rgb(255 255 255 / 0.08);
   --primary-fill: #f9fafb;
   --primary-fill-hover: #e4e6e9;
   --on-primary: #0f1115;

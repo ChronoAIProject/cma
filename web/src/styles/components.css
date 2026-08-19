@@ -9,12 +9,18 @@
  * Rules belonging to exactly one component stay in that component's own .css.
  */
 
-/* ── Depth, §3 ────────────────────────────────────────────────────────────
+/* ── Depth, §3 and §20.1 ──────────────────────────────────────────────────
  *
  * Two levels. A thing resting on the page carries --lift-rest; a thing floating
  * over it carries --lift-plate and never moves. Nothing translates on hover:
- * hover raises the background one step in the ramp, active lowers it one step,
- * and that is the whole vocabulary. The letterpress contract is retired.
+ * hover tints the background, active tints it further, and that is the whole
+ * vocabulary.
+ *
+ * §20.1 adds the part that makes one rule work in both themes: an edge is
+ * drawn by shadow in light and by hairline in dark. `--edge-hairline` is
+ * transparent in light, where the shadow is doing it, and a faint white in
+ * dark, where a black shadow is invisible against a dark ground. So every
+ * floating surface declares both and neither theme needs its own rule.
  */
 
 .lift {
@@ -23,7 +29,7 @@
 
 .plate {
   background: var(--raised);
-  border: 1px solid var(--rule-2);
+  border: 1px solid var(--edge-hairline);
   border-radius: var(--radius-lg);
   box-shadow: var(--lift-plate);
 }
