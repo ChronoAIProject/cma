@@ -217,6 +217,39 @@ impl HostedKernel {
         Ok(())
     }
 
+    /// Restart the supervised program under a different front-end command.
+    ///
+    /// The command must be one the pod was told at boot it may run; the
+    /// supervisor refuses anything else by name.
+    pub(crate) async fn switch_plane(
+        &self,
+        handle: &RuntimeHandle,
+        command: &str,
+    ) -> Result<(), AdapterError> {
+        let link = self.link_to(&handle.0).await;
+        let Some(link) = link else {
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {} has no open link to switch plane",
+                handle.0
+            )));
+        };
+        if link
+            .send(TerminalInput::SwitchPlane {
+                command: command.to_string(),
+            })
+            .await
+            .is_err()
+        {
+            self.forget_link(&handle.0).await;
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link closed before the switch reached it",
+                handle.0
+            )));
+        }
+        tracing::info!(sandbox = %handle.0, command, "plane switch delivered to the runtime");
+        Ok(())
+    }
+
     /// Learn which wire this pod speaks, from the first thing it says.
     ///
     /// A pod that knows lanes declares itself before anything else, so a
@@ -282,6 +315,9 @@ impl HostedKernel {
             TerminalInput::Credential(value) => {
                 Message::Text(serde_json::json!({ "t": "credential", "value": value }).to_string())
             }
+            TerminalInput::SwitchPlane { command } => Message::Text(
+                serde_json::json!({ "t": "switch_plane", "command": command }).to_string(),
+            ),
         }
     }
 }
