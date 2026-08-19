@@ -28,7 +28,21 @@ interface ComposerProps {
   readonly turnInFlight: boolean;
   /** Why the session cannot take input at all, when it cannot (§11). */
   readonly refusedReason?: string;
-  readonly onSend: (text: string) => void;
+  /**
+   * Send this turn.
+   *
+   * Answers whether the turn was accepted, and the composer keeps the draft
+   * until it hears yes. It used to clear the field the instant the button was
+   * pressed, so a refusal — a `reject` policy mid-turn, a capability the
+   * session lacks, a dropped network — took the words with it and left a
+   * banner and nothing to retry. On a long run the message that fails is the
+   * carefully worded correction.
+   *
+   * Stated as an answer rather than inferred from a promise settling, because
+   * the surface reports refusals rather than throwing them: a promise that
+   * resolves is not evidence the service took anything.
+   */
+  readonly onSend: (text: string) => boolean | Promise<boolean>;
   readonly onInterrupt: () => void;
   readonly busy?: boolean;
 }
@@ -81,6 +95,27 @@ export function Composer({
     );
   }
 
+  /**
+   * Hand the turn over, and keep the words until it is taken.
+   *
+   * Cleared only once `onSend` resolves. A refusal leaves the draft exactly
+   * as it was typed, so the reader retries rather than rewrites.
+   */
+  async function send(): Promise<void> {
+    const outgoing = text.trim();
+    if (outgoing === '') {
+      return;
+    }
+    try {
+      if (await onSend(outgoing)) {
+        setText('');
+      }
+    } catch {
+      // Kept, deliberately. The surface reports the refusal; this keeps the
+      // only copy of what was written.
+    }
+  }
+
   const note = turnInFlight ? POLICY_SAYS[policy] : undefined;
 
   return (
@@ -100,8 +135,7 @@ export function Composer({
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
               if (canSend) {
-                onSend(text.trim());
-                setText('');
+                void send();
               }
             }
           }}
@@ -144,8 +178,7 @@ export function Composer({
             tone="accent"
             disabled={!canSend}
             onClick={() => {
-              onSend(text.trim());
-              setText('');
+              void send();
             }}
           >
             Send
