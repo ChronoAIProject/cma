@@ -62,16 +62,15 @@ impl KernelAdapter for CodexAdapter {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        // Refused rather than ignored. Nothing in the runtime authenticates the
-        // agent against the owner's own vendor account, so a session that asked
-        // for it and was accepted would run on the delegated credential — the
-        // owner's bill and the owner's entitlements — while believing otherwise.
-        // A session that cannot be what was asked for must not start at all.
-        if spec.options.own_credential {
-            return Err(AdapterError::Unsupported(
-                "this kernel does not support the owner's own credential yet".to_string(),
-            ));
-        }
+        // An own-account session is provisioned now rather than refused. The
+        // refusal that stood here was right for as long as nothing signed the
+        // agent in — a session accepted and then run on the delegated
+        // credential would spend the platform's budget while its owner
+        // believed otherwise. What changed is that the kernel can now sign
+        // itself in inside the sandbox, and its configuration names no proxy,
+        // so an own-account session either spends the owner's account or
+        // cannot reach a model at all. Neither outcome is the quiet
+        // substitution the refusal existed to prevent.
 
         // Refused for the same reason, and it is the same defect: a caller
         // asked for something, was told nothing, and got a session without it.
