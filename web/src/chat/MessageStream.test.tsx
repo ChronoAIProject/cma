@@ -41,13 +41,11 @@ describe('the equivalence rule', () => {
     const live = await conversationFrom('plain-turn');
     const replayed = await conversationFrom('plain-turn', { dropAfter: 2 });
 
-    const watching = render(<MessageStream kernel="codex" entries={live.conversation.entries} />);
+    const watching = render(<MessageStream entries={live.conversation.entries} />);
     const watchedHtml = watching.container.innerHTML;
     watching.unmount();
 
-    const reading = render(
-      <MessageStream kernel="codex" entries={replayed.conversation.entries} />,
-    );
+    const reading = render(<MessageStream entries={replayed.conversation.entries} />);
     expect(reading.container.innerHTML).toBe(watchedHtml);
   });
 
@@ -68,7 +66,7 @@ describe('the equivalence rule', () => {
 });
 
 describe('a turn', () => {
-  it('tells the two roles apart by shape and by eyebrow', () => {
+  it('tells the two roles apart by shape alone', () => {
     const state = fold([
       toEvent({ type: 'RUN_STARTED', seq: 1 }),
       toEvent({ type: 'TEXT_MESSAGE_START', seq: 2, messageId: 'm1', role: 'user' }),
@@ -76,15 +74,20 @@ describe('a turn', () => {
       toEvent({ type: 'TEXT_MESSAGE_START', seq: 4, messageId: 'm2', role: 'assistant' }),
       toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 5, messageId: 'm2', delta: 'done' }),
     ]);
-    const { container } = render(<MessageStream kernel="codex" entries={state.entries} />);
+    const { container } = render(<MessageStream entries={state.entries} />);
 
     expect(container.querySelectorAll('.turn')).toHaveLength(2);
     expect(container.querySelector('[data-role="user"]')).not.toBeNull();
     expect(container.querySelector('[data-role="assistant"]')).not.toBeNull();
-    // §18.1: the owner's slot says You; the agent's eyebrow carries the
-    // product and the kernel. No avatars, no bubble on the agent's side.
+    /*
+     * §18.1: the owner's turns are bubbles and the agent's run the full
+     * measure, which is what tells them apart. The agent's eyebrow is gone —
+     * it repeated "chronobot · codex" above every turn, a label nobody reads
+     * twice that cost a line of the reading column each time. Which kernel is
+     * answering is a fact about the session, and the session header says it.
+     */
     expect(screen.getByText('You')).toBeInTheDocument();
-    expect(screen.getByText(/chronobot · codex/)).toBeInTheDocument();
+    expect(screen.queryByText(/chronobot ·/)).toBeNull();
   });
 
   it('changes nothing about a message when it commits, except the caret', () => {
@@ -100,11 +103,11 @@ describe('a turn', () => {
       toEvent({ type: 'TEXT_MESSAGE_END', seq: 4, messageId: 'm1' }),
     );
 
-    const live = render(<MessageStream kernel="codex" entries={arriving.entries} turnInFlight />);
+    const live = render(<MessageStream entries={arriving.entries} turnInFlight />);
     const liveHtml = live.container.innerHTML;
     live.unmount();
 
-    const done = render(<MessageStream kernel="codex" entries={settled.entries} turnInFlight />);
+    const done = render(<MessageStream entries={settled.entries} turnInFlight />);
     const doneHtml = done.container.innerHTML;
 
     // The only difference is the caret.
@@ -127,7 +130,7 @@ describe('a turn', () => {
     // §18.6: not a status chip. An owner who can see the boundary recognises a
     // gap rather than puzzling over one.
     const { conversation } = await conversationFrom('rotates');
-    render(<MessageStream kernel="codex" entries={conversation.entries} />);
+    render(<MessageStream entries={conversation.entries} />);
 
     expect(screen.getByRole('separator')).toBeInTheDocument();
     expect(screen.getByText(/carried forward from/i)).toBeInTheDocument();
@@ -136,7 +139,7 @@ describe('a turn', () => {
 
   it('shows an event kind it does not know rather than hiding it', async () => {
     const { conversation } = await conversationFrom('unknown-kind');
-    render(<MessageStream kernel="codex" entries={conversation.entries} />);
+    render(<MessageStream entries={conversation.entries} />);
     expect(screen.getByText('THINKING_START')).toBeInTheDocument();
     expect(screen.getByText(/was not lost/i)).toBeInTheDocument();
   });
@@ -216,7 +219,6 @@ describe('the plane-change boundary', () => {
     // misled by the interface rather than by the platform.
     render(
       <MessageStream
-        kernel="codex"
         entries={[
           {
             kind: 'gap',
@@ -238,10 +240,7 @@ describe('the plane-change boundary', () => {
     // A stretch the runtime had to drop is the same kind of fact and is drawn
     // the same way, minus a destination there is none of.
     render(
-      <MessageStream
-        kernel="codex"
-        entries={[{ kind: 'gap', id: 'gap-4', rotatedAt: undefined, seq: 4 }]}
-      />,
+      <MessageStream entries={[{ kind: 'gap', id: 'gap-4', rotatedAt: undefined, seq: 4 }]} />,
     );
 
     const boundary = screen.getByRole('separator');
@@ -261,7 +260,7 @@ describe('a run that failed, §18.9', () => {
       toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 2, messageId: 'm1', delta: 'reading a file' }),
       toEvent({ type: 'RUN_ERROR', seq: 3, message: 'the model endpoint refused' }),
     ]);
-    render(<MessageStream kernel="codex" entries={state.entries} />);
+    render(<MessageStream entries={state.entries} />);
 
     expect(screen.getByText('the model endpoint refused')).toBeTruthy();
     expect(
@@ -273,22 +272,20 @@ describe('a run that failed, §18.9', () => {
   it('says the word as well as wearing the ink', () => {
     // §2: colour is never the only carrier. A reader who cannot distinguish
     // the ink must still be able to read what happened.
-    render(<MessageStream kernel="codex" entries={failure({}).entries} />);
+    render(<MessageStream entries={failure({}).entries} />);
 
     expect(screen.getByText('Run failed')).toBeTruthy();
   });
 
   it('names the ability when the failure was a refusal', () => {
-    render(
-      <MessageStream kernel="codex" entries={failure({ capability: 'conversation' }).entries} />,
-    );
+    render(<MessageStream entries={failure({ capability: 'conversation' }).entries} />);
 
     const named = screen.getByText(/This session cannot/);
     expect(named.textContent).toContain('conversation');
   });
 
   it('names nothing when there was nothing to name', () => {
-    render(<MessageStream kernel="codex" entries={failure({}).entries} />);
+    render(<MessageStream entries={failure({}).entries} />);
 
     expect(screen.queryByText(/This session cannot/)).toBeNull();
   });
@@ -300,7 +297,7 @@ describe('a run that failed, §18.9', () => {
       message: 'moving this session to the other plane',
       'chrono:returns': true,
     });
-    render(<MessageStream kernel="codex" entries={state.entries} />);
+    render(<MessageStream entries={state.entries} />);
 
     expect(screen.queryByText('Run failed')).toBeNull();
   });
@@ -311,13 +308,13 @@ describe('a turn in flight, §18.1', () => {
     // A turn that has started and produced nothing is otherwise
     // indistinguishable from a dead stream, and a turn takes as long as the
     // agent takes.
-    render(<MessageStream kernel="codex" entries={[]} turnInFlight />);
+    render(<MessageStream entries={[]} turnInFlight />);
 
     expect(screen.getByText('Working')).toBeTruthy();
   });
 
   it('stops saying it the moment there is something to read', () => {
-    render(<MessageStream kernel="codex" entries={[]} turnInFlight live={{ text: 'Hel' }} />);
+    render(<MessageStream entries={[]} turnInFlight live={{ text: 'Hel' }} />);
 
     expect(screen.queryByText('Working')).toBeNull();
     expect(screen.getByText('Hel')).toBeTruthy();
@@ -329,12 +326,7 @@ describe('a turn in flight, §18.1', () => {
       toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 1, messageId: 'm1', delta: 'do the thing' }),
     ]);
     const { container } = render(
-      <MessageStream
-        kernel="codex"
-        entries={state.entries}
-        turnInFlight
-        live={{ text: 'on it' }}
-      />,
+      <MessageStream entries={state.entries} turnInFlight live={{ text: 'on it' }} />,
     );
 
     const turns = [...container.querySelectorAll('.turn')];
@@ -349,12 +341,7 @@ describe('a turn in flight, §18.1', () => {
       toEvent({ type: 'RUN_FINISHED', seq: 2 }),
     ]);
     const { container } = render(
-      <MessageStream
-        kernel="codex"
-        entries={settled.entries}
-        turnInFlight
-        live={{ text: 'still going' }}
-      />,
+      <MessageStream entries={settled.entries} turnInFlight live={{ text: 'still going' }} />,
     );
 
     const carets = [...container.querySelectorAll('.turn__caret')];
@@ -363,7 +350,7 @@ describe('a turn in flight, §18.1', () => {
   });
 
   it('draws nothing extra when a turn is not in flight', () => {
-    render(<MessageStream kernel="codex" entries={[]} />);
+    render(<MessageStream entries={[]} />);
 
     expect(screen.queryByText('Working')).toBeNull();
   });
@@ -375,14 +362,7 @@ describe('what the agent is working through, §18.8', () => {
     // put the least durable content at the same weight as the conversation.
     // The words that make it safe to lose stay on the key either way.
     const user = userEvent.setup();
-    render(
-      <MessageStream
-        kernel="codex"
-        entries={[]}
-        turnInFlight
-        reasoning={{ text: 'checking src/' }}
-      />,
-    );
+    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'checking src/' }} />);
 
     const key = screen.getByRole('button', { name: /not kept after this turn/i });
     /*
@@ -400,7 +380,7 @@ describe('what the agent is working through, §18.8', () => {
     // Not an empty band. §18.4's rule: a thing that can never appear is not
     // one that is currently unavailable, and an empty box would suggest the
     // agent was thinking silently.
-    const { container } = render(<MessageStream kernel="codex" entries={[]} turnInFlight />);
+    const { container } = render(<MessageStream entries={[]} turnInFlight />);
 
     expect(container.querySelector('.thinking')).toBeNull();
   });
@@ -408,9 +388,7 @@ describe('what the agent is working through, §18.8', () => {
   it('carries no colour', () => {
     // §2: the semantic inks describe session and system state and describe
     // nothing the agent thought.
-    const { container } = render(
-      <MessageStream kernel="codex" entries={[]} reasoning={{ text: 'hmm' }} />,
-    );
+    const { container } = render(<MessageStream entries={[]} reasoning={{ text: 'hmm' }} />);
     const classes = [...container.querySelectorAll('.thinking, .thinking *')]
       .flatMap((node) => [...node.classList])
       .join(' ');
@@ -419,7 +397,7 @@ describe('what the agent is working through, §18.8', () => {
   });
 
   it('replaces the waiting wave once reasoning starts arriving', () => {
-    render(<MessageStream kernel="codex" entries={[]} turnInFlight reasoning={{ text: 'hmm' }} />);
+    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'hmm' }} />);
 
     expect(screen.queryByText('Working')).toBeNull();
   });
@@ -431,7 +409,6 @@ describe('the owner turn label, §18.1', () => {
     // means the same moment whoever is looking.
     render(
       <MessageStream
-        kernel="codex"
         entries={[
           {
             kind: 'message',
@@ -454,7 +431,6 @@ describe('the owner turn label, §18.1', () => {
     // absence, never as an estimated moment.
     render(
       <MessageStream
-        kernel="codex"
         entries={[{ kind: 'message', id: 'm1', role: 'user', text: 'hi', committed: true, seq: 1 }]}
       />,
     );
@@ -489,7 +465,7 @@ describe('following the turn as it is written', () => {
   ]).entries;
 
   const stream = (props: Partial<Parameters<typeof MessageStream>[0]> = {}) => (
-    <MessageStream kernel="codex" entries={settled} turnInFlight={true} {...props} />
+    <MessageStream entries={settled} turnInFlight={true} {...props} />
   );
 
   /** A surface with more content than fits, which jsdom does not lay out. */
@@ -555,7 +531,7 @@ describe('what a screen reader hears', () => {
    * long answer that never finishes and cannot be interrupted.
    */
   it('announces additions rather than every character typed', () => {
-    const { container } = render(<MessageStream kernel="codex" entries={[]} />);
+    const { container } = render(<MessageStream entries={[]} />);
     const log = container.querySelector('[role="log"]');
     expect(log).toHaveAttribute('aria-live', 'polite');
     expect(log).toHaveAttribute('aria-relevant', 'additions');
@@ -564,9 +540,7 @@ describe('what a screen reader hears', () => {
   it('keeps the message being typed out of the announcements', () => {
     // It is announced when it commits, once and whole, because the committed
     // message is an addition.
-    const { container } = render(
-      <MessageStream kernel="codex" entries={[]} live={{ text: 'half a sen' }} />,
-    );
+    const { container } = render(<MessageStream entries={[]} live={{ text: 'half a sen' }} />);
     expect(container.querySelector('.turn[data-role="assistant"]')).toHaveAttribute(
       'aria-live',
       'off',
@@ -607,7 +581,7 @@ describe('what a reader can take away', () => {
       value: { writeText: written },
     });
 
-    render(<MessageStream kernel="codex" entries={settledTurn()} />);
+    render(<MessageStream entries={settledTurn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
     expect(written).toHaveBeenCalledWith('# Steps\n\n1. Run `npm ci`\n');
@@ -623,9 +597,7 @@ describe('what a reader can take away', () => {
       toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 3, messageId: 'm1', delta: 'half' }),
     ]).entries;
 
-    const { container } = render(
-      <MessageStream kernel="codex" entries={arriving} turnInFlight={true} />,
-    );
+    const { container } = render(<MessageStream entries={arriving} turnInFlight={true} />);
     const key = container.querySelector('.turn__actions .copykey');
     expect(key).toBeDisabled();
     expect(key).toHaveAttribute('title');
@@ -702,18 +674,17 @@ describe('when the surface cannot hear the session', () => {
    */
   it('stops claiming the agent is working the moment the link is not live', () => {
     const { container, rerender } = render(
-      <MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={true} />,
+      <MessageStream entries={[]} turnInFlight={true} linkLive={true} />,
     );
     expect(container.querySelector('.stream__waiting')).not.toBeNull();
 
-    rerender(<MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={false} />);
+    rerender(<MessageStream entries={[]} turnInFlight={true} linkLive={false} />);
     expect(container.querySelector('.stream__waiting')).toBeNull();
   });
 
   it('stops the caret too, on the message that has stopped growing', () => {
     const { container } = render(
       <MessageStream
-        kernel="codex"
         entries={[]}
         turnInFlight={true}
         linkLive={false}
@@ -727,20 +698,14 @@ describe('when the surface cannot hear the session', () => {
     // A blip announced as a fault teaches a reader to distrust the next
     // notice, and §11 forbids drawing a recovering session as a failed one.
     const { container } = render(
-      <MessageStream kernel="codex" entries={[]} turnInFlight={true} linkLive={false} />,
+      <MessageStream entries={[]} turnInFlight={true} linkLive={false} />,
     );
     expect(container.querySelector('.stream__unheard')).toBeNull();
   });
 
   it('names it once the link has stayed down, and not as a failure', () => {
     const { container } = render(
-      <MessageStream
-        kernel="codex"
-        entries={[]}
-        turnInFlight={true}
-        linkLive={false}
-        linkLost={true}
-      />,
+      <MessageStream entries={[]} turnInFlight={true} linkLive={false} linkLost={true} />,
     );
     const notice = container.querySelector('.stream__unheard');
     expect(notice).not.toBeNull();
@@ -834,7 +799,7 @@ describe('following the newest turn', () => {
   it('says nothing while somebody is following along', () => {
     // Pinned is the ordinary state, and a control counting entries somebody
     // is already reading would be noise on every turn.
-    render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    render(<MessageStream entries={[turn('1')]} />);
     expect(screen.queryByRole('button', { name: /newer/i })).toBeNull();
   });
 
@@ -844,27 +809,27 @@ describe('following the newest turn', () => {
      * has said what they want, so what arrives while they read is announced
      * rather than scrolled to.
      */
-    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    const view = render(<MessageStream entries={[turn('1')]} />);
     scrollTo(300);
 
-    view.rerender(<MessageStream entries={[turn('1'), turn('2'), turn('3')]} kernel="codex" />);
+    view.rerender(<MessageStream entries={[turn('1'), turn('2'), turn('3')]} />);
 
     expect(screen.getByRole('button', { name: /2 newer entries/i })).toBeInTheDocument();
   });
 
   it('counts one entry as one, not as a plural', () => {
-    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    const view = render(<MessageStream entries={[turn('1')]} />);
     scrollTo(300);
 
-    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} />);
 
     expect(screen.getByRole('button', { name: /1 newer entry\./i })).toBeInTheDocument();
   });
 
   it('follows again the moment somebody scrolls back to the bottom', () => {
-    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    const view = render(<MessageStream entries={[turn('1')]} />);
     scrollTo(300);
-    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} />);
     expect(screen.getByRole('button', { name: /newer/i })).toBeInTheDocument();
 
     scrollTo(0);
@@ -881,10 +846,10 @@ describe('following the newest turn', () => {
      * Checked by what arrives next: a scroll alone resets the count, so the
      * threshold is only visible in whether the following entry is chased.
      */
-    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    const view = render(<MessageStream entries={[turn('1')]} />);
     scrollTo(10);
 
-    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} />);
 
     expect(screen.queryByRole('button', { name: /newer/i })).toBeNull();
   });
@@ -892,9 +857,9 @@ describe('following the newest turn', () => {
   it('names what the control does, since its glyph says it to nobody', () => {
     // A circle with a chevron in it says "go down" to somebody who can see
     // it, and says nothing at all otherwise.
-    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    const view = render(<MessageStream entries={[turn('1')]} />);
     scrollTo(300);
-    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} />);
 
     const control = screen.getByRole('button', { name: /newer/i });
     expect(control.getAttribute('aria-label')).toMatch(/go to the newest/i);
