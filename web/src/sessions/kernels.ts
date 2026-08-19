@@ -18,6 +18,10 @@ export const PLANES: readonly { readonly id: SessionPlane; readonly label: strin
 
 const NAMES: Readonly<Record<string, string>> = {
   codex: 'Codex',
+  // The control plane registers this one as `claude_code`; the hyphenated
+  // spelling is kept beside it because both have been seen on the wire and a
+  // label is not the place to argue about which is canonical.
+  claude_code: 'Claude Code',
   'claude-code': 'Claude Code',
   dsh: 'DeepSeek Harness',
 };
