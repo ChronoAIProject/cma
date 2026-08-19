@@ -279,9 +279,8 @@ impl SessionService {
     /// happened is a failure, not an ending, and the difference is exactly
     /// what lets a client tell "the agent had nothing more to say" from "the
     /// agent could not answer". The reason travels as the status change's
-    /// detail, which every interface already projects — so a caller on REST,
-    /// AG-UI or MCP is told the same thing without any of them being taught
-    /// a new shape.
+    /// detail, which every interface already projects — so every caller is
+    /// told the same thing without any interface being taught a new shape.
     async fn fold_failure(&self, id: &SessionId, message: String, capability: Option<String>) {
         tracing::warn!(session_id = %id, %message, "a turn failed");
         {
