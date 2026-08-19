@@ -253,6 +253,15 @@ pub enum EventKind {
         /// The steps, in order, each in the kernel's own words.
         entries: Vec<PlanStep>,
     },
+    /// The kernel reported the settings a session may change.
+    ///
+    /// Durable so a client can render a selection rather than a free-text box,
+    /// from the kernel's own names and kinds — never a set this service
+    /// invented.
+    ConfigOptionsSet {
+        /// The settable options, each in the kernel's own words.
+        options: Vec<ConfigOption>,
+    },
     /// Part of the conversation was lost rather than recorded.
     ///
     /// Written where the loss happened, in the same spirit as a rotation's
@@ -331,6 +340,21 @@ pub struct PlanStep {
     pub status: String,
 }
 
+/// One setting the kernel says is settable, in its own words.
+///
+/// The kernel names the setting and the kind of value it takes; a client
+/// renders a selection from these rather than a free-text box, exactly as it
+/// does for the answers an approval offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigOption {
+    /// The kernel's identifier for the setting.
+    pub id: String,
+    /// What it is called, as the kernel named it.
+    pub name: String,
+    /// What kind of value it takes, in the kernel's own word.
+    pub kind: String,
+}
+
 /// Every discriminator this build owns, exactly as serde spells it.
 ///
 /// Must name every variant of [`EventKind`]. A variant missing from here would
@@ -350,6 +374,7 @@ const KNOWN_TAGS: &[&str] = &[
     "usage_reported",
     "mode_changed",
     "plan_set",
+    "config_options_set",
     "conversation_gap",
     "terminal_attached",
     "terminal_detached",
@@ -490,6 +515,13 @@ mod tests {
                     status: "pending".into(),
                 }],
             },
+            EventKind::ConfigOptionsSet {
+                options: vec![ConfigOption {
+                    id: "thought".into(),
+                    name: "Thinking level".into(),
+                    kind: "select".into(),
+                }],
+            },
             EventKind::ConversationGap { frames: 7 },
             EventKind::TerminalAttached,
             EventKind::TerminalDetached,
@@ -530,6 +562,7 @@ mod tests {
                 | EventKind::UsageReported { .. }
                 | EventKind::ModeChanged { .. }
                 | EventKind::PlanSet { .. }
+                | EventKind::ConfigOptionsSet { .. }
                 | EventKind::ConversationGap { .. }
                 | EventKind::TerminalAttached
                 | EventKind::TerminalDetached
