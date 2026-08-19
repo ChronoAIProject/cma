@@ -15,6 +15,7 @@ import type {
   ProfileVariable,
 } from './types';
 import { isValidKey } from './types';
+import { Input } from '../ui/Input';
 
 /**
  * The profile form, in two halves.
@@ -116,9 +117,9 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={nameId}>
           Name
         </label>
-        <input
+        <Input
           id={nameId}
-          className="field__input"
+          placement="field__input"
           value={draft.name}
           onChange={(event) => {
             onChange({ ...draft, name: event.target.value });
@@ -176,9 +177,9 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={modelId}>
           Model
         </label>
-        <input
+        <Input
           id={modelId}
-          className="field__input"
+          placement="field__input"
           aria-describedby={`${modelId}-hint`}
           value={draft.agent.model ?? ''}
           onChange={(event) => {
@@ -279,9 +280,9 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={packagesId}>
           Software
         </label>
-        <input
+        <Input
           id={packagesId}
-          className="field__input"
+          placement="field__input"
           aria-describedby={`${packagesId}-hint`}
           value={chosen
             .map((p) => (p.version === undefined ? p.name : `${p.name}@${p.version}`))
@@ -318,8 +319,8 @@ export function ProfileEditor({
               // is named, and keying on a name that is being typed remounts
               // the field on every keystroke and loses the caret.
               <div className="pair" key={index}>
-                <input
-                  className="field__input"
+                <Input
+                  placement="field__input"
                   aria-label={`Variable ${index + 1} name`}
                   aria-invalid={variable.key.length > 0 && !isValidKey(variable.key)}
                   value={variable.key}
@@ -327,8 +328,8 @@ export function ProfileEditor({
                     setVariable(index, { ...variable, key: event.target.value });
                   }}
                 />
-                <input
-                  className="field__input"
+                <Input
+                  placement="field__input"
                   type={revealed.includes(index) ? 'text' : 'password'}
                   aria-label={`Variable ${index + 1} value`}
                   value={variable.value}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
-import { Dialog, InlineConfirm } from '../ui/Dialog';
+import { Modal } from '../ui/Modal';
+import { InlineConfirm } from '../ui/InlineConfirm';
 import { ProfileEditor } from './ProfileEditor';
 import type {
   EnvironmentProfile,
@@ -172,14 +173,15 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
 
   if (mode.kind !== 'list') {
     return (
-      <Dialog
+      <Modal
+        open
         title={mode.kind === 'new' ? 'New environment profile' : 'Edit environment profile'}
         /*
-         * The widest of §7's three. The editor is a form with pickers beside
-         * it; at 520px its rows truncated, which is the same reason §14 took
-         * operations out of a dialog.
+         * A form with pickers beside it. At the card's own width its rows
+         * truncated, which is the same reason §14 took operations out of a
+         * dialog altogether.
          */
-        width="wide"
+        placement="modal--widest"
         onClose={onClose}
         footer={
           <>
@@ -215,15 +217,16 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
           mandatory={mandatory}
           error={error}
         />
-      </Dialog>
+      </Modal>
     );
   }
 
   return (
-    <Dialog
+    <Modal
+      open
       title="Environment profiles"
-      /* A list of rows with controls on each: §7's middle width. */
-      width="medium"
+      /* A list of rows with controls on each. */
+      placement="modal--wide"
       onClose={onClose}
       footer={
         <Button
@@ -302,7 +305,7 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
           ))}
         </ul>
       )}
-    </Dialog>
+    </Modal>
   );
 }
 
