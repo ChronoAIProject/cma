@@ -350,6 +350,19 @@ async fn relay_conversation(
             pump_in.abort();
         }
     }
+    /*
+     * If the model endpoint refused this pod while the conversation ran, that
+     * is very likely why it ended — an agent that cannot reach its model
+     * stops having anything to say. Said here, in the pod's own log, with
+     * the status the proxy actually saw.
+     *
+     * The control plane learns the same fact from its own side: the link
+     * closing fails every call waiting on it, and the turn is reported as a
+     * failure rather than as an empty ending.
+     */
+    if let Some(fault) = state.model_fault.get() {
+        tracing::warn!(runtime = %id, %fault, "the model endpoint had refused this runtime");
+    }
     tracing::info!(runtime = %id, "conversation detached");
     Ok(())
 }
