@@ -184,6 +184,9 @@ impl SessionService {
             .into_iter()
             .map(|service| service.0)
             .collect();
+        // Kept for redaction: a tool body must not carry a value the session
+        // was handed, and these are exactly those values.
+        let environment_values: Vec<String> = environment.variables.values().cloned().collect();
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
@@ -288,6 +291,7 @@ impl SessionService {
             session: seeded,
             sequences: Arc::clone(&self.sequences),
             subject_credential: spec.subject_credential.clone(),
+            environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
