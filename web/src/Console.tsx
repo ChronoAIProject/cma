@@ -15,7 +15,6 @@ import { ConversationSurface } from './chat/ConversationSurface';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
 import { selectLiveWindow, unattachedNote } from './canvas/layout';
-import { ArrangementToggle } from './sessions/ArrangementToggle';
 import { loadArrangement, saveArrangement } from './sessions/arrangement';
 import type { Arrangement } from './sessions/arrangement';
 import { ProfileMenu } from './profile/ProfileMenu';
@@ -429,30 +428,19 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             />
           }
         >
-          <SessionRail
-            sessions={listed}
-            activeId={activeId}
-            order={order}
-            onSelect={select}
-            onReorder={setOrder}
-            /*
-             * The arrangement of this list, drawn with the list it rearranges.
-             * It does not stop at the browser: a terminal declares its own
-             * measurements to the runtime drawing into it, so putting every
-             * attached session in a node resizes every one of them.
-             */
-            arrangement={
-              <ArrangementToggle
-                arrangement={arrangementShown}
-                onChange={changeArrangement}
-                canvasAvailable
-              />
-            }
-            collapsed={railCollapsed}
-            onToggleCollapsed={toggleRail}
-            stages={stages}
-            waitingId={waitingId}
-          />
+          {railCollapsed ? null : (
+            <SessionRail
+              sessions={listed}
+              activeId={activeId}
+              order={order}
+              onSelect={select}
+              onReorder={setOrder}
+              arrangement={arrangementShown}
+              onArrange={changeArrangement}
+              stages={stages}
+              waitingId={waitingId}
+            />
+          )}
         </Sidebar>
       }
       details={
