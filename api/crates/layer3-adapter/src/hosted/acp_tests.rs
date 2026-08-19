@@ -135,6 +135,7 @@ async fn a_fresh_conversation_is_started_and_held_to_its_mode() {
         Some("read-only".into()),
         None,
         None,
+        false,
     )
     .await
     .expect("the bridge answered everything");
@@ -159,6 +160,7 @@ async fn a_carried_conversation_is_loaded_rather_than_started_again() {
         Some("agent".into()),
         None,
         None,
+        false,
     )
     .await
     .expect("the bridge answered everything");
@@ -177,7 +179,7 @@ async fn a_bridge_with_no_modes_is_not_asked_to_set_one() {
     // names none and this step is skipped rather than defaulted.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), None, None, None)
+    Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect("a bridge without modes still opens");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -197,6 +199,7 @@ async fn a_session_whose_mode_did_not_take_is_refused_rather_than_started() {
         Some("read-only".into()),
         None,
         None,
+        false,
     )
     .await
     .expect_err("a mode that did not take must fail the session");
@@ -219,6 +222,7 @@ async fn a_conversation_that_could_not_be_resumed_fails_loudly() {
         Some("agent".into()),
         None,
         None,
+        false,
     )
     .await
     .expect_err("a conversation that did not resume must not look resumed");
@@ -244,7 +248,7 @@ async fn a_link_that_declares_nothing_is_not_a_conversation() {
         let _ = ws.close(None).await;
     });
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), None, None, None)
+    let err = Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect_err("a silent link is not a conversation");
     assert!(
@@ -272,6 +276,7 @@ async fn a_conversation_the_bridge_still_holds_is_adopted_rather_than_loaded() {
         Some("read-only".into()),
         Some("conv-already-running".into()),
         None,
+        false,
     )
     .await
     .expect("a held conversation is adopted");
@@ -296,6 +301,7 @@ async fn rejoining_wins_over_what_the_pod_says_it_was_handed() {
         Some("agent".into()),
         Some("conv-already-running".into()),
         None,
+        false,
     )
     .await
     .expect("adopted");
@@ -320,7 +326,7 @@ async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
     // is where it was wrong. Every existing test here passed throughout.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    let (channel, _control) = Bridge::open(stream, "/home/chrono".into(), None, None, None)
+    let (channel, _control) = Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect("the bridge answered the handshake");
 
@@ -369,6 +375,7 @@ async fn every_request_this_bridge_sends_is_dispatchable() {
         Some("agent".into()),
         None,
         None,
+        false,
     )
     .await
     .expect("the bridge answered the handshake");
