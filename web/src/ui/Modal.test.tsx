@@ -3,25 +3,26 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Dialog } from './Dialog';
+import { Modal } from './Modal';
 
 function open(onClose = vi.fn()) {
   render(
     <div>
       <button type="button">behind</button>
-      <Dialog
+      <Modal
+        open
         title="Environment profiles"
         onClose={onClose}
         footer={<button type="button">Save</button>}
       >
         <button type="button">inside</button>
-      </Dialog>
+      </Modal>
     </div>,
   );
   return onClose;
 }
 
-describe('Dialog', () => {
+describe('the dialog', () => {
   it('announces itself as a modal labelled by its heading', () => {
     open();
     const dialog = screen.getByRole('dialog', { name: 'Environment profiles' });
@@ -60,8 +61,8 @@ describe('Dialog', () => {
     await user.click(screen.getByRole('button', { name: 'inside' }));
     expect(onClose).not.toHaveBeenCalled();
 
-    // The scrim is the only part of the overlay that dismisses.
-    await user.click(screen.getByRole('dialog').parentElement as HTMLElement);
+    // The mask is the only part of the overlay that dismisses.
+    await user.click(document.querySelector('.modal__mask') as HTMLElement);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -87,9 +88,9 @@ describe('Dialog', () => {
     opener.focus();
 
     const { unmount } = render(
-      <Dialog title="Sized" onClose={vi.fn()}>
+      <Modal open title="Sized" onClose={vi.fn()}>
         <button type="button">inside</button>
-      </Dialog>,
+      </Modal>,
     );
     expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
 
@@ -100,9 +101,9 @@ describe('Dialog', () => {
 
   it('renders without a footer when a surface has no actions', () => {
     render(
-      <Dialog title="Read only" onClose={vi.fn()}>
+      <Modal open title="Read only" onClose={vi.fn()}>
         <p>Nothing to do here.</p>
-      </Dialog>,
+      </Modal>,
     );
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
@@ -110,42 +111,60 @@ describe('Dialog', () => {
 });
 
 describe('the dialog shell', () => {
-  it('offers three widths and no others', () => {
-    // §7. A width chosen per surface is how two dialogs that ask the same kind
-    // of question end up different sizes.
-    const css = readFileSync(resolve(process.cwd(), 'src/ui/Dialog.css'), 'utf8');
-    const widths = [...css.matchAll(/\.dialog--(\w+)\s*\{\s*max-width: (\d+)px/g)].map((match) => [
-      match[1],
-      match[2],
-    ]);
-    expect(widths).toEqual([
-      ['narrow', '520'],
-      ['medium', '700'],
-      ['wide', '1000'],
-    ]);
-    // And no other rule sets a dialog's width.
-    expect(css.match(/max-width: \d+px/g)).toHaveLength(3);
+  it('is one card, and says so where a surface needs more', () => {
+    // A width chosen per call site is how two dialogs that ask the same kind
+    // of question end up different sizes. The two exceptions are named
+    // classes, which a reviewer can find, rather than a size prop anybody can
+    // reach for.
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/Modal.css'), 'utf8');
+    const widths = [...css.matchAll(/width: min\((\d+)px, 100%\)/g)].map((match) => match[1]);
+    expect(widths).toEqual(['380', '700', '1000']);
   });
 
-  it('is a plate: it floats over the page and never moves', () => {
-    // §3: a thing floating over the page takes --lift-plate, and nothing in
-    // the interface moves on hover.
-    const css = readFileSync(resolve(process.cwd(), 'src/ui/Dialog.css'), 'utf8');
-    expect(css).toMatch(/\.dialog\s*\{[^}]*box-shadow: var\(--lift-plate\)/);
-    expect(css).not.toMatch(/\.dialog[^_{]*:hover/);
-    expect(css).not.toMatch(/\.dialog[\s\S]*?transform:/);
+  it('portals out of the page, and stops it scrolling underneath', () => {
+    // An ancestor that establishes a stacking context leaves sticky page
+    // chrome floating above the mask, and no z-index here can reach past it.
+    const host = document.createElement('div');
+    document.body.append(host);
+    const { unmount } = render(
+      <Modal open title="Sized" onClose={vi.fn()}>
+        <p>body</p>
+      </Modal>,
+      { container: host },
+    );
+    // Out of whatever rendered it, and directly on the body.
+    expect(screen.getByRole('dialog').closest('.modal')?.parentElement).toBe(document.body);
+    expect(host.contains(screen.getByRole('dialog'))).toBe(false);
+    expect(document.body.style.overflow).toBe('hidden');
+
+    unmount();
+    host.remove();
+    // And gives it back, or the page stays frozen after the dialog leaves.
+    expect(document.body.style.overflow).not.toBe('hidden');
+  });
+
+  it('renders nothing at all when closed', () => {
+    // Not merely hidden: a closed dialog that is still mounted keeps its
+    // focus trap armed and steals focus from the page behind it.
+    render(
+      <Modal open={false} title="Sized" onClose={vi.fn()}>
+        <button type="button">inside</button>
+      </Modal>,
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'inside' })).toBeNull();
   });
 
   it('is the only shell in the tree', () => {
     // The parts that are easy to get wrong — the focus trap, the return of
-    // focus, Escape, the scrim click — are the parts nobody notices are
-    // missing. There were two implementations and one trapped nothing, so
-    // this asserts that only one declares the shell.
+    // focus, Escape, the mask click — are the parts nobody notices are
+    // missing. There were two implementations once and one trapped nothing,
+    // so this asserts that only one declares the shell.
     const shells = readdirSync(resolve(process.cwd(), 'src'), { recursive: true })
       .filter((name) => typeof name === 'string' && name.endsWith('.css'))
       .map((name) => [name, readFileSync(resolve(process.cwd(), 'src', name as string), 'utf8')])
-      .filter(([, css]) => (css as string).includes('.dialog__scrim'))
+      .filter(([, css]) => (css as string).includes('.modal__mask'))
       .map(([name]) => name);
-    expect(shells).toEqual(['ui/Dialog.css']);
+    expect(shells).toEqual(['ui/Modal.css']);
   });
 });
