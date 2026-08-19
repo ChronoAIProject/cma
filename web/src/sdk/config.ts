@@ -87,22 +87,36 @@ export interface ResolvedConfig {
  * production and not in a test.
  */
 export function resolveConfig(config: ClientConfig = {}): ResolvedConfig {
-  const fetchImpl = config.fetch ?? globalThis.fetch;
-  if (typeof fetchImpl !== 'function') {
-    throw new TypeError(
-      'no fetch is available: pass one as `fetch` in the config, or run somewhere that has it',
-    );
-  }
   return {
     baseUrl: (config.baseUrl ?? '').replace(/\/+$/, ''),
     credential: config.credential,
     cookies: config.cookies ?? true,
-    // Bound to its own global. An unbound `fetch` read off `globalThis` throws
-    // "Illegal invocation" in a browser the moment it is called as a bare
-    // function, which is exactly how this SDK calls it.
-    fetch: fetchImpl.bind(globalThis),
+    fetch: config.fetch === undefined ? platformFetch : config.fetch,
   };
 }
+
+/**
+ * The platform's own `fetch`, looked up when it is called rather than now.
+ *
+ * Captured at construction it would be whatever existed at import time, and a
+ * client is usually constructed at module scope — so a `fetch` installed
+ * afterwards was ignored. That breaks a consumer who wraps it for retries or
+ * tracing, and it broke every test that stubs the global, which is how the
+ * problem was found.
+ *
+ * Bound to `globalThis` at the call, because an unbound `fetch` invoked as a
+ * bare function throws "Illegal invocation" in a browser — exactly how this
+ * SDK invokes it.
+ */
+const platformFetch: typeof globalThis.fetch = (input, init) => {
+  const impl = globalThis.fetch;
+  if (typeof impl !== 'function') {
+    throw new TypeError(
+      'no fetch is available: pass one as `fetch` in the config, or run somewhere that has it',
+    );
+  }
+  return impl.call(globalThis, input, init);
+};
 
 /** The absolute address of a path under this deployment. */
 export function urlOf(config: ResolvedConfig, path: string): string {
