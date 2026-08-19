@@ -1,0 +1,154 @@
+/*
+ * The page frame — `docs/Web_Style.md` §9.
+ *
+ * A grid rather than flex, because the three tracks are the layout: the
+ * solver decides three numbers and this draws them, with nothing in between
+ * that could disagree.
+ */
+
+.frame {
+  /* Anchors the handles, which straddle the column borders. */
+  position: relative;
+  display: grid;
+  grid-template-rows: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-base);
+  transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/*
+ * A drag writes widths at pointer cadence. Easing them would leave the column
+ * trailing the handle, which reads as lag rather than as smoothness.
+ */
+.frame[data-dragging] {
+  transition: none;
+}
+
+.frame__sidebar {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.frame__center {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.frame__details {
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--dsw-alias-border-l2);
+}
+
+/*
+ * A closed details column stays mounted at zero width, so its border would
+ * otherwise paint a 1px seam down the right of the page.
+ */
+.frame[data-details-collapsed] .frame__details {
+  border-left: none;
+}
+
+.frame__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  /* Centred on the border rather than beside it. */
+  margin-left: -4px;
+  cursor: col-resize;
+  touch-action: none;
+  transition: left var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.frame[data-dragging] .frame__handle {
+  transition: none;
+}
+
+/*
+ * The details handle shows a grip; the sidebar's is invisible. The sidebar
+ * has a visible collapse control of its own, and two affordances for one
+ * border is one more than the border can carry.
+ */
+.frame__handle[data-side='details']::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  width: 12px;
+  height: 32px;
+  background: var(--dsw-alias-button-floating-fill);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 10px;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition:
+    opacity var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    background var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+  content: '';
+}
+
+.frame__details:hover ~ .frame__handle[data-side='details']::after,
+.frame__handle[data-side='details']:hover::after,
+.frame__handle[data-side='details'][data-dragging='true']::after {
+  opacity: 1;
+}
+
+.frame__handle[data-side='details']:hover::after,
+.frame__handle[data-side='details'][data-dragging='true']::after {
+  background: var(--dsw-alias-button-floating-hover);
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.frame__handle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * The overlay layer is inert except where something is drawn into it, so a
+ * banner covering the top strip does not swallow clicks across the whole page.
+ */
+.frame__overlay {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  inset: 0;
+}
+
+.frame__overlay > * {
+  pointer-events: auto;
+}
+
+/*
+ * Below the auto-collapse width the sidebar shuts on its own, so the way back
+ * has to be somewhere that is still visible.
+ */
+.frame__narrowtoggle {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 21;
+  height: 28px;
+  padding: 0 10px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+  background: var(--dsw-alias-button-floating-fill);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame,
+  .frame__handle,
+  .frame__handle[data-side='details']::after {
+    transition: none;
+  }
+}
