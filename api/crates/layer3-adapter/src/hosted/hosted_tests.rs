@@ -366,3 +366,79 @@ impl futures_util::Sink<Message> for Recorder {
         std::task::Poll::Ready(Ok(()))
     }
 }
+
+#[tokio::test]
+async fn a_runtime_that_never_answers_a_switch_is_not_recorded_as_having_switched() {
+    // #289. A supervisor too old to know the frame ignores it in silence, so
+    // "the frame reached the socket" is not evidence the program changed.
+    // Waiting is what tells the two apart, and the error is what carries the
+    // caller to a rotation — which is how such a session moved before the
+    // in-place switch existed, and still moves correctly.
+    let kernel = hosted("http://127.0.0.1:1");
+    let (link, _held) = mpsc::channel::<TerminalInput>(4);
+    kernel.remember_link("sbx_old", link).await;
+
+    let started = std::time::Instant::now();
+    let outcome = kernel
+        .switch_plane(&RuntimeHandle("sbx_old".into()), "codex-acp")
+        .await;
+
+    assert!(
+        matches!(outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("did not answer")),
+        "silence must be an error rather than a success: {outcome:?}"
+    );
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(1),
+        "it waited for an answer rather than assuming one"
+    );
+}
+
+#[tokio::test]
+async fn a_switch_the_runtime_confirms_is_recorded_as_done() {
+    // The positive case, and the only one that may be recorded in place.
+    let kernel = hosted("http://127.0.0.1:1");
+    let (link, mut held) = mpsc::channel::<TerminalInput>(4);
+    kernel.remember_link("sbx_new", link).await;
+
+    // Stand in for the pod: read the request off the link and answer it the
+    // way a current supervisor does, on the wire.
+    let waiters = kernel.switch_waiters();
+    tokio::spawn(async move {
+        if let Some(TerminalInput::SwitchPlane { command }) = held.recv().await {
+            let frame =
+                serde_json::json!({ "t": "switch_plane_result", "command": command, "accepted": true })
+                    .to_string();
+            let accepted = super::link::switch_answer(&frame).expect("the answer parses");
+            waiters.settle("sbx_new", accepted).await;
+        }
+    });
+
+    kernel
+        .switch_plane(&RuntimeHandle("sbx_new".into()), "codex-acp")
+        .await
+        .expect("a confirmed switch succeeds");
+}
+
+#[tokio::test]
+async fn a_refused_command_is_not_a_switch() {
+    // The supervisor refuses anything outside its boot allowlist. That is a
+    // negative answer, not a missing one, and it must not be recorded either.
+    let kernel = hosted("http://127.0.0.1:1");
+    let (link, mut held) = mpsc::channel::<TerminalInput>(4);
+    kernel.remember_link("sbx_ref", link).await;
+
+    let waiters = kernel.switch_waiters();
+    tokio::spawn(async move {
+        if held.recv().await.is_some() {
+            waiters.settle("sbx_ref", false).await;
+        }
+    });
+
+    let outcome = kernel
+        .switch_plane(&RuntimeHandle("sbx_ref".into()), "rm")
+        .await;
+    assert!(
+        matches!(outcome, Err(AdapterError::Unsupported(ref why)) if why.contains("refused")),
+        "a refusal names itself: {outcome:?}"
+    );
+}
