@@ -5,6 +5,8 @@ import { abilitiesFor } from './availability';
 import { labelFor } from './types';
 import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
 import './SessionDrawer.css';
+import { Button } from '../ui/Button';
+import { RiskConfirmation } from '../ui/RiskConfirmation';
 
 /**
  * What is known about the open session — docs/Web_Style.md §12.
@@ -183,60 +185,44 @@ export function SessionDrawer({
 
       {/*
        * The foot — §12: End session and Delete, away from everything
-       * reversible. Delete confirms inline, in place of the keys that raised
-       * it (§7), never in a second dialog.
+       * reversible.
+       *
+       * Delete is the one action here that loses something. It is confirmed
+       * behind an explicit tick rather than by a second press on a red key:
+       * a colour is something a person can click as fast as any other, and
+       * what is being protected is a session's whole history.
        */}
       <div className="drawer__foot">
-        {confirmingDelete ? (
-          <>
-            <span className="control-reason drawer__question">
-              Delete this session and its history?
-            </span>
-            <button
-              type="button"
-              className="button button--ghost button--md"
-              onClick={() => {
-                setConfirmingDelete(false);
-              }}
-            >
-              Keep it
-            </button>
-            <button
-              type="button"
-              className="button button--primary button--md"
-              disabled={busy}
-              onClick={() => {
-                setConfirmingDelete(false);
-                onDelete();
-              }}
-            >
-              Delete permanently
-            </button>
-          </>
-        ) : (
-          <>
-            {can.reason === undefined ? null : <span className="control-reason">{can.reason}</span>}
-            <button
-              type="button"
-              className="button button--ghost button--md"
-              disabled={busy || !can.canStop}
-              onClick={onStop}
-            >
-              End session
-            </button>
-            <button
-              type="button"
-              className="button button--primary button--md"
-              disabled={busy || !can.canDelete}
-              onClick={() => {
-                setConfirmingDelete(true);
-              }}
-            >
-              Delete
-            </button>
-          </>
-        )}
+        {can.reason === undefined ? null : <span className="control-reason">{can.reason}</span>}
+        <Button disabled={busy || !can.canStop} onClick={onStop}>
+          End session
+        </Button>
+        <Button
+          variant="primary"
+          disabled={busy || !can.canDelete}
+          onClick={() => {
+            setConfirmingDelete(true);
+          }}
+        >
+          Delete
+        </Button>
       </div>
+
+      <RiskConfirmation
+        open={confirmingDelete}
+        title="Delete this session?"
+        description="This deletes the session and everything it recorded — its transcript, its terminal output, and its history. Nothing here can be recovered afterwards."
+        acknowledgeLabel="I understand this cannot be undone."
+        confirmLabel="Delete permanently"
+        busy={busy}
+        onCancel={() => {
+          setConfirmingDelete(false);
+        }}
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          onDelete();
+        }}
+      />
     </aside>
   );
 }
