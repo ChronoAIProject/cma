@@ -42,7 +42,6 @@ describe('the band grid', () => {
         activeId={null}
         order="newest"
         onSelect={() => {}}
-        onCreate={() => {}}
         onReorder={() => {}}
         collapsed={false}
         onToggleCollapsed={() => {}}
@@ -74,17 +73,15 @@ describe('the band grid', () => {
     }
   });
 
-  it('draws the foot band undivided', () => {
-    // §6: one band across the whole window — no per-column cells, because the
-    // columns no longer draw their own footers. The rail still takes its own
-    // width from the tokens; the band no longer mirrors it.
-    const band = sheet('shell/StatusBand.css');
-    expect(band).not.toContain('.statusband__lead');
-    expect(band).not.toContain('.statusband__cell');
-    expect(rule(sheet('sessions/SessionRail.css'), '.rail')).toContain('width: var(--rail-width)');
-    expect(rule(sheet('sessions/SessionRail.css'), '.rail--collapsed')).toContain(
-      'width: var(--rail-collapsed)',
-    );
+  it('takes its width from the column it sits in', () => {
+    /*
+     * §9 moved the width decision out of this list and into the frame's
+     * solver, which is the whole reason the column can be dragged. A width
+     * declared here again would be one the solver could not honour, and the
+     * two would disagree at every size.
+     */
+    const css = sheet('sessions/SessionRail.css');
+    expect(rule(css, '.rail')).not.toContain('width:');
   });
 
   it('gives the rail a second band rather than a taller header', () => {
@@ -96,7 +93,6 @@ describe('the band grid', () => {
         activeId={null}
         order="newest"
         onSelect={() => {}}
-        onCreate={() => {}}
         onReorder={() => {}}
         collapsed={false}
         onToggleCollapsed={() => {}}
@@ -105,9 +101,8 @@ describe('the band grid', () => {
     const chrome = container.querySelector('.rail__chrome');
     expect(chrome).toHaveClass('band');
     expect(chrome).not.toHaveClass('band--head');
-    expect(chrome?.querySelector('.rail__newsession')).not.toBeNull();
 
-    // The rail draws no footer of its own: it ends at the status band's rule.
+    // The rail draws no footer of its own: the sidebar's foot carries one.
     expect(container.querySelector('.band--foot')).toBeNull();
   });
 

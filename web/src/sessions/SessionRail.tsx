@@ -51,7 +51,6 @@ interface SessionRailProps {
   readonly activeId: string | null;
   readonly order: SortOrder;
   readonly onSelect: (id: string) => void;
-  readonly onCreate: () => void;
   readonly onReorder: (order: SortOrder) => void;
   /**
    * How the list is arranged, drawn in the rail's own head band.
@@ -75,7 +74,6 @@ export function SessionRail({
   activeId,
   order,
   onSelect,
-  onCreate,
   onReorder,
   arrangement,
   collapsed,
@@ -191,14 +189,11 @@ export function SessionRail({
        * rule still runs straight across every column.
        */}
       <div className="band rail__chrome">
-        {/* §12: the rail's one full-width primary key. */}
-        <button
-          type="button"
-          className="button button--primary button--md rail__newsession"
-          onClick={onCreate}
-        >
-          <span aria-hidden="true">+</span> New session
-        </button>
+        {/*
+          No new-session key here. The sidebar this list sits in carries one,
+          and two controls for one act is how somebody learns to distrust
+          which of them they pressed.
+        */}
         <div className="rail__filters">
           {(['all', 'live', 'stopped'] as const).map((option) => (
             <button
