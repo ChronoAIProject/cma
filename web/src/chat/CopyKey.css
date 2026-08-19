@@ -14,11 +14,6 @@
 .copykey {
   flex: none;
   padding: 2px var(--space-2);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
   background: none;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -26,6 +21,9 @@
   transition:
     background var(--ds-transition-duration) var(--ds-ease-in-out),
     color var(--ds-transition-duration) var(--ds-ease-in-out);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .copykey:hover:not(:disabled) {
