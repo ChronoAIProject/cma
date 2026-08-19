@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef } from 'react';
+import { useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { Button } from './Button';
+import { PlateScrim, usePlateFocus } from './plate';
 import './Dialog.css';
 
 /**
@@ -40,67 +41,16 @@ interface DialogProps {
   readonly footer?: ReactNode;
 }
 
-/** Everything inside `root` that a Tab can reach. */
-function focusable(root: HTMLElement): HTMLElement[] {
-  return Array.from(
-    root.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  );
-}
-
 export function Dialog({ title, onClose, children, width = 'narrow', footer }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
-  useEffect(() => {
-    // Remembered before focus moves, so closing returns the user to the
-    // control they opened this from rather than the top of the document.
-    const opener = document.activeElement as HTMLElement | null;
-    const panel = panelRef.current;
-    const first = panel === null ? undefined : focusable(panel)[0];
-    first?.focus();
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key !== 'Tab' || panel === null) {
-        return;
-      }
-      // Trapped rather than merely started here: Tab out of a modal lands on
-      // the page behind it, which is still inert to the eye and not to the
-      // keyboard.
-      const reachable = focusable(panel);
-      const edge = event.shiftKey ? reachable[0] : reachable[reachable.length - 1];
-      const wrap = event.shiftKey ? reachable[reachable.length - 1] : reachable[0];
-      if (document.activeElement === edge && wrap !== undefined) {
-        event.preventDefault();
-        wrap.focus();
-      }
-    };
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      opener?.focus();
-    };
-  }, [onClose]);
+  // The trap, Escape and the focus return are the shared plate machinery —
+  // written once in ui/plate.ts, for this and the command bar alike.
+  usePlateFocus(panelRef, onClose);
 
   return (
-    <div
-      className="dialog__scrim"
-      // Dismissing on the scrim is a pointer affordance; the keyboard route is
-      // Escape, which is why this carries no role and no handler of its own
-      // beyond the click.
-      onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
+    <PlateScrim onClose={onClose}>
       <div
         className={`dialog dialog--${width}`}
         role="dialog"
@@ -125,7 +75,7 @@ export function Dialog({ title, onClose, children, width = 'narrow', footer }: D
           <footer className="band band--foot dialog__footer">{footer}</footer>
         )}
       </div>
-    </div>
+    </PlateScrim>
   );
 }
 

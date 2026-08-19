@@ -1,0 +1,61 @@
+/*
+ * The command bar — docs/Web_Style.md §6 and §7.
+ *
+ * The plate itself is the shared .plate vocabulary; what lives here is the
+ * palette's own geometry: pinned toward the window's top so the list grows
+ * downward, the field leading, and the results as menu items.
+ */
+
+.commandbar__scrim {
+  align-items: start;
+  padding-top: 15dvh;
+}
+
+.commandbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 520px;
+  padding: var(--space-2);
+}
+
+.commandbar__field {
+  height: var(--control-h-md);
+  padding-inline: var(--space-3);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
+  background: var(--inset);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius);
+}
+
+.commandbar__field::placeholder {
+  color: var(--ink-3);
+}
+
+.commandbar__field:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The results scroll inside the plate; the page never scrolls (§5). */
+.commandbar__list {
+  max-height: 40dvh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.commandbar__list .menu__item {
+  height: var(--control-h-lg);
+}
+
+.commandbar__empty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--ink-3);
+  font-size: var(--text-note);
+}

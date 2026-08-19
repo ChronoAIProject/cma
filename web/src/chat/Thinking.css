@@ -1,41 +1,57 @@
-/* ── What the agent is working through, §18.8 ────────────────────────────
+/*
+ * The reasoning band — docs/Web_Style.md §18.8.
  *
- * Liveness, and drawn as such: quieter than anything it sits above, capped in
- * height, and carrying no colour at all. The semantic inks describe session
- * and system state (§2) and describe nothing the agent thought.
+ * Collapsed by default to one pill key; open, a height-capped band on the
+ * raised ground pinned to the newest. No colour, ever: §2 reserves the
+ * semantic inks for session and system state, and reasoning is neither.
  */
 
 .thinking {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
-  border-left: 2px solid var(--rule-2);
+  align-items: flex-start;
 }
 
-.thinking__label {
+.thinking__key {
+  display: inline-flex;
+  align-items: center;
+  height: var(--chip-h);
+  padding-inline: var(--space-3);
   color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+  cursor: pointer;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
 }
 
-/* Capped rather than unbounded. Reasoning arrives fast and says less than any
- * line of the conversation it would otherwise push off the screen. */
-.thinking__body {
-  max-height: 8rem;
-  overflow-y: auto;
+.thinking__key:hover {
   color: var(--ink-2);
-  font-size: var(--text-base);
-  line-height: var(--leading-base);
-  white-space: pre-wrap;
+  border-color: var(--rule-2);
 }
 
-/* Said on the surface, not only in the document: a reader who saw this and
- * reloaded to find it gone would otherwise report it as lost work. */
-.thinking__note {
-  margin: 0;
+.thinking__key:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Height-capped with its own scroll: reasoning is unbounded and arrives
+ * fast, and a band that grew without limit would push the conversation off
+ * the screen while saying less than any line of it.
+ */
+.thinking__body {
+  align-self: stretch;
+  max-height: 120px;
+  padding: var(--space-3);
+  overflow-y: auto;
   color: var(--ink-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
 }

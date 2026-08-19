@@ -9,8 +9,8 @@ import './Mark.css';
  *
  * Four squares rather than a glyph or an image: it needs no font, no SVG and
  * no asset, survives a 16px favicon, and prints in one colour. The face it
- * used to be drawn in was Geist Pixel, which §4 retires; a mark that depended
- * on a typeface would have gone dark with it.
+ * used to be drawn in was a pixel face §4 has since retired; a mark that
+ * depended on a typeface would have gone dark with it.
  *
  * The two colours are custom properties on the element, so a variant —
  * knockout, on-accent, light — is the same geometry with two values

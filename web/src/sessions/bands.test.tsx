@@ -66,7 +66,7 @@ describe('the band grid', () => {
     for (const [name, selector] of [
       ['sessions/SessionRail.css', '.rail__head'],
       ['sessions/SessionHeader.css', '.sessionheader'],
-      ['sessions/SessionDetails.css', '.details__head'],
+      ['sessions/SessionDrawer.css', '.drawer__head'],
     ] as const) {
       expect(rule(sheet(name), selector), selector).not.toMatch(
         /padding(-block|-top|-bottom)?:|height:/,
@@ -74,30 +74,17 @@ describe('the band grid', () => {
     }
   });
 
-  it('aligns the band leading cell with the rail rather than with its own text', () => {
-    // The cell is the rail's share of the one 40px band, so it takes the
-    // rail's width from the page. A cell sized from its content would put a
-    // second vertical line a few pixels from the rail's, which reads as a
-    // misprint; a cell pinned to the open width would leave it 264px adrift
-    // the moment the rail collapsed.
+  it('draws the foot band undivided', () => {
+    // §6: one band across the whole window — no per-column cells, because the
+    // columns no longer draw their own footers. The rail still takes its own
+    // width from the tokens; the band no longer mirrors it.
     const band = sheet('shell/StatusBand.css');
-    expect(rule(band, '.statusband__lead')).not.toContain('width:');
-    // Follows the rail, and is absent on a view that has no rail: a vertical
-    // rule drawn under nothing is worse than none.
-    const console = sheet('Console.tsx');
-    expect(console).toContain("'var(--rail-collapsed)'");
-    expect(console).toContain("'var(--rail-width)'");
-    expect(console).toMatch(/view === 'operations'\s*\?\s*undefined/);
+    expect(band).not.toContain('.statusband__lead');
+    expect(band).not.toContain('.statusband__cell');
     expect(rule(sheet('sessions/SessionRail.css'), '.rail')).toContain('width: var(--rail-width)');
     expect(rule(sheet('sessions/SessionRail.css'), '.rail--collapsed')).toContain(
       'width: var(--rail-collapsed)',
     );
-
-    // Written at two-class specificity on purpose: the element carries .band
-    // and .statusband, both set padding-inline, and equal specificity would
-    // leave the winner decided by whichever stylesheet the bundler emitted
-    // last — a 12px misalignment that comes and goes with import order.
-    expect(band).toContain('.band.statusband {');
   });
 
   it('gives the rail a second band rather than a taller header', () => {
@@ -118,7 +105,7 @@ describe('the band grid', () => {
     const chrome = container.querySelector('.rail__chrome');
     expect(chrome).toHaveClass('band');
     expect(chrome).not.toHaveClass('band--head');
-    expect(chrome?.querySelector('.rail__new')).not.toBeNull();
+    expect(chrome?.querySelector('.button--block')).not.toBeNull();
 
     // The rail draws no footer of its own: it ends at the status band's rule.
     expect(container.querySelector('.band--foot')).toBeNull();
@@ -128,11 +115,13 @@ describe('the band grid', () => {
     const { container } = render(<SessionHeader session={SESSION} />);
     expect(container.querySelector('.band__subject')).not.toBeNull();
     expect(rule(sheet('styles/components.css'), '.band__subject')).toContain(
-      'font-size: var(--text-lg)',
+      'font-size: var(--text-subject)',
     );
-    // Everything else in a band is mono xs — one type size per band.
+    // Everything else in a band is mono at the label size — one size per band.
     for (const selector of ['.band__label', '.band__value']) {
-      expect(rule(sheet('styles/components.css'), selector)).toContain('font-size: var(--text-xs)');
+      expect(rule(sheet('styles/components.css'), selector)).toContain(
+        'font-size: var(--text-label)',
+      );
     }
   });
 });
