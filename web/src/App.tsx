@@ -2,7 +2,17 @@ import { Suspense, lazy } from 'react';
 import { IntroTerminal } from './landing/IntroTerminal';
 import { PageFrame } from './shell/PageFrame';
 import { useAuth } from './auth/context';
+/*
+ * Mount order matters — `docs/Web_Style.md` §2. The palette sheets must be
+ * parsed before anything reads an alias off them, and `tokens.css` first
+ * because the others reference the font stacks and the easing curve it
+ * declares.
+ */
 import './styles/tokens.css';
+import './styles/design-platform.css';
+import './styles/effects-typography.css';
+import './styles/scrollbar.css';
+import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 

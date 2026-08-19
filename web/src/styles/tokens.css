@@ -1,120 +1,141 @@
 /*
- * Design tokens — docs/Web_Style.md is the single source of truth.
- * Every value here is transcribed from that document. Never introduce a colour,
- * shadow, spacing value, radius or type step that does not appear there.
+ * The token layer — `docs/Web_Style.md` §2, §3, §4.
  *
- * This file is custom properties and nothing else. Component rules live in
- * components.css or in the component's own stylesheet, so checking §2 against
- * the token layer stays a single-file review.
+ * Three sheets carry the palette itself and are vendored beside this one:
+ * `design-platform.css` (the ramps and aliases), `effects-typography.css`
+ * (shadows and the composite type ramp) and `shiki.css` (syntax). This file
+ * holds only what those sheets reference but do not define, plus the one face
+ * this product downloads.
  *
- * Light is defined on bare :root first, per §2: a colour whose only definition
- * lives inside a media query or [data-theme] block is a bug, because a token
- * that fails to resolve under an unexpected combination of theme settings
- * silently renders as `unset`.
+ * Read §2 before adding anything here. Spacing, radius and z-index have no
+ * tokens by design: they are literal pixels in the sheet that uses them,
+ * because a scale invites a component to take the step above when the one it
+ * needs is missing.
  */
 
 :root {
-  /* Surfaces — §2. Warm neutrals: the ramp is tinted toward the accent's hue
-     family so a lime key reads as part of the page rather than dropped on it. */
-  --ground: #ffffff;
-  --surface: #ffffff;
-  --raised: #ffffff;
-  --inset: #f1f3f5;
-  --sunken: #f7f8fa;
-
-  /* Text — §2. --ink-3 is the binding constraint: it carries 11–12px metadata,
-     which is not large text, so the full 4.5:1 applies. Do not lighten it. */
-  --ink: #0f1115;
-  --ink-2: #61666b;
-  --ink-3: #81858c;
-
-  /* Borders — §2 */
-  --rule: #ebeef2;
-  --rule-2: #e1e5ea;
-  --rule-3: #d6dbe1;
-
-  /* One accent. Light and dark share the fill and differ in the ink, because a
-     colour bright enough to read on near-black cannot carry text on paper. */
-  --accent: #4176e6;
-  --accent-fill: #4176e6;
-  --accent-wash: rgb(65 118 230 / 0.08);
-  --on-accent: #ffffff;
-
-  /* Semantic state — §2. Never used decoratively, never colour alone. */
-  --live: #22c55e;
-  --wait: #f59e0b;
-  --fail: #ec1313;
-  --ended: #81858c;
-  --live-wash: rgb(34 197 94 / 0.1);
-  --wait-wash: rgb(245 158 11 / 0.1);
-  --fail-wash: rgb(236 19 19 / 0.08);
-
-  /* The scrim behind a plate. Not a new colour: --ink at 40%. */
-  --scrim: rgb(0 0 0 / 0.24);
-
   /*
-   * Depth — §3. Two levels and no others: one for a thing resting on the page,
-   * one for a thing floating over it. The letterpress contract is retired; an
-   * inline box-shadow string in a component is still a bug.
+   * The system stack. No interface webfont: the face a platform already
+   * renders is the one that costs nothing to load and never arrives late.
    */
-  /*
-   * Depth is expressed by theme, not by one value — §20.1.
-   *
-   * In light, shadow does the separating and `--edge-hairline` is
-   * transparent. In dark it is the other way round: a black shadow is
-   * invisible on a dark ground, so the hairline carries the edge and the
-   * shadow only deepens it. A card declares both and each does its work in
-   * one theme, which is why no component needs a media query of its own.
-   */
-  --lift-rest: 0 1px 2px rgb(15 17 21 / 0.06);
-  --lift-plate: 0 8px 24px rgb(15 17 21 / 0.12);
-  --edge-hairline: transparent;
-  --lift-none: none;
-  --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
-  /* §8's one documented variant, for the terminal prompt row. */
-  --focus-prompt: inset 2px 0 0 var(--accent);
-  /* A focused canvas node, §13: hue change plus a soft halo, never a glow. */
-  --focus-node: 0 0 0 3px rgb(198 242 78 / 0.12);
-  /* The selected row's leading edge, §12. */
-  --edge-selected: #0f1115;
-
-  /* Type — §4. Both faces are self-hosted; nothing is fetched from a third party. */
-  /*
-   * The system stack — §20.3. No interface webfont: the face a platform
-   * already renders best is the one that costs nothing to load and never
-   * arrives late. The mono face stays downloaded, because code and terminal
-   * output cannot be left to whatever a platform calls monospace.
-   */
-  --font-ui:
+  --dsw-font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
-  --text-label: 11px; /* mono, uppercase, tracked */
-  --text-meta: 12px;
-  --text-note: 13px;
-  --text-ui: 14px;
-  --text-body: 15px;
-  --text-read: 16px; /* the conversation, and only the conversation */
-  --text-title: 17px; /* dialog and plate titles */
-  --text-subject: 20px; /* the session a surface is showing */
-  --text-page: 24px;
-  --text-display: 64px; /* the landing headline only */
+  /*
+   * The code stack, deliberately without a bare `monospace` tail: on Windows
+   * that resolves to a CJK serif, which is the one thing a terminal cannot
+   * use. Column widths are the whole point of this face.
+   */
+  --ds-font-family-code:
+    'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier,
+    'PingFang SC', 'Microsoft YaHei';
 
-  --track-label: 0.08em;
-  --track-tight: -0.01em;
-  --track-display: -0.035em;
+  /* One curve, three durations — §4. Nothing in the product eases differently. */
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-transition-duration: 0.2s;
+  --ds-transition-duration-fast: 0.1s;
+  --ds-transition-duration-slow: 0.3s;
+}
 
-  --leading-tight: 1.15;
-  --leading-ui: 1.55;
-  --leading-read: 1.65;
+/*
+ * The one face this product downloads. Everything else is the platform's.
+ *
+ * It is named in the code stack above rather than used directly, so a machine
+ * that already has SF Mono never fetches it.
+ */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../assets/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 800;
+  font-style: normal;
+  /*
+   * Text shows in the fallback immediately and swaps when the face arrives.
+   * Nothing is ever invisible waiting for a font.
+   */
+  font-display: swap;
+}
 
-  /* Terminal type keeps its own metrics — §4. Never track a terminal. */
-  --term-size: 13.5px;
-  --term-leading: 1.65;
-  --term-tracking: 0;
+/*
+ * ── Migration shim, temporary ────────────────────────────────────────────
+ *
+ * The old names, defined in terms of the new aliases. Thirty-four stylesheets
+ * read them, and rewriting all of them in one commit would be one enormous
+ * unreviewable change — so each surface migrates in its own pull request and
+ * this shim keeps the tree green in between.
+ *
+ * **This block is deleted by the last pull request of #317.** Nothing new may
+ * reference these names; a component added after this was written and reaching
+ * for `--ink` is reaching for something already on its way out.
+ *
+ * The mapping is the one #317 specifies, so a surface being migrated is
+ * substituting names rather than choosing values.
+ */
+:root {
+  --ground: var(--dsw-alias-bg-base);
+  --surface: var(--dsw-alias-bg-layer-1);
+  --raised: var(--dsw-alias-bg-layer-2);
+  --inset: var(--dsw-alias-bg-layer-3);
+  --sunken: var(--dsw-alias-markdown-code-block);
 
-  /* Spacing — §5. 4px rhythm; 2px steps only inside a control's own padding. */
+  --ink: var(--dsw-alias-label-primary);
+  --ink-2: var(--dsw-alias-label-secondary);
+  --ink-3: var(--dsw-alias-label-tertiary);
+
+  --rule: var(--dsw-alias-border-l1);
+  --rule-2: var(--dsw-alias-border-l2);
+  --rule-3: var(--dsw-alias-border-l3);
+
+  /*
+   * Blue is status here, never the primary — §2. The old `--accent` was the
+   * thing you pressed; it now means running, current, send, and the thing you
+   * press is `--primary-fill`, which is a neutral.
+   */
+  --accent: var(--dsw-alias-state-business-primary);
+  --accent-fill: var(--dsw-alias-state-business-primary);
+  --accent-wash: var(--dsw-alias-interactive-bg-hover);
+  --on-accent: var(--dsw-alias-label-primary-foreground);
+
+  --live: var(--dsw-alias-state-success-primary);
+  --wait: var(--dsw-alias-state-warn-primary);
+  --fail: var(--dsw-alias-state-error-primary);
+  --ended: var(--dsw-alias-label-tertiary);
+  --live-wash: var(--dsw-alias-interactive-bg-hover);
+  --wait-wash: var(--dsw-alias-interactive-bg-hover);
+  --fail-wash: var(--dsw-alias-interactive-bg-hover);
+
+  --scrim: var(--dsw-alias-bg-mask-1);
+  --tint-hover: var(--dsw-alias-interactive-bg-hover);
+  --tint-active: var(--dsw-alias-interactive-bg-active);
+  --edge-hairline: var(--dsw-alias-border-l1);
+  --edge-selected: var(--dsw-alias-label-primary);
+
+  --primary-fill: var(--dsw-alias-button-primary-fill);
+  --primary-fill-hover: var(--dsw-alias-button-primary-hover);
+  --on-primary: var(--dsw-alias-label-primary-foreground);
+
+  --lift-rest: var(--dsw-shadow-lv1);
+  --lift-plate: var(--dsw-shadow-lv3);
+  --lift-none: none;
+
+  --font-ui: var(--dsw-font-family);
+  --font-mono: var(--ds-font-family-code);
+
+  --motion-colour: var(--ds-transition-duration);
+  --motion-press: var(--ds-transition-duration-fast);
+
+  /*
+   * Geometry the old sheets still read. These retire with their surfaces:
+   * §2 gives radius and spacing no tokens at all, so a migrated sheet writes
+   * the pixels it needs and stops reading these.
+   */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -125,36 +146,6 @@
   --space-12: 48px;
   --space-16: 64px;
 
-  /* Frame — §5, §6. Heights are set on the element, never accumulated. */
-  --bar-height: 60px;
-  --band-head: 56px;
-  --band-foot: 40px;
-  --page-gutter: 20px;
-  --rail-width: 320px;
-  --rail-collapsed: 56px;
-  --drawer-width: 360px;
-  /*
-   * The measure — §20.3. Wide enough for code to sit unwrapped, narrow enough
-   * that a line of prose does not tire the eye. The chrome around it is tight
-   * and this is deliberately not: the reading surface is the one place in the
-   * product allowed to breathe.
-   */
-  --read-column: 748px;
-
-  /* Radius — §3. Five steps: control, row, card, panel, pill. */
-  /*
-   * §20.4. A container takes a fixed step; an interactive capsule takes half
-   * its own height, which is what makes a 32px control read as a pill and a
-   * card read as a panel without either being told which it is.
-   */
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-  --radius-pill: 999px;
-
-  /* Controls — §7 */
   --control-h-sm: 30px;
   --control-h: 32px;
   --control-h-md: 36px;
@@ -163,140 +154,53 @@
   --chip-h: 26px;
   --hit: 32px;
 
-  /* Canvas node size, §13. Fixed: a node's size is the geometry its runtime is
-     told to draw at, so a fluid grid would re-wrap everything an agent printed. */
+  --text-label: 11px;
+  --text-meta: 12px;
+  --text-note: 13px;
+  --text-ui: 14px;
+  --text-body: 15px;
+  --text-read: 16px;
+  --text-subject: 20px;
+  --text-title: 17px;
+  --text-display: 64px;
+  --text-page: 24px;
+
+  --leading-tight: 1.15;
+  --leading-ui: 1.55;
+  --leading-read: 1.65;
+  --leading-prose: 1.75;
+  --track-tight: -0.01em;
+  --track-label: 0.08em;
+  --track-display: -0.035em;
+
+  --term-size: 13.5px;
+  --term-leading: 1.65;
+  --term-tracking: 0;
+
+  --read-column: 748px;
+  --rail-width: 320px;
+  --rail-collapsed: 56px;
+  --drawer-width: 360px;
+  --page-gutter: 20px;
+  --bar-height: 60px;
+  --band-head: 56px;
+  --band-foot: 40px;
   --canvas-node-w: 420px;
   --canvas-node-h: 280px;
 
-  /* Motion — §8 */
-  --motion-press: 140ms;
-  --motion-colour: 200ms;
-  /*
-   * The primary is a neutral, not the accent — §20.2. The accent carries
-   * status and nothing else, so the thing you press is the darkest ink the
-   * theme has. It removes the loudest element from the surface and leaves the
-   * emphasis to type and weight.
-   */
-  --primary-fill: #0f1115;
-  --primary-fill-hover: #23262b;
-  --on-primary: #ffffff;
-
-  /*
-   * Interactive states are translucent, never solid — §20.5. A solid hover on
-   * a card and the same hover on the page produced two different colours; an
-   * alpha tint produces one relationship everywhere it is used.
-   */
-  --tint-hover: rgb(15 17 21 / 0.04);
-  --tint-active: rgb(15 17 21 / 0.08);
-  --tint-accent: rgb(65 118 230 / 0.08);
-  --tint-danger: rgb(236 19 19 / 0.08);
-
-  /*
-   * Long-form leading — §20.3. The same sizes as the interface scale, set
-   * looser. A label and a paragraph of one size are different objects, and
-   * treating them alike is what made a long answer hard to read.
-   */
-  --leading-prose: 1.75;
+  --focus-ring:
+    0 0 0 2px var(--dsw-alias-bg-base), 0 0 0 4px var(--dsw-alias-state-business-primary);
+  --focus-prompt: inset 2px 0 0 var(--dsw-alias-state-business-primary);
+  --focus-node: 0 0 0 3px var(--dsw-alias-interactive-bg-active);
 }
 
 /*
- * Dark. Redefined under BOTH the media query (guarded so an explicit light
- * choice wins) and the explicit attribute, so a deliberate choice beats the
- * system preference in either direction. Only the tokens that change are restated.
- */
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --ground: #0f1115;
-    --surface: #15171b;
-    --raised: #1b1d21;
-    --inset: #232529;
-    --sunken: #121418;
-
-    --ink: #f9fafb;
-    --ink-2: #adb2b8;
-    --ink-3: #81858c;
-
-    --rule: rgb(255 255 255 / 0.08);
-    --rule-2: rgb(255 255 255 / 0.12);
-    --rule-3: rgb(255 255 255 / 0.16);
-
-    --accent: #679efe;
-    --accent-fill: #679efe;
-    --accent-wash: rgb(103 158 254 / 0.14);
-    --on-accent: #0f1115;
-
-    --live: #22c55e;
-    --wait: #f59e0b;
-    --fail: #f25a5a;
-    --ended: #81858c;
-    --live-wash: rgb(34 197 94 / 0.14);
-    --wait-wash: rgb(245 158 11 / 0.14);
-    --fail-wash: rgb(242 90 90 / 0.14);
-
-    --scrim: rgb(0 0 0 / 0.5);
-
-    --lift-rest: 0 1px 2px rgb(0 0 0 / 0.4);
-    --lift-plate: 0 8px 24px rgb(0 0 0 / 0.55);
-    --edge-hairline: rgb(255 255 255 / 0.08);
-    --primary-fill: #f9fafb;
-    --primary-fill-hover: #e4e6e9;
-    --on-primary: #0f1115;
-    --tint-hover: rgb(255 255 255 / 0.06);
-    --tint-active: rgb(255 255 255 / 0.1);
-    --tint-accent: rgb(103 158 254 / 0.14);
-    --tint-danger: rgb(242 90 90 / 0.14);
-    --leading-prose: 1.75;
-  }
-}
-
-:root[data-theme='dark'] {
-  --ground: #0f1115;
-  --surface: #15171b;
-  --raised: #1b1d21;
-  --inset: #232529;
-  --sunken: #121418;
-
-  --ink: #f9fafb;
-  --ink-2: #adb2b8;
-  --ink-3: #81858c;
-
-  --rule: rgb(255 255 255 / 0.08);
-  --rule-2: rgb(255 255 255 / 0.12);
-  --rule-3: rgb(255 255 255 / 0.16);
-
-  --accent: #679efe;
-  --accent-fill: #679efe;
-  --accent-wash: rgb(103 158 254 / 0.14);
-  --on-accent: #0f1115;
-
-  --live: #22c55e;
-  --wait: #f59e0b;
-  --fail: #f25a5a;
-  --ended: #81858c;
-  --live-wash: rgb(34 197 94 / 0.14);
-  --wait-wash: rgb(245 158 11 / 0.14);
-  --fail-wash: rgb(242 90 90 / 0.14);
-
-  --scrim: rgb(0 0 0 / 0.5);
-
-  --lift-rest: 0 1px 2px rgb(0 0 0 / 0.4);
-  --lift-plate: 0 8px 24px rgb(0 0 0 / 0.55);
-  --edge-hairline: rgb(255 255 255 / 0.08);
-  --primary-fill: #f9fafb;
-  --primary-fill-hover: #e4e6e9;
-  --on-primary: #0f1115;
-  --tint-hover: rgb(255 255 255 / 0.06);
-  --tint-active: rgb(255 255 255 / 0.1);
-  --tint-accent: rgb(103 158 254 / 0.14);
-  --tint-danger: rgb(242 90 90 / 0.14);
-  --leading-prose: 1.75;
-}
-
-/*
- * §16: below 30rem the app bar drops to 52px and every target grows to 44px.
- * The control heights grow with the minimum, because a control is a target.
- * Band heights do not change — the page reads as the same shape on a phone.
+ * The phone override, still part of the shim.
+ *
+ * §9 replaces the band geometry with the three-column concession chain, and
+ * these names go with it — but that is the shell's pull request, not this one.
+ * Kept here so the touch-target floor and the reading column keep working on a
+ * phone until the shell moves.
  */
 @media (max-width: 29.999rem) {
   :root {
