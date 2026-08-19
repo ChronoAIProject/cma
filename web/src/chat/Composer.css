@@ -33,6 +33,14 @@
  * said six and the box delivered fewer, which is the kind of disagreement
  * nobody reports and everybody feels.
  */
+/*
+ * The card is the menu's anchor — §18.4. The list opens above the field, so
+ * the field's own card is what it is positioned against.
+ */
+.composer {
+  position: relative;
+}
+
 .composer__field {
   min-height: calc(var(--control-h) * 2);
   max-height: calc(6lh + var(--space-2) * 2);
