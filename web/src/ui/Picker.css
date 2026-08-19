@@ -1,0 +1,54 @@
+/*
+ * The value picker — `docs/Web_Style.md` §7.
+ *
+ * Only what the button and the menu do not already say: how wide the control
+ * is, and how a long value behaves inside it.
+ */
+
+.picker,
+.picker--filter {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+/* A filter holds its width so its row does not resize as the value changes. */
+.picker--filter .picker__anchor {
+  min-width: 160px;
+}
+
+.picker__anchor {
+  gap: 6px;
+  justify-content: space-between;
+  max-width: 100%;
+}
+
+/* The value truncates; the caret never does. */
+.picker__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker__caret {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/*
+ * A disabled row states its reason under the label rather than beside it: the
+ * reasons run long, and beside the label they pushed the row's own name out
+ * of the card.
+ */
+.picker__unavailable {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.picker__reason {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: normal;
+}
