@@ -76,7 +76,17 @@
 
 .button:hover:not(:disabled, [aria-disabled='true']) {
   color: var(--ink);
-  background: var(--raised);
+  /*
+   * A tint, not a surface — §20.5. Since §20.1 made the light layers all one
+   * white, a hover that swapped to `--raised` changed nothing there; and a
+   * solid grey would read as two different colours over a card and over the
+   * page. A translucent ink reads as one relationship wherever it lands.
+   */
+  background: var(--tint-hover);
+}
+
+.button:hover:active:not(:disabled, [aria-disabled='true']) {
+  background: var(--tint-active);
 }
 
 .button:active:not(:disabled, [aria-disabled='true']) {
@@ -98,15 +108,26 @@
 
 /* The primary. No border: the fill is the edge. */
 .button--primary {
-  color: var(--on-accent);
-  font-weight: 600;
-  background: var(--accent-fill);
+  /*
+   * §20.2: the primary is the darkest ink in light and the lightest in dark,
+   * not the accent. The accent now carries status only — a dot, a selected
+   * tab, a focus ring — so the thing you press is neutral and the surface has
+   * no loud element left on it.
+   */
+  color: var(--on-primary);
+  font-weight: 500;
+  background: var(--primary-fill);
   border-color: transparent;
 }
 
 .button--primary:hover:not(:disabled) {
-  color: var(--on-accent);
-  filter: brightness(1.06);
+  /*
+   * The primary is a neutral now — §20.2 — so it lightens or darkens toward
+   * its own hover fill rather than brightening an accent. `brightness()` on
+   * near-black does almost nothing, which is how this was found.
+   */
+  color: var(--on-primary);
+  background: var(--primary-fill-hover);
 }
 
 /* Quiet: no border at all. For a third-rank action beside two ranked ones. */
@@ -288,7 +309,7 @@
 .menu__item:hover,
 .menu__item--active {
   color: var(--ink);
-  background: var(--inset);
+  background: var(--tint-hover);
 }
 
 .menu__item[aria-disabled='true'] {
@@ -402,7 +423,7 @@
 }
 
 .row-item:hover {
-  background: var(--raised);
+  background: var(--tint-hover);
 }
 
 /* The selected session is marked on its leading edge and by its background. */
