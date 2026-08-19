@@ -345,3 +345,56 @@ describe('liveness is not history', () => {
     );
   });
 });
+
+describe('a durable event that projects to several frames', () => {
+  it('delivers every one of them, not just the first', async () => {
+    // The defect this exists for: a committed message projects to
+    // TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT and TEXT_MESSAGE_END, and all
+    // three carry the sequence of the event they came from — that sequence is
+    // the cursor a reconnect resumes on. Deduplicated by sequence alone, the
+    // START was delivered and its siblings dropped as duplicates, so every
+    // agent message opened and then received none of its own text: the chat
+    // surface drew an empty turn for an agent that had answered.
+    const fake = new Fake();
+    fake.onOpen = [
+      {
+        type: 'TEXT_MESSAGE_START',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 7,
+        messageId: 'm_7',
+        role: 'assistant',
+      },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 7,
+        messageId: 'm_7',
+        delta: 'hello',
+      },
+      { type: 'TEXT_MESSAGE_END', threadId: 'sesn_1', runId: 'run_1', seq: 7, messageId: 'm_7' },
+    ];
+    const { seen, stop } = connect(fake);
+    await tick();
+    stop();
+
+    expect(seen.map((e) => e.type)).toEqual([
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+    ]);
+  });
+
+  it('still drops a frame the reconnect overlap replays', async () => {
+    // The overlap the dedup exists for stays harmless: the same frame,
+    // arriving twice, is delivered once.
+    const fake = new Fake();
+    fake.onOpen = [text(9, 'x'), text(9, 'x')];
+    const { seen, stop } = connect(fake);
+    await tick();
+    stop();
+
+    expect(seen).toHaveLength(1);
+  });
+});

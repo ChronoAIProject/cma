@@ -477,3 +477,51 @@ async fn a_conversation_session_is_started_with_the_mode_its_owner_chose() {
         "the runtime must be told the intent its owner chose"
     );
 }
+
+#[tokio::test]
+async fn a_turn_that_failed_is_not_recorded_as_one_that_finished() {
+    // The requirement this exists for: whatever goes wrong underneath — the
+    // agent unable to reach its model, a bridge that died, a prompt that was
+    // never answered — has to reach whoever is reading the conversation.
+    // Reported as an ending, all of those looked identical to an agent with
+    // nothing to say, which is the one reading that helps nobody.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::Failed {
+                message: "could not reach the model endpoint".to_string(),
+                capability: None,
+            })
+            .await
+            .expect("the core is listening");
+    }
+
+    let recorded = until_logged(&svc, &alice, &id, |kind| {
+        matches!(
+            kind,
+            EventKind::StatusChanged {
+                stop_reason: Some(StopReason::Error),
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(recorded, "a failed turn is recorded as a failure");
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("the log is readable");
+    let stated = events.iter().rev().find_map(|e| match &e.kind {
+        EventKind::StatusChanged { detail, .. } => detail.clone(),
+        _ => None,
+    });
+    assert_eq!(
+        stated.as_deref(),
+        Some("could not reach the model endpoint"),
+        "the reason travels in the words of whatever knew it"
+    );
+}

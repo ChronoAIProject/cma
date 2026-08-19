@@ -402,11 +402,13 @@ fn a_turn_reports_the_reason_the_kernel_gave() {
     // into a stop reason, which could only ever fail, so every turn was
     // reported as `end_turn`: a refusal, a context limit and a cancellation
     // all looked like an agent that had finished normally.
-    let ended = super::turn_outcome(serde_json::json!({
+    let super::Outcome::Ended(ended) = super::turn_outcome(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 4,
         "result": { "stopReason": "max_tokens" },
-    }));
+    })) else {
+        panic!("a turn the agent finished is an ending, not a failure");
+    };
 
     assert!(
         matches!(ended.stop_reason, crate::TurnStopReason::MaxTokens),
@@ -420,17 +422,32 @@ fn a_refused_prompt_is_not_reported_as_a_finished_turn() {
     // The worst of the flattened cases. Telling an owner their agent answered
     // when the bridge refused outright leaves them reading an empty turn and
     // wondering what they did wrong.
-    let ended = super::turn_outcome(serde_json::json!({
+    //
+    // The agent's own words are carried through, because that message is the
+    // only part a person can act on — it is where "could not reach the model"
+    // and an upstream 401 actually arrive.
+    let super::Outcome::Failed { message, .. } = super::turn_outcome(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 4,
-        "error": { "code": -32000, "message": "no" },
-    }));
+        "error": { "code": -32000, "message": "connection refused talking to chrono-llm" },
+    })) else {
+        panic!("a refusal is a failure, not a finished turn");
+    };
 
-    assert!(
-        matches!(ended.stop_reason, crate::TurnStopReason::Refusal),
-        "got {:?}",
-        ended.stop_reason
-    );
+    assert_eq!(message, "connection refused talking to chrono-llm");
+}
+
+#[test]
+fn a_refusal_naming_a_capability_carries_the_name() {
+    let super::Outcome::Failed { capability, .. } = super::turn_outcome(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "error": { "code": -32021, "message": "no", "data": { "capability": "steer" } },
+    })) else {
+        panic!("a refusal is a failure");
+    };
+
+    assert_eq!(capability.as_deref(), Some("steer"));
 }
 
 #[test]
@@ -438,14 +455,44 @@ fn an_answer_this_build_cannot_read_still_closes_the_turn() {
     // A turn left open sits `running` forever and is indistinguishable from an
     // agent taking its time. Ending it is right even when the reason is not
     // legible; what must not happen is silence.
-    let ended = super::turn_outcome(serde_json::json!({
+    let super::Outcome::Ended(ended) = super::turn_outcome(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 4,
         "result": { "stopReason": "something-added-later" },
-    }));
+    })) else {
+        panic!("a newer protocol naming a new ending must not read as a failure");
+    };
 
     assert!(matches!(ended.stop_reason, crate::TurnStopReason::EndTurn));
 
+    // An answer that is neither a result nor an error is not an ending: the
+    // agent said nothing usable, and reporting that as a finished turn is how
+    // an empty turn came to mean two different things.
     let empty = super::turn_outcome(serde_json::json!({ "jsonrpc": "2.0", "id": 4 }));
-    assert!(matches!(empty.stop_reason, crate::TurnStopReason::EndTurn));
+    assert!(matches!(empty, super::Outcome::Failed { .. }));
+}
+
+#[tokio::test]
+async fn a_pod_whose_agent_never_answers_fails_the_handshake_quickly() {
+    // The thirty-minute bound was sized for a prompt, which no longer travels
+    // this path. Against a pod whose agent never started it held the session
+    // at Attaching for half an hour with nothing said — indistinguishable
+    // from a slow start, and the request that asked for it hung too.
+    assert!(
+        super::CALL_DEADLINE <= std::time::Duration::from_secs(60),
+        "a handshake is a question with a quick answer: {:?}",
+        super::CALL_DEADLINE
+    );
+    // A turn is the opposite and keeps its room, but is still bounded: a
+    // prompt had no deadline at all, so a turn nobody would answer stayed
+    // `running` forever.
+    assert!(
+        super::TURN_DEADLINE >= std::time::Duration::from_secs(600),
+        "a turn takes as long as the model takes: {:?}",
+        super::TURN_DEADLINE
+    );
+    assert!(
+        super::TURN_DEADLINE < std::time::Duration::from_secs(24 * 3600),
+        "but it is still bounded"
+    );
 }
