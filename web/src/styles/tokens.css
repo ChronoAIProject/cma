@@ -16,49 +16,59 @@
 :root {
   /* Surfaces — §2. Warm neutrals: the ramp is tinted toward the accent's hue
      family so a lime key reads as part of the page rather than dropped on it. */
-  --ground: #f6f6f2;
+  --ground: #ffffff;
   --surface: #ffffff;
-  --raised: #f1f2eb;
-  --inset: #f1f2eb;
-  --sunken: #edeee6;
+  --raised: #ffffff;
+  --inset: #f1f3f5;
+  --sunken: #f7f8fa;
 
   /* Text — §2. --ink-3 is the binding constraint: it carries 11–12px metadata,
      which is not large text, so the full 4.5:1 applies. Do not lighten it. */
-  --ink: #141613;
-  --ink-2: #55584f;
-  --ink-3: #64685e;
+  --ink: #0f1115;
+  --ink-2: #61666b;
+  --ink-3: #81858c;
 
   /* Borders — §2 */
-  --rule: #e3e4db;
-  --rule-2: #d8dacf;
-  --rule-3: #c7cabd;
+  --rule: #ebeef2;
+  --rule-2: #e1e5ea;
+  --rule-3: #d6dbe1;
 
   /* One accent. Light and dark share the fill and differ in the ink, because a
      colour bright enough to read on near-black cannot carry text on paper. */
-  --accent: #46620b;
-  --accent-fill: #c6f24e;
-  --accent-wash: rgb(70 98 11 / 0.08);
-  --on-accent: #141613;
+  --accent: #4176e6;
+  --accent-fill: #4176e6;
+  --accent-wash: rgb(65 118 230 / 0.08);
+  --on-accent: #ffffff;
 
   /* Semantic state — §2. Never used decoratively, never colour alone. */
-  --live: #46620b;
-  --wait: #8a5a00;
-  --fail: #a63232;
-  --ended: #64685e;
-  --live-wash: rgb(70 98 11 / 0.08);
-  --wait-wash: rgb(138 90 0 / 0.09);
-  --fail-wash: rgb(166 50 50 / 0.08);
+  --live: #22c55e;
+  --wait: #f59e0b;
+  --fail: #ec1313;
+  --ended: #81858c;
+  --live-wash: rgb(34 197 94 / 0.1);
+  --wait-wash: rgb(245 158 11 / 0.1);
+  --fail-wash: rgb(236 19 19 / 0.08);
 
   /* The scrim behind a plate. Not a new colour: --ink at 40%. */
-  --scrim: rgb(20 22 19 / 0.4);
+  --scrim: rgb(0 0 0 / 0.24);
 
   /*
    * Depth — §3. Two levels and no others: one for a thing resting on the page,
    * one for a thing floating over it. The letterpress contract is retired; an
    * inline box-shadow string in a component is still a bug.
    */
-  --lift-rest: 0 1px 2px rgb(20 22 19 / 0.06);
-  --lift-plate: 0 12px 32px rgb(20 22 19 / 0.12);
+  /*
+   * Depth is expressed by theme, not by one value — §20.1.
+   *
+   * In light, shadow does the separating and `--edge-hairline` is
+   * transparent. In dark it is the other way round: a black shadow is
+   * invisible on a dark ground, so the hairline carries the edge and the
+   * shadow only deepens it. A card declares both and each does its work in
+   * one theme, which is why no component needs a media query of its own.
+   */
+  --lift-rest: 0 1px 2px rgb(15 17 21 / 0.06);
+  --lift-plate: 0 8px 24px rgb(15 17 21 / 0.12);
+  --edge-hairline: transparent;
   --lift-none: none;
   --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
   /* §8's one documented variant, for the terminal prompt row. */
@@ -66,10 +76,18 @@
   /* A focused canvas node, §13: hue change plus a soft halo, never a glow. */
   --focus-node: 0 0 0 3px rgb(198 242 78 / 0.12);
   /* The selected row's leading edge, §12. */
-  --edge-selected: inset 2px 0 0 var(--accent);
+  --edge-selected: #0f1115;
 
   /* Type — §4. Both faces are self-hosted; nothing is fetched from a third party. */
-  --font-ui: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  /*
+   * The system stack — §20.3. No interface webfont: the face a platform
+   * already renders best is the one that costs nothing to load and never
+   * arrives late. The mono face stays downloaded, because code and terminal
+   * output cannot be left to whatever a platform calls monospace.
+   */
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   --text-label: 11px; /* mono, uppercase, tracked */
@@ -118,10 +136,16 @@
   --read-column: 760px;
 
   /* Radius — §3. Five steps: control, row, card, panel, pill. */
-  --radius-sm: 8px;
-  --radius: 10px;
-  --radius-md: 12px;
+  /*
+   * §20.4. A container takes a fixed step; an interactive capsule takes half
+   * its own height, which is what makes a 32px control read as a pill and a
+   * card read as a panel without either being told which it is.
+   */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
   --radius-lg: 14px;
+  --radius-xl: 20px;
   --radius-pill: 999px;
 
   /* Controls — §7 */
@@ -141,6 +165,32 @@
   /* Motion — §8 */
   --motion-press: 140ms;
   --motion-colour: 200ms;
+  /*
+   * The primary is a neutral, not the accent — §20.2. The accent carries
+   * status and nothing else, so the thing you press is the darkest ink the
+   * theme has. It removes the loudest element from the surface and leaves the
+   * emphasis to type and weight.
+   */
+  --primary-fill: #0f1115;
+  --primary-fill-hover: #23262b;
+  --on-primary: #ffffff;
+
+  /*
+   * Interactive states are translucent, never solid — §20.5. A solid hover on
+   * a card and the same hover on the page produced two different colours; an
+   * alpha tint produces one relationship everywhere it is used.
+   */
+  --tint-hover: rgb(15 17 21 / 0.04);
+  --tint-active: rgb(15 17 21 / 0.08);
+  --tint-accent: rgb(65 118 230 / 0.08);
+  --tint-danger: rgb(236 19 19 / 0.08);
+
+  /*
+   * Long-form leading — §20.3. The same sizes as the interface scale, set
+   * looser. A label and a paragraph of one size are different objects, and
+   * treating them alike is what made a long answer hard to read.
+   */
+  --leading-prose: 1.75;
 }
 
 /*
@@ -151,72 +201,90 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --ground: #101210;
-    --surface: #171916;
-    --raised: #1b1e1a;
-    --inset: #22261e;
-    --sunken: #131512;
+    --ground: #0f1115;
+    --surface: #15171b;
+    --raised: #1b1d21;
+    --inset: #232529;
+    --sunken: #121418;
 
-    --ink: #f1f2ee;
-    --ink-2: #a9aea3;
-    --ink-3: #8a9082;
+    --ink: #f9fafb;
+    --ink-2: #adb2b8;
+    --ink-3: #81858c;
 
-    --rule: #23261f;
-    --rule-2: #2a2e26;
-    --rule-3: #3a3f36;
+    --rule: rgb(255 255 255 / 0.08);
+    --rule-2: rgb(255 255 255 / 0.12);
+    --rule-3: rgb(255 255 255 / 0.16);
 
-    --accent: #c6f24e;
-    --accent-fill: #c6f24e;
-    --accent-wash: rgb(198 242 78 / 0.1);
-    --on-accent: #111310;
+    --accent: #679efe;
+    --accent-fill: #679efe;
+    --accent-wash: rgb(103 158 254 / 0.14);
+    --on-accent: #0f1115;
 
-    --live: #c6f24e;
-    --wait: #e9b44c;
-    --fail: #f58585;
-    --ended: #8a9082;
-    --live-wash: rgb(198 242 78 / 0.1);
-    --wait-wash: rgb(233 180 76 / 0.1);
-    --fail-wash: rgb(245 133 133 / 0.07);
+    --live: #22c55e;
+    --wait: #f59e0b;
+    --fail: #f25a5a;
+    --ended: #81858c;
+    --live-wash: rgb(34 197 94 / 0.14);
+    --wait-wash: rgb(245 158 11 / 0.14);
+    --fail-wash: rgb(242 90 90 / 0.14);
 
-    --scrim: rgb(10 10 11 / 0.64);
+    --scrim: rgb(0 0 0 / 0.5);
 
-    --lift-rest: 0 1px 2px rgb(0 0 0 / 0.35);
-    --lift-plate: 0 12px 32px rgb(0 0 0 / 0.5);
+    --lift-rest: 0 1px 2px rgb(0 0 0 / 0.4);
+    --lift-plate: 0 8px 24px rgb(0 0 0 / 0.55);
+    --edge-hairline: rgb(255 255 255 / 0.08);
+    --primary-fill: #f9fafb;
+    --primary-fill-hover: #e4e6e9;
+    --on-primary: #0f1115;
+    --tint-hover: rgb(255 255 255 / 0.06);
+    --tint-active: rgb(255 255 255 / 0.1);
+    --tint-accent: rgb(103 158 254 / 0.14);
+    --tint-danger: rgb(242 90 90 / 0.14);
+    --leading-prose: 1.75;
   }
 }
 
 :root[data-theme='dark'] {
-  --ground: #101210;
-  --surface: #171916;
-  --raised: #1b1e1a;
-  --inset: #22261e;
-  --sunken: #131512;
+  --ground: #0f1115;
+  --surface: #15171b;
+  --raised: #1b1d21;
+  --inset: #232529;
+  --sunken: #121418;
 
-  --ink: #f1f2ee;
-  --ink-2: #a9aea3;
-  --ink-3: #8a9082;
+  --ink: #f9fafb;
+  --ink-2: #adb2b8;
+  --ink-3: #81858c;
 
-  --rule: #23261f;
-  --rule-2: #2a2e26;
-  --rule-3: #3a3f36;
+  --rule: rgb(255 255 255 / 0.08);
+  --rule-2: rgb(255 255 255 / 0.12);
+  --rule-3: rgb(255 255 255 / 0.16);
 
-  --accent: #c6f24e;
-  --accent-fill: #c6f24e;
-  --accent-wash: rgb(198 242 78 / 0.1);
-  --on-accent: #111310;
+  --accent: #679efe;
+  --accent-fill: #679efe;
+  --accent-wash: rgb(103 158 254 / 0.14);
+  --on-accent: #0f1115;
 
-  --live: #c6f24e;
-  --wait: #e9b44c;
-  --fail: #f58585;
-  --ended: #8a9082;
-  --live-wash: rgb(198 242 78 / 0.1);
-  --wait-wash: rgb(233 180 76 / 0.1);
-  --fail-wash: rgb(245 133 133 / 0.07);
+  --live: #22c55e;
+  --wait: #f59e0b;
+  --fail: #f25a5a;
+  --ended: #81858c;
+  --live-wash: rgb(34 197 94 / 0.14);
+  --wait-wash: rgb(245 158 11 / 0.14);
+  --fail-wash: rgb(242 90 90 / 0.14);
 
-  --scrim: rgb(10 10 11 / 0.64);
+  --scrim: rgb(0 0 0 / 0.5);
 
-  --lift-rest: 0 1px 2px rgb(0 0 0 / 0.35);
-  --lift-plate: 0 12px 32px rgb(0 0 0 / 0.5);
+  --lift-rest: 0 1px 2px rgb(0 0 0 / 0.4);
+  --lift-plate: 0 8px 24px rgb(0 0 0 / 0.55);
+  --edge-hairline: rgb(255 255 255 / 0.08);
+  --primary-fill: #f9fafb;
+  --primary-fill-hover: #e4e6e9;
+  --on-primary: #0f1115;
+  --tint-hover: rgb(255 255 255 / 0.06);
+  --tint-active: rgb(255 255 255 / 0.1);
+  --tint-accent: rgb(103 158 254 / 0.14);
+  --tint-danger: rgb(242 90 90 / 0.14);
+  --leading-prose: 1.75;
 }
 
 /*
