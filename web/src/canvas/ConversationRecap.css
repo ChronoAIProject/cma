@@ -1,0 +1,65 @@
+/*
+ * The conversation recap — docs/Web_Style.md §13.
+ *
+ * What a glance wants from a conversation node: the last thing the agent
+ * said, what is running, and the one key that opens the surface which can
+ * hold a reading column. Nothing here clips a control or a placeholder,
+ * because nothing here is a control that needs room to be used in.
+ */
+
+.recap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  min-width: 0;
+  padding: var(--space-3);
+  overflow: hidden;
+}
+
+/* The last agent message, clamped: the node is a glance, not a reader. */
+.recap__said {
+  display: -webkit-box;
+  flex: 1 1 auto;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+
+.recap__empty {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-note);
+}
+
+.recap__running {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recap__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  border-radius: 50%;
+}
+
+.recap__open {
+  flex: none;
+}
