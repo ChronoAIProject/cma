@@ -47,6 +47,15 @@ export const PATHS = {
   /** The settings this session may change, in the kernel's own words. */
   configOptions: '/configOptions',
   /**
+   * Where the agent is waiting for its owner to sign in.
+   *
+   * Only ever written for a session spending its owner's own account with the
+   * model vendor. It carries an address and a short-lived code — never a
+   * credential, which is written by the agent inside its own sandbox and never
+   * reaches this service.
+   */
+  signIn: '/signIn',
+  /**
    * The actions the owner may invoke right now.
    *
    * Liveness rather than history: a stale list replayed from the log would

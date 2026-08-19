@@ -118,6 +118,22 @@ export interface UnknownEntry {
   readonly seq: number;
 }
 
+/**
+ * What the owner has to do somewhere else before the agent can continue.
+ *
+ * Never a credential. The address and the code are worth nothing without the
+ * person's own account, and what the sign-in produces is written by the agent
+ * inside its sandbox.
+ */
+export interface SignIn {
+  /** The page to open, on their own device. */
+  readonly url: string;
+  /** The one-time code to enter there, where the kernel gave one. */
+  readonly code?: string;
+  /** The kernel's own wording, rendered verbatim where it gave any. */
+  readonly message?: string;
+}
+
 /** An approval, and when the run that raised it stopped. */
 export interface PendingApproval extends Interrupt {
   /** RFC 3339, from the frame that carried it. Absent on an older log. */
@@ -146,6 +162,15 @@ export interface Conversation {
    * nothing, and has often spent a great deal.
    */
   readonly usage?: Usage;
+  /**
+   * A sign-in the agent is waiting on — `Web_Style.md` §18.
+   *
+   * Present only on a session spending its owner's own account. It is the one
+   * thing on this plane that has to be completed somewhere else, so it is
+   * durable rather than live: a prompt lost to a reload leaves a session
+   * waiting on a code its owner can no longer read.
+   */
+  readonly signIn?: SignIn;
   /** Why the last run failed, when one did. */
   readonly error?: { readonly message: string; readonly capability?: string };
   /**
