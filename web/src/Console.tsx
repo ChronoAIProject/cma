@@ -360,7 +360,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, []);
 
   /*
-   * §16: between 60rem and 75rem "the rail arrives collapsed to its 48px
+   * §16: between 60rem and 75rem "the rail arrives collapsed to its 56px
    * strip". Arrives, not is locked — crossing the boundary collapses it and
    * the handle still opens it, because somebody working at 70rem who wants
    * their list should not have to widen the window to see it.
@@ -537,11 +537,26 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                  * §16: below 30rem the app bar gives the switch and the
                  * command trigger to the drawer — a view somebody can no
                  * longer reach is worse than one they have to open a drawer
-                 * for. The trigger arrives with the command bar itself; until
-                 * then the drawer carries the switch, and never a dead field
-                 * (§6).
+                 * for. Both are real controls here, never dead fields (§6).
                  */}
-                {compact ? <div className="band console__drawerchrome">{viewSwitch}</div> : null}
+                {compact ? (
+                  <div className="band console__drawerchrome">
+                    {viewSwitch}
+                    <button
+                      type="button"
+                      className="topbar__trigger"
+                      onClick={() => {
+                        setDrawerOpen(false);
+                        setCommandOpen(true);
+                      }}
+                    >
+                      <span className="topbar__triggerlabel">
+                        Find a session, or type a command
+                      </span>
+                      <kbd className="topbar__triggerkey">⌘K</kbd>
+                    </button>
+                  </div>
+                ) : null}
                 <SessionRail
                   sessions={listed}
                   activeId={activeId}
@@ -569,7 +584,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                   /*
                    * Always expanded in the drawer. Collapsing is what a column
                    * does to give the terminal its width back; a drawer has
-                   * already given all of it, so a 48px strip inside one is a
+                   * already given all of it, so a 56px strip inside one is a
                    * drawer holding nothing.
                    */
                   collapsed={false}
