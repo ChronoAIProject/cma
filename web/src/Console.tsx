@@ -424,7 +424,14 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           onSearch={() => {
             setCommandOpen(true);
           }}
-          status={note === undefined ? showing : `${showing} · ${note}`}
+          /*
+           * Only what the list cannot say for itself. An empty list already
+           * reads "No sessions yet."; a status line under it repeating "No
+           * sessions" is the same fact twice, one line apart.
+           */
+          status={
+            listed.length === 0 ? undefined : note === undefined ? showing : `${showing} · ${note}`
+          }
           operationsActive={view === 'operations'}
           onOperations={
             canOperate(user.capabilities)
