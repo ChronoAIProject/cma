@@ -366,3 +366,19 @@ describe('the commands the kernel offers', () => {
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 });
+
+describe('where the keyboard lands', () => {
+  it('rests on the prompt, as §10 has always required', () => {
+    // Honoured only by the landing until now, so opening a session and typing
+    // cost a mouse click every time — on the surface whose whole purpose is
+    // typing into it.
+    renderComposer();
+    expect(screen.getByRole('textbox')).toHaveFocus();
+  });
+
+  it('takes no focus where the session refuses input', () => {
+    // There is no field to focus: a refused composer draws its reason instead.
+    renderComposer({ refusedReason: 'This session is terminated' });
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+});

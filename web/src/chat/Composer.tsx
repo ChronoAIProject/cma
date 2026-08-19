@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import type { ConcurrentInput, SessionCapabilities } from '../agui';
 import type { AvailableCommand } from './conversation';
@@ -113,6 +113,18 @@ export function Composer({
     field.style.height = 'auto';
     field.style.height = `${String(field.scrollHeight)}px`;
   }, [text]);
+
+  /*
+   * Focus rests on the prompt — §10, which has said so all along and was
+   * honoured only by the landing. Opening a session and typing cost a mouse
+   * click every time, on the surface whose entire purpose is typing.
+   *
+   * Once, on mount. A session that refuses input renders no field at all, so
+   * there is nothing to focus and nothing to do.
+   */
+  useEffect(() => {
+    fieldRef.current?.focus();
+  }, []);
 
   const policy = capabilities.concurrentInput;
 
