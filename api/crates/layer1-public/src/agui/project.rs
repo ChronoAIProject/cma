@@ -293,6 +293,34 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             )],
             ending: None,
         },
+        // A permission-mode change is a safety matter and is surfaced as state,
+        // not as prose: the surface draws the new mode as a fact about the
+        // session rather than as something the agent said.
+        EventKind::ModeChanged { mode } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "replace", "path": "/mode", "value": mode },
+                ]}),
+            )],
+            ending: None,
+        },
+        // The agent's plan, as a state patch rather than an invented event.
+        // A revision replaces the whole plan, which is what a `replace` on the
+        // list path says to a client.
+        EventKind::PlanSet { entries } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "replace", "path": "/plan", "value": entries
+                        .iter()
+                        .map(|step| serde_json::json!({ "title": step.title, "status": step.status }))
+                        .collect::<Vec<_>>()
+                    },
+                ]}),
+            )],
+            ending: None,
+        },
         // The run ends to ask. Not a mid-stream prompt: a client that closed
         // the tab finds this still pending and answerable, which only works
         // because the asking is durable rather than held on a connection.

@@ -233,6 +233,26 @@ pub enum EventKind {
         /// How much of the model's context the conversation currently fills.
         context_used: u64,
     },
+    /// The session's permission mode changed under its owner.
+    ///
+    /// Durable rather than only shown live, because a mode is how much the
+    /// agent may do unattended, and a session whose mode changed is acting
+    /// under a different amount of trust — the record must say so. The name is
+    /// the kernel's own and is carried opaquely, exactly like a tool's kind.
+    ModeChanged {
+        /// The new mode, in the kernel's own word.
+        mode: String,
+    },
+    /// The agent set a plan for the work it is doing.
+    ///
+    /// A revision replaces the previous one whole — the agent sends the
+    /// complete list each time — so a client draws the latest rather than
+    /// accumulating. Per-revision volume, not per token, which is why it is
+    /// durable where a message delta is not.
+    PlanSet {
+        /// The steps, in order, each in the kernel's own words.
+        entries: Vec<PlanStep>,
+    },
     /// Part of the conversation was lost rather than recorded.
     ///
     /// Written where the loss happened, in the same spirit as a rotation's
@@ -299,6 +319,18 @@ pub struct ToolBody {
     pub truncated: bool,
 }
 
+/// One step of an agent's plan, in the kernel's own words.
+///
+/// Nothing is mapped onto a vocabulary this service invented: the kernel names
+/// the step and its state, and a client renders both verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    /// What the step is, as the agent described it.
+    pub title: String,
+    /// Where it has got to, in the kernel's own word.
+    pub status: String,
+}
+
 /// Every discriminator this build owns, exactly as serde spells it.
 ///
 /// Must name every variant of [`EventKind`]. A variant missing from here would
@@ -316,6 +348,8 @@ const KNOWN_TAGS: &[&str] = &[
     "tool_call_started",
     "tool_call_updated",
     "usage_reported",
+    "mode_changed",
+    "plan_set",
     "conversation_gap",
     "terminal_attached",
     "terminal_detached",
@@ -447,6 +481,15 @@ mod tests {
                 output_tokens: 56,
                 context_used: 1290,
             },
+            EventKind::ModeChanged {
+                mode: "autonomous".into(),
+            },
+            EventKind::PlanSet {
+                entries: vec![PlanStep {
+                    title: "read the file".into(),
+                    status: "pending".into(),
+                }],
+            },
             EventKind::ConversationGap { frames: 7 },
             EventKind::TerminalAttached,
             EventKind::TerminalDetached,
@@ -485,6 +528,8 @@ mod tests {
                 | EventKind::ToolCallStarted { .. }
                 | EventKind::ToolCallUpdated { .. }
                 | EventKind::UsageReported { .. }
+                | EventKind::ModeChanged { .. }
+                | EventKind::PlanSet { .. }
                 | EventKind::ConversationGap { .. }
                 | EventKind::TerminalAttached
                 | EventKind::TerminalDetached
