@@ -221,3 +221,46 @@ describe('a refused turn keeps what was written', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 });
+
+describe('the field grows with what is written in it', () => {
+  /*
+   * §18.4: "The field grows to six lines and then scrolls inside itself." It
+   * was `rows={1}` with no growth, so a multi-paragraph prompt scrolled inside
+   * a two-line porthole — somebody writing the careful instruction a long run
+   * turns on could see two lines of it.
+   *
+   * jsdom lays nothing out, so `scrollHeight` is stubbed: what is under test
+   * is that the field is measured and its height set from the measurement,
+   * which is the part that was missing.
+   */
+  function measured(field: HTMLTextAreaElement, height: number): void {
+    Object.defineProperty(field, 'scrollHeight', { configurable: true, get: () => height });
+  }
+
+  it('sets its height from what it measures', async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+    measured(field, 140);
+
+    await user.type(field, 'a line');
+
+    expect(field.style.height).toBe('140px');
+  });
+
+  it('shrinks again when the draft is cut down', async () => {
+    // Reset to `auto` before measuring, or `scrollHeight` of an already-tall
+    // box never reports anything smaller and the field only ever grows.
+    const user = userEvent.setup();
+    renderComposer();
+    const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+    measured(field, 200);
+    await user.type(field, 'lots');
+    expect(field.style.height).toBe('200px');
+
+    measured(field, 64);
+    await user.clear(field);
+    expect(field.style.height).toBe('64px');
+  });
+});
