@@ -20,6 +20,18 @@
 }
 
 /* The eyebrow: approval · the kernel's own reason, on the accent wash. */
+/*
+ * The time the question was asked, beside the reason — §18.3.
+ *
+ * A step quieter than the reason it follows: the reason is what is being
+ * decided and the time is context for it. Tabular figures so a column of
+ * approvals does not shuffle horizontally as the minutes change.
+ */
+.approval__asked {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
 .approval__eyebrow {
   align-self: flex-start;
   margin: 0;
