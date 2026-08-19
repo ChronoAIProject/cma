@@ -462,3 +462,105 @@
   background: var(--inset);
   border-radius: var(--radius-sm);
 }
+
+/*
+ * §18.12 — what an agent wrote, beyond code and lists.
+ *
+ * Nothing here takes colour. §18.1 forbids it on agent content without
+ * exception, and a link is where that exception arrives by habit: underline
+ * and cursor are what distinguish it, and they are enough.
+ */
+.agent__link {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agent__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.agent__link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * A quotation the agent set apart — §18.12.
+ *
+ * The rule carries it and nothing else does. An earlier draft dimmed it to
+ * `--ink-2`, which §18.1 forbids without exception and which the no-colour
+ * test caught: quoting is the agent's own emphasis, and drawing it fainter
+ * than the words around it is this surface deciding the quote matters less
+ * than the agent did.
+ */
+.agent__quote {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--rule);
+}
+
+/*
+ * Nesting kept, drawn as indent — §18.12. A plan with sub-steps flattened to
+ * one level is a different plan.
+ */
+.agent__list li[data-depth='1'] {
+  margin-left: var(--space-4);
+}
+
+.agent__list li[data-depth='2'] {
+  margin-left: calc(var(--space-4) * 2);
+}
+
+.agent__list li[data-depth='3'] {
+  margin-left: calc(var(--space-4) * 3);
+}
+
+.agent__list li[data-depth='4'],
+.agent__list li[data-depth='5'] {
+  margin-left: calc(var(--space-4) * 4);
+}
+
+/*
+ * A table scrolls inside its own frame rather than widening the reading
+ * column — the rule a code block follows, for the same reason: content length
+ * is not allowed to decide the width of the surface it sits in.
+ */
+.agent__tablewrap {
+  overflow-x: auto;
+  margin: var(--space-2) 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+
+.agent__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-note);
+}
+
+.agent__table th,
+.agent__table td {
+  padding: var(--space-1) var(--space-3);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* One boundary, one hairline — §5. Rows are separated, never striped. */
+.agent__table tr + tr td,
+.agent__table thead tr th {
+  border-top: 1px solid var(--rule);
+}
+
+.agent__table th {
+  font-weight: 500;
+}
+
+/*
+ * A soft line break is a line break — §18.12. An agent that wrote its steps on
+ * separate lines meant them on separate lines, and collapsing them into a
+ * paragraph rewrites the shape of the answer.
+ */
+.agent__paragraph {
+  white-space: pre-wrap;
+}
