@@ -1,45 +1,37 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import type { Session } from './types';
 import { stateDotFor, toneFor } from './types';
 import { StateDot } from '../ui/StateDot';
+import { Menu, type MenuEntry } from '../ui/Menu';
+import { IconEllipsisOutline16 } from '../ui/icons';
+import type { Arrangement } from './arrangement';
 import type { Stage } from './progress';
 import { lastActivity } from './lastActivity';
 import { fullTimestamp, sortSessions, tabLabel, type SortOrder } from './sessionTime';
 import './SessionRail.css';
 
 /**
- * The sessions someone has, down the left.
+ * The sessions someone has — `docs/Web_Style.md` §10.
  *
  * Vertical rather than a horizontal strip because sessions accumulate: a row
- * of tabs runs out of width after a handful and starts truncating the labels,
+ * of tabs runs out of width after a handful and starts truncating labels,
  * while a column scrolls without any of them becoming unreadable.
  *
  * Labelled by creation time, which is what actually distinguishes one session
- * from another — an identifier distinguishes them too, but not in a way anyone
- * can hold in their head.
+ * from another — an identifier does too, but not in a way anyone can hold in
+ * their head.
  *
- * Two bands at its head, per docs/Web_Style.md §5. The first is the head band
- * every column shares, so its rule lands on the session header's. The rail
- * needs more chrome than fits there, and a column that needs more chrome adds
- * a band beneath the first rather than growing its header — the rail's second
- * band being the one documented exception to the row shape, since it stacks
- * the new-session key over the filters.
+ * **One control in its header, not four.** Filtering, ordering and arranging
+ * were three separate affordances across two bands; they are three answers to
+ * "what am I looking at", and they belong on one card. What that buys is the
+ * header dropping to a single 36px row, which is the height the list gets.
  *
- * Collapsed it is a handle, never nothing (§7): a 48px strip that keeps both
- * bands, so the way back is exactly where the panel was and the page's rules
- * still line up. The strip carries the summary the list would have given —
- * the status dots in state order, and a count — because collapsing gives up
- * detail, not awareness.
+ * Collapsed, this renders nothing at all. The sidebar around it becomes a
+ * rail of icons, and a summary drawn here as well would be a second, quieter
+ * answer to a question the rail already answers.
  */
 
-/** Which dots the collapsed strip shows, and in which order. */
-const TONE_ORDER = ['live', 'wait', 'fail', 'ended'] as const;
-
-/**
- * The filter pills — §12: `All 5`, `Live 2`, `Stopped 3`. Live is the live
- * tone; stopped is everything else still listed. Rail-local state, because a
- * filter is about this look at the list, not a setting to carry across tabs.
- */
+/** What the list is narrowed to. Local: a filter is about this look at it. */
 type RailFilter = 'all' | 'live' | 'stopped';
 
 function isLive(session: Session): boolean {
@@ -53,16 +45,19 @@ interface SessionRailProps {
   readonly onSelect: (id: string) => void;
   readonly onReorder: (order: SortOrder) => void;
   /**
-   * How the list is arranged, drawn in the rail's own head band.
+   * How the list is arranged.
    *
    * §1: the control for an arrangement lives with the list it rearranges. It
-   * used to sit in the app bar, which made the bar differ between a page that
-   * has a list and one that does not — and §6 requires one bar that never
-   * changes shape as somebody switches view.
+   * does not stop at the browser — a terminal declares its own measurements
+   * to the runtime drawing into it, so putting every attached session in a
+   * node asks each agent to redraw at that width, and output already wrapped
+   * narrow stays wrapped.
    */
-  readonly arrangement?: ReactNode;
-  readonly collapsed: boolean;
-  readonly onToggleCollapsed: () => void;
+  readonly arrangement: Arrangement;
+  readonly onArrange: (arrangement: Arrangement) => void;
+  /** Per-row actions, drawn on the row the pointer is over. */
+  readonly actionsFor?: (session: Session) => readonly MenuEntry[];
+  readonly onAction?: (session: Session, id: string) => void;
   /** The step each starting session has reached, for its activity line. */
   readonly stages?: Readonly<Record<string, Stage>>;
   /** The session parked on an answerable approval, when one is — §18.3. */
@@ -76,12 +71,16 @@ export function SessionRail({
   onSelect,
   onReorder,
   arrangement,
-  collapsed,
-  onToggleCollapsed,
+  onArrange,
+  actionsFor,
+  onAction,
   stages = {},
   waitingId = null,
 }: SessionRailProps) {
   const [filter, setFilter] = useState<RailFilter>('all');
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [actionsFor_, setActionsFor] = useState<string | null>(null);
+
   const filtered =
     filter === 'all' ? sessions : sessions.filter((s) => (filter === 'live') === isLive(s));
   const ordered = sortSessions(filtered, order);
@@ -90,146 +89,77 @@ export function SessionRail({
     live: sessions.filter(isLive).length,
     stopped: sessions.filter((s) => !isLive(s)).length,
   };
-  const handleRef = useRef<HTMLButtonElement>(null);
-  // Focus moves to the handle when the panel collapses or opens, because §7
-  // says so and because the alternative is stranding somebody on a control
-  // that has just left the layout.
-  const firstRender = useRef(true);
 
-  useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
+  const options: MenuEntry[] = [
+    { type: 'label', id: 'show', text: 'Show' },
+    { id: 'all', label: `All ${String(counts.all)}` },
+    { id: 'live', label: `Live ${String(counts.live)}` },
+    { id: 'stopped', label: `Stopped ${String(counts.stopped)}` },
+    { type: 'separator', id: 'sep-order' },
+    { type: 'label', id: 'order', text: 'Order' },
+    { id: 'newest', label: 'Newest first' },
+    { id: 'oldest', label: 'Oldest first' },
+    { type: 'separator', id: 'sep-arrange' },
+    { type: 'label', id: 'arrange', text: 'Arrange' },
+    { id: 'list', label: 'List' },
+    { id: 'canvas', label: 'Canvas' },
+  ];
+
+  const chooseOption = (id: string) => {
+    setOptionsOpen(false);
+    if (id === 'all' || id === 'live' || id === 'stopped') {
+      setFilter(id);
       return;
     }
-    handleRef.current?.focus();
-  }, [collapsed]);
-
-  // ⌃← collapses a column and ⌃→ opens it (§7). Bound on the document rather
-  // than on the rail: the shortcut has to work while the caret is anywhere on
-  // the page, which is the whole reason for having one.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.ctrlKey || event.metaKey || event.altKey) {
-        return;
-      }
-      const wants = event.key === 'ArrowLeft' ? true : event.key === 'ArrowRight' ? false : null;
-      if (wants === null || wants === collapsed) {
-        return;
-      }
-      event.preventDefault();
-      onToggleCollapsed();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [collapsed, onToggleCollapsed]);
-
-  const handle = (
-    <button
-      ref={handleRef}
-      type="button"
-      className="collapse-handle rail__handle"
-      aria-expanded={!collapsed}
-      aria-label={collapsed ? 'Show the session list' : 'Hide the session list'}
-      onClick={onToggleCollapsed}
-    >
-      {/*
-       * The glyph points where the panel will go and reverses when collapsed,
-       * so the control describes its outcome rather than its state (§7).
-       */}
-      <span aria-hidden="true">{collapsed ? '›' : '‹'}</span>
-    </button>
-  );
-
-  if (collapsed) {
-    const counted = TONE_ORDER.map((tone) => ({
-      tone,
-      count: sessions.filter((session) => toneFor(session.lifecycle) === tone).length,
-    })).filter((entry) => entry.count > 0);
-
-    return (
-      <div className="rail rail--collapsed">
-        <div className="band band--head rail__head">{handle}</div>
-        <div className="band rail__chrome rail__chrome--collapsed">
-          <span className="band__value">{sessions.length}</span>
-        </div>
-        <ul className="rail__summary" aria-label={`${String(sessions.length)} sessions`}>
-          {counted.map(({ tone, count }) => (
-            <li className="rail__summaryitem" key={tone}>
-              {stateDotFor(tone) === undefined ? null : (
-                <StateDot state={stateDotFor(tone)!} placement="rail__dot" />
-              )}
-              {/*
-               * The number is drawn and the tone repeated in words, because a
-               * summary carried by colour alone is not a summary (§10).
-               */}
-              <span className="rail__summarycount">{count}</span>
-              <span className="sr-only">{tone}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
+    if (id === 'newest' || id === 'oldest') {
+      onReorder(id);
+      return;
+    }
+    if (id === 'list' || id === 'canvas') {
+      onArrange(id);
+    }
+  };
 
   return (
     <div className="rail">
-      <div className="band band--head rail__head">
-        <span className="band__label">Sessions</span>
-        <span className="band__value">{sessions.length}</span>
-        <span className="band__spacer" />
-        {arrangement}
-        {handle}
-      </div>
-
-      {/*
-       * The second band, stacked. §5 names this as the one documented
-       * exception to the row shape: it sits below the head band, so the head
-       * rule still runs straight across every column.
-       */}
-      <div className="band rail__chrome">
-        {/*
-          No new-session key here. The sidebar this list sits in carries one,
-          and two controls for one act is how somebody learns to distrust
-          which of them they pressed.
-        */}
-        <div className="rail__filters">
-          {(['all', 'live', 'stopped'] as const).map((option) => (
+      <div className="rail__header">
+        <span className="rail__label">Sessions</span>
+        <Menu
+          open={optionsOpen}
+          label="View options"
+          align="end"
+          selectedIds={[filter, order, arrangement]}
+          items={options}
+          onSelect={chooseOption}
+          onClose={() => {
+            setOptionsOpen(false);
+          }}
+          anchor={
             <button
-              key={option}
               type="button"
-              className={`tag rail__filter${filter === option ? ' tag--on' : ''}`}
-              aria-pressed={filter === option}
+              className="rail__options"
+              aria-haspopup="menu"
+              aria-expanded={optionsOpen}
+              aria-label="View options"
               onClick={() => {
-                setFilter(option);
+                setOptionsOpen((was) => !was);
               }}
             >
-              {option === 'all' ? 'All' : option === 'live' ? 'Live' : 'Stopped'} {counts[option]}
+              <IconEllipsisOutline16 />
             </button>
-          ))}
-          <span className="band__spacer" />
-          <button
-            type="button"
-            className="button button--ghost button--sm"
-            onClick={() => {
-              onReorder(order === 'newest' ? 'oldest' : 'newest');
-            }}
-            // The control says which way the list is ordered, not which way
-            // pressing it would order the list — the second reads as a
-            // description of the current state and is routinely misread.
-            aria-label={`Sorted ${order} first. Change order.`}
-          >
-            {order === 'newest' ? 'Newest' : 'Oldest'}
-          </button>
-        </div>
+          }
+        />
       </div>
 
       <ul className="rail__list" role="tablist" aria-label="Sessions" aria-orientation="vertical">
         {ordered.map((session) => {
           const active = session.id === activeId;
+          const dot = stateDotFor(toneFor(session.lifecycle));
+          const activity = lastActivity(session, stages[session.id], session.id === waitingId);
+          const actions = actionsFor?.(session) ?? [];
+
           return (
-            <li key={session.id}>
+            <li className="rail__row" key={session.id}>
               <button
                 type="button"
                 role="tab"
@@ -240,42 +170,62 @@ export function SessionRail({
                   onSelect(session.id);
                 }}
               >
-                {stateDotFor(toneFor(session.lifecycle)) === undefined ? null : (
-                  <StateDot
-                    state={stateDotFor(toneFor(session.lifecycle))!}
-                    placement="row-item__dot"
-                  />
-                )}
-                <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
-                <span className="row-item__meta">{session.kernel}</span>
                 {/*
-                 * What makes a list of times into a list of work (§12). It
-                 * never wraps: a row that grows with its longest sentence
-                 * makes the list a different height every time it reloads.
-                 */}
-                <span className="row-item__activity">
-                  {lastActivity(session, stages[session.id], session.id === waitingId)}
+                  The slot is held whether or not there is a dot in it, so an
+                  ended session's title starts where every other one does.
+                */}
+                <span className="row-item__dot">
+                  {dot === undefined ? null : <StateDot state={dot} />}
                 </span>
+                <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
+                {/*
+                 * What makes a list of times into a list of work. It never
+                 * wraps: a row that grows with its longest sentence makes the
+                 * list a different height every time it reloads.
+                 */}
+                <span className="row-item__activity">{activity}</span>
               </button>
+
+              {actions.length === 0 ? null : (
+                <Menu
+                  open={actionsFor_ === session.id}
+                  label={`Actions for ${tabLabel(session.createdAt)}`}
+                  align="end"
+                  portal
+                  items={actions}
+                  onSelect={(id) => {
+                    setActionsFor(null);
+                    onAction?.(session, id);
+                  }}
+                  onClose={() => {
+                    setActionsFor(null);
+                  }}
+                  anchor={
+                    <button
+                      type="button"
+                      className="row-item__more"
+                      aria-haspopup="menu"
+                      aria-expanded={actionsFor_ === session.id}
+                      aria-label={`Actions for the session started ${tabLabel(session.createdAt)}`}
+                      onClick={() => {
+                        setActionsFor((open) => (open === session.id ? null : session.id));
+                      }}
+                    >
+                      <IconEllipsisOutline16 />
+                    </button>
+                  }
+                />
+              )}
             </li>
           );
         })}
       </ul>
 
-      {/*
-       * No footer here. §6 gives the page one 40px band and says the columns
-       * share it, so the rail ends at that band's rule rather than drawing a
-       * second one a few pixels above it.
-       *
-       * The zone is not restated either: §12 puts it in the status band, which
-       * is on every page, so a rail that also carried it would be the second
-       * place a reader had to reconcile.
-       */}
       {sessions.length === 0 ? (
         <p className="rail__empty">No sessions yet.</p>
       ) : ordered.length === 0 ? (
-        // §14's rule, held here too: an empty list says what would have been
-        // there. The filter narrowed to nothing; the sessions still exist.
+        // An empty list says what would have been there: the filter narrowed
+        // to nothing, and the sessions still exist.
         <p className="rail__empty">Nothing matches this filter.</p>
       ) : null}
     </div>

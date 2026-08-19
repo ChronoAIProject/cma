@@ -38,7 +38,6 @@
   .button,
   .pill,
   .row-item,
-  .select,
   .input {
     transition:
       background var(--motion-colour) ease,
@@ -84,73 +83,6 @@
 .field__error {
   color: var(--fail);
   font-size: var(--text-note);
-}
-
-/* ── Rows, §12 and §14 ────────────────────────────────────────────────────
- *
- * A selectable row (the rail) and a record row (operations) are different
- * things: one is a target, the other is read. Both are rows, neither is a table.
- */
-
-.row-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 2px var(--space-3);
-  width: 100%;
-  padding: var(--space-3);
-  font-family: var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-md);
-}
-
-.row-item:hover {
-  background: var(--tint-hover);
-}
-
-/* The selected session is marked on its leading edge and by its background. */
-.row-item[aria-selected='true'] {
-  background: var(--raised);
-  box-shadow: var(--edge-selected), var(--lift-rest);
-}
-
-.row-item:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.row-item__dot {
-  grid-row: 1 / span 2;
-  align-self: start;
-  margin-top: 5px;
-}
-
-.row-item__subject {
-  color: var(--ink);
-  font-size: var(--text-ui);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.row-item__meta {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-}
-
-/*
- * What the session last did — §12. It never wraps: a row that grows with its
- * longest sentence makes the list a different height every time it reloads.
- */
-.row-item__activity {
-  grid-column: 2 / span 2;
-  overflow: hidden;
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .record {
