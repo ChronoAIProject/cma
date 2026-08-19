@@ -93,14 +93,28 @@ impl InterfaceProfile for RestInterface {
 /// Unknown fields are refused rather than ignored. A caller who sends
 /// `{"kernel": "claude_code"}` — which `GET /api/v1/kernels` gives them every
 /// reason to try — was getting a session on a different runtime and a 201
-/// saying it had worked. Which runtime a session runs is decided by the
-/// environment profile it names, and a request that tries to decide it any
-/// other way has to be told so, at creation, by name. §9: a session refused by
-/// name is one somebody can plan around; one accepted and silently altered is
-/// not.
+/// saying it had worked. §9: a session refused by name is one somebody can
+/// plan around; one accepted and silently altered is not.
+///
+/// The refusal is blanket rather than aimed at `kernel`, because the same
+/// silence swallowed `environmentProfile` — the camelCase spelling this
+/// project's own SDK and its AG-UI interface both use — and started a session
+/// on the deployment's default profile instead of the named one.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
+    /// Declared only so it can be refused in words a caller can act on.
+    ///
+    /// Left to `deny_unknown_fields`, this gets serde's generic sentence: it
+    /// names the field and lists the ones that were expected, which answers
+    /// "what is wrong" and not "then how do I get `claude_code`?". That second
+    /// question is the only reason anybody sent it, and §3's bar is a refusal
+    /// "in words a caller can act on".
+    ///
+    /// Every other unknown field keeps serde's message, which is right for
+    /// them: a typo has no remedy worth spelling out.
+    #[serde(default)]
+    pub kernel: Option<String>,
     /// Initial terminal width.
     #[serde(default)]
     pub cols: Option<u16>,
@@ -426,33 +440,51 @@ impl IntoResponse for RequestFailure {
 /// A request body this interface could not read, rendered like every other
 /// refusal.
 ///
-/// Axum answers a bad body with its own plain text, which is the only place in
-/// this API that does not speak problem documents. Wrapping it keeps the shape
-/// and — the part worth the code — keeps axum's own status, which carries real
-/// information: a syntax error is 400, a wrong `Content-Type` is 415, and a
-/// body that parsed but could not be honoured is 422. Collapsing all three into
-/// one status would send somebody whose header is wrong to go and stare at
-/// their JSON.
+/// Axum answers a bad body with its own plain text. Wrapping it keeps this
+/// API's shape and — the part worth the code — keeps axum's own status, which
+/// carries real information: a syntax error is 400, a wrong `Content-Type` is
+/// 415, and a body that parsed but could not be honoured is 422. Collapsing all
+/// three into one status would send somebody whose header is wrong to go and
+/// stare at their JSON.
+///
+/// Applied to session creation only, so far. The other routes still answer a
+/// bad body in axum's words, and saying so is cheaper than implying an
+/// evenness this does not yet have.
+///
+/// One caveat travels with `body_text()`: `CoreError::InvalidRequest` promises
+/// to name what is wrong without quoting a value, and this is a foreign string
+/// that cannot promise the same. Serde's unknown-field branch carries the key
+/// alone, but its `invalid type` branch echoes what was sent. No field on this
+/// body is a credential, so there is nothing to leak today — but a field that
+/// could carry one must not be added without revisiting this.
 pub struct BodyProblem(pub(crate) axum::extract::rejection::JsonRejection);
 
 impl IntoResponse for BodyProblem {
     fn into_response(self) -> Response {
         use axum::extract::rejection::JsonRejection;
         let status = self.0.status();
-        let slug = match &self.0 {
-            JsonRejection::JsonDataError(_) => "invalid-request",
-            JsonRejection::JsonSyntaxError(_) => "malformed-json",
-            JsonRejection::MissingJsonContentType(_) => "unsupported-media-type",
+        // Slug and code together, so the two cannot drift. `Problem` reads its
+        // code from `CoreError::code()`; deriving one from the other by string
+        // substitution would be a second source of truth that happens to agree.
+        let (slug, code) = match &self.0 {
+            // Deliberately the same pair the core uses for a request it
+            // understood and would not act on. To a caller this is that: the
+            // body was read and could not be honoured.
+            JsonRejection::JsonDataError(_) => ("invalid-request", "invalid_request"),
+            JsonRejection::JsonSyntaxError(_) => ("malformed-json", "malformed_json"),
+            JsonRejection::MissingJsonContentType(_) => {
+                ("unsupported-media-type", "unsupported_media_type")
+            }
             // Axum's rejection is non-exhaustive, so anything added later
             // reads as a body we could not take rather than as a panic.
-            _ => "unreadable-request-body",
+            _ => ("unreadable-request-body", "unreadable_request_body"),
         };
         // Axum's own sentence. For the unknown-field case it carries serde's
         // message, which names the field and lists what was expected — more
         // than this could say by hand, and it stays correct when a field is
         // added.
         let detail = self.0.body_text();
-        let body = problem_document(status, slug, &detail, &slug.replace('-', "_"));
+        let body = problem_document(status, slug, &detail, code);
         (status, Json(body)).into_response()
     }
 }
@@ -597,6 +629,21 @@ async fn create(
     body: Result<Json<CreateSessionRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<SessionView>), RequestFailure> {
     let Json(body) = body.map_err(BodyProblem)?;
+    if let Some(named) = body.kernel.as_deref() {
+        // Refused rather than honoured. Which runtime a session runs on is a
+        // property of the session, and §3 forbids an interface deciding one —
+        // a request that could name a kernel would resolve differently
+        // depending on which deployment received it.
+        tracing::debug!(kernel = %named, "a create request named a kernel");
+        return Err(CoreError::InvalidRequest(
+            "this interface accepts no 'kernel' field: which runtime a session runs on is \
+             decided by the environment profile it names. Choose or create one whose \
+             agent.kernel is the runtime you want (GET or POST /api/v1/environment-profiles) \
+             and send its id as 'environment_profile'"
+                .to_string(),
+        )
+        .into());
+    }
     let geometry = match (body.cols, body.rows) {
         (Some(c), Some(r)) => Some(TerminalGeometry::new(c, r).map_err(CoreError::from)?),
         _ => None,
