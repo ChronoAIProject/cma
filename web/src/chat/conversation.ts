@@ -25,6 +25,11 @@ export interface MessageEntry {
   /** False while the turn is still in flight. Carries the caret; nothing else. */
   readonly committed: boolean;
   readonly seq: number;
+  /**
+   * When the message entered the durable log, RFC 3339. Absent for an event a
+   * control plane predating timestamps wrote; §18.1 renders no time then.
+   */
+  readonly at?: string;
 }
 
 export interface ToolCallEntry {
@@ -37,6 +42,10 @@ export interface ToolCallEntry {
   readonly status?: string;
   readonly output?: string;
   readonly seq: number;
+  /** When the call started, RFC 3339. */
+  readonly startedAt?: string;
+  /** When the call finished, RFC 3339. Absent while running. */
+  readonly finishedAt?: string;
 }
 
 /**
@@ -244,6 +253,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
           text: '',
           committed: false,
           seq: event.seq,
+          at: event.timestamp,
         },
       );
 
@@ -270,6 +280,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
         text: (existing?.text ?? '') + event.delta,
         committed: existing?.committed ?? false,
         seq: existing?.seq ?? event.seq,
+        at: existing?.at ?? event.timestamp,
       });
     }
 
@@ -289,6 +300,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
         toolKind: event.toolKind,
         target: event.target,
         seq: event.seq,
+        startedAt: event.timestamp,
       });
 
     case 'TOOL_CALL_END':
@@ -296,7 +308,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
         ...state,
         entries: state.entries.map((entry) =>
           entry.kind === 'tool' && entry.id === event.toolCallId
-            ? { ...entry, status: event.status, output: event.output }
+            ? { ...entry, status: event.status, output: event.output, finishedAt: event.timestamp }
             : entry,
         ),
       };
