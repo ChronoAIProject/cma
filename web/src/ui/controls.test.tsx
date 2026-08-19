@@ -4,7 +4,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './Button';
-import { Select } from './Select';
+import { Picker } from './Picker';
 
 /**
  * Controls — docs/Web_Style.md §7.
@@ -94,84 +94,96 @@ describe('the button', () => {
   });
 });
 
-describe('the dropdown', () => {
+describe('the value picker', () => {
   const OPTIONS = [
     { value: 'a', label: 'Codex' },
     { value: 'b', label: 'Claude Code' },
     { value: 'c', label: 'DeepSeek Harness', unavailable: 'no terminal plane' },
   ] as const;
 
-  function renderSelect(onChange = vi.fn()) {
-    render(<Select label="Agent" value="a" options={OPTIONS} onChange={onChange} />);
+  function renderPicker(onChange = vi.fn()) {
+    render(<Picker label="Agent" value="a" options={OPTIONS} onChange={onChange} />);
     return onChange;
   }
 
-  it('does not run anything when it opens', async () => {
-    // §7: choosing a value is a select and choosing an action is a menu. They
-    // look alike and behave differently.
+  it('does not choose anything when it opens', async () => {
+    // §7: choosing a value and choosing an action look alike and behave
+    // differently. Opening one is not picking the row under the pointer.
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    await user.click(screen.getByRole('combobox', { name: 'Agent' }));
-    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    const onChange = renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
+    expect(screen.getByRole('menu', { name: 'Agent' })).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
   });
 
   it('is operable from the keyboard alone', async () => {
     // §10: every view is fully keyboard operable. A native <select> gave this
-    // away for free and the pattern §7 asks for cannot, so it is implemented.
+    // away for free and this pattern cannot, so it is implemented — and the
+    // menu it replaced had no keyboard route at all.
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    const trigger = screen.getByRole('combobox', { name: 'Agent' });
-    trigger.focus();
+    const onChange = renderPicker();
 
-    await user.keyboard('{ArrowDown}');
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
+    // Focus lands on the selected row, so arrows move from where you are.
+    expect(screen.getByRole('menuitemradio', { name: 'Codex' })).toHaveFocus();
+
     await user.keyboard('{ArrowDown}{Enter}');
-
     expect(onChange).toHaveBeenCalledWith('b');
+  });
+
+  it('wraps rather than stopping at the ends', async () => {
+    // A list that stops dead at the last row makes the first one four presses
+    // away in a menu of five.
+    const user = userEvent.setup();
+    renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
+
+    await user.keyboard('{ArrowUp}');
+    expect(screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ })).toHaveFocus();
   });
 
   it('closes on Escape without choosing', async () => {
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    const trigger = screen.getByRole('combobox', { name: 'Agent' });
-    trigger.focus();
+    const onChange = renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
 
-    await user.keyboard('{ArrowDown}{Escape}');
+    await user.keyboard('{Escape}');
 
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu')).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('disables an unavailable option rather than removing it, and steps past it', async () => {
+  it('disables an unavailable option rather than removing it, and says why', async () => {
+    // §7: removing it answers "why is it not there" with nothing, and a person
+    // who came looking for it concludes the product cannot do it.
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    const trigger = screen.getByRole('combobox', { name: 'Agent' });
-    trigger.focus();
+    renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
 
-    await user.keyboard('{ArrowDown}');
-    const unavailable = screen.getByRole('option', { name: /DeepSeek Harness/ });
+    const unavailable = screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ });
     expect(unavailable).toHaveAttribute('aria-disabled', 'true');
     expect(unavailable.textContent).toContain('no terminal plane');
 
-    // End would land on the last option; it lands on the last CHOOSABLE one.
-    await user.keyboard('{End}{Enter}');
-    expect(onChange).toHaveBeenCalledWith('b');
+    // Still reachable, so the reason can actually be read. Choosing it does
+    // nothing — the row is listed, not offered.
+    unavailable.focus();
+    expect(unavailable).toHaveFocus();
+    await user.click(unavailable);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 
-  it('marks the chosen option by weight and by a tick', () => {
-    // §7 asks for both, because a mark carried by one channel alone is not a
-    // mark to everyone (§10).
-    const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    expect(components).toMatch(/\.menu__item\[aria-selected='true'\][\s\S]*?font-weight: 600/);
-    expect(components).toMatch(/\.menu__tick::before\s*\{\s*content: '✓'/);
+  it('marks the chosen option with a tick rather than a fill', () => {
+    // A fill would make the selected row and the hovered row the same colour,
+    // so running the pointer down the list would look like the selection
+    // following it.
+    const css = readFileSync(join(SRC, 'ui', 'Menu.css'), 'utf8');
+    expect(css).toMatch(/\.menu__check\s*\{[^}]*color: var\(--/);
+    expect(css).not.toMatch(/\.menu__item\[aria-checked='true'\]\s*\{[^}]*background:/);
   });
 
-  it('holds the 200px minimum when it filters, and flips rather than rotates', () => {
-    const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    expect(components).toMatch(/\.select--filter\s*\{\s*min-width: 200px/);
-    // Content swap, not a transform: at this size a rotation reads as a wobble.
-    expect(components).toMatch(/\.select\[aria-expanded='true'\] \.select__caret::before/);
-    expect(components).not.toMatch(/\.select__caret[\s\S]{0,120}transform:/);
+  it('holds a minimum width when it filters', () => {
+    // Otherwise the row it sits in resizes every time the value changes.
+    const css = readFileSync(join(SRC, 'ui', 'Picker.css'), 'utf8');
+    expect(css).toMatch(/\.picker--filter \.picker__anchor\s*\{\s*min-width: 160px/);
   });
 });
