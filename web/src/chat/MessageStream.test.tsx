@@ -528,3 +528,31 @@ describe('following the turn as it is written', () => {
     expect(surface.scrollTop).toBe(4000);
   });
 });
+
+describe('what a screen reader hears', () => {
+  /*
+   * A conversation is a log, and a log announces what arrives. The failure
+   * this guards is that the default live region also announces text changing
+   * inside nodes it already holds — and the agent's message grows one delta at
+   * a time, so a reader was re-reading the whole message on every token. For a
+   * long answer that never finishes and cannot be interrupted.
+   */
+  it('announces additions rather than every character typed', () => {
+    const { container } = render(<MessageStream kernel="codex" entries={[]} />);
+    const log = container.querySelector('[role="log"]');
+    expect(log).toHaveAttribute('aria-live', 'polite');
+    expect(log).toHaveAttribute('aria-relevant', 'additions');
+  });
+
+  it('keeps the message being typed out of the announcements', () => {
+    // It is announced when it commits, once and whole, because the committed
+    // message is an addition.
+    const { container } = render(
+      <MessageStream kernel="codex" entries={[]} live={{ text: 'half a sen' }} />,
+    );
+    expect(container.querySelector('.turn[data-role="assistant"]')).toHaveAttribute(
+      'aria-live',
+      'off',
+    );
+  });
+});
