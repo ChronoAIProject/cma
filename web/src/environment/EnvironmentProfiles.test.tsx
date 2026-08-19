@@ -380,7 +380,7 @@ describe('the plane a profile starts sessions on', () => {
     open();
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
-    expect(await screen.findByRole('combobox', { name: /^plane$/i })).toHaveTextContent(
+    expect(await screen.findByRole('button', { name: /^plane$/i })).toHaveTextContent(
       /conversation/i,
     );
   });

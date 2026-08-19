@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import type { KernelOffer, Session } from './types';
 import { abilitiesFor } from './availability';
 import { switchFor, unavailableBecause } from './planeSwitch';
 import { Button } from '../ui/Button';
 import './SessionActions.css';
+import { Menu } from '../ui/Menu';
 
 /**
  * What can be done to the session being described — docs/Web_Style.md §12.
@@ -61,37 +62,12 @@ export function SessionActions({
 }: SessionActionsProps) {
   const [confirmingSwitch, setConfirmingSwitch] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
   const reasonId = useId();
   const can = abilitiesFor(session);
   // Absent rather than disabled where the kernel does not advertise the other
   // plane (§18.6): a control that can never work is not one that is currently
   // unavailable.
   const move = onChangePlane === undefined ? undefined : switchFor(session, kernels);
-
-  // The menu closes on Escape and on a press anywhere outside it, because a
-  // plate that only its own key can dismiss traps the pointer.
-  useEffect(() => {
-    if (!menuOpen) {
-      return;
-    }
-    const onPress = (event: MouseEvent) => {
-      if (menuRef.current !== null && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onPress);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onPress);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [menuOpen]);
 
   if (confirmingSwitch && move !== undefined) {
     /*
@@ -165,64 +141,77 @@ export function SessionActions({
         Details
       </Button>
 
-      <div className="actions__overflow" ref={menuRef}>
-        <Button
-          placement="button--icon"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-label="More actions"
-          onClick={() => {
-            setMenuOpen((open) => !open);
-          }}
-        >
-          ···
-        </Button>
-        {menuOpen ? (
-          <div className="menu actions__menu" role="menu" aria-label="More actions">
-            {/*
-             * §18.6: a small key naming the plane it moves to, absent — not
-             * disabled — when the kernel does not advertise the other plane,
-             * and disabled with its reason when the state refuses it.
-             */}
-            {move === undefined ? null : (
-              <button
-                type="button"
-                role="menuitem"
-                className="menu__item"
-                aria-disabled={busy || !move.available}
-                onClick={() => {
-                  if (busy || !move.available) {
-                    return;
-                  }
-                  setMenuOpen(false);
-                  setConfirmingSwitch(true);
-                }}
-              >
-                {move.label}
-                {move.available ? null : (
-                  <span className="menu__kind">{unavailableBecause(session)}</span>
-                )}
-              </button>
-            )}
-            <button
-              type="button"
-              role="menuitem"
-              className="menu__item"
-              aria-disabled={busy || !can.canStop}
-              aria-describedby={describedBy}
-              onClick={() => {
-                if (busy || !can.canStop) {
-                  return;
-                }
-                setMenuOpen(false);
-                onStop();
-              }}
-            >
-              End session
-            </button>
-          </div>
-        ) : null}
-      </div>
+      {/*
+       * §18.6: the plane key names where it moves to, is absent — not
+       * disabled — when the kernel does not advertise the other plane, and
+       * disabled with its reason when the state refuses it.
+       */}
+      <Menu
+        open={menuOpen}
+        label="More actions"
+        align="end"
+        portal
+        items={[
+          ...(move === undefined
+            ? []
+            : [
+                {
+                  id: 'move',
+                  /*
+                   * The reason rides with the row. §7 asks a disabled control
+                   * to say why where it is, and the row is the only place a
+                   * person reading the menu will look.
+                   */
+                  label: move.available ? (
+                    move.label
+                  ) : (
+                    <span className="actions__whynot">
+                      {move.label}
+                      <span className="actions__reason">{unavailableBecause(session)}</span>
+                    </span>
+                  ),
+                  disabled: busy || !move.available,
+                },
+              ]),
+          {
+            id: 'stop',
+            label:
+              can.reason === undefined ? (
+                'End session'
+              ) : (
+                <span className="actions__whynot">
+                  End session
+                  <span className="actions__reason">{can.reason}</span>
+                </span>
+              ),
+            disabled: busy || !can.canStop,
+          },
+        ]}
+        onSelect={(id) => {
+          setMenuOpen(false);
+          if (id === 'move') {
+            setConfirmingSwitch(true);
+            return;
+          }
+          onStop();
+        }}
+        onClose={() => {
+          setMenuOpen(false);
+        }}
+        anchor={
+          <Button
+            placement="actions__more"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="More actions"
+            onClick={() => {
+              setMenuOpen((open) => !open);
+            }}
+          >
+            ···
+          </Button>
+        }
+      />
     </div>
   );
 }
