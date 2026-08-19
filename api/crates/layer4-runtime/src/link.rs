@@ -40,6 +40,7 @@ use axum::{
 };
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use serde::Deserialize;
+use tokio::sync::mpsc;
 
 use crate::bridge::Outbound;
 use crate::lanes::{self, Ready, LANE_CONVERSATION, LANE_CONVERSATION_GAP, LANE_TERMINAL};
@@ -112,6 +113,18 @@ pub(crate) enum ControlFrame {
     },
 }
 
+/// How many unsent control answers a link will hold.
+///
+/// Small on purpose: answers are one per request and are consumed at once, so
+/// a backlog here would mean the socket is already gone.
+const CONTROL_REPLIES: usize = 4;
+
+/// The tag a supervisor answers a plane switch with.
+///
+/// Named here and matched by the adapter: the two ends have to agree on one
+/// word, and a literal repeated in two crates is how they stop agreeing.
+pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
+
 type Sink = SplitSink<WebSocket, Message>;
 
 pub(crate) async fn attach(
@@ -183,10 +196,27 @@ async fn relay_terminal(
     let mut output = session.output.subscribe();
     session.resize(cols, rows)?;
 
+    // Answers to control frames share the one sink the output pump owns, so
+    // the inbound side never needs a second half of the socket.
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
     let runtime = id.clone();
     let mut pump_out = tokio::spawn(async move {
         loop {
-            match output.recv().await {
+            let chunk = tokio::select! {
+                answer = answers.recv() => {
+                    match answer {
+                        Some(text) => {
+                            if sink.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        None => continue,
+                    }
+                }
+                chunk = output.recv() => chunk,
+            };
+            match chunk {
                 Ok(chunk) => {
                     let payload = if framed {
                         lanes::frame(LANE_TERMINAL, &chunk)
@@ -235,7 +265,7 @@ async fn relay_terminal(
                     }
                 }
                 Ok(Message::Text(text)) => {
-                    control(&text, &runtime, &state_in, Some(&session_in)).await
+                    control(&text, &runtime, &state_in, Some(&session_in), &replies).await
                 }
                 Ok(Message::Close(_)) => break,
                 Ok(_) => {}
@@ -283,10 +313,26 @@ async fn relay_conversation(
         }
     }
 
+    // As on the terminal plane: one sink, and control answers ride it too.
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
     let runtime = id.clone();
     let mut pump_out = tokio::spawn(async move {
         loop {
-            match live.recv().await {
+            let said = tokio::select! {
+                answer = answers.recv() => {
+                    match answer {
+                        Some(text) => {
+                            if sink.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        None => continue,
+                    }
+                }
+                said = live.recv() => said,
+            };
+            match said {
                 Ok(said) => {
                     if sink.send(outbound(said)).await.is_err() {
                         break;
@@ -328,7 +374,9 @@ async fn relay_conversation(
                     }
                     None => {}
                 },
-                Ok(Message::Text(text)) => control(&text, &runtime, &state_in, None).await,
+                Ok(Message::Text(text)) => {
+                    control(&text, &runtime, &state_in, None, &replies).await
+                }
                 Ok(Message::Close(_)) => break,
                 Ok(_) => {}
                 Err(e) => {
@@ -382,6 +430,7 @@ async fn control(
     runtime: &str,
     state: &AppState,
     session: Option<&std::sync::Arc<PtySession>>,
+    replies: &mpsc::Sender<String>,
 ) {
     match serde_json::from_str::<ControlFrame>(text) {
         Ok(ControlFrame::Credential { value }) => {
@@ -392,7 +441,24 @@ async fn control(
         Ok(ControlFrame::SwitchPlane { command }) => {
             // The program is swapped in place — the pod, its filesystem and
             // its conversation stay. The allowlist is checked in `switch_command`.
-            state.switch_command(&command);
+            let accepted = state.switch_command(&command);
+            // Answered either way. The control plane records an in-place
+            // switch only on a positive answer, and rotates when none comes:
+            // a pod that predates this frame says nothing at all, and silence
+            // is what carries that case to the fallback rather than to a
+            // session whose record disagrees with the program it is running.
+            let answer = serde_json::json!({
+                "t": SWITCH_RESULT,
+                "command": command,
+                "accepted": accepted,
+            })
+            .to_string();
+            if replies.send(answer).await.is_err() {
+                tracing::warn!(
+                    runtime,
+                    "the link closed before the switch could be answered"
+                );
+            }
         }
         Ok(ControlFrame::Resize { cols, rows }) => match session {
             Some(session) => {
