@@ -11,6 +11,7 @@ import type {
   ServiceCatalogue,
 } from '../environment/types';
 import { kernelLabel, modesOf, planeRefusal, PLANES } from './kernels';
+import './NewSessionDialog.css';
 import type { KernelOffer, SessionPlane } from './types';
 
 /**
@@ -174,18 +175,17 @@ export function NewSessionDialog({
       onClose={onCancel}
       footer={
         <>
+          {/*
+           * Short here and named in full beside the control that caused it:
+           * §7 states a disabled key's reason once per row, as a sibling of
+           * the keys it explains, and the same sentence in both places reads
+           * as two problems.
+           */}
+          {refusal === undefined ? null : (
+            <span className="control-reason">The agent cannot serve this plane</span>
+          )}
           <Button onClick={onCancel}>Cancel</Button>
-          <Button
-            tone="accent"
-            disabled={saving || refusal !== undefined}
-            /*
-             * Short here and named in full beside the control that caused it:
-             * §7 draws a disabled key's reason as part of the key, and the
-             * same sentence in both places reads as two problems.
-             */
-            reason={refusal === undefined ? undefined : 'The agent cannot serve this plane'}
-            onClick={start}
-          >
+          <Button tone="accent" disabled={saving || refusal !== undefined} onClick={start}>
             {saving ? 'Starting' : 'Start session'}
           </Button>
         </>
@@ -272,28 +272,48 @@ export function NewSessionDialog({
           </div>
 
           <div className="field">
-            <label className="field__label" htmlFor={planeId}>
+            <span className="field__label" id={planeId}>
               Plane
-            </label>
-            <Select
-              id={planeId}
-              label="Plane"
-              value={draft.agent.mode}
-              options={PLANES.map((plane) => ({
-                value: plane.id,
-                label: plane.label,
-                unavailable: served(kernels, draft.agent.kernel, plane.id)
-                  ? undefined
-                  : `Not on ${kernelLabel(draft.agent.kernel)}`,
-              }))}
-              onChange={(mode: SessionPlane) => {
-                setDraft({ ...draft, agent: { ...draft.agent, mode } });
-              }}
-            />
-            <span className="field__hint">
-              A terminal is a screen you type at; a conversation is messages, tool calls and
-              approvals. Fixed for the session&rsquo;s life.
             </span>
+            {/*
+             * §7: the plane choice is two labelled cards rather than a
+             * select — the choice is fixed for the session's life, and a
+             * decision that cannot be revisited deserves both answers on the
+             * surface at once. A row of peer cards is a grid, never a flex
+             * row of hand-set widths.
+             */}
+            <div className="card-grid" role="radiogroup" aria-labelledby={planeId}>
+              {PLANES.map((plane) => {
+                const unavailable = !served(kernels, draft.agent.kernel, plane.id);
+                const chosen = draft.agent.mode === plane.id;
+                return (
+                  <button
+                    key={plane.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={chosen}
+                    className={`card planecard${chosen ? ' planecard--chosen' : ''}`}
+                    disabled={unavailable}
+                    onClick={() => {
+                      setDraft({ ...draft, agent: { ...draft.agent, mode: plane.id } });
+                    }}
+                  >
+                    <span className="planecard__name">{plane.label}</span>
+                    <span className="planecard__what">
+                      {plane.id === 'terminal'
+                        ? 'The kernel’s own screen, entire and unmediated.'
+                        : 'Messages, tool calls and approvals, as structure.'}
+                    </span>
+                    {unavailable ? (
+                      <span className="control-reason">
+                        Not on {kernelLabel(draft.agent.kernel)}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="field__hint">Fixed for the session&rsquo;s life.</span>
             {refusal === undefined ? null : (
               <p className="field__error" role="alert">
                 {refusal}

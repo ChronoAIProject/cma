@@ -1,48 +1,10 @@
 /*
- * Status chip — docs/Web_Style.md §7: 22px tall, mono, xs, uppercase, 1px
- * border, radius 2px, and flat, because a chip is read rather than pressed.
- *
- * Text and border take the semantic token; the background is that token at
- * 0.12 alpha, which is why each tone repeats the value as a colour-mix rather
- * than referencing a background token.
+ * The status pill's own placement — docs/Web_Style.md §2 and §7. The pill
+ * itself is `.status` in the component layer, shared with anything that says
+ * a state; this file holds only what belongs to the inline use.
  */
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  height: var(--chip-h);
-  padding-inline: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  line-height: var(--leading-xs);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
-  vertical-align: middle;
-  white-space: nowrap;
-  border: 1px solid currentcolor;
-  border-radius: var(--radius);
-}
 
 .chip--inline {
   margin-left: var(--space-2);
-}
-
-.chip--live {
-  color: var(--live);
-  background: color-mix(in srgb, var(--live) 12%, transparent);
-}
-
-.chip--wait {
-  color: var(--wait);
-  background: color-mix(in srgb, var(--wait) 12%, transparent);
-}
-
-.chip--fail {
-  color: var(--fail);
-  background: color-mix(in srgb, var(--fail) 12%, transparent);
-}
-
-.chip--ended {
-  color: var(--ended);
-  background: color-mix(in srgb, var(--ended) 12%, transparent);
+  vertical-align: middle;
 }

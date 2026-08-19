@@ -42,6 +42,12 @@ interface ConversationSurfaceProps {
   readonly transport?: AguiTransport;
   /** Where operations go. Injected for the same reason. */
   readonly operations?: OperationTransport;
+  /**
+   * Told when the session starts or stops waiting on an answer — §18.3: a
+   * session waiting on one says so everywhere it appears, and the rail and
+   * the header are drawn by the console rather than by this surface.
+   */
+  readonly onWaitingChange?: (waiting: boolean) => void;
 }
 
 export function ConversationSurface({
@@ -49,6 +55,7 @@ export function ConversationSurface({
   capabilities,
   transport = wireTransport,
   operations = fetchTransport,
+  onWaitingChange,
 }: ConversationSurfaceProps) {
   const [conversation, setConversation] = useState<Conversation>(EMPTY);
   const [link, setLink] = useState<LinkStatus>('reconnecting');
@@ -101,14 +108,24 @@ export function ConversationSurface({
     }
   }, []);
 
-  const state = planeStateFor(session);
   const pending = conversation.pending;
   /*
    * §11: `idle` is read-only on this plane *unless* it is waiting on an
    * approval, which is the most alive a session gets. The composer stays
    * refused either way — an approval is answered by its own card — but the
-   * card is drawn, which is the difference that matters.
+   * refusal says the agent stopped here on purpose, and the card is drawn.
    */
+  const state = planeStateFor(session, pending !== undefined);
+
+  /*
+   * Lifted so the rail line and the header pill can say the session is
+   * waiting for its owner (§18.3) — only this surface folds the log, so only
+   * it knows an approval is parked.
+   */
+  useEffect(() => {
+    onWaitingChange?.(state.waiting);
+  }, [state.waiting, onWaitingChange]);
+
   const reason =
     state.reason ??
     (link === 'reconnecting' ? 'Reconnecting to this session.' : undefined) ??
@@ -117,16 +134,21 @@ export function ConversationSurface({
   return (
     <section className="conversation" aria-label="Conversation">
       {refusal === undefined ? null : (
-        <div className="band conversation__refusal" role="alert">
-          <span className="band__value">{refusal}</span>
+        <div className="notice notice--fail conversation__refusal" role="alert">
+          <span className="notice__detail">{refusal}</span>
         </div>
       )}
 
       <MessageStream
         entries={conversation.entries}
+        kernel={session.kernel}
         turnInFlight={conversation.turnInFlight}
         live={conversation.live}
         reasoning={conversation.reasoning}
+        plan={conversation.plan}
+        mode={conversation.mode}
+        configOptions={conversation.configOptions}
+        availableCommands={conversation.availableCommands}
         footer={
           pending === undefined ? null : (
             <ApprovalCard
@@ -140,21 +162,27 @@ export function ConversationSurface({
         }
       />
 
-      <Composer
-        capabilities={capabilities}
-        turnInFlight={conversation.turnInFlight}
-        refusedReason={state.interactive ? undefined : reason}
-        busy={busy}
-        onSend={(text) => {
-          void attempt(() => client.prompt(text, runId()));
-        }}
-        onInterrupt={() => {
-          void attempt(() => client.interrupt());
-        }}
-      />
-
-      <div className="band band--foot conversation__foot">
-        <Usage granted={capabilities.usage} usage={conversation.usage} />
+      {/*
+       * The composer card at the foot of the reading column, and usage
+       * beneath it, outside its card — §18.4 and §18.5. The same centred
+       * column as the stream, so the card sits under the turns it answers.
+       */}
+      <div className="conversation__foot">
+        <div className="conversation__footcolumn">
+          <Composer
+            capabilities={capabilities}
+            turnInFlight={conversation.turnInFlight}
+            refusedReason={state.interactive ? undefined : reason}
+            busy={busy}
+            onSend={(text) => {
+              void attempt(() => client.prompt(text, runId()));
+            }}
+            onInterrupt={() => {
+              void attempt(() => client.interrupt());
+            }}
+          />
+          <Usage granted={capabilities.usage} usage={conversation.usage} />
+        </div>
       </div>
     </section>
   );

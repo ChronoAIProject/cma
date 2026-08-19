@@ -13,6 +13,7 @@ fn logged(seq: u64, kind: EventKind) -> Event {
         session_id: layer2_core::SessionId("sesn_1".into()),
         seq,
         kind,
+        appended_at: String::new(),
     }
 }
 
@@ -91,6 +92,47 @@ fn a_message_identifier_is_stable_across_a_replay() {
 }
 
 #[test]
+fn an_owner_message_arrives_as_a_user_turn() {
+    let p = projected(EventKind::OwnerMessage {
+        content: "open a pull request".into(),
+    });
+    assert_eq!(
+        kinds(&p),
+        vec![
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END"
+        ]
+    );
+    assert_eq!(p.events[0].body["role"], "user");
+    assert_eq!(p.events[1].body["delta"], "open a pull request");
+    let id = p.events[0].body["messageId"].clone();
+    assert!(
+        p.events.iter().all(|e| e.body["messageId"] == id),
+        "one message is one identifier"
+    );
+}
+
+#[test]
+fn a_durable_event_carries_its_append_time() {
+    let mut event = logged(7, EventKind::TurnStarted);
+    event.appended_at = "2026-08-19T04:00:00Z".into();
+    let p = project(&event, "run_1", "sesn_1");
+    assert_eq!(
+        p.events[0].timestamp.as_deref(),
+        Some("2026-08-19T04:00:00Z")
+    );
+}
+
+#[test]
+fn an_event_without_an_append_time_carries_no_timestamp() {
+    // A control plane that predates the field wrote no time; that is absence,
+    // never an invented moment.
+    let p = projected(EventKind::TurnStarted);
+    assert!(p.events[0].timestamp.is_none());
+}
+
+#[test]
 fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
     // Namespaced rather than mapped onto the protocol's vocabulary: the sets
     // differ per kernel and grow, and a session must not fail because a kernel
@@ -99,6 +141,7 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
         call_id: "call-1".into(),
         title: "read notes".into(),
         kind: "a-kind-this-build-has-never-seen".into(),
+        arguments: None,
     });
     assert_eq!(kinds(&p), vec!["TOOL_CALL_START"]);
     assert_eq!(p.events[0].body["toolCallId"], "call-1");

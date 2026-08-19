@@ -23,21 +23,21 @@ interface Palette {
 }
 
 const DARK: Palette = {
-  background: '#0F0F11',
-  foreground: '#F2F2F3',
+  background: '#171916',
+  foreground: '#F1F2EE',
   cursor: '#C6F24E',
   // --accent at 25% alpha, per the terminal component rules.
   selection: 'rgba(198, 242, 78, 0.25)',
   ansi: {
-    black: '#0F0F11',
-    red: '#FF6B6B',
+    black: '#131512',
+    red: '#F58585',
     green: '#C6F24E',
-    yellow: '#F2B23E',
+    yellow: '#E9B44C',
     blue: '#7AA2F7',
     magenta: '#C08BE0',
     cyan: '#5FD3C4',
-    white: '#F2F2F3',
-    brightBlack: '#8A8A94',
+    white: '#F1F2EE',
+    brightBlack: '#8A9082',
     brightRed: '#FF9A9A',
     brightGreen: '#DDF98C',
     brightYellow: '#F7CE7C',
@@ -50,26 +50,26 @@ const DARK: Palette = {
 
 const LIGHT: Palette = {
   background: '#FFFFFF',
-  foreground: '#121214',
+  foreground: '#141613',
   cursor: '#46620B',
   selection: 'rgba(70, 98, 11, 0.25)',
   ansi: {
-    black: '#ECEAE6',
-    red: '#A12626',
+    black: '#EDEEE6',
+    red: '#A63232',
     green: '#46620B',
     yellow: '#8A5A00',
     blue: '#2E4E8F',
     magenta: '#743A8F',
     cyan: '#1F5F58',
-    white: '#52525B',
-    brightBlack: '#686871',
+    white: '#55584F',
+    brightBlack: '#64685E',
     brightRed: '#7A1B1B',
     brightGreen: '#334707',
     brightYellow: '#623F00',
     brightBlue: '#213866',
     brightMagenta: '#532866',
     brightCyan: '#16443F',
-    brightWhite: '#121214',
+    brightWhite: '#141613',
   },
 };
 
