@@ -35,9 +35,11 @@ pub(crate) struct FakeConversation {
 
 impl FakeConversation {
     /// Open a conversation, returning the core's end and the kernel's.
-    pub(crate) fn open() -> (ConversationChannel, Self) {
-        let (updates, update_rx) = mpsc::channel(BUFFER);
-
+    ///
+    /// The sender comes from the core, exactly as it does for a real kernel:
+    /// the core is already folding when it calls, so a fake that made its own
+    /// would not be able to reproduce anything reported during the open.
+    pub(crate) fn open(updates: mpsc::Sender<ConversationUpdate>) -> (ConversationChannel, Self) {
         let (input, mut input_rx) = mpsc::channel(BUFFER);
         let received = std::sync::Arc::new(Mutex::new(Vec::new()));
 
@@ -51,7 +53,6 @@ impl FakeConversation {
         (
             ConversationChannel {
                 conversation_id: Some("conv-fixture".to_string()),
-                updates: update_rx,
                 input,
             },
             Self { updates, received },
