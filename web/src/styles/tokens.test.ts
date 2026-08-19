@@ -269,3 +269,76 @@ describe('motion', () => {
     expect(offences).toEqual([]);
   });
 });
+
+describe('the scope a token is declared in', () => {
+  /**
+   * Which selector each property is declared under, across the token sheets.
+   *
+   * Blocks are matched on their own line-start selector, which is enough here
+   * because these sheets are flat: every declaration sits directly under
+   * `:root`, `body`, or `body[data-ds-dark-theme]`.
+   */
+  function declarationsBySelector(): Map<string, Set<string>> {
+    const found = new Map<string, Set<string>>();
+    for (const sheet of TOKEN_SHEETS) {
+      const css = readFileSync(sheet, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const block of css.matchAll(/(?:^|\n)(\s*)([^{}\n]+?)\s*\{([\s\S]*?)\n\1\}/g)) {
+        const selector = (block[2] ?? '').trim();
+        for (const declaration of (block[3] ?? '').matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+          const under = found.get(selector) ?? new Set<string>();
+          under.add(declaration[1] ?? '');
+          found.set(selector, under);
+        }
+      }
+    }
+    return found;
+  }
+
+  it('never references a property its own scope cannot see', () => {
+    /*
+     * The bug this exists for, found in a real browser and invisible to every
+     * other test here: a custom property's value is substituted in the scope
+     * it is **declared** in, not the scope it is used from.
+     *
+     * So `:root { --ground: var(--dsw-alias-bg-base) }` resolves against
+     * `:root` — where the palette, declared on `body`, does not exist — and
+     * computes to nothing. Every old name went empty, and the whole page
+     * rendered on browser defaults: no ground, no ink, no rules, no focus
+     * ring. jsdom resolves no custom properties, so 1083 tests passed.
+     *
+     * `:root` is an ancestor of `body`, so `body` may reference what `:root`
+     * declares. The reverse is what breaks.
+     */
+    const bySelector = declarationsBySelector();
+    const onRoot = bySelector.get(':root') ?? new Set<string>();
+    const onBody = new Set([
+      ...(bySelector.get('body') ?? []),
+      ...(bySelector.get('body[data-ds-dark-theme]') ?? []),
+    ]);
+
+    const offences: string[] = [];
+    for (const sheet of TOKEN_SHEETS) {
+      const css = readFileSync(sheet, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const block of css.matchAll(/(?:^|\n)(\s*):root\s*\{([\s\S]*?)\n\1\}/g)) {
+        for (const declaration of (block[2] ?? '').matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+          for (const reference of (declaration[2] ?? '').matchAll(/var\(\s*(--[\w-]+)/g)) {
+            const name = reference[1] ?? '';
+            const property = declaration[1] ?? '';
+            /*
+             * A `:root` declaration that cannot resolve is harmless once the
+             * same property is declared on `body` as well — everything under
+             * the body then reads the one that works. What is being caught is
+             * a property with no resolvable declaration at all.
+             */
+            if (!onRoot.has(name) && onBody.has(name) && !onBody.has(property)) {
+              offences.push(
+                `${relative(SRC, sheet)}: ${property} on :root reads ${name}, which only body declares`,
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+});
