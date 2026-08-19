@@ -36,10 +36,10 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .button,
-  .chip,
+  .pill,
   .row-item,
   .select,
-  .field__control {
+  .input {
     transition:
       background var(--motion-colour) ease,
       border-color var(--motion-colour) ease,
@@ -73,26 +73,6 @@
   color: var(--ink-2);
   font-family: var(--font-ui);
   font-size: var(--text-note);
-}
-
-.field__control {
-  height: var(--control-h-md);
-  padding-inline: var(--space-3);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  background: var(--inset);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
-}
-
-.field__control::placeholder {
-  color: var(--ink-3);
-}
-
-.field__control:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 .field__hint {
