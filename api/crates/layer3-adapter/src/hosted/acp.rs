@@ -67,6 +67,19 @@ const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 /// outside, from one still working.
 const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3600);
 
+/// How long a sign-in may take.
+///
+/// Human-paced, not machine-paced: somebody has to open a page on another
+/// device, sign in, and type a code. The ordinary call deadline is thirty
+/// seconds and this timed out against it every time — the sign-in was working
+/// and the wait was not.
+///
+/// A little longer than the code itself lives, so a sign-in that runs out is
+/// reported by the kernel in its own words rather than by us giving up first.
+/// Which of the two spoke is the difference between "your code expired" and
+/// "something went wrong".
+const SIGN_IN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(16 * 60);
+
 /// The socket half this client writes to.
 type Sink = SplitSink<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Message>;
 
@@ -487,14 +500,18 @@ impl Bridge {
             .to_string();
 
         tracing::info!(method = %chosen, "signing in to the owner's own account");
-        self.call("authenticate", serde_json::json!({ "methodId": chosen }))
-            .await
-            .map_err(|e| {
-                // Named rather than swallowed. A refused or expired sign-in is
-                // the likeliest way this fails, and the person who has to act
-                // on it is the one reading the session.
-                AdapterError::Rejected(format!("the sign-in did not complete: {e}"))
-            })?;
+        self.call_within(
+            "authenticate",
+            serde_json::json!({ "methodId": chosen }),
+            SIGN_IN_DEADLINE,
+        )
+        .await
+        .map_err(|e| {
+            // Named rather than swallowed. A refused or expired sign-in is
+            // the likeliest way this fails, and the person who has to act
+            // on it is the one reading the session.
+            AdapterError::Rejected(format!("the sign-in did not complete: {e}"))
+        })?;
         Ok(())
     }
 
@@ -504,8 +521,18 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, AdapterError> {
+        self.call_within(method, params, CALL_DEADLINE).await
+    }
+
+    /// The same, for something that legitimately takes longer than a call.
+    async fn call_within(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        deadline: std::time::Duration,
+    ) -> Result<serde_json::Value, AdapterError> {
         let waiting = self.begin(method, params)?;
-        let frame = tokio::time::timeout(CALL_DEADLINE, waiting)
+        let frame = tokio::time::timeout(deadline, waiting)
             .await
             .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
             .map_err(|_| AdapterError::Unavailable(format!("{method} lost its answer")))?;
