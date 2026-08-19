@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { asHex, resolveToken, themes } from '../test/palette';
 import { activeThemeName, terminalTheme } from './theme';
@@ -86,5 +88,45 @@ describe('terminal theme', () => {
 
     document.body.toggleAttribute('data-ds-dark-theme', false);
     expect(activeThemeName()).toBe('light');
+  });
+});
+
+describe('the terminal card', () => {
+  const css = readFileSync(resolve(process.cwd(), 'src/terminal/TerminalSurface.css'), 'utf8');
+  const tsx = readFileSync(resolve(process.cwd(), 'src/terminal/TerminalSurface.tsx'), 'utf8');
+
+  it('takes the same card a code block takes', () => {
+    /*
+     * It is the same kind of content — a program's own output in its own
+     * font — and two treatments for that would make the two planes read as
+     * two products.
+     */
+    const rule = /\.terminal\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(rule).toContain('background: var(--dsw-alias-markdown-code-block)');
+    expect(rule).toContain('border-radius: 12px');
+  });
+
+  it('takes the same code stack as everything else', () => {
+    // A command and its output should line up whether they are read here or
+    // in a transcript.
+    for (const face of ["'SF Mono'", "'JetBrains Mono'", "'Fira Code'"]) {
+      expect(tsx).toContain(face);
+    }
+  });
+
+  it('keeps a bare monospace tail, which nothing else may', () => {
+    /*
+     * The one permitted exception. Elsewhere `monospace` resolves to a CJK
+     * serif on Windows and wrecks the column widths; here, a terminal with no
+     * font at all is not a terminal, so a last resort has to exist.
+     */
+    expect(tsx).toMatch(/Menlo, monospace/);
+  });
+
+  it('sets a line height in pixels rather than a ratio somebody guessed', () => {
+    // 22px at 13px, matching the code blocks. Written as the division so the
+    // two numbers stay legible and stay together.
+    expect(tsx).toContain('fontSize: 13');
+    expect(tsx).toContain('lineHeight: 22 / 13');
   });
 });
