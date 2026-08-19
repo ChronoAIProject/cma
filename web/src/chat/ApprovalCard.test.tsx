@@ -220,7 +220,6 @@ describe('in the stream', () => {
     const { conversation } = await conversationFrom('approval-granted', { upTo: 2 });
     const { container } = render(
       <MessageStream
-        kernel="codex"
         entries={conversation.entries}
         footer={
           conversation.pending === undefined ? null : (
