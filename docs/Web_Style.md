@@ -2,7 +2,9 @@
 
 **This document is the single source of truth for all chrono-bot frontend design and style.**
 
-No colour, spacing value, type scale step, component pattern, or interaction rule may be introduced in `web/` unless it appears here. If a design need is not covered, extend this document first, in its own pull request, then implement.
+No colour, spacing value, type scale step, radius, component pattern, or interaction rule may be
+introduced in `web/` unless it appears here. If a design need is not covered, extend this document
+first, in its own pull request, then implement.
 
 The changelog at the end is **append-only**. Entries are never edited or deleted.
 
@@ -10,165 +12,173 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 
 ## 1. What the frontend is
 
-chrono-bot's frontend is **two planes onto one session, and the chrome needed to run several of them**.
-
-A session is reached on one of two planes, drawn in the same middle column and chosen by what that session was granted:
+Unchanged. **Two planes onto one session, and the chrome needed to run several of them.**
 
 | Plane | What it is |
 |---|---|
-| **terminal** | The kernel's own interface, entire and unmediated, exactly as its authors built it. The raw seat at the agent. |
-| **conversation** | The structured seat: approvals as buttons rather than keystrokes, tool calls as structure rather than scrollback, usage as a number, history that survives the screen. |
-
-Same agent, same conversation — not two products and not two histories. Conversation is the general surface and the terminal is the escape hatch, not a friendlier skin over the same thing; and conversation is the *only* plane a kernel without a terminal can offer at all.
-
-**A plane is not a view**, exactly as an arrangement is not a view. It changes what the middle column draws and nothing else. The views stay two, there is one page frame, and there is no navigation beyond them.
+| **terminal** | The kernel's own interface, entire and unmediated. The raw seat at the agent. |
+| **conversation** | The structured seat: approvals as buttons, tool calls as structure, usage as a number, history that survives the screen. |
 
 | View | What it is |
 |---|---|
-| **sessions** | The default, and where the work happens. A session list, one surface, and what is known about it. |
-| **operations** | Running the service: who is using it, what it has been asked to do, what is running, and stop that. Drawn only for a caller holding an operator capability. |
+| **sessions** | The default, and where the work happens. A list, one surface, and what is known about it. |
+| **operations** | Running the service. Drawn only for a caller holding an operator capability. |
 
-Sessions has **two arrangements** of the same list — `tabs`, where one surface owns the column, and `canvas`, where every listed session is a framed node with its own. An arrangement is not a view: it changes how the middle column is drawn and nothing else. The control for it lives with the list it rearranges.
+Sessions has two **arrangements** of the same list — `list` and `canvas`. A plane is not a view and an
+arrangement is not a view: both change what the middle column draws and nothing else. There are two
+views, one page frame, and no navigation beyond them.
 
-The unauthenticated state is the same terminal, driven by an authored introduction instead of a kernel.
+The four binding consequences survive this redesign untouched:
 
-Design consequences, binding:
-
-- **The surface owns whatever width is left**, terminal or conversation. It is the last to give up space: the details sheet closes first, then the rail collapses, then the rail leaves the layout.
-- **One surface, many drivers.** The introduction and a live session are the same engine driven by different sources. A visual difference between them that is not a difference in *content* is a defect. This does more work than it used to: the conversation plane is driven by a recorded transcript in development and by a live event stream in production, and a component that can tell the two apart is a component that has learned something about its driver it had no business learning.
-- **Fidelity beats decoration inside the viewport.** Agent-emitted output is rendered faithfully. Styling applies to the frame, the chrome and the authored introduction — never to output produced by a kernel. This extends to agent-emitted message content on the conversation plane: the code blocks, lists and inline formatting an agent wrote are rendered as it meant them, and the frame around them is what is styled.
-- **The conversation surface may call no route a third-party client could not call.** It exists because everything it does is already in AG-UI. The moment it needs something AG-UI lacks, the answer is to add it to AG-UI — never to add it here.
-
-  This replaces "never build an interactive feature here that belongs in the API", and is stricter than the sentence it replaces: that one asked whether a feature *belonged* in the API, which is a judgement, and this asks whether the API *already projects it*, which is checkable. `acp-kernel` claims a product frontend can build a chat interface on the public interfaces, and a first-party client held to the same constraint is the only thing that keeps that claim honest — a client permitted a private route would prove nothing about the one a third party has to build.
+- **The surface owns whatever width is left.** It is the last to give up space: the details drawer
+  closes first, then the rail collapses, then the rail leaves the layout.
+- **One surface, many drivers.** A visual difference between the introduction and a live session that
+  is not a difference in *content* is a defect.
+- **Fidelity beats decoration inside the viewport.** Agent-emitted output is rendered faithfully;
+  styling applies to the frame.
+- **The conversation surface may call no route a third-party client could not call.**
 
 ---
 
 ## 2. Colour
 
-Defined as CSS custom properties on `:root`. Components reference tokens only — never a literal colour.
+Defined as custom properties on `:root`. Components reference tokens only — never a literal colour.
 
-Dark is the primary expression. Light is fully specified and measured, not an afterthought. The two share the accent *fill* and differ in the accent *ink*, because a colour bright enough to read on near-black cannot carry text on paper.
-
-### Light (default)
-
-| Token | Value | Use |
-|---|---|---|
-| `--ground` | `#F7F7F5` | page background |
-| `--surface` | `#FFFFFF` | chrome: bars, bands, panels |
-| `--raised` | `#F7F7F5` | selected row |
-| `--inset` | `#ECEAE6` | fields, tracks |
-| `--ink` | `#121214` | primary text |
-| `--ink-2` | `#52525B` | secondary text |
-| `--ink-3` | `#686871` | labels, metadata |
-| `--rule` | `#E2E2DE` | hairline borders |
-| `--rule-2` | `#CACAC4` | control borders |
-| `--rule-3` | `#B5B5AE` | the lit edge of a raised control |
-| `--accent` | `#46620B` | interactive text and borders |
-| `--accent-fill` | `#C6F24E` | the accent key's fill |
-| `--accent-edge` | `#7C9E27` | its impression |
-| `--on-accent` | `#121214` | text on the accent fill |
+The ramp is **warm neutral**: every grey is tinted a few degrees toward the accent's hue family, so a
+lime key reads as part of the page rather than as something dropped onto it. Dark and light are equal
+expressions, and both are measured.
 
 ### Dark
 
-Redefined under both `@media (prefers-color-scheme: dark)` guarded as `:root:not([data-theme='light'])` and `:root[data-theme='dark']`, so an explicit choice wins in either direction.
+| Token | Value | Use |
+|---|---|---|
+| `--ground` | `#101210` | page background, app bar, footer |
+| `--surface` | `#171916` | the surface a session is drawn on |
+| `--raised` | `#1B1E1A` | cards, composer, tool rows, plates |
+| `--inset` | `#22261E` | fields, the user's own turn, tracks |
+| `--sunken` | `#131512` | a terminal viewport, the canvas floor |
+| `--ink` | `#F1F2EE` | primary text |
+| `--ink-2` | `#A9AEA3` | secondary text |
+| `--ink-3` | `#8A9082` | metadata, labels, hints |
+| `--rule` | `#23261F` | hairlines |
+| `--rule-2` | `#2A2E26` | control borders |
+| `--rule-3` | `#3A3F36` | the quiet cells of the mark |
+| `--accent` | `#C6F24E` | interactive text, the primary fill |
+| `--on-accent` | `#111310` | text on the accent fill |
+
+### Light
 
 | Token | Value |
 |---|---|
-| `--ground` | `#0A0A0B` |
-| `--surface` | `#0F0F11` |
-| `--raised` | `#121214` |
-| `--inset` | `#141417` |
-| `--ink` | `#F2F2F3` |
-| `--ink-2` | `#A0A0A8` |
-| `--ink-3` | `#8A8A94` |
-| `--rule` | `#232327` |
-| `--rule-2` | `#34343B` |
-| `--rule-3` | `#45454E` |
-| `--accent` | `#C6F24E` |
+| `--ground` | `#F6F6F2` |
+| `--surface` | `#FFFFFF` |
+| `--raised` | `#F1F2EB` |
+| `--inset` | `#F1F2EB` |
+| `--sunken` | `#EDEEE6` |
+| `--ink` | `#141613` |
+| `--ink-2` | `#55584F` |
+| `--ink-3` | `#64685E` |
+| `--rule` | `#E3E4DB` |
+| `--rule-2` | `#D8DACF` |
+| `--rule-3` | `#C7CABD` |
+| `--accent` | `#46620B` |
 | `--accent-fill` | `#C6F24E` |
-| `--accent-edge` | `#8FAE3B` |
-| `--on-accent` | `#0A0A0B` |
+| `--on-accent` | `#141613` |
 
-**One accent.** The cyan/magenta pair is retired: two accents meant every surface had to decide which one it was, and the answer was decorative. `#C6F24E` marks what is live and what to press, and nothing else.
+**One accent, and the two themes share its fill and differ in its ink** — a colour bright enough to
+read on near-black cannot carry text on paper. `#C6F24E` marks what is live and what to press, and
+nothing else.
 
 ### Semantic
-
-Session and system state. Separate from the accent; never used decoratively.
 
 | Token | Light | Dark | Meaning |
 |---|---|---|---|
 | `--live` | `#46620B` | `#C6F24E` | ready, running, healthy |
-| `--wait` | `#8A5A00` | `#F2B23E` | starting, idle, rotating |
-| `--fail` | `#A12626` | `#FF6B6B` | failed, refused, invalid |
-| `--ended` | `#686871` | `#8A8A94` | ended, unknown, retired |
+| `--wait` | `#8A5A00` | `#E9B44C` | starting, stopped, rotating, waiting on you |
+| `--fail` | `#A63232` | `#F58585` | failed, refused, invalid |
+| `--ended` | `#64685E` | `#8A9082` | ended, unknown, retired |
+
+Each has a `*-wash` companion at 7–10% alpha, which is the only permitted background for a status
+pill. A semantic colour never carries meaning alone: the state word is always drawn beside it.
 
 ### Measured contrast
 
-Worst case per theme, computed per WCAG 2.1, against the surface the token actually sits on. Body text requires 4.5:1; no pair falls below it in either theme.
+Worst case per theme, computed per WCAG 2.1 against the surface the token actually sits on. Body text
+requires 4.5:1; no pair falls below it in either theme.
 
-| Theme | Worst text pair | Ratio |
+| Theme | Pair | Ratio |
 |---|---|---|
-| Dark | `--ink-3` on `--inset` | 5.38:1 |
-| Dark | `--ink-3` on `--surface` | 5.60:1 |
-| Light | `--ink-3` on `--inset` | 4.59:1 |
+| Dark | `--ink-3` on `--inset` `#22261E` | 4.69:1 |
+| Dark | `--ink-3` on `--surface` | 5.39:1 |
+| Dark | `--ink-2` on `--surface` | 7.81:1 |
+| Dark | `--wait` on `--surface` | 9.35:1 |
+| Dark | `--fail` on `--surface` | 7.22:1 |
+| Light | `--ink-3` on `--inset` | 5.06:1 |
+| Light | `--ink-3` on `--ground` | 5.26:1 |
+| Light | `--accent` on `--surface` | 6.97:1 |
 | Light | `--wait` on `--surface` | 5.93:1 |
-| Light | `--accent` on `--ground` | 6.49:1 |
+| Light | `--fail` on `--surface` | 6.73:1 |
 
-`--ink-3` is the binding constraint in both themes: it carries 11px uppercase metadata, which is not large text, so the full 4.5:1 applies. Do not darken it in dark or lighten it in light. A new colour requires a changelog entry and a recomputed row.
+`--ink-3` is the binding constraint in both themes: it carries 11–12px metadata, which is not large
+text, so the full 4.5:1 applies. **Do not lighten it in dark or darken it in light.** A new colour
+requires a changelog entry and a recomputed row.
+
+**A disabled control's label is measured too.** It sits on `--inset` and takes `--ink-3`, which is
+4.69:1 in dark and 5.06:1 in light. A disabled primary action nobody can read is the one control where
+"it looks disabled" costs the most.
 
 ### Rules
 
-- Every colour is defined on bare `:root` first. A colour whose only definition lives inside a media query or `[data-theme]` block is a bug.
+- Every colour is defined on bare `:root` first. A colour whose only definition lives inside a media
+  query or `[data-theme]` block is a bug.
 - `body` always sets an explicit `background` from a token.
-- Semantic colour never carries meaning alone — always paired with the state word.
+- No colour is ever applied to agent-emitted content (§18.1).
 
 ---
 
 ## 3. Depth
 
-Depth is **letterpress**: a hard offset shadow with zero blur, as if the control had been stamped into the page. There are no soft drop shadows, no gradients beyond a fill's own hue, no glass and no coloured glow.
+**Two levels and no others.** A thing resting on the page, and a thing floating over it.
 
-### Tokens
-
-| Token | Dark | Light |
-|---|---|---|
-| `--press-accent-rest` | `4px 4px 0 0 var(--accent-edge)` | same |
-| `--press-accent-hover` | `2px 2px 0 0 var(--accent-edge)` | same |
-| `--press-flush` | `0 0 0 0 transparent` | same |
-| `--press-quiet-rest` | `3px 3px 0 0 rgb(242 242 243 / 0.24)` | `3px 3px 0 0 rgb(18 18 20 / 0.26)` |
-| `--press-quiet-hover` | `1.5px 1.5px 0 0 var(--accent)` | same |
-| `--press-card-rest` | `5px 5px 0 0 var(--press-ink), inset 0 0 0 1px var(--rule)` | same |
-| `--press-card-hover` | `2px 2px 0 0 var(--press-ink), inset 0 0 0 1px var(--rule-2)` | same |
-| `--press-ink` | `rgb(242 242 243 / 0.10)` | `rgb(46 62 11 / 0.15)` |
-| `--press-none` | `inset 0 0 0 1px var(--rule)` | same |
-| `--focus-ring` | `0 0 0 2px var(--ground), 0 0 0 4px var(--accent)` | same |
+| Token | Dark | Light | Use |
+|---|---|---|---|
+| `--lift-rest` | `0 1px 2px rgb(0 0 0 / 0.35)` | `0 1px 2px rgb(20 22 19 / 0.06)` | the composer, a selected row, a card that matters |
+| `--lift-plate` | `0 12px 32px rgb(0 0 0 / 0.5)` | `0 12px 32px rgb(20 22 19 / 0.12)` | dialogs, menus, the command bar |
+| `--focus-ring` | `0 0 0 2px var(--ground), 0 0 0 4px var(--accent)` | same | every focusable thing |
+| `--focus-node` | `0 0 0 3px rgb(198 242 78 / 0.12)` | same | the canvas node holding the keys |
+| `--edge-selected` | `inset 2px 0 0 var(--accent)` | same | the selected row's leading edge |
 
 **These are the only shadow values permitted.** An inline `box-shadow` string in a component is a bug.
 
-Dark uses a bone ink for the card impression rather than black: on `#0A0A0B` a black offset is invisible, and an impression nobody can see is a shadow that costs paint for nothing.
+**The letterpress contract is retired.** Hard-offset impressions, hover translating into the
+impression, active sinking flush: all removed. They gave every control a 4px visual weight that a
+dense interface could not carry, and they demanded 2px corners.
 
 ### The state contract
 
-| State | Shadow | Transform |
+| State | Treatment |
+|---|---|
+| rest | its own background and hairline |
+| hover | background raises one step in the ramp; the border firms to `--rule-2` |
+| active | background lowers one step |
+| disabled | `--inset` fill, `--rule` border, `--ink-3` label, and a reason on the surface |
+| focus | `--focus-ring`, stacked over whatever the state holds |
+
+**Nothing moves on hover.** No translate, no scale, no lift toward the cursor. The only glow the
+product has is `--focus-node`, and no glow is ever applied to a terminal viewport or to a character a
+kernel emitted.
+
+### Radius
+
+Five steps, and a thing keeps the same one everywhere it appears.
+
+| Token | Value | Use |
 |---|---|---|
-| rest | the element's `*-rest` | none |
-| hover | its `*-hover` — the shadow **shrinks** | translate 1.5–2px down and right |
-| active | `--press-flush` | translate 3–4px |
-| disabled | `--press-none` | none |
-| focus | the state's shadow **plus** `--focus-ring` | unchanged |
-
-Hover presses **into** the impression. Nothing in this interface lifts toward the cursor.
-
-**A disabled control carries no impression.** The impression is what says a thing can be pressed; a greyed key that still looks pressable reads as broken rather than unavailable.
-
-### What gets depth
-
-- **Raised** — anything you press: keys, filter chips when on, the selected segment.
-- **Flat** — the page, its bars and bands, and anything you type into or read: fields, selects, tracks, status chips, record rows.
-- **Card** — a thing among peers, 5px. Interactive cards press in on hover; static panels do not.
-- **Plate** — anything floating over the page: dialogs, menus, the command bar. Same 5px impression, and it never moves.
-
-The one glow the product has is a 6px halo on the dot of a **live** session. Nothing else glows, and no glow is ever applied to a terminal viewport or to a character a kernel emitted.
+| `--radius-sm` | 8px | small controls, menu items |
+| `--radius` | 10px | buttons, fields, tool rows |
+| `--radius-md` | 12px | cards, rows, canvas nodes, code blocks |
+| `--radius-lg` | 14px | panels, plates, the composer, a page frame |
+| `--radius-pill` | 999px | status pills, filters, counts, the account control |
 
 ---
 
@@ -176,135 +186,163 @@ The one glow the product has is a 6px halo on the dot of a **live** session. Not
 
 | Role | Stack |
 |---|---|
-| Platform — headings, labels, prose, controls | `'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` |
-| Data — terminal, times, identifiers, metadata | `'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace` |
+| Interface — headings, labels, prose, controls | `'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` |
+| Data — terminal, times, identifiers, metadata | `'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace` |
 
-Both faces are **self-hosted** under the OFL in `web/src/assets/fonts/`, with `font-display: swap` and a system fallback. Nothing is fetched from a third party: a font request to someone else's host can be logged, blocked or slow. Geist Pixel is retired — the product mark is drawn geometry now and needs no glyph (§17).
+Both faces are **self-hosted** under the SIL OFL in `web/src/assets/fonts/`, with `font-display: swap`
+and a system fallback. Nothing is fetched from a third party: a font request to someone else's host
+can be logged, blocked or slow. Geist and Geist Mono are retired with the last reference to them.
 
 ### Scale
 
-| Step | Size | Use |
+| Token | Size | Use |
 |---|---|---|
-| `2xs` | 10px | status chip words, band micro-labels |
-| `xs` | 11px | every band label and value, all metadata |
-| `sm` | 12px | secondary prose, hints |
-| `base` | 13px | controls, terminal |
-| `md` | 14px | body, menu items, record primaries |
-| `lg` | 15px | a band's subject — the session time |
-| `xl` | 17px | page and dialog titles |
-| `2xl` | 20px | empty-state leads |
-| `3xl` | 28px | section statements |
-| `display` | 62px | the landing headline only |
+| `--text-label` | 11px | mono, uppercase, tracked `0.08em` — every eyebrow and band label |
+| `--text-meta` | 12px | metadata, timestamps, identifiers |
+| `--text-note` | 13px | secondary prose, hints, reasons, quiet controls |
+| `--text-ui` | 14px | controls, menu items, rail subjects |
+| `--text-body` | 15px | interface body, the owner's own turn |
+| `--text-read` | 16px | **the agent's words, and nothing else** |
+| `--text-title` | 17px | dialog and plate titles |
+| `--text-subject` | 20px | the session a surface is showing |
+| `--text-page` | 24px | a page title |
+| `--text-display` | 64px | the landing headline only |
 
-Uppercase labels take `letter-spacing: 0.14em`. Display type takes `-0.03em`. Headings take `text-wrap: balance`, prose takes `text-wrap: pretty`, and any column of digits takes `font-variant-numeric: tabular-nums`.
+Line height: `1.15` display, `1.55` interface, `1.65` the conversation and the terminal. Headings take
+`text-wrap: balance`, prose `text-wrap: pretty`, any column of digits `font-variant-numeric:
+tabular-nums`. Weights are 400, 500 and 600 only.
 
-**Terminal type** keeps its own metrics: 13px, line height 1.6, letter spacing 0. Never track a terminal.
+**Nothing an owner reads at length is below 15px, and the agent's own words are 16px.** The previous
+revision set the conversation at 14px and its metadata at 10–11px, which is what "squeezed" meant.
+
+**Terminal type keeps its own metrics:** 13.5px, line height 1.65, letter spacing 0. Never track a
+terminal.
 
 ---
 
 ## 5. Layout
 
-4px base unit. Permitted spacing: `4, 8, 12, 16, 20, 24, 32, 40, 56`.
+4px rhythm. Permitted spacing: `4, 8, 12, 16, 20, 24, 32, 48, 64`, with 2px steps allowed **only**
+inside a control's own padding, where optical alignment beats the grid.
 
-**The 10% page inset is removed.** It cost the terminal roughly 290px on a 1440px window and made the bar look detached from a page it was already aligned to. Page content runs to a 20px gutter, and alignment is achieved by the band grid instead.
-
-**The page does not scroll.** The app fills the viewport; the terminal owns its scrollback, and a column or a canvas owns its own overflow.
-
-### The band grid
-
-Every column's header is one **head band** tall and every column's footer one **foot band**, so when two panels sit side by side their hairlines land on the same line and the page reads as one surface.
+**The page does not scroll.** The app fills the viewport; the terminal owns its scrollback, and a
+column, a drawer or a canvas owns its own overflow.
 
 | Token | Value |
 |---|---|
-| `--bar-height` | 56px (48px below 30rem) |
-| `--band-head` | 52px |
+| `--bar-height` | 60px (52px below 30rem) |
+| `--band-head` | 56px |
 | `--band-foot` | 40px |
 | `--page-gutter` | 20px |
-| `--rail-width` | 312px |
-| `--rail-collapsed` | 48px |
-| `--sheet-height` | 412px |
+| `--rail-width` | 320px |
+| `--rail-collapsed` | 56px |
+| `--drawer-width` | 360px |
+| `--read-column` | 760px |
 
 Binding rules:
 
-- A band's height is **set on the band**, never accumulated from padding. Padding is what lets two aligned columns drift apart when one gains a longer label.
-- A column needing more chrome adds a **second band beneath the first**. It never grows its header.
-- **One type size lives in a band** — mono `xs`, tracked and uppercase for a label, plain for a value. The single exception is a band's subject, the session time, at `lg`.
-- One documented exception to the row shape: the rail's second band **stacks** its new-session key over its filters. It sits below the header band, so the header rule still runs straight across every column.
-
-### Radius
-
-`2px` everywhere. A hard offset shadow wants a sharp corner; anything rounder reads as a different material.
+- A band's height is **set on the band**, never accumulated from padding.
+- **One hairline per boundary.** Two adjacent elements may not both draw a border on the shared edge;
+  the container draws it, or the child does, never both.
+- **The reading column is centred and capped at 760px**, whatever the surface's width. A conversation
+  set to the full width of a 1440px window is a conversation nobody can track a line in.
+- A column needing more chrome adds a second band beneath the first. It never grows its header.
 
 ---
 
 ## 6. Page frame
 
-**One app bar and one status band, on every page**, so the window's top and bottom edges never move as somebody switches view.
+One app bar and one footer band, on every page, so the window's top and bottom edges never move as
+somebody switches view.
 
-The **app bar** (56px) carries the mark, the view switch, the command field, and the account control. It is not navigation and must never become it.
+The **app bar** (60px) carries, in order: the mark and wordmark, the view switch, the command trigger,
+the live count, and the account control. It is not navigation and must never become it.
 
-The **status band** (40px) always reads in one order: the display zone, then what this page is showing, then the build. It is the page's footer; in a multi-column view its 40px is shared by the columns' own footers, and the rule still runs across.
+The **command trigger** is a real control: a 36px field-shaped button reading *"Find a session, or
+type a command"* with a `⌘K` hint, opening the command bar plate (§7). It is no longer drawn disabled —
+a permanently dead field in the middle of the bar is the single loudest "unfinished" signal the
+product had. **The plate ships with the surfaces it can reach and no more:** sessions by time and
+last-activity line, the two arrangements, new session, and the appearance controls. Anything else it
+would offer belongs to a section of this document that does not exist yet.
+
+The **footer band** (40px) reads: the display zone, then what this page is showing, then the build.
+It is one band across the whole window; it no longer divides into per-column cells, because the
+columns no longer draw their own footers.
 
 ---
 
 ## 7. Controls
 
-Height is declared on the control, and every control is `box-sizing: border-box` — a quiet button carries a 1px border and an accent button does not, so under content-box the two render 2px apart and sit a pixel out of line in the same row.
-
 | Token | Value | Use |
 |---|---|---|
+| `--control-h-sm` | 30px | inside a row, a node header, a filter row |
 | `--control-h` | 32px | anything in a band or a dialog footer |
-| `--control-h-sm` | 28px | controls inside a record row or a card footer |
-| `--control-h-block` | 36px | a panel's one full-width primary action |
-| `--control-h-lg` | 44px | the landing's opening actions |
-| `--chip-h` | 22px | status chips |
-| `--segment-h` | 26px | segmented options |
+| `--control-h-md` | 36px | fields, the command trigger, a drawer's actions |
+| `--control-h-lg` | 40px | a panel's one full-width primary action |
+| `--control-h-xl` | 46px | the landing's opening action |
+| `--chip-h` | 26px | status pills, filters, tags |
 | `--hit` | 32px | minimum target (44px below 30rem) |
 
-Two button sizes and no others. **One accent button per view**, spent on the action the view exists for; everything else is quiet. Destructive actions take `--fail` and confirm inline, in place of the row's own controls — never a second dialog over a dialog.
+**One primary action per surface**, drawn as the accent fill, spent on the action that surface exists
+for. Second-rank actions are bordered, third-rank are borderless, and **everything beyond the third
+goes into the overflow menu** behind a `···` key. A header carrying four equally weighted keys makes
+the reader choose before they can read, which is what the session header did.
 
-**Controls are disabled, never removed**, and every disabled control states why. A two-line stacked key carries its reason as part of the button, because a tooltip is unreachable by touch and invisible to anyone scanning. Stacked keys hold a 52px minimum so a column of them stays even when one reason wraps.
+**Controls are disabled, never removed**, and the reason is stated **once per row**, beside the
+controls it explains, at `--text-note` in `--ink-3` — never in a tooltip, and never repeated on each
+key. The stacked two-line key is retired: it made every disabled control taller than its enabled
+neighbour.
+
+Destructive actions take `--fail` and confirm **inline**, in place of the controls that raised them.
+Never a second dialog over a dialog.
 
 ### Dropdowns
 
-A dropdown is an **instrument closed and a plate open**: hairline and fill at rest with no impression, since it is not a key; the open menu floats and takes `--press-card-rest`. 32px tall, caret at `2xs` in `--ink-3`, and the caret **flips** rather than rotating — at that size a rotation reads as a wobble. A filter dropdown holds a 160px minimum so its row does not resize as the value changes. The selected option is marked on its leading edge **and** by a tick.
-
-Choosing a **value** is a select; choosing an **action** is a menu. They look alike and behave differently, so a select never runs anything when it opens.
+An instrument closed and a plate open. 32px tall, the caret **flips** rather than rotating, a filter
+holds a 200px minimum so its row does not resize as the value changes, and the selected option is
+marked by weight **and** a tick. Choosing a **value** is a select; choosing an **action** is a menu;
+a select never runs anything when it opens.
 
 ### Cards side by side
 
-A row of peer cards is a **grid**, never a flex row of hand-set widths: columns are equal by construction and every card stretches to the tallest, so content length can never decide how big a card is. A card whose text overruns truncates or scrolls inside itself rather than growing and leaving its neighbours short.
+A row of peer cards is a **grid**, never a flex row of hand-set widths. A card whose text overruns
+truncates or scrolls inside itself rather than growing and leaving its neighbours short.
 
 ### Collapsing a panel
 
-A collapsed panel becomes a **handle, never nothing**: 48px of strip that keeps its header and footer bands, so the way back is exactly where the panel was and the page's rules still line up. The strip carries a **summary** of what it hides — the session dots in state order and a count. Collapsing gives up detail, not awareness.
-
-The handle glyph points where the panel will go — `‹ ›` for a column, `⌃ ⌄` for a sheet — and reverses when collapsed, so the control describes its outcome rather than its state. The choice persists per browser and is validated on read. Keyboard: `⌃← / ⌃→` for a column, `⌃↑ / ⌃↓` for the sheet, and focus moves to the handle so nobody is stranded on a control that just left.
+A collapsed panel becomes a **handle, never nothing**: 56px of strip carrying the handle and the
+status-dot summary with counts. The glyph points where the panel will go and reverses when collapsed.
+`⌃← / ⌃→` for a column, and focus moves to the handle so nobody is stranded on a control that just
+left. The choice persists per browser and is validated on read — web storage is untrusted input.
 
 ---
 
 ## 8. Interaction
 
-- Every interactive element has a visible focus state: `--focus-ring`, stacked over whatever impression the state carries. Never removed.
-
-  **One documented variant: the terminal prompt row.** A 2px ring around a full-width borderless field boxes in the whole prompt line and breaks the illusion the surface depends on, so for that input the indicator is a 2px `--accent` bar on the row's leading edge (`box-shadow: inset 2px 0 0 var(--accent)`), reinforced by the accent caret. A relocation, not a removal, scoped to that one input.
-
-- Transitions are 140ms on `transform` and `box-shadow`, 200ms on colour, and every one is wrapped in `@media (prefers-reduced-motion: no-preference)`. Under reduced motion the translate is suppressed and the shadow swap alone communicates the press — nothing is lost.
-- Loading is a **skeleton of the shape that is coming**, or an inline indicator. Never a full-page spinner.
-- Errors state what went wrong and what to do about it. No apologies, no raw codes without a human sentence.
+- Every interactive element has a visible focus state: `--focus-ring`, stacked over whatever the state
+  carries. Never removed. **One documented variant:** the terminal prompt row takes
+  `--focus-prompt` on its leading edge, because a ring around a full-width borderless field boxes in
+  the whole prompt line and breaks the surface's illusion.
+- Transitions are 140ms on `box-shadow`, 200ms on colour and background, each wrapped in
+  `@media (prefers-reduced-motion: no-preference)`. **Nothing transitions position or size.**
+- Loading is a skeleton of the shape that is coming, or an inline indicator. Never a full-page spinner.
+- Waiting is a pulse on a dot, or a bar reflecting steps the control plane actually reported. A bar
+  never advances on a timer.
+- Errors state what went wrong and what to do about it. No apologies, no raw codes without a human
+  sentence beside them.
 
 ---
 
 ## 9. Terminal
 
-The byte stream originates from a coding agent executing the user's own untrusted code. Escape sequences are an attack surface, and the unauthenticated introduction shares the engine, so the **engine** carries the hardening.
+Unchanged, and the engine carries the hardening: **OSC 52 disabled**, no escape sequence setting the
+tab title or triggering a host action, capped scrollback, OSC 8 hyperlinks validated before being made
+clickable. The 16-slot ANSI palette is derived from the tokens and is authoritative; agent output is
+rendered through it and not otherwise restyled. Selectable terminal themes remain vendored as data,
+filtered by the current appearance, and scoped to the terminal canvas.
 
-- **OSC 52 (clipboard write) is disabled.**
-- Escape sequences must not set the tab title or trigger any host-level action.
-- Scrollback is capped. Unbounded output must not exhaust the tab.
-- OSC 8 hyperlinks are validated before being made clickable.
-
-The 16-slot ANSI palette is derived from the tokens and is authoritative; agent output is rendered through it and not otherwise restyled. The selectable terminal themes remain as specified: vendored as data, filtered by the current appearance, scoped to the terminal canvas and never to the surrounding interface.
+The viewport sits on `--sunken` inside a `--radius-md` frame with a `--rule` hairline, at
+`--term-size`. Inside a canvas node it drops its own border: the node frame is that border.
 
 ---
 
@@ -312,9 +350,11 @@ The 16-slot ANSI palette is derived from the tokens and is authoritative; agent 
 
 - Text contrast meets WCAG AA in **both** themes. Measured ratios are recorded in §2.
 - Semantic HTML before ARIA. Landmarks on every page.
-- Every view is fully keyboard operable, including the terminal, which must be escapable by keyboard alone.
+- Every view is fully keyboard operable, including the terminal, which must be escapable by keyboard
+  alone.
 - Never convey state through colour alone.
-- **The animated introduction is never the only route to its information.** The viewport is exposed to assistive technology as a static, complete transcript — a screen reader user never waits for an animation and never receives a character-by-character stream.
+- **The animated introduction is never the only route to its information.** The viewport is exposed to
+  assistive technology as a static, complete transcript.
 - Focus on load rests on the prompt.
 - Minimum target 32px, 44px below 30rem.
 
@@ -322,151 +362,157 @@ The 16-slot ANSI palette is derived from the tokens and is authoritative; agent 
 
 ## 11. Session states and what they allow
 
-A session is shown in one of six states, and the state decides what the interface offers. **One rule governs all of it** — whether the surface accepts input, whether a control is enabled, and whether the session appears in the list.
-
-The table covers **both planes**, because a state means the same thing on each and a second table would be a second place for them to disagree.
+Unchanged, and one rule still governs all of it — whether the surface accepts input, whether a control
+is enabled, and whether the session appears in the list. `abilitiesFor()` remains the single source.
 
 | State | Shown as | Terminal plane | Conversation plane | Available |
 |---|---|---|---|---|
 | provisioning | starting | progress, no input | progress, composer refuses | end |
 | ready / running | ready / running | live | live | reconnect, end, delete |
-| rotating | **updating** | progress, no input | **progress, composer refuses, and says why** | nothing |
-| idle | idle | history, read-only | history, read-only — **unless it is waiting on an approval** | **revive**, delete |
+| rotating | **updating** | progress, no input | progress, composer refuses, and says why | nothing |
+| idle | stopped | history, read-only | history, read-only — **unless it is waiting on an approval** | **revive**, delete |
 | terminated | ended | history, read-only | history, read-only | delete |
 
-**A session that cannot be typed into always says why**, in the owner's terms, on the surface showing it — not only in a panel that may be describing something else.
+**A session that cannot be typed into always says why**, in the owner's terms, on the surface showing
+it. `idle`, `recovering` and `unknown` are **not failures** and none of them takes `--fail`.
 
-**A session with no sandbox still shows its history**, read-only. Stopping releases what it costs; it does not hide what it did. Keystrokes into a read-only terminal are dropped rather than buffered, and a composer on a read-only session refuses rather than accepting text it will not send.
+**The wording of a refusal belongs to the reason it exists, not to the state's name.** This is the one
+substantive change to this section, and it fixes a live defect: a session parked on `requires_action`
+is `idle`, so the composer told its owner *"This session is stopped. Revive it to carry on."* while an
+approval it could answer sat directly above. A session waiting on an answer says it is **waiting for
+you**, in the rail, in the header and at the composer, and offers the answer rather than a revive.
 
-### `rotating` is the one the interface must get right
-
-`API_Overview.md` §2 does not describe this state, it instructs: *"Clients must refuse input while it lasts — a keystroke sent now reaches a sandbox being torn down, so it would be accepted and then lost."* `CLAUDE.md` §5 puts it more bluntly: accepting input that would be lost with the outgoing pod is worse than briefly refusing it.
-
-Refusing is the requirement. **Saying why is the design**, and it is on the surface rather than in a panel, because a composer that has quietly stopped working is the thing people report as broken.
-
-### `idle` and `recovering` are not failures
-
-`idle` with `stop_reason: requires_action` is a session waiting for its owner, and is the most alive a session gets. `recovering` with reason `runtime_absent` is normal during an idle-to-revive cycle. `unknown` with `runtime_observation_unavailable` means the control plane cannot see the runtime *right now* — not that the session is dead.
-
-None of the three takes `--fail`. Drawing them as errors trains owners to ignore real ones.
-
-**Ended sessions leave the list, except when they failed.** A session that died on its own is the one its owner is looking for.
-
-**Revive is the primary action wherever it is offered.**
-
-### Waiting
-
-Provisioning takes seconds on a warm node and a minute on a cold one. The wait is animated as a left-to-right character wave — 1.4s loop, 45ms stagger, 0.28em lift — because a spinner is forbidden and a wave makes no claim about progress. Beside it, a bar reflecting **steps the control plane actually reported**, with the step named in words. It never advances on a timer: a bar that moves without anything happening costs the user their trust in every other bar. Under reduced motion the animation is removed and the message stays.
-
-**A session that ends badly says why.** Terminating normally and failing to start are different events and must not read the same.
+Ended sessions leave the list, except when they failed. **Revive is the primary action wherever it is
+offered.**
 
 ---
 
-## 12. Sessions — the tabs arrangement
+## 12. Sessions — the list arrangement
 
-Three columns: the session list, **the session's surface**, and what is known about the session. Which surface is drawn is the session's to decide, not the arrangement's — §18.6.
+Two columns and a drawer: the session list, the session's surface, and — when asked for — what is
+known about it.
 
-**The rail lists sessions by when they started, in Singapore time**, newest first and reversible, with the date shown only once a session is no longer from today. A fixed zone means the same session reads the same to everyone who sees it, and the zone is stated in the status band rather than assumed.
+**The rail is 320px** and lists sessions by when they started, in Singapore time, newest first and
+reversible, with the date shown only once a session is no longer from today. A row carries a status
+dot, the start time at `--text-ui` weight 600, the kernel in mono `--text-label`, and **one line
+saying what the session last did**, which never wraps. The selected row takes `--raised`,
+`--edge-selected` and `--lift-rest`.
 
-A rail row carries a status dot, the time, **one line saying what the session last did**, and its kernel and profile. The last-activity line is what makes a list of times into a list of work; it never wraps.
+The rail's second band carries the one full-width primary key — **New session** — and a row of filter
+pills carrying counts (`All 5`, `Live 2`, `Stopped 3`) and the sort control.
 
-**The details panel is a sheet under the surface, not a column beside it.** It is reference material: read when somebody wants to know which agent is answering or why a session stopped, and the rest of the time it is width the surface should have. Open, it is 412px and its facts sit wide rather than tall; closed, it is a 40px band carrying a one-line summary. Its columns scroll inside it.
+**What is known about the session is a right drawer, 360px, closed by default.** It is reference
+material, and the previous revision's 412px bottom sheet took that height from the surface it was
+describing — on a 900px window, a third of the terminal. As a drawer it takes width from a surface
+that has 1000px of it and none of the height. It carries the session's facts in labelled rows, who
+started it, what it reaches, its identifier as a copyable control, and — at its foot, away from
+everything reversible — **End session** and **Delete**.
 
-**A session's lifecycle controls live in the session header**, at the head of the surface they act on — visible without opening anything. §11 decides which are enabled; each disabled one states its reason.
+**A session's lifecycle controls live in the session header**: one primary, one secondary, and the
+overflow menu (§7). The header also carries the subject, the status pill, and the kernel and plane in
+mono.
 
-**A failed action is reported above the surface, never in place of it.** One `--fail` band with `role="alert"` at the head of the column, outside whatever the column is showing. Placement is the substantive part of this rule: a failure belongs to one request about one session, and the surface beneath it may hold a dozen live terminals — replacing it would cost eleven sessions their connection to say something about the twelfth. **Nothing that reports a failure may destroy work that did not fail.** The band reports the most recent attempt and every action clears it as it starts.
+**A failed action is reported inside the column, above the surface and never in place of it.** It is a
+`--fail` notice card at the head of the reading column, carrying what failed, what was not changed,
+and the API's own code in identifier style, with a dismiss. Placement is the substantive part: a
+failure belongs to one request about one session, and the surface beneath it may hold a dozen live
+terminals. **Nothing that reports a failure may destroy work that did not fail.** Every action clears
+it as it starts.
 
 ---
 
 ## 13. Sessions — the canvas arrangement
 
-Every listed session is a framed node with its own terminal on one pannable surface. **The canvas replaces the middle column and nothing else**: the bar, the rail and the sheet keep their places, because they are the same facts in either arrangement.
-
-**One selection, two arrangements.** The session the rail marks active and the node the canvas focuses are the same fact. Changing arrangement never changes which session is selected.
+Every listed session is a framed node on one pannable surface. **The canvas replaces the middle column
+and nothing else.** One selection, two arrangements: the session the rail marks active and the node the
+canvas focuses are the same fact.
 
 ### Node framing
 
 | Property | Value |
 |---|---|
 | Size | `--canvas-node-w` 420px × `--canvas-node-h` 280px |
-| Gap and surface padding | `--space-4` |
-| Background | `--surface`, body on `--ground` |
-| Border | 1px `--rule` |
-| Shadow | `--press-card-rest` |
+| Gap and surface padding | `--space-5` |
+| Background | `--surface` on a `--sunken` floor |
+| Border | 1px `--rule`, `--radius-md` |
+| Header | 38px, 1px `--rule` underline: dot, start time, kernel and state in mono |
 
-**Fixed size, deliberately.** A node's size *is* the geometry its runtime is told to draw at: a 420×280 node asks for roughly 47 columns, and a node that changed width as siblings came and went would re-wrap everything the agent has drawn. Output already wrapped at 47 columns stays wrapped at 47 columns, on the canvas and in the transcript afterwards. Choosing the canvas therefore resizes every attached session once, and that does not undo — which is a real cost of this arrangement and must not be described as a display preference that stops at the browser.
+**Fixed size, deliberately.** A node's size *is* the geometry its runtime is told to draw at: a
+420×280 node asks for roughly 47 columns, and a node that changed width as siblings came and went
+would re-wrap everything the agent has drawn. Choosing the canvas therefore resizes every attached
+session once, and that does not undo.
 
-The grid fills whole columns and overflows in both directions, so panning means something in both.
+### What a node draws
 
-Each node carries a header above its terminal on a 1px `--rule` underline: the start time in `sm`, **the same label the rail uses**, then the kernel and the lifecycle word in `2xs` uppercase. Inside a node the terminal drops its own border — the node frame is that border.
+| Plane and state | The node draws |
+|---|---|
+| terminal, interactive | its terminal, live |
+| terminal, read-only | its terminal, live, and the word `read-only` in its header |
+| **conversation** | **a recap: the last thing the agent said, what is running, and one key reading `Open to reply`** |
+| rotating | the sentence, and a bar reflecting reported steps |
+| failed | what failed, in the kernel's words, and `Start again` |
+| past the budget | why it is unattached, and `Attach` |
 
-### Focus, and how it differs from selection
+**The conversation recap is the substantive change here.** The previous revision drew the whole
+conversation surface inside the node — stream, composer, usage band, all of it — inside 420×280,
+where the composer's placeholder clipped mid-word and the send key had 40px of room. A conversation
+needs a reading column (§5) and a canvas node cannot give it one, so the node shows what a glance
+wants and hands the reply to the surface that can hold it.
 
-Exactly one node is focused. **The focused node is the only one that receives keyboard input** — a correctness property, not a styling one.
+### Focus, selection, and the cost
 
 | State | Treatment |
 |---|---|
 | Resting | 1px `--rule`, `--ink-2` header |
 | Selection — pointer over the node | 1px `--rule-2`. Border weight only. |
-| Focus — this node takes the keys | 1px `--accent`, the impression in accent, `--ink` header, `aria-pressed` on its handle |
+| Focus — this node takes the keys | 1px `--accent`, `--focus-node`, `--ink` header, `aria-pressed` on its handle, and the words `typing here` |
 
-Hover changes weight within the neutral ramp; focus changes hue. **Focus is never a second opinion on §11**: a provisioning, rotating, idle or ended session stays read-only however plainly it is being looked at, and its node says `read-only` in words in its header.
+**Focus is never a second opinion on §11.** The canvas is one tab stop; arrows move by one and by a
+row, clamped and never wrapping, and are not intercepted inside a terminal. **Unfocused terminals are
+never dimmed, tinted, greyed or covered.**
 
-**Unfocused terminals are never dimmed, tinted, greyed or covered.** They are attached and rendering live output.
-
-### Keyboard, pointer, panning, cost
-
-- The canvas is one tab stop: the focused node's header handle. Arrows move by one and by a row, Home and End jump to the ends, movement clamps and never wraps. Arrows are **not** intercepted inside a terminal — there they are shell history. Tab from the handle enters the terminal. A move is announced through a polite live region naming the session and its position.
-- A gesture on a node's chrome focuses it and parks the caret on its handle; a gesture on its terminal focuses it and leaves the caret in the terminal, so one click is enough to type. Focus placement is always explicit.
-- The viewport scrolls and drags within itself; the page still does not scroll. A drag inside a node belongs to that node's terminal.
-- **At most 12 nodes are attached at once.** Sessions past the budget appear as framed, labelled nodes with no terminal, saying so and inviting selection; focusing one attaches it and detaches whichever attached node has gone longest without focus. **Truncation is never silent** — the status band states how many are unattached and why.
-- The only motion is the 140ms border and shadow transition when focus moves.
+**At most 12 nodes are attached at once**, and truncation is never silent: the footer band states how
+many are unattached and why. **The surface overflows on purpose and says so** — a fade at the trailing
+edge and a pill reading *"drag or → to pan"* with the session count. A grid that runs past the
+viewport with nothing marking the cut reads as a clipped layout rather than a canvas.
 
 ---
 
 ## 14. Operations
 
-**A page, not a dialog.** It is the one surface that shows many rows at once, and a 560px dialog was why its rows truncated. As a page its four views also have somewhere to live without stacking chrome inside a modal.
+**A page, not a dialog**, and the only surface that shows many rows at once. The view is absent unless
+the control plane says the caller holds a capability it can act on — presentation, never protection.
+Each of its four views is offered on its own capability, and a view is never drawn empty because of
+entitlement.
 
-**The view is absent unless the control plane says otherwise.** The identity surface reports the caller's capabilities and the switch offers `operations` only to a caller holding one this page can act on. This is presentation, never protection — the API refuses on its own and would refuse a hand-written request just the same. Both halves are required.
-
-**Each view is offered on its own capability**, matching the API. A caller holding two sees two. A view is never drawn empty because of entitlement: an empty list must always mean "there is nothing", or the page teaches people to misread it.
-
-The four views are switched by a tablist in the page's second band: mono `xs` uppercase labels, selected by `--accent` text **and** a 2px `--accent` bottom border **and** `aria-selected`.
+The page carries a `--text-page` title with a one-line description, then the four views as an
+underlined tablist at `--text-ui` — selected by weight, `--accent` ink, a 2px `--accent` bottom border
+**and** `aria-selected`.
 
 ### Record list
 
-Rows, not a table: rows are read one at a time and a table's column rules earn nothing here.
+Rows inside one `--radius-md` card, not a table.
 
-- A leading tabular-nums timestamp, a `md` primary label, `xs` `--ink-3` mono metadata beneath.
-- Hairline separators, no zebra striping, no hover highlight, no row-level click target. Nothing on this page navigates.
+- A leading tabular-nums timestamp at 190px, a `--text-body` primary line, `--text-meta` mono
+  metadata beneath.
+- Hairline separators, no zebra striping, no hover highlight, no row-level click target. Nothing on
+  this page navigates.
 - **Newest first, always.** Filters narrow without ever changing the order.
 - An empty list says what would have been there, in a sentence.
 
-### Naming people
+**A person is their name, then their email — never their subject identifier.** Where the directory
+knows nothing, the identifier is shown in identifier style. An action with no established identity
+reads "Not signed in".
 
-**A person is their name, then their email — never their subject identifier.** Where the directory knows nothing about a subject, the identifier is shown in identifier style so a reader can tell they are looking at an identifier. An action with no established identity reads "Not signed in", which is a fact, rather than an empty cell, which is an omission.
-
-### Unknown is not empty
-
-A provider that could not be asked renders as **unknown**, carrying the reason, and never as a provider running nothing. The running total is withheld entirely while any provider is unobservable: a partial total presented as a total is the same lie as an empty list. This mirrors the API contract and must not be simplified for tidiness.
-
-### Acting on somebody else's session
-
-| Control | Confirms | Available when |
-|---|---|---|
-| Stop | no | the session has a runtime to release |
-| Terminate | yes, inline | the session has not already ended |
-
-Both are disabled with a stated reason rather than removed. Deleting somebody else's session is not offered at all: the API does not expose it, and stopping is reversible where destroying a history is not.
+**Unknown is not empty.** A provider that could not be asked renders as unknown carrying its reason,
+and the running total is withheld entirely while any provider is unobservable — drawn as a quiet
+notice stating why, not as an absence.
 
 ---
 
 ## 15. The signed-out surface
 
-A statement, and a terminal that already works.
-
-The prompt is a real `<input>`, mounted and focused from the first frame, so time-to-interactive is zero and the introduction is decoration over an already-usable field. A visitor who types at 300ms keeps every character. The visible text **is** `input.value` — no mirror element, so the whole class of mirror-desync defects cannot occur.
+A statement, and a terminal that already works. Timings are unchanged:
 
 | Property | Value |
 |---|---|
@@ -476,132 +522,143 @@ The prompt is a real `<input>`, mounted and focused from the first frame, so tim
 | Caret blink | 530ms |
 | **Time to interactive** | **0ms; introduction complete under 3.2s, hard cap 4s** |
 
-- The animation is **skippable**: any keypress or click completes it, and a dim hint says so after the boot block.
-- The sign-in affordance appears only once the visitor has typed a character. Do not nag an empty prompt.
-- Their text survives the round trip and becomes the first turn of their first session.
-- `prefers-reduced-motion: reduce` — all text present instantly, no typing, no blink, no skip hint. Fully usable, not a degraded fallback.
+The prompt is a real `<input>`, mounted and focused from the first frame. The animation is skippable
+by any keypress or click. The sign-in affordance appears once the visitor has typed a character. Their
+text survives the round trip and becomes the first turn of their first session. Under
+`prefers-reduced-motion: reduce` all text is present instantly, with no typing, no blink and no hint.
 
-The page carries the same app bar and status band as every other page: a visitor and an owner are looking at one product.
+The layout is a statement column beside a terminal panel: an availability tag, the headline at
+`--text-display`, the lede at `--text-body` + 4, one `--control-h-xl` primary key, and beside it the
+panel with a 40px chrome strip and the introduction inside. The page carries the same app bar and
+footer band as every other page.
 
 ---
 
 ## 16. Responsive
 
-The number of columns changes; the bands never do. 52px header and 40px footer hold at every width, so the page reads as the same shape on a phone as on a desk.
+The number of columns changes; the bands never do.
 
 | Width | Layout |
 |---|---|
-| ≥ 75rem | Three columns. Nothing collapses on its own. |
-| 60–75rem | The rail arrives collapsed to its 48px strip — still a handle, dots still reporting. |
-| < 60rem | The rail leaves the layout and becomes a drawer over it. The terminal keeps the full width. |
-| < 30rem | The app bar drops to 48px and gives the switch and the command field to the drawer. Every target grows to 44px. The status band keeps the zone and the count and drops the build. |
+| ≥ 75rem | Rail, surface, and the drawer on request. Nothing collapses on its own. |
+| 60–75rem | The rail arrives collapsed to its 56px strip; the drawer becomes an overlay. |
+| < 60rem | The rail leaves the layout and becomes a drawer over it. The surface keeps the full width. |
+| < 30rem | The app bar drops to 52px and gives the switch and the command trigger to the drawer. Every target grows to 44px. The reading column is the full width. The footer keeps the zone and the count and drops the build. |
 
-**The canvas arrangement is offered at 60rem and above only.** A grid of terminals in a narrow window is several terminals nobody can read; below that the toggle is disabled with its reason, per §11, rather than removed.
+**The canvas arrangement is offered at 60rem and above only**, disabled with its reason below that
+rather than removed.
 
 ---
 
 ## 17. The mark
 
-Two-by-two, one cell lit. It is a clock quarter and a fleet with one session live at the same time, and it inherits the checkered logic of the glyph it replaces.
+Two-by-two, one cell lit, inside a 3px-radius square. Built from four squares, so it needs no font, no
+SVG and no asset, survives a 16px favicon, and prints in one colour. The gap scales with the mark:
+8px at 96, 4px at 40, 2px at 18, 1px at 16. The quiet cells take `--rule-3` and the lit cell takes
+`--accent`.
 
-Built from four squares, so it needs no font, no SVG and no asset, survives a 16px favicon, and prints in one colour. The gap scales with the mark so the cells never fuse: 8px at 96, 4px at 40, 2px at 18, 1px at 16. Knockout, on-accent and light variants are the same geometry in two colours.
-
-The wordmark is Geist 500 at `-0.03em`, lowercase. `chrono-bot` in mono stays for anything naming the repository or the API.
+The wordmark is Figtree 600 at `--track-tight`, lowercase. `chrono-bot` in mono stays for anything
+naming the repository or the API.
 
 ---
 
 ## 18. The conversation surface
 
-The other plane a session can be drawn on (§1). Everything here is built from the tokens and patterns §2–§8 already define; a component that needs a value this document does not carry extends this document first.
-
-The whole reason this surface exists is that the platform understands what is happening on it. A terminal shows bytes; a conversation shows a message, a tool call, an approval and a number. **Anything drawn here that could equally have been drawn as scrollback has thrown away the thing this plane was built to obtain.**
-
----
+The plane a session can be drawn on beside the terminal. **Anything drawn here that could equally have
+been drawn as scrollback has thrown away the thing this plane was built to obtain.**
 
 ### 18.1 The message stream
 
-The turn-by-turn record of the conversation: the owner's turns and the agent's, in the order they happened.
+**A reading column, 760px, centred**, with `--space-8` between turns. The two roles are told apart by
+shape as well as ink, which is the change from the previous revision's undifferentiated bands:
 
-**Turns, not bubbles.** A turn is a band of content on the surface, separated from the one before it by a 1px `--rule` and `--space-4` of air. No speech bubbles, no alternating alignment, no avatars. Two things distinguish a turn: a mono `xs` uppercase `--ink-3` label naming who is speaking, and the ink the content takes — the owner's turns in `--ink-2`, the agent's in `--ink`. The agent's words are the ones being read.
+- **The agent's turn is full width and unboxed.** An eyebrow — a `--live` dot, then `CHRONOBOT ·
+  <kernel>` in mono `--text-label` uppercase — then its words at `--text-read` in `--ink` at
+  `--leading-read`. The agent's words are the ones being read, and they get the whole column.
+- **The owner's turn is a block, right-aligned**, at `--text-body` in `--ink` on `--inset`, max 78% of
+  the column, `--radius-lg` with the trailing corner at 4px, with `You · HH:MM` above it. It is
+  short, it is already known, and giving it a shape means the eye finds where a request starts without
+  reading a label.
 
-Content is `md` on the platform stack at `--leading-base`, with `text-wrap: pretty`.
+No avatars. No alternating alignment beyond that one asymmetry. No bubble on the agent's side.
 
-**Where the eye rests when output is long.** The surface is pinned to the newest turn while the newest turn is the one growing, and stops being pinned the moment somebody scrolls up. It does not scroll back down on its own: a person reading something the agent said four turns ago has said what they want. When new content arrives while they are reading, a quiet control at the foot of the surface says how many turns they are behind and returns them — a `--control-h-sm` quiet key, not a jump nobody asked for.
+**Streaming versus committed.** Text arriving is drawn in the same ink and size as text that has
+settled; the only difference is the caret — a 9×17px `--accent` block, `--radius` 1px — which belongs
+to the message being typed and to nothing else. **The message being typed is not a stream entry**: it
+is drawn after the last entry and *replaced* by the committed message, which is what makes the
+equivalence rule hold by construction.
 
-The surface owns its overflow. `body` never scrolls (§5).
+**The equivalence rule.** A turn drawn from history and a turn watched arriving must produce the same
+result. Nothing may be rendered from a streaming frame that is not also derivable from the durable log.
 
-**Streaming versus committed.** Text that is arriving is drawn in the same ink and the same size as text that has settled. Nothing about a message changes when it commits, because a message that restyles itself on commit tells a reader the earlier state was provisional when it was not. A turn still in flight carries the caret — the same 1ch `--accent` block the introduction uses (§15) — and loses it when the turn ends. That is the whole difference.
+**Before the first thing arrives**, the surface draws the §8 pulse with a word, removed the moment
+anything arrives, claiming no progress.
 
-**Before the first thing arrives.** Between the turn starting and anything coming back, the surface draws the §11 wave with a word. A turn that has started and produced nothing is otherwise indistinguishable from a dead stream, and a turn takes as long as the agent takes. It is removed the moment anything arrives, and it claims no progress — which is §11's reason for a wave rather than a bar, unchanged.
+**Where the eye rests when output is long.** Pinned to the newest turn while the newest turn is the one
+growing; unpinned the moment somebody scrolls up, and never scrolling back on its own. A quiet
+`--control-h-sm` key at the foot of the column says how many turns they are behind.
 
-**The message being typed is not a stream entry.** It is drawn after the last entry, in the same band and the same ink as any other, and it is **replaced** by the committed message rather than appended to.
-
-That distinction is what makes the equivalence rule below hold by construction rather than by discipline. History contains no in-flight message: a reload folds no live frames at all, so it has no in-flight message to draw, so the two agree. Modelling it as an entry and remembering to remove it would be the same rule enforced by hand, and the hand is what fails.
-
-The caret follows from this rather than being a second rule: **it belongs to the message being typed and to nothing else.**
-
-**The equivalence rule, which is what this section is really about.** A turn drawn from history and a turn watched arriving must produce the same result. Streaming is liveness and history is the record; if the two disagree, the one a person reloads into is the one they will believe, and the difference is a defect rather than a style. Nothing may be rendered from a streaming frame that is not also derivable from the durable log.
-
-**Fidelity.** The code blocks, lists, headings and inline formatting the agent emitted are rendered as the agent meant them (§1). The frame is styled and the content is not:
-
-- Code blocks take `--font-mono` at `--text-base` on `--inset`, with `--space-3` of padding and `--radius`. They scroll horizontally inside themselves; the surface never does.
-- Inline code takes `--font-mono` at `--text-base` on `--inset`.
-- Lists, headings and emphasis take the type scale §4 already defines and nothing else.
-- **No colour is applied to agent content**, ever. Not syntax highlighting, not a tint per role, not a semantic colour on a word the agent happened to write. `--live`, `--wait`, `--fail` and `--ended` describe session and system state (§2) and describe nothing an agent said.
-
----
+**Fidelity.** Code blocks take `--font-mono` at `--term-size` − 0.5 on `--sunken` inside `--radius-md`
+with a `--rule` hairline, scrolling horizontally inside themselves. Inline code takes `--font-mono` on
+`--inset`. Lists, headings and emphasis take the scale §4 defines. **No colour is applied to agent
+content, ever** — not syntax highlighting, not a tint per role, not a semantic colour on a word the
+agent happened to write.
 
 ### 18.2 Tool calls
 
-A tool call is **structure, not prose**. This is the section that pays for the plane.
+**Structure, not prose**, and the section that pays for the plane. A 40px row on `--raised` inside
+`--radius`, in a stack directly under the turn that made the calls:
 
-**Collapsed by default**, as a `--control-h` row: a disclosure caret at `2xs` in `--ink-3` that flips rather than rotating (§7), the tool's kind, and its target. Both come from the kernel verbatim and are drawn in `--font-mono` at `--text-base` — a kernel's vocabulary for its own tools grows without warning, so an unrecognised kind is rendered as it arrived rather than mapped onto a set this document invented.
-
-**The collapsed row carries enough to identify the call without opening it.** A row reading only "tool call" is a row somebody has to expand to learn anything from, which is scrollback with extra steps.
-
-**A running call is distinguishable from a finished one without reading it**, and a failed one from a successful one:
-
-| State | Treatment |
+| Part | Treatment |
 |---|---|
-| running | the caret's place is taken by the wave §11 uses for waiting, and the row takes `--press-none` |
-| succeeded | `--live` status word, `--ink` target |
-| failed | `--fail` status word, `--ink` target |
+| status glyph | `✓` in `--live` finished · `×` in `--fail` failed · a pulsing `--wait` dot running |
+| kind | the kernel's own word, verbatim, mono `--text-note` in `--ink` |
+| target | the kernel's own word, verbatim, mono `--text-meta` in `--ink-2`, truncating — it is the part that runs long |
+| duration | mono `--text-label` in `--ink-3`, once the call has finished |
+| status word | for a failed or running call, beside the caret, because §2 forbids colour alone |
 
-The status is a **word** as well as a colour, because §2 forbids colour carrying meaning alone.
+A failed row takes a `--fail`-tinted border. **Disclosure, not truncation:** expanded output takes the
+code-block treatment and scrolls inside itself, capped at 120px in the stack; nothing is silently
+shortened.
 
-**Disclosure, not truncation.** A tool call whose output is enormous is agent-emitted content and §1's fidelity rule applies, so it is not silently shortened. Bounding it behind the disclosure is a frame decision and is permitted; dropping the tail of it is not. Expanded output takes the code-block treatment from §18.1 and scrolls inside itself.
-
----
+**The collapsed row carries enough to identify the call without opening it.** An unrecognised kind is
+rendered as it arrived rather than mapped onto a set this document invented.
 
 ### 18.3 Approvals
 
-The card that appears when a session parks on `requires_action`. It is the highest-stakes control in the product and reads as one.
+The highest-stakes control in the product, and it reads as one. It sits in the stream where the turn
+stopped — not above it, not pinned, not floating — on `--raised` inside `--radius-lg` with a 1px
+`--accent` border and `--lift-rest`.
 
-It takes the **card impression** (§3, 5px), a 1px `--accent` border, and sits in the message stream where the turn stopped — not above it, not pinned, not floating. It belongs at the point in the conversation the agent reached.
+It carries, in this order:
 
-It carries three things, in this order:
+1. An eyebrow: `approval · <the kernel's own reason>` in mono `--text-label` on `--accent-wash`, and
+   the time it was asked.
+2. **What is being asked**, as the kernel worded it, verbatim, at `--text-title` + 1 in `--ink` — the
+   largest type on the surface, because it is the sentence the decision turns on. A command inside it
+   takes inline code.
+3. **The answers the kernel offered**, as `--control-h-md` + 2 keys in a row, **rendered from what
+   arrived, never from a hardcoded pair.** The affirmative answer is the surface's one primary key;
+   an answer that abandons the turn is never collapsed into one that refuses this action.
+4. Beside them, in `--ink-3`: *"Your other sessions keep working."*
 
-1. **What is being asked**, as the kernel worded it, at `md` in `--ink`. Verbatim: a kernel that says `Run \`rm -rf build/\`?` is asking about that command, and rewording it into a category loses the one detail the decision turns on.
-2. **Why**, when the kernel said — its own name for the kind of thing it wants to do, at `xs` mono uppercase in `--ink-3`.
-3. **The answers the kernel offered**, as `--control-h` keys in a row. **Rendered from what arrived, never from a hardcoded pair.** A kernel offering three answers gets three keys; the interface has no opinion about how many there are or what they are called.
+**It is not a modal, and this is binding.** A session can sit on an approval while its owner reads
+something else. **It survives a reconnect**, because approvals ride the durable event stream, and is
+drawn from history like everything else.
 
-The affirmative answer is the surface's one accent key (§7). Everything else is quiet. An answer that abandons the turn is not the same as one that refuses this action, and the two are never collapsed into one control.
-
-**It is not a modal, and this is binding.** A session can sit on an approval while its owner is reading something else, and a modal makes every other session in the rail unreachable until they answer. The rest of the interface stays usable while one is pending: the rail can be scrolled, another session opened, the sheet toggled.
-
-**It survives a reconnect**, because approvals ride the durable event stream: a client that closes the tab and returns finds the request waiting and answerable. The surface therefore draws it from history like everything else, and never from having held a connection.
-
-**A session waiting on one says so in the rail.** Its status dot takes `--wait` and its last-activity line says it is waiting for an answer — an approval nobody notices is an agent stopped for no reason anybody can see.
-
----
+**A session waiting on one says so everywhere it appears**: `--wait` dot and *waiting for your answer*
+in the rail, *Waiting for you* as the header's status pill, and at the composer the sentence §11
+requires — *the agent stopped here on purpose* — rather than a claim that the session is stopped.
 
 ### 18.4 The composer
 
-Where a prompt is written and sent, in a band at the foot of the surface.
+A card at the foot of the reading column, on `--raised` inside `--radius-lg` with `--lift-rest`: the
+field, then a row carrying what the session's own policy means, `Interrupt` while a turn is in flight,
+and the primary `Send` with its `↵` hint. The field grows to six lines and then scrolls inside itself.
+Enter sends; Shift+Enter opens a line, stated once beneath the card.
 
-A `--control-h-block` field growing to a maximum of six lines and then scrolling inside itself, and one accent key. Enter sends; Shift+Enter opens a line. The key is disabled while the field is empty, and says so.
-
-**What it does while a turn is in flight is not a style choice.** A second turn arriving mid-turn resolves under the session's `concurrent_input` policy — `reject`, `enqueue`, `interrupt` or `rollback` — chosen at creation and reported in the session's capability document. The composer **reads that policy and behaves accordingly**; it does not invent one and it does not disable itself on a guess:
+**What it does while a turn is in flight is not a style choice.** It reads the session's
+`concurrent_input` policy and behaves accordingly:
 
 | Policy | The composer |
 |---|---|
@@ -610,60 +667,40 @@ A `--control-h-block` field growing to a maximum of six lines and then scrolling
 | `interrupt` | accepts and sends; says sending will stop the turn in progress |
 | `rollback` | accepts and sends; says sending will discard the turn in progress |
 
-The sentence is on the surface beside the key, not in a tooltip (§7).
+The sentence is on the surface beside the key, never in a tooltip. **Steering shows no affordance at
+all where it was not granted** — a control that can never work is not one that is currently
+unavailable — and where it was, it is stated as a tag on the composer's own row.
 
-**Steering is a separate, granted thing.** A session not granted `steer` shows no steering affordance at all — not a disabled one — because there is nothing about the session's state to explain and nothing that would ever enable it. A control that can never work is not a control that is currently unavailable.
-
-**Interrupt lives here**, beside the composer, because it is what somebody reaches for in the same moment and for the same reason. A quiet `--control-h` key, present only while a turn is in flight, and only on a session granted `interrupt` — a kernel that cannot withdraw a prompt is refused by name rather than left waiting.
-
-**A composer on a session that cannot take input refuses, and says why** (§11). It is never merely inert.
-
----
+**A composer on a session that cannot take input refuses, and says why**, drawn as a dashed-border
+card carrying the reason and what to do instead. It is never merely inert.
 
 ### 18.5 Usage
 
-Where what the session has cost is shown, and what is drawn when it cannot be known.
+Beneath the composer, outside its card, in mono `--text-label`: the token count with tabular figures
+and the cost. It updates as the session reports it and is **never estimated**.
 
-In the surface's foot band beside the composer: a mono `xs` label, the token count with `tabular-nums`, and the cost. It updates as the session reports it and is never estimated — a number this interface computed would be a number nobody can reconcile with a bill.
-
-**Absence is a fact, not a zero.** `usage` is a granted capability, and a session that was not granted it says *"not reported"* rather than showing `0`, an empty space, or nothing at all.
-
-This is the same rule §14 already holds for the operations page, which withholds the running total while any provider is unobservable rather than showing a total that is wrong, and it is the same reason: **a reading of the interface that suggests "nothing has been spent" when the truth is "we cannot tell" is a lie the interface told.** A session with no usage grant has often spent a great deal.
-
-A session moved to the terminal plane, which is never granted `usage`, drops the figure rather than leaving the last one it saw on screen.
-
----
+**Absence is a fact, not a zero.** A session not granted `usage` reads *"Usage not reported for this
+session"*. A session moved to the terminal plane drops the figure rather than leaving the last one it
+saw on screen.
 
 ### 18.6 Plane, and changing it
 
-A session's plane is decided when it is created and is a property of the session, not of the view (§1). Moving between them is a deliberate act with a cost, and the interface is honest about the cost.
+A session's plane is decided when it is created and is a property of the session. The affordance is a
+`--control-h-sm` key in the overflow menu naming the plane it moves to, **absent — not disabled — when
+the kernel does not advertise the other plane**. It confirms inline, stating the two costs that are
+not obvious: the turn in flight is lost, and the session is briefly not interactive.
 
-**The affordance** is a quiet `--control-h-sm` key in the session header, beside the lifecycle controls, naming the plane it moves to. It is **absent — not disabled — when the session's kernel does not advertise the other plane**, for §18.4's reason: a control that can never work is not one that is currently unavailable.
+**While it runs, this is `rotating`** and §11 applies without exception.
 
-**It confirms, inline** (§7), in place of the header's own controls. The confirmation states the two things that are true and are not obvious:
-
-- the turn in flight is lost
-- the session is briefly not interactive
-
-**While it runs, this is `rotating`** and §11 applies without exception: input refused, the reason on the surface, and nothing accepted that would be dropped.
-
-**Afterwards, the boundary is drawn.** A rotation carries a session's conversation forward from a snapshot, and anything after that moment did not travel. §11 requires the moment to be shown; on this plane it is not a status chip but **a rule across the message stream at `rotated_at`, labelled with the time in the display zone**, at the point history stops being continuous. That is the difference between an owner who trusts the transcript and one who does not: a gap they can see is a gap they can recognise, and a gap they cannot is one they will read as the agent having forgotten.
-
-**Both refusals are drawn, never hidden.** A kernel that does not advertise the other plane, and a conversation that cannot be resumed on the other side, both come back as typed errors naming what is missing. The interface reports what the API said — §14's existing rule, applied here.
-
----
+**Afterwards, the boundary is drawn**: a labelled rule across the reading column at `rotated_at` — the
+label in `--wait` mono `--text-label`, a hairline fading out beside it, and the sentence *"Anything
+after that moment did not travel."* A gap somebody can see is a gap they can recognise.
 
 ### 18.7 What the conversation surface does not do
 
-**It renders no terminal.** Not a small one, not an embedded one, not a fallback one. A session that needs a terminal has its plane changed (§18.6).
-
-**It offers no operation AG-UI does not project.** `API_Overview.md` §1's matrix gives AG-UI no `screen_snapshot` and no `resize_terminal`: a screen and a geometry are terminal facts. A person looking for either is told the terminal plane is where they live, rather than left hunting for a control that was never going to exist.
-
-**Where it withholds something, it is reporting what the API says**, exactly as §14 already says of Operations. Every refusal names the capability it lacks, on screen and not only in a console — an API that names what is missing (`API_Overview.md` rule 4) is worth nothing if the interface renders it as "something went wrong".
-
-**It never renders a credential.** What a session may reach is a fact about its configuration and is shown (§11); what it holds is not, and appears nowhere.
-
-**What the terminal can do that this cannot, and what to do instead.** Stated here rather than discovered, because a person hunting for a control that was never going to exist blames the interface and then themselves.
+Unchanged. It renders no terminal — not a small one, not an embedded one, not a fallback one. It offers
+no operation AG-UI does not project. Where it withholds something it is reporting what the API said,
+and every refusal names the capability it lacks on screen. It never renders a credential.
 
 | Wanted | On this plane | Where it lives |
 |---|---|---|
@@ -674,47 +711,47 @@ A session's plane is decided when it is created and is a property of the session
 | Steer mid-turn | under the session's own policy; no affordance where it was not granted | — |
 | Read what it has spent | where the kernel reports it; "not reported" otherwise (§18.5) | — |
 
-The first three are one answer: **the plane changes, the session does not**. It keeps its identifier, its history and its place in the rail, and §18.6 is the whole of what that costs.
-
 ### 18.8 What the agent is working through
 
-The agent's reasoning, while it reasons. A turn spent thinking is otherwise indistinguishable from a turn spent stuck, and thinking is most of what a long turn is.
+**Liveness, and never in the record.** Removed when the turn ends; a reload shows none of it.
 
-**It is liveness, and it is never in the record.** It is removed when the turn ends and a reload shows none of it.
+**Collapsed by default** to one `--radius-pill` key reading *"Thought for 4s · not kept after this
+turn"*, opening to a height-capped band on `--raised` pinned to the newest. The previous revision drew
+it as an always-open band, which put the least durable content on the surface at the same weight as
+the conversation. The words that make it safe to lose stay on the control whether it is open or not.
 
-That is stated on the surface, in words, and not only here — a reader who saw reasoning and reloaded to find it gone will otherwise report it as lost work. It is also why none of it may be recorded: §18.1 requires a turn drawn from history and a turn watched arriving to produce the same result, so a durable thought is a thought that gets replayed, and somebody reloading to check what the agent decided would watch it think a second time. The turn's own boundaries already say when the thinking happened.
+**No colour, ever**, and it is not announced: the band changes many times a second, and a live region
+there would make the surface unusable with a screen reader.
 
-**One band, above the message being typed**, because that is the order it happens in. Height-capped with its own scroll, pinned to the newest: reasoning is unbounded and arrives fast, and a band that grew without limit would push the conversation off the screen while saying less than any line of it. Nobody scrolls back through it — it is about to be gone.
-
-**No colour, ever.** §18.1's fidelity rule applies unchanged: `--ink-2` at `--text-base`. `--live`, `--wait`, `--fail` and `--ended` describe session and system state (§2) and describe nothing the agent thought. The label is mono `xs` uppercase `--ink-3` and carries the §11 wave while reasoning is arriving.
-
-**A session whose kernel does not reason draws nothing at all** — not an empty band. §18.4 already settles this: a thing that can never appear is not one that is currently unavailable, and an empty box suggests an agent thinking silently.
-
-**It is not announced.** The band changes many times a second, and a live region here would make the surface unusable with a screen reader. The message that follows is what is worth hearing, and it is announced.
-
----
+**A kernel that does not reason draws nothing at all** — not an empty band, and not an empty key.
 
 ### 18.9 A run that failed
 
-**Drawn in the message stream, at the point it stopped.** Not as a band above the surface and never in place of it — §12 already settles that for a failed *action*, and the same reasoning is sharper here: a failure has a position. It happened after the last tool call and before nothing, and what the agent had already done stays readable beside it. A failure hoisted out of the stream loses the one thing that says what the session was doing when it stopped.
+Drawn in the stream at the point it stopped, as a `--fail` notice carrying: what failed in the
+kernel's own words, **the ability it lacked, named, and only where the failure was a refusal**, and
+the stop reason as the API spells it in identifier style. The word carries the meaning and the ink
+reinforces it.
 
-**The word and the ink, never the ink alone.** `--fail` on the label, and the label says the run failed. §2's rule is not relaxed because the meaning feels obvious.
+**A session being carried onto another runtime is not a failure**, and the two arrive on the same
+frame. What distinguishes them is stated by the API rather than guessed from wording; where the
+distinction is absent the frame is drawn as a failure, that being the safer of the two to be wrong
+about. A new run clears it.
 
-**Three things, in this order.**
+---
 
-| | |
-|---|---|
-| What failed | the kernel's own words, verbatim, as §18.2 already requires of a tool call's status |
-| The ability it lacked | **named**, and only when the failure was a refusal |
-| The stop reason | as the API spells it, in identifier style |
+## 19. What this revision did not change
 
-The middle row is the whole point of the section. `API_Overview.md` rule 4 asks errors to name what is missing, and §18.7 already says every refusal names its capability on screen rather than only in a console. A refusal is arrived at typed — the control plane knows *which* ability was absent — and an interface that renders it as "something went wrong" has thrown away the only part its reader could act on. Most failures name nothing, and a name invented for those is worse than the absence: it would be read as one, and acted on.
+Stated so nothing here is "fixed" by somebody who assumed a redesign touches everything.
 
-**A session being carried onto another runtime is not a failure.** This is the trap, and it is not obvious: a rotation ends the run — the runtime behind it is being torn down — and reaches a client on the *same frame* a genuine failure does, because the protocol has one event for a run ending badly. §11 forbids `rotating` taking `--fail` and §18.6 already specifies how the boundary itself is drawn, so the two must be told apart before either is drawn. What distinguishes them is stated by the API rather than guessed from wording: a handover says the session is coming back, and a client that cannot read that draws every rotation as a fault.
-
-Where the distinction is absent — an older control plane that does not send it — the frame is drawn as a failure. That is the safer of the two to be wrong about: a handover drawn as a failure is confusing, and a failure drawn as a handover tells somebody their session is returning when it is not.
-
-**A new run clears it**, entry and all. It belonged to the run that ended.
+- **§1's information architecture.** Two views, two planes, two arrangements, one page frame, no
+  navigation, no router, no URL.
+- **Every capability rule.** A control that can never work is absent; one that is currently
+  unavailable is disabled and says why. Absence is a fact, not a zero. A refusal names what is missing.
+- **The equivalence rule** (§18.1) and the fidelity rule (§1).
+- **Terminal hardening** (§9) and the canvas node's fixed geometry (§13).
+- **The landing's timings** (§15) and the reduced-motion equivalences throughout.
+- **`abilitiesFor()` as the single source of enablement**, and the session-state table's meanings.
+- **Singapore time**, stated rather than assumed, and newest-first ordering everywhere.
 
 ---
 
@@ -743,3 +780,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-18 | Added §18.9 A run that failed. §11 already said a session that ends badly says why and §18.7 already said every refusal names its capability on screen rather than only in a console; neither was drawn, because the conversation surface folded a failed run into state nothing read, so a run that failed looked exactly like a run still going — nothing at all. Established that a failure is drawn in the stream at the point it stopped rather than in a band above it, on the same reasoning §12 uses for a failed action and one step further: a failure has a position, and what the agent had already done stays readable beside it. Established the three things it says and their order — what failed in the kernel's own words, the ability it lacked **named** and only where the failure was a refusal, and the stop reason as the API spells it — and that most failures name nothing, since a name invented for those would be read as one and acted on. Recorded the trap that made this worth writing down: a session being carried onto another runtime ends the run and arrives on the *same frame* a genuine failure does, because the protocol has one event for a run ending badly, so a client that cannot tell them apart draws every rotation as a fault — which §11 forbids outright. What distinguishes them is stated by the API rather than inferred from wording, and where it is absent the frame is drawn as a failure, that being the safer of the two to be wrong about. |
 | 2026-08-18 | Amended §18.1 with what a turn looks like while it is still running, which the section had described only for its two settled ends. Between the turn starting and anything arriving the surface draws the §11 wave with a word: a turn that has started and produced nothing is otherwise indistinguishable from a dead stream, and a turn takes as long as the agent takes. Established that the message being typed is **not a stream entry** — it is drawn after the last entry, in the same band and ink as any other, and is *replaced* by the committed message rather than appended to. That is what makes the section's own equivalence rule hold by construction rather than by discipline: history contains no in-flight message, so a reload folds none and has none to draw, and the two agree without anybody remembering to make them. Modelling it as an entry and removing it on commit would be the same rule enforced by hand, and the hand is what fails. The existing caret rule now follows from that rather than standing as a second one: the caret belongs to the message being typed and to nothing else. |
 | 2026-08-18 | Added §18.8 What the agent is working through. A turn spent thinking was indistinguishable from a turn spent stuck, and thinking is most of what a long turn is. Established that reasoning is **liveness and never in the record** — removed when the turn ends, absent after a reload — and that the surface says so in words rather than leaving it to this document, because a reader who saw reasoning and reloaded to find it gone reports it as lost work. Recorded why it may not be durable: §18.1 requires a turn drawn from history and a turn watched arriving to produce the same result, so a durable thought is one that gets replayed, and somebody reloading to check what the agent decided would watch it think a second time; the turn's own boundaries already say when the thinking happened. One band above the message being typed, height-capped with its own scroll pinned to the newest, since reasoning is unbounded and arrives fast and would otherwise push the conversation off the screen while saying less than any line of it. **No colour, ever** — §2's semantic inks describe session and system state and describe nothing the agent thought — with the label carrying the §11 wave while reasoning arrives. A kernel that does not reason draws nothing at all rather than an empty band, on §18.4's existing rule. And it is not announced: the band changes many times a second, and a live region there would make the surface unusable with a screen reader, while the message that follows is announced and is what is worth hearing. |
+| 2026-08-18 | Quiet instrument: full redesign of the frontend's visual language, replacing the Ground control letterpress system of 2026-08-17. Kept the accent and every rule in §19, changed everything that made the interface hard to read. Replaced the neutral ramp with warm near-neutrals in five steps per theme (ground/surface/raised/inset/sunken), recording worst-case measured contrast per theme — dark `--ink-3` 4.69:1 on `--inset`, light `--ink-3` 5.06:1 on `--inset` — and set `--ink-3` to `#8A9082` dark and `#64685E` light so 11–12px metadata clears AA on every surface it sits on, including a disabled control's own fill, which the previous revision left at 2.5:1. Retired letterpress depth for two levels and no others — one for a thing resting on the page, one for a thing floating over it — with hover raising the background a step rather than translating into an impression, and nothing in the interface moving on hover. Replaced the single 2px radius with five steps from 8px to a pill, since a hard offset shadow was the only reason a sharp corner was required. Adopted Figtree and JetBrains Mono, self-hosted under the OFL, and retired Geist and Geist Pixel; raised the reading sizes so the agent's own words are 16px at 1.65 and nothing read at length is below 15px, which is what "squeezed" meant. Capped the conversation at a 760px centred reading column, gave the owner's turns a right-aligned block on `--inset` and the agent's turns the full column unboxed, so the two roles are told apart by shape as well as ink. Moved what is known about a session from a 412px bottom sheet to a 360px right drawer, because the sheet took its height from the surface it was describing. Reduced the session header to one primary, one secondary and an overflow menu, and moved End and Delete to the foot of the drawer. Made the command trigger a working `⌘K` plate over the surfaces it can already reach, rather than a disabled field in the middle of the bar. Collapsed tool calls to 40px rows carrying a status glyph, the kernel's own kind and target, a duration and a status word, and collapsed reasoning to one key stating that it is not kept. Replaced the conversation surface drawn inside a 420×280 canvas node — where the composer clipped mid-placeholder — with a recap of the last thing the agent said and a key that opens the surface which can hold a reading column, and gave the canvas an explicit trailing fade and pan affordance so a viewport narrower than the grid reads as pannable rather than clipped. Fixed one live defect in §11's wording rather than its rules: a session parked on `requires_action` is `idle`, and told its owner it was stopped while an approval it could answer sat above the composer; it now says it is waiting for them, in the rail, the header and the composer. Fixed the double hairline where a panel and its first band both drew a border on the shared edge, and added §5's rule that one boundary draws one hairline. |
