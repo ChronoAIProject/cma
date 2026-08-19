@@ -290,3 +290,71 @@ describe('what a session reaches', () => {
     expect(unreported.container.textContent).toContain('Not reported by the control plane');
   });
 });
+
+describe('the plane strip', () => {
+  const BOTH = [{ id: 'codex', modes: ['terminal', 'conversation'] as const }];
+  // The one it is already on: a kernel offering only the *other* plane is a
+  // kernel that does offer a move, which is a different case.
+  const ONE = [{ id: 'codex', modes: ['terminal'] as const }];
+
+  it('is absent where the kernel offers only one plane', () => {
+    // §7: what can never work is absent rather than disabled. A strip with a
+    // single tab is a control that cannot do anything.
+    render(<SessionHeader session={session('running')} kernels={ONE} onChangePlane={vi.fn()} />);
+    expect(screen.queryByRole('tablist', { name: 'Plane' })).toBeNull();
+  });
+
+  it('names both planes and marks the one showing', () => {
+    render(<SessionHeader session={session('running')} kernels={BOTH} onChangePlane={vi.fn()} />);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(2);
+    expect(tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true')).toHaveLength(1);
+  });
+
+  it('moves the session when the other plane is chosen', async () => {
+    const user = userEvent.setup();
+    const onChangePlane = vi.fn();
+    render(
+      <SessionHeader session={session('running')} kernels={BOTH} onChangePlane={onChangePlane} />,
+    );
+
+    const other = screen
+      .getAllByRole('tab')
+      .find((tab) => tab.getAttribute('aria-selected') !== 'true');
+    await user.click(other!);
+    expect(onChangePlane).toHaveBeenCalledOnce();
+  });
+
+  it('refuses the move while the session cannot be carried, and says why', async () => {
+    /*
+     * A move is a rotation of a live runtime, so a session that has none has
+     * nothing to carry. The tab is dimmed with the reason rather than removed
+     * — this is a state, not a missing ability, and the two are different
+     * answers.
+     */
+    const user = userEvent.setup();
+    const onChangePlane = vi.fn();
+    render(
+      <SessionHeader session={session('idle')} kernels={BOTH} onChangePlane={onChangePlane} />,
+    );
+
+    const other = screen
+      .getAllByRole('tab')
+      .find((tab) => tab.getAttribute('aria-selected') !== 'true');
+    expect(other).toHaveAttribute('aria-disabled', 'true');
+    expect(other).toHaveAttribute('title');
+
+    await user.click(other!);
+    expect(onChangePlane).not.toHaveBeenCalled();
+  });
+
+  it('never disables the tab already showing', () => {
+    // Disabling the current tab is how a strip ends up with nothing
+    // selectable on it at all.
+    render(<SessionHeader session={session('idle')} kernels={BOTH} onChangePlane={vi.fn()} />);
+    const current = screen
+      .getAllByRole('tab')
+      .find((tab) => tab.getAttribute('aria-selected') === 'true');
+    expect(current).toHaveAttribute('aria-disabled', 'false');
+  });
+});
