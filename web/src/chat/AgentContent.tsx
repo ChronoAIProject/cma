@@ -118,17 +118,65 @@ export function blocksOf(text: string): Block[] {
   return blocks;
 }
 
-/** Inline code, and nothing else. Everything else is the text it was. */
-function inline(text: string): ReactNode[] {
-  return text.split(/(`[^`]+`)/).map((part, index) =>
-    part.startsWith('`') && part.endsWith('`') && part.length > 2 ? (
-      <code className="agent__code" key={index}>
-        {part.slice(1, -1)}
-      </code>
-    ) : (
-      part
-    ),
-  );
+/**
+ * Inline code and emphasis — §18.1: "Lists, headings and emphasis take the
+ * scale §4 defines."
+ *
+ * Emphasis was required from the day §18 was written and never rendered, so
+ * `**do not**` reached the reader as four asterisks around a word. An agent
+ * emphasising something is an agent saying it matters, and printing its
+ * punctuation is the surface refusing to hear that.
+ *
+ * Code is taken out first and its contents are left alone: `` `a ** b` `` is
+ * an expression, not emphasis, and a pass that ran the other way round would
+ * quietly rewrite what the agent wrote. Weight and slant carry it, never
+ * colour — §18.1 forbids colour on agent content outright.
+ */
+export function inline(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  text.split(/(`[^`]+`)/).forEach((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      out.push(
+        <code className="agent__code" key={`c${String(index)}`}>
+          {part.slice(1, -1)}
+        </code>,
+      );
+      return;
+    }
+    out.push(...emphasis(part, index));
+  });
+  return out;
+}
+
+/**
+ * Strong and emphatic runs, in the two spellings agents actually use.
+ *
+ * `**` and `__` are strong; single `*` and `_` are emphatic. Underscores are
+ * matched only at a word boundary, because `snake_case_names` are ordinary
+ * text an agent writes constantly and turning their middles italic would
+ * corrupt an identifier the reader may be about to copy.
+ */
+function emphasis(text: string, seed: number): ReactNode[] {
+  // Typed as ReactNode[] rather than inferred: `flatMap` in the caller needs a
+  // uniform element type, and a mix of strings and elements infers as neither.
+  const pattern = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|\b_[^_]+_\b)/g;
+  const parts: ReactNode[] = text.split(pattern).map((part, index): ReactNode => {
+    const key = `e${String(seed)}-${String(index)}`;
+    if (
+      (part.startsWith('**') && part.endsWith('**')) ||
+      (part.startsWith('__') && part.endsWith('__'))
+    ) {
+      return <strong key={key}>{part.slice(2, -2)}</strong>;
+    }
+    if (
+      (part.startsWith('*') && part.endsWith('*') && part.length > 2) ||
+      (part.startsWith('_') && part.endsWith('_') && part.length > 2)
+    ) {
+      return <em key={key}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+  return parts;
 }
 
 export function AgentContent({ text }: AgentContentProps) {
@@ -144,12 +192,25 @@ export function AgentContent({ text }: AgentContentProps) {
                 {block.body}
               </pre>
             );
-          case 'heading':
+          case 'heading': {
+            /*
+             * A heading element, not a styled paragraph. §18.1 says headings
+             * take §4's scale, and a `<p>` gives a long answer no outline at
+             * all — a screen reader cannot jump between the sections of an
+             * agent's plan, which is exactly the document where jumping is
+             * worth something.
+             *
+             * Offset by one so the agent's top level lands at `h2`: the page
+             * owns `h1`, and an agent that starts at `#` must not compete
+             * with it for the document's title.
+             */
+            const Tag = `h${String(Math.min(block.level + 1, 6))}` as 'h2';
             return (
-              <p className="agent__heading" data-level={block.level} key={index}>
+              <Tag className="agent__heading" data-level={block.level} key={index}>
                 {inline(block.body)}
-              </p>
+              </Tag>
             );
+          }
           case 'list':
             return block.ordered ? (
               <ol className="agent__list" key={index}>
