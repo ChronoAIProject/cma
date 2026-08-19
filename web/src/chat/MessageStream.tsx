@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
-import type { Entry, MessageEntry, PlanStep } from './conversation';
+import type { ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 
@@ -59,6 +59,8 @@ interface MessageStreamProps {
   readonly plan?: readonly PlanStep[];
   /** The session's permission mode, when the kernel changed it. */
   readonly mode?: string;
+  /** The settings the kernel says are settable, when it reported them. */
+  readonly configOptions?: readonly ConfigOption[];
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
 }
@@ -75,6 +77,7 @@ export function MessageStream({
   footer,
   plan,
   mode,
+  configOptions,
 }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -149,6 +152,16 @@ export function MessageStream({
             </ol>
           )}
           {mode === undefined ? null : <div className="stage__mode">Mode: {mode}</div>}
+          {configOptions === undefined || configOptions.length === 0 ? null : (
+            <ul className="stage">
+              {configOptions.map((option) => (
+                <li key={option.id} className="stage__step">
+                  <span className="stage__title">{option.name}</span>
+                  <span className="stage__status">{option.kind}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
           {live === undefined ? null : (
             /*
