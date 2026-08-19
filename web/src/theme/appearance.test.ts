@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyAppearance,
@@ -57,7 +59,7 @@ describe('applying an appearance', () => {
     stubSystem(false);
     applyAppearance('dark');
     expect(isDark()).toBe(true);
-    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.style.colorScheme).toBe('dark');
   });
 
   it('clears the body mark for an explicit light choice on a dark system', () => {
@@ -66,16 +68,16 @@ describe('applying an appearance', () => {
     stubSystem(true);
     applyAppearance('light');
     expect(isDark()).toBe(false);
-    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.style.colorScheme).toBe('light');
   });
 
-  it('resolves system against the machine, and records no choice', () => {
+  it('resolves system against the machine', () => {
     stubSystem(true);
     applyAppearance('system');
-    // No root attribute: "system" is the absence of a choice, and the body
-    // mark is the resolved value rather than the choice itself.
-    expect(document.documentElement.dataset.theme).toBeUndefined();
+    // The DOM carries what is shown, never what was chosen: "system" is a
+    // preference, and the page has to be one theme or the other.
     expect(isDark()).toBe(true);
+    expect(document.documentElement.style.colorScheme).toBe('dark');
   });
 
   it('falls back to light where matchMedia is unavailable', () => {
@@ -132,5 +134,64 @@ describe('starting up', () => {
   it('starts without a system query at all', () => {
     vi.stubGlobal('matchMedia', undefined);
     expect(() => startAppearance()()).not.toThrow();
+  });
+});
+
+describe('the pre-paint boot script', () => {
+  /*
+   * index.html decides the theme inline, before the bundle exists, so a dark
+   * reader is not shown a white page for the length of a download. That means
+   * the logic is written twice — and two copies of a decision drift, so this
+   * runs the real one out of the real file and holds it to the same answer the
+   * module gives.
+   */
+  const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
+  const inline = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
+
+  /** Run the inline script against the current jsdom document. */
+  function boot() {
+    expect(inline.trim(), 'index.html has no inline boot script').not.toBe('');
+    new Function('window', 'document', inline)(window, document);
+  }
+
+  it.each([
+    ['dark', false, true],
+    ['dark', true, true],
+    ['light', true, false],
+    ['light', false, false],
+    ['system', true, true],
+    ['system', false, false],
+  ] as const)('agrees with the module for %s on a dark=%s machine', (choice, machine, dark) => {
+    stubSystem(machine);
+    setAppearance(choice);
+
+    // What the module did, cleared — the script must reach it from nothing,
+    // which is the state a fresh document is actually in.
+    document.body.removeAttribute('data-ds-dark-theme');
+    document.documentElement.style.colorScheme = '';
+
+    boot();
+
+    expect(isDark()).toBe(dark);
+    expect(document.documentElement.style.colorScheme).toBe(dark ? 'dark' : 'light');
+  });
+
+  it('reads the key the module writes', () => {
+    // A renamed key would leave the script always answering "system" — right
+    // for most people, wrong for exactly those who expressed a preference.
+    setAppearance('dark');
+    expect(inline).toContain('chrono-bot:appearance');
+  });
+
+  it('survives storage it is not allowed to read', () => {
+    // Private modes and blocked cookies both throw here. A theme preference is
+    // never worth failing to render the page over.
+    stubSystem(true);
+    vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+
+    expect(() => boot()).not.toThrow();
+    expect(isDark()).toBe(true);
   });
 });

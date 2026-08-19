@@ -77,14 +77,14 @@ describe('terminal theme', () => {
     expect(JSON.stringify(terminalTheme('light')).toUpperCase()).not.toContain('#679EFE');
   });
 
-  it('honours an explicit theme choice over the system preference', () => {
-    document.documentElement.setAttribute('data-theme', 'light');
-    expect(activeThemeName()).toBe('light');
-
-    document.documentElement.setAttribute('data-theme', 'dark');
+  it('reads the same mark the palette selects on', () => {
+    // Not the media query. Somebody who chose light on a dark machine has a
+    // light page, and a terminal that consulted the machine directly would be
+    // the one dark rectangle on it.
+    document.body.toggleAttribute('data-ds-dark-theme', true);
     expect(activeThemeName()).toBe('dark');
 
-    document.documentElement.removeAttribute('data-theme');
-    expect(['light', 'dark']).toContain(activeThemeName());
+    document.body.toggleAttribute('data-ds-dark-theme', false);
+    expect(activeThemeName()).toBe('light');
   });
 });
