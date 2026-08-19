@@ -175,9 +175,15 @@ async function renderApp(provider: AuthProvider) {
 /**
  * The console is code-split so the landing page does not carry xterm, which
  * means it arrives a dynamic import later than everything else.
+ *
+ * The wait is bounded well above the default, because what is being waited on
+ * is a whole chunk being transformed and evaluated while the rest of the suite
+ * competes for the same cores. At the default second this failed roughly one
+ * run in three — never because the console was absent, only because it had not
+ * finished arriving. A longer bound still fails if it never comes.
  */
 async function waitForConsole() {
-  return waitFor(() => screen.getByRole('tablist', { name: /sessions/i }));
+  return waitFor(() => screen.getByRole('tablist', { name: /sessions/i }), { timeout: 10_000 });
 }
 
 /**
