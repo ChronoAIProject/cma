@@ -5,14 +5,18 @@
  * contained here rather than pushing the terminal down the document.
  */
 
+/*
+ * The list fills the column it is given. §9 moved the width decision into the
+ * frame's solver — which is what makes the column draggable — so a width
+ * declared here would be one the solver cannot honour, and the two would
+ * disagree at every size. The fill and the right border belong to the column
+ * as well, for the same reason.
+ */
 .rail {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1;
   flex-direction: column;
-  width: var(--rail-width);
   min-height: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--rule);
 }
 
 /*
@@ -81,7 +85,6 @@
  */
 
 .rail--collapsed {
-  width: var(--rail-collapsed);
   align-items: center;
 }
 

@@ -1,23 +1,4 @@
 /*
- * The authenticated surface, per docs/Web_Style.md §5, §12 and §16.
- *
- * Three columns inside the one page frame: the sessions someone has, the one
- * they are working in, and what is known about it. The frame owns the app bar,
- * the status band and the fact that the page never scrolls; each column owns
- * its own overflow, so a long session list or a long transcript never pushes
- * anything else off the screen.
- */
-
-.console__body {
-  /* The positioned ancestor the details drawer overlays below 75rem (§16). */
-  position: relative;
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-}
-
-/*
  * The terminal column, taking whatever width the rail leaves. It opens with
  * its own head band, so the rule under the session header lands on the rule
  * under the rail's — §5's whole reason for setting band heights.
@@ -89,62 +70,6 @@
  * surface to give up width: the sheet closes first, then the rail collapses,
  * then the rail leaves the layout.
  */
-
-/*
- * Below 60rem the rail leaves the layout and becomes a drawer over it, so the
- * terminal keeps the full width rather than sharing it with a strip.
- */
-@media (max-width: 59.999rem) {
-  .console__drawer {
-    position: fixed;
-    top: var(--bar-height);
-    bottom: var(--band-foot);
-    left: 0;
-    z-index: 15;
-    display: flex;
-  }
-
-  .console__drawer .rail {
-    box-shadow: var(--lift-plate);
-  }
-
-  /*
-   * The chrome §16 hands the drawer below 30rem. Stacked, because at that
-   * width a row of it would truncate the one thing it exists to carry.
-   */
-  .console__drawerchrome {
-    flex-direction: column;
-    gap: var(--space-2);
-    align-items: stretch;
-    width: var(--rail-width);
-    max-width: 80vw;
-    padding-block: var(--space-2);
-    background: var(--surface);
-    border-right: 1px solid var(--rule);
-    border-bottom: 1px solid var(--rule);
-  }
-
-  .console__drawer {
-    flex-direction: column;
-    max-width: 80vw;
-  }
-
-  .console__drawer .rail {
-    max-width: 80vw;
-  }
-
-  /*
-   * The scrim behind the drawer. A drawer over a live terminal with nothing
-   * between them reads as two surfaces at the same depth, and a gesture meant
-   * for the drawer lands in the terminal.
-   */
-  .console__drawerscrim {
-    position: fixed;
-    inset: 0;
-    z-index: 14;
-    background: var(--scrim);
-  }
-}
 
 /*
  * Below 30rem the sheet gives up its 412px: at that width it would leave the

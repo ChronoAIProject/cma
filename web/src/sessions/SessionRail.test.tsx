@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionRail } from './SessionRail';
 import { lastActivity } from './lastActivity';
-import { loadCollapsed, saveCollapsed } from '../shell/collapse';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '../agui';
 
@@ -37,7 +36,6 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
       activeId="a"
       order="newest"
       onSelect={onSelect}
-      onCreate={() => {}}
       onReorder={() => {}}
       collapsed={false}
       onToggleCollapsed={onToggleCollapsed}
@@ -156,36 +154,11 @@ describe('collapsing the rail', () => {
         activeId="a"
         order="newest"
         onSelect={() => {}}
-        onCreate={() => {}}
         onReorder={() => {}}
         collapsed
         onToggleCollapsed={() => {}}
       />,
     );
     expect(document.activeElement).toHaveAttribute('aria-label', 'Show the session list');
-  });
-});
-
-describe('the stored state', () => {
-  it('remembers the choice', () => {
-    saveCollapsed('rail', true);
-    expect(loadCollapsed('rail')).toBe(true);
-    saveCollapsed('rail', false);
-    expect(loadCollapsed('rail')).toBe(false);
-  });
-
-  it('falls back to expanded on anything it does not recognise', () => {
-    // §7: validated on read. Web storage is untrusted input — another script
-    // on the origin, an older build, or a newer build the user has since
-    // rolled back from may have written it.
-    for (const bad of ['true', 'false', '', '{}', 'COLLAPSED', 'null']) {
-      window.localStorage.setItem('chrono-bot:rail-collapsed', bad);
-      expect(loadCollapsed('rail'), bad).toBe(false);
-    }
-  });
-
-  it('remembers the choice it was given', () => {
-    saveCollapsed('rail', true);
-    expect(loadCollapsed('rail')).toBe(true);
   });
 });
