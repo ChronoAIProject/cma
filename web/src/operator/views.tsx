@@ -151,11 +151,21 @@ export function ActivityView({ entries, names, people, filter, onFilter }: Activ
 export function NamespaceView({ inventory }: { readonly inventory: RuntimeInventory }) {
   return (
     <>
-      <p className="operator__summary">
-        {inventory.fullyObserved && inventory.running !== undefined
-          ? `${String(inventory.running)} running`
-          : 'Running total unavailable: a provider could not be asked.'}
-      </p>
+      {inventory.fullyObserved && inventory.running !== undefined ? (
+        <p className="operator__summary">{String(inventory.running)} running</p>
+      ) : (
+        /*
+         * §14: the running total is withheld while any provider is
+         * unobservable — drawn as a quiet notice stating why, not as an
+         * absence, because a partial total presented as a total is a lie.
+         */
+        <div className="notice notice--quiet">
+          <span className="notice__detail">
+            Running total withheld: a provider could not be asked, so any number shown here would be
+            missing part of the answer.
+          </span>
+        </div>
+      )}
       <RecordList
         label="Runtimes in service"
         empty="No provider is configured."

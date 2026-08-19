@@ -1,0 +1,195 @@
+/*
+ * The details drawer — docs/Web_Style.md §12 and §16.
+ *
+ * 360px on the right, taking width the surface can spare rather than height
+ * it cannot. Its body scrolls inside itself: the page does not scroll, and a
+ * drawer that grew with its contents would push the foot's two destructive
+ * keys off the window.
+ */
+
+.drawer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  width: var(--drawer-width);
+  min-height: 0;
+  font-family: var(--font-ui);
+  background: var(--surface);
+  border-left: 1px solid var(--rule);
+}
+
+.drawer__head {
+  gap: var(--space-2);
+}
+
+.drawer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.drawer__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.drawer__row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.drawer__row dt {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.drawer__row dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
+}
+
+.drawer__creator {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.drawer__face {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  background: var(--inset);
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/*
+ * The identifier as a copyable control — §12. The value wraps rather than
+ * truncating, because a partial identifier is not one anyone can use.
+ */
+.drawer__id {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  cursor: pointer;
+  background: var(--inset);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius);
+}
+
+.drawer__id:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.drawer__idvalue {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  word-break: break-all;
+}
+
+.drawer__idhint {
+  flex: none;
+  color: var(--ink-3);
+  font-size: var(--text-meta);
+}
+
+.drawer__reach {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.drawer__service {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  min-width: 0;
+}
+
+.drawer__servicename {
+  color: var(--ink);
+}
+
+.drawer__serviceid {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer__unknown {
+  color: var(--ink-3);
+}
+
+.drawer__state,
+.drawer__ending {
+  margin: var(--space-4) 0 0;
+  color: var(--ink-2);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
+}
+
+.drawer__ending {
+  color: var(--fail);
+}
+
+/*
+ * The foot — End session and Delete, away from everything reversible. Its own
+ * band, ruled off from the body so the two keys read as a different kind of
+ * thing from the facts above them.
+ */
+.drawer__foot {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+.drawer__question {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+
+/*
+ * §16: between 60 and 75rem the drawer becomes an overlay rather than
+ * narrowing the surface. It floats, so it takes the plate depth.
+ */
+@media (max-width: 74.999rem) {
+  .drawer {
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    z-index: 15;
+    box-shadow: var(--lift-plate);
+  }
+}

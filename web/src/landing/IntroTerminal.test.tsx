@@ -23,6 +23,18 @@ async function renderIntro(provider: AuthProvider = createMockAuthProvider()) {
   return result;
 }
 
+describe('the statement column — §15', () => {
+  it('carries the availability tag, the headline and the panel chrome', async () => {
+    await renderIntro();
+    const tag = document.querySelector('.intro__tag');
+    expect(tag?.textContent).toContain('Ready to run');
+    expect(document.querySelector('.intro__headline')).not.toBeNull();
+    // The terminal panel's 40px chrome strip, drawn as chrome rather than
+    // content: the transcript beneath it is the introduction.
+    expect(document.querySelector('.intro__chrome')).not.toBeNull();
+  });
+});
+
 describe('IntroTerminal', () => {
   it('is interactive immediately, before the animation finishes', async () => {
     const user = userEvent.setup();

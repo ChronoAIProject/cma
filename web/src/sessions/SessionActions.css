@@ -1,49 +1,35 @@
 /*
- * Session actions — docs/Web_Style.md §7 and §12.
+ * The session's lifecycle controls — docs/Web_Style.md §12 and §7.
  *
- * The controls themselves are the shared `.button` family; what lives here is
- * their arrangement. A row in the session header, at the head of the terminal
- * they act on.
+ * One primary, one secondary, and the overflow menu. The row's reason line is
+ * the shared .control-reason; what lives here is only placement.
  */
 
 .actions {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
   gap: var(--space-2);
   align-items: center;
+  justify-content: flex-end;
   min-width: 0;
 }
 
-/*
- * The one sentence explaining why the disabled controls are disabled. Drawn on
- * the surface rather than in a tooltip, which §7 rejects as unreachable by
- * touch and invisible to anyone scanning. It truncates before the controls do:
- * a reason nobody can act on is worth less than the control it describes.
- */
-.actions__reason {
-  overflow: hidden;
-  color: var(--ink-3);
-  text-overflow: ellipsis;
-}
-
-/*
- * The destructive confirmation is inline, in place of the row's own controls
- * (§7) — never a second dialog over a dialog. Replacing the row rather than
- * adding to it is also what stops the answer being read as one more action.
- */
+.actions__reason,
 .actions__question {
-  color: var(--fail);
-  font-size: var(--text-sm);
-  white-space: nowrap;
+  flex: 0 1 auto;
 }
 
-/*
- * The same question shape without the alarm. Deleting a session is
- * irreversible and takes `--fail`; moving one between planes costs a turn and
- * a pause, and drawing that in the colour reserved for destruction would spend
- * the one signal that is supposed to mean "this cannot be undone".
- */
-.actions__question--cost {
-  color: var(--ink-2);
+/* The inline confirmation may take two lines; the band still fits 40px keys. */
+.actions__question {
   white-space: normal;
+}
+
+.actions__overflow {
+  position: relative;
+  flex: none;
+}
+
+.actions__menu {
+  top: calc(100% + var(--space-1));
+  right: 0;
 }

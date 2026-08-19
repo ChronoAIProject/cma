@@ -8,7 +8,7 @@ import type { LiveSession } from '../sessions/live';
 import type { Session, SessionLifecycle } from '../sessions/types';
 import type { TerminalDriver } from '../terminal/types';
 import { unattachedNote } from './layout';
-import { NO_CAPABILITIES } from '../agui';
+import { MockSession, NO_CAPABILITIES, transcriptNamed } from '../agui';
 
 /**
  * Recording drivers rather than a real one: what these tests assert is where
@@ -65,6 +65,7 @@ function Harness({
       nodes={nodes}
       focusedId={focusedId}
       focusHistory={history}
+      onOpenToReply={() => {}}
       onFocus={(id) => {
         setFocusedId(id);
         setHistory((prev) => (prev[0] === id ? prev : [id, ...prev.filter((seen) => seen !== id)]));
@@ -388,6 +389,7 @@ describe('SessionCanvas attachment budget', () => {
         focusedId="s-0"
         focusHistory={withoutFocused}
         onFocus={() => undefined}
+        onOpenToReply={() => {}}
       />,
     );
 
@@ -472,5 +474,75 @@ describe('SessionCanvas driver identity', () => {
     // Re-attaching on every focus change would clear the scrollback and, with
     // a real transport, reconnect the socket.
     expect(attach.mock.calls.length).toBe(initial);
+  });
+});
+
+describe('a conversation node — §13', () => {
+  function conversationFleet() {
+    const mock = new MockSession(transcriptNamed('plain-turn'));
+    const node: LiveSession = {
+      session: { ...session('s-chat', 'running', 0), plane: 'conversation' },
+      driver: null,
+    };
+    return { mock, node };
+  }
+
+  it('draws a recap and mounts no composer', async () => {
+    // §13: the node shows what a glance wants — the last agent message and
+    // one key — and hands the reply to the surface that can hold a reading
+    // column. A composer inside 420×280 clipped its placeholder mid-word.
+    const { mock, node } = conversationFleet();
+    render(
+      <SessionCanvas
+        nodes={[node]}
+        focusedId="s-chat"
+        focusHistory={['s-chat']}
+        onFocus={() => {}}
+        onOpenToReply={() => {}}
+        transport={mock.transport}
+      />,
+    );
+
+    expect(await screen.findByRole('button', { name: /open to reply/i })).toBeInTheDocument();
+    expect(document.querySelector('.composer')).toBeNull();
+    expect(screen.queryByLabelText('Message')).toBeNull();
+  });
+
+  it('hands the reply to the surface that can hold it', async () => {
+    const user = userEvent.setup();
+    const { mock, node } = conversationFleet();
+    const onOpenToReply = vi.fn();
+    render(
+      <SessionCanvas
+        nodes={[node]}
+        focusedId="s-chat"
+        focusHistory={['s-chat']}
+        onFocus={() => {}}
+        onOpenToReply={onOpenToReply}
+        transport={mock.transport}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /open to reply/i }));
+    expect(onOpenToReply).toHaveBeenCalledWith('s-chat');
+  });
+
+  it('says on the focused node that it is typing here', () => {
+    // §13's focus treatment: hue, the halo, and the words — never colour
+    // alone (§10).
+    const { nodes } = makeFleet(2);
+    render(
+      <SessionCanvas
+        nodes={nodes}
+        focusedId="s-0"
+        focusHistory={['s-0']}
+        onFocus={() => {}}
+        onOpenToReply={() => {}}
+      />,
+    );
+    const focused = document.querySelector('[data-node-id="s-0"]');
+    const other = document.querySelector('[data-node-id="s-1"]');
+    expect(focused?.textContent).toContain('typing here');
+    expect(other?.textContent).not.toContain('typing here');
   });
 });

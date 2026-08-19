@@ -23,9 +23,33 @@
   gap: var(--space-2);
 }
 
+/* §14: the page title and its one-line description. */
+.operator__intro {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-5) var(--page-gutter) var(--space-3);
+}
+
+.operator__title {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-page);
+  font-weight: 600;
+  letter-spacing: var(--track-tight);
+}
+
+.operator__description {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-note);
+}
+
 /*
- * The four views, in the page's second band — §14. A second band rather than a
- * taller header, for the reason §5 gives every column.
+ * The four views as an underlined tablist at the interface size — §14:
+ * selected by weight, accent ink, a 2px accent bottom border AND
+ * aria-selected, so colour is never the only signal.
  */
 .operator__tabs {
   gap: var(--space-1);
@@ -36,10 +60,8 @@
   height: var(--control-h);
   padding-inline: var(--space-3);
   color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  font-size: var(--text-ui);
   cursor: pointer;
   background: none;
   border: 0;
@@ -51,13 +73,10 @@
   box-shadow: var(--focus-ring);
 }
 
-/*
- * The selected view is named by its border *and* by aria-selected, so colour is
- * never the only signal.
- */
 .operator__tab--on {
-  border-bottom-color: var(--accent);
   color: var(--accent);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
 }
 
 /*
@@ -81,14 +100,14 @@
 .operator__waiting,
 .operator__summary {
   color: var(--ink-3);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
 
 /* The same treatment `field__error` gives a failure elsewhere in the product. */
 .operator__error {
   color: var(--fail);
-  font-size: var(--text-sm);
-  line-height: var(--leading-sm);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
 }
 
 /* Filters — ordinary selects that narrow without reordering. */
@@ -107,71 +126,28 @@
 
 .operator__filter-label {
   color: var(--ink-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
 
 .operator__confirm {
   color: var(--ink-2);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
 }
 
 /*
- * Record list — rows, not a table. Hairline separators, no zebra striping, no
- * hover highlight and no row-level click target: nothing in this panel
- * navigates.
+ * The record list itself is the shared vocabulary — one card of rows on a
+ * 190px timestamp column (§14). What lives here is only the middle cell this
+ * page's rows wrap their two lines in, and the controls a sessions row
+ * carries.
  */
-
-.record {
-  display: flex;
-  flex-direction: column;
-  list-style: none;
-  /* The list scrolls inside the dialog body; the page still never scrolls. */
-  overflow-y: auto;
-  max-height: 50vh;
-}
-
-.record__row {
-  display: flex;
-  gap: var(--space-3);
-  align-items: baseline;
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--rule);
-}
-
-.record__row:last-child {
-  border-bottom: 0;
-}
-
-.record__at {
-  flex: none;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
 
 .record__text {
   display: flex;
-  flex: 1;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
-}
-
-.record__primary {
-  color: var(--ink);
-  font-size: var(--text-base);
-}
-
-.record__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
 }
 
 .record__actions {
@@ -181,21 +157,6 @@
   align-items: center;
 }
 
-/*
- * An identifier is drawn as an identifier, so a reader can tell at a glance
- * that they are not looking at somebody named that.
- */
-.record__identifier {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
 .record__anonymous {
   color: var(--ink-3);
-}
-
-.record__empty {
-  color: var(--ink-3);
-  font-size: var(--text-sm);
 }
