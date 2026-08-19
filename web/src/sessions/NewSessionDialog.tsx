@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { Button } from '../ui/Button';
-import { Dialog } from '../ui/Dialog';
+import { Modal } from '../ui/Modal';
 import { Select } from '../ui/Select';
 import { ServicePicker } from '../environment/ServicePicker';
 import { emptyDraft, validate } from '../environment/types';
@@ -13,6 +13,7 @@ import type {
 import { kernelLabel, modesOf, planeRefusal, PLANES } from './kernels';
 import './NewSessionDialog.css';
 import type { KernelOffer, SessionPlane } from './types';
+import { Input } from '../ui/Input';
 
 /**
  * The choice made when a session starts.
@@ -169,9 +170,11 @@ export function NewSessionDialog({
   }
 
   return (
-    <Dialog
+    <Modal
+      open
       title="New session"
-      width={authoring ? 'medium' : 'narrow'}
+      /* A form with a picker in it needs the room; a question does not. */
+      placement={authoring ? 'modal--wide' : undefined}
       onClose={onCancel}
       footer={
         <>
@@ -239,9 +242,9 @@ export function NewSessionDialog({
             <label className="field__label" htmlFor={nameId}>
               Name
             </label>
-            <input
+            <Input
               id={nameId}
-              className="field__input"
+              placement="field__input"
               value={draft.name}
               onChange={(event) => {
                 setDraft({ ...draft, name: event.target.value });
@@ -342,7 +345,7 @@ export function NewSessionDialog({
           </div>
         </>
       )}
-    </Dialog>
+    </Modal>
   );
 }
 

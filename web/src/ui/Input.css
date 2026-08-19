@@ -1,0 +1,57 @@
+/*
+ * The text field — `docs/Web_Style.md` §7.
+ *
+ * `inline-flex` rather than `flex`, so a field sits in a row beside a label
+ * without a wrapper of its own; surfaces that want it full width say so with
+ * a placement class.
+ */
+
+.input {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+
+/*
+ * Focus is shown by the border rather than by an added ring, because the
+ * field already has an edge and a ring outside it would make the control
+ * appear to grow.
+ */
+.input:focus-within {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+/* Invalid is stated on the wrapper for the same reason focus is. */
+.input:has(.input__control[aria-invalid='true']) {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.input__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.input__control {
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.input__control::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
