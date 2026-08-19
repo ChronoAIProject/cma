@@ -148,6 +148,7 @@ export function ConversationSurface({
         plan={conversation.plan}
         mode={conversation.mode}
         configOptions={conversation.configOptions}
+        availableCommands={conversation.availableCommands}
         footer={
           pending === undefined ? null : (
             <ApprovalCard
