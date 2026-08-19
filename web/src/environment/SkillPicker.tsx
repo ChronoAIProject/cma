@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Chip } from '../ui/Chip';
+import { Pill } from '../ui/Pill';
 import type { CatalogSkill } from './types';
 
 /**
@@ -96,7 +96,7 @@ export function SkillPicker({ skills, selected, mandatory, onChange, error }: Sk
                 <span className="picker__text">
                   <span className="picker__name">
                     {skill.name}
-                    {required ? <Chip inline>required</Chip> : null}
+                    {required ? <Pill>required</Pill> : null}
                     {skill.access === undefined || required ? null : (
                       <span className="picker__access">{skill.access}</span>
                     )}

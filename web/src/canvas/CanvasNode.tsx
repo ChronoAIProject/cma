@@ -6,7 +6,8 @@ import { ConversationRecap } from './ConversationRecap';
 import type { AguiTransport } from '../agui';
 import type { TerminalDriver } from '../terminal/types';
 import type { Session } from '../sessions/types';
-import { labelFor, toneFor } from '../sessions/types';
+import { labelFor, stateDotFor, toneFor } from '../sessions/types';
+import { StateDot } from '../ui/StateDot';
 import { abilitiesFor } from '../sessions/availability';
 import { tabLabel } from '../sessions/sessionTime';
 import { MAX_LIVE_NODES } from './layout';
@@ -137,6 +138,7 @@ export function CanvasNode({
 
   const started = tabLabel(session.createdAt);
   const state = labelFor(session.lifecycle);
+  const dot = stateDotFor(toneFor(session.lifecycle));
   const name = `Session ${started} on ${session.kernel}, ${state}`;
 
   return (
@@ -165,7 +167,7 @@ export function CanvasNode({
           onClick={onFocus}
         >
           {/* §13's header: dot, start time, kernel and state in mono. */}
-          <span className={`node__dot tone-bg-${toneFor(session.lifecycle)}`} aria-hidden="true" />
+          {dot === undefined ? null : <StateDot state={dot} placement="node__dot" />}
           <span className="node__started tabular">{started}</span>
           <span className="node__meta">
             {session.kernel} · {state}

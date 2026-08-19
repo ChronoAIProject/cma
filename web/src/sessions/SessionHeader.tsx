@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import type { Session } from './types';
-import { labelFor, toneFor } from './types';
+import { labelFor, stateDotFor, toneFor } from './types';
+import { Pill } from '../ui/Pill';
+import { StateDot } from '../ui/StateDot';
 import { tabLabel } from './sessionTime';
-import { Chip } from '../ui/Chip';
 import './SessionHeader.css';
 
 /**
@@ -62,15 +63,23 @@ export function SessionHeader({
     );
   }
 
+  const dot = stateDotFor(toneFor(session.lifecycle));
+
   return (
     <div className="band band--head sessionheader">
       {listHandle}
       <span className="band__subject">{tabLabel(session.createdAt)}</span>
       {/* §12: the status pill — the state as a dot and a word. */}
       {waiting ? (
-        <Chip tone="wait">Waiting for you</Chip>
+        <Pill>
+          <StateDot state="warning" />
+          Waiting for you
+        </Pill>
       ) : (
-        <Chip tone={toneFor(session.lifecycle)}>{labelFor(session.lifecycle)}</Chip>
+        <Pill>
+          {dot === undefined ? null : <StateDot state={dot} />}
+          {labelFor(session.lifecycle)}
+        </Pill>
       )}
       {/* The kernel and the plane, in mono, because both are identifiers. */}
       <span className="band__label">{session.kernel}</span>

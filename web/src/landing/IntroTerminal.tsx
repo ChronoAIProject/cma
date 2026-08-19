@@ -5,6 +5,8 @@ import { useIntroAnimation } from './useIntroAnimation';
 import { MAX_TURN_LENGTH, capturePendingTurn } from '../auth/pendingTurn';
 import { useAuth } from '../auth/context';
 import './IntroTerminal.css';
+import { StateDot } from '../ui/StateDot';
+import { Pill } from '../ui/Pill';
 
 /**
  * The signed-out surface — docs/Web_Style.md §15.
@@ -199,10 +201,10 @@ export function IntroTerminal() {
 
       {/* The statement — §15: an availability tag, then the headline. */}
       <div className="intro__statement">
-        <span className="tag intro__tag">
-          <span className="status__dot tone-bg-live" aria-hidden="true" />
+        <Pill placement="intro__tag">
+          <StateDot state="ongoing" />
           Ready to run
-        </span>
+        </Pill>
         <h1 id="intro-heading" className="intro__headline">
           Nothing to install.
         </h1>
