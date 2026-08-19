@@ -304,6 +304,24 @@ describe('App', () => {
     });
   });
 
+  it('opens and closes the command bar with the keyboard', async () => {
+    // §6: ⌘K opens the plate and closes it again; the trigger in the bar is
+    // a real control and never a dead field.
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(
+      screen.getByRole('button', { name: /find a session, or type a command/i }),
+    ).toBeEnabled();
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    expect(await screen.findByRole('dialog', { name: /commands/i })).toBeInTheDocument();
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    expect(screen.queryByRole('dialog', { name: /commands/i })).toBeNull();
+  });
+
   it('arranges the same sessions on a canvas when asked', async () => {
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
