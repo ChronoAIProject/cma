@@ -37,8 +37,17 @@ export type StopReason = 'error' | 'other';
  */
 export type SessionPlane = 'terminal' | 'conversation';
 
-/** The kernels the control plane can run. */
-export type Kernel = 'codex' | 'claude-code';
+/**
+ * The identifier a session names its runtime by.
+ *
+ * A string rather than a union of the ones this build happens to know. Which
+ * runtimes a deployment offers is a fact about that deployment — `kernels.ts`
+ * already reads them from `GET /api/v1/kernels` and labels an unfamiliar one
+ * under its own identifier. A closed union here contradicted that and did
+ * worse than mislabel: the client refused to parse the session at all, and
+ * one such session made the whole list unreadable.
+ */
+export type Kernel = string;
 
 /**
  * A runtime this deployment can start a session on, and what it can be.
