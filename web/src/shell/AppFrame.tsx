@@ -1,0 +1,220 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import {
+  SIDEBAR_AUTO_COLLAPSE,
+  SIDEBAR_DEFAULT,
+  SIDEBAR_MAX,
+  SIDEBAR_MIN,
+  DETAILS_MAX,
+  DETAILS_MIN,
+  clampWidth,
+  computeColumns,
+} from './columns';
+import './AppFrame.css';
+
+/**
+ * The page — `docs/Web_Style.md` §9.
+ *
+ * Three columns filling the viewport, and nothing above or below them. There
+ * is no app bar and no footer: every band that used to hold chrome is column
+ * width that the surface now has.
+ *
+ * Widths are **preferences, not settings**. They are not remembered across a
+ * reload, deliberately: a width is a response to the window somebody has open
+ * right now, and restoring yesterday's into today's window is how a layout
+ * arrives wrong on a machine with a different screen.
+ *
+ * The frame measures **its own box** rather than the window. They are the
+ * same today and would stop being the same the moment anything is placed
+ * beside it, and a layout that silently assumed otherwise would be wrong in a
+ * way nobody could see in the code.
+ */
+
+interface AppFrameProps {
+  readonly sidebar: ReactNode;
+  readonly center: ReactNode;
+  /** Always rendered. A closed details column is zero-wide, never unmounted. */
+  readonly details?: ReactNode;
+  /** Whether the details column is asked for. */
+  readonly detailsOpen: boolean;
+  /** Things that float over every column — a banner, a dialog's own layer. */
+  readonly overlay?: ReactNode;
+}
+
+export function AppFrame({ sidebar, center, details, detailsOpen, overlay }: AppFrameProps) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState(0);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
+  const [dragging, setDragging] = useState(false);
+  /**
+   * Whether the sidebar was opened by hand at a width that collapses it.
+   *
+   * Without this the toggle does nothing below 1024px: the auto-collapse would
+   * win on the next render and the panel would shut again immediately, which
+   * reads as a broken control rather than as a deliberate rule.
+   */
+  const [expandedAnyway, setExpandedAnyway] = useState(false);
+
+  useEffect(() => {
+    const element = frameRef.current;
+    if (element === null) {
+      return;
+    }
+    let frame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      // Coalesced to one measurement per frame: a resize drag fires this far
+      // faster than anything can be laid out in response.
+      frame ??= requestAnimationFrame(() => {
+        frame = null;
+        const width = element.getBoundingClientRect().width;
+        if (width > 0) {
+          setViewport(width);
+        }
+      });
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+    };
+  }, []);
+
+  const narrow = viewport > 0 && viewport < SIDEBAR_AUTO_COLLAPSE;
+  const sidebarPreference = narrow && !expandedAnyway ? 0 : sidebarWidth;
+  const columns = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
+
+  const onSidebarDrag = useCallback((to: number) => {
+    setSidebarWidth(clampWidth(to, SIDEBAR_MIN, SIDEBAR_MAX));
+  }, []);
+  const onDetailsDrag = useCallback((to: number) => {
+    setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
+  }, []);
+
+  return (
+    <div
+      ref={frameRef}
+      className="frame"
+      data-dragging={dragging ? '' : undefined}
+      data-details-collapsed={columns.details === 0 ? '' : undefined}
+      style={{
+        gridTemplateColumns: `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
+      }}
+    >
+      <div className="frame__sidebar">{sidebar}</div>
+      <div className="frame__center">{center}</div>
+      <div className="frame__details">{details}</div>
+
+      {/*
+        The handles are children of the frame rather than of the columns they
+        move: a column clips its own overflow, so a strip straddling its border
+        would be cut in half by the thing it is there to resize.
+      */}
+      <DragHandle
+        side="sidebar"
+        at={columns.sidebar}
+        label="Resize the session list"
+        onDrag={(dx) => {
+          onSidebarDrag(columns.sidebar + dx);
+        }}
+        onDraggingChange={setDragging}
+      />
+      {columns.details === 0 ? null : (
+        <DragHandle
+          side="details"
+          at={columns.sidebar + columns.center}
+          label="Resize the details column"
+          onDrag={(dx) => {
+            // Dragging left widens: the column grows from its leading edge.
+            onDetailsDrag(columns.details - dx);
+          }}
+          onDraggingChange={setDragging}
+        />
+      )}
+
+      <div className="frame__overlay">{overlay}</div>
+      {narrow ? (
+        <button
+          type="button"
+          className="frame__narrowtoggle"
+          aria-expanded={expandedAnyway}
+          onClick={() => {
+            setExpandedAnyway((was) => !was);
+          }}
+        >
+          {expandedAnyway ? 'Hide sessions' : 'Show sessions'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+interface DragHandleProps {
+  readonly side: 'sidebar' | 'details';
+  /** Where the border it straddles currently is. */
+  readonly at: number;
+  readonly label: string;
+  readonly onDrag: (dx: number) => void;
+  readonly onDraggingChange: (dragging: boolean) => void;
+}
+
+function DragHandle({ side, at, label, onDrag, onDraggingChange }: DragHandleProps) {
+  const [dragging, setDragging] = useState(false);
+  const origin = useRef(0);
+  const latest = useRef(0);
+  const frame = useRef<number | null>(null);
+
+  const report = useCallback(() => {
+    frame.current = null;
+    onDrag(latest.current - origin.current);
+  }, [onDrag]);
+
+  return (
+    <div
+      className="frame__handle"
+      style={{ left: at }}
+      data-side={side}
+      data-dragging={dragging ? 'true' : undefined}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        /*
+         * Captured, so the drag survives the pointer leaving the 8px strip.
+         * Without it a fast drag stops the moment the pointer outruns the
+         * column, which is exactly when somebody is dragging fast.
+         */
+        event.currentTarget.setPointerCapture(event.pointerId);
+        origin.current = event.clientX;
+        latest.current = event.clientX;
+        setDragging(true);
+        onDraggingChange(true);
+      }}
+      onPointerMove={(event) => {
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+          return;
+        }
+        latest.current = event.clientX;
+        // One report per frame. Pointer events arrive faster than layout.
+        frame.current ??= requestAnimationFrame(report);
+      }}
+      onPointerUp={(event) => {
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+          return;
+        }
+        event.currentTarget.releasePointerCapture(event.pointerId);
+        if (frame.current !== null) {
+          cancelAnimationFrame(frame.current);
+          frame.current = null;
+        }
+        // The last position, which the throttle may not have reported yet.
+        onDrag(latest.current - origin.current);
+        setDragging(false);
+        onDraggingChange(false);
+      }}
+    />
+  );
+}
