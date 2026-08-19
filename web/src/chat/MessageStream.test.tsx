@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { resizeObserved } from '../test/setup';
 import { MessageStream } from './MessageStream';
 import { AgentContent, blocksOf } from './AgentContent';
-import { EMPTY, fold, reduce, type Conversation } from './conversation';
+import { EMPTY, fold, reduce, type Conversation, type Entry } from './conversation';
 import { AguiConnection, MockSession, toEvent, transcriptNamed, type AguiEvent } from '../agui';
 
 /**
@@ -443,5 +444,87 @@ describe('the owner turn label, §18.1', () => {
 
     expect(screen.getByText('You')).toBeInTheDocument();
     expect(screen.queryByText(/You ·/)).toBeNull();
+  });
+});
+
+describe('following the turn as it is written', () => {
+  /*
+   * The defect this guards was the largest felt one on the conversation
+   * plane: the view stopped following at exactly the moment text started
+   * arriving, so every long answer was read by scrolling by hand.
+   *
+   * Its cause is why the test drives a resize rather than a rerender. The
+   * follow used to depend on `entries`, and a streaming delta lands in `live`
+   * and returns a conversation holding the *same* entries array — nothing in
+   * a dependency list changed, so nothing ran.
+   */
+  /*
+   * One array, reused across every render in this block, because that is what
+   * the real path does: a streaming delta lands in `live` and the conversation
+   * it returns holds the *same* entries. Passing a fresh `[]` each time would
+   * hand the old code a changed dependency it never gets in production, and
+   * these tests would pass against the very defect they exist to catch.
+   */
+  const settled: readonly Entry[] = fold([
+    toEvent({ type: 'RUN_STARTED', seq: 1 }),
+    toEvent({ type: 'TEXT_MESSAGE_START', seq: 2, messageId: 'm1', role: 'user' }),
+    toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 3, messageId: 'm1', delta: 'do the thing' }),
+  ]).entries;
+
+  const stream = (props: Partial<Parameters<typeof MessageStream>[0]> = {}) => (
+    <MessageStream kernel="codex" entries={settled} turnInFlight={true} {...props} />
+  );
+
+  /** A surface with more content than fits, which jsdom does not lay out. */
+  function measured(container: HTMLElement): HTMLElement {
+    const surface = container.querySelector('.stream__surface');
+    if (surface === null) {
+      throw new Error('the stream has no scrolling surface');
+    }
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4000 });
+    Object.defineProperty(surface, 'clientHeight', { configurable: true, value: 600 });
+    return surface as HTMLElement;
+  }
+
+  /** Scroll away from the newest turn, the way a reader does. */
+  function scrollUp(surface: HTMLElement): void {
+    surface.scrollTop = 120;
+    fireEvent.scroll(surface);
+  }
+
+  it('scrolls to the newest text as the column grows', () => {
+    const { container, rerender } = render(stream());
+    const surface = measured(container);
+
+    rerender(stream({ live: { text: 'the answer so far' } }));
+    resizeObserved();
+
+    expect(surface.scrollTop).toBe(4000);
+  });
+
+  it('leaves the reader alone once they have scrolled away', () => {
+    // Dragging somebody back to the bottom while they are reading something
+    // further up is worse than not following at all.
+    const { container, rerender } = render(stream());
+    const surface = measured(container);
+    scrollUp(surface);
+
+    rerender(stream({ live: { text: 'more' } }));
+    resizeObserved();
+
+    expect(surface.scrollTop).toBe(120);
+  });
+
+  it('jumps to the newest turn the moment following resumes', () => {
+    // Without this, re-pinning does nothing until the agent happens to emit
+    // another token, and on a finished turn that is never.
+    const { container } = render(stream());
+    const surface = measured(container);
+    scrollUp(surface);
+
+    surface.scrollTop = 3400;
+    fireEvent.scroll(surface);
+
+    expect(surface.scrollTop).toBe(4000);
   });
 });
