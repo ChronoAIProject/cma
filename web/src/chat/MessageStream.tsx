@@ -7,6 +7,7 @@ import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from 
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 import { IconChevronDownOutline14 } from '../ui/icons';
+import { StateDot } from '../ui/StateDot';
 
 /**
  * The turn-by-turn record of the conversation — `Web_Style.md` §18.1.
@@ -40,8 +41,6 @@ interface MessageStreamProps {
   readonly onInspect?: (call: ToolCallEntry) => void;
   /** The call the column is showing, when it is showing one. */
   readonly inspectingId?: string;
-  /** The kernel's name, for the agent turns' eyebrow — §18.1. */
-  readonly kernel: string;
   /** Drawn under the last entry while a turn is in flight. */
   readonly turnInFlight?: boolean;
   /**
@@ -101,7 +100,6 @@ export function MessageStream({
   entries,
   onInspect,
   inspectingId,
-  kernel,
   turnInFlight = false,
   linkLive = true,
   linkLost = false,
@@ -225,7 +223,6 @@ export function MessageStream({
           {entries.map((entry) => (
             <StreamEntry
               entry={entry}
-              kernel={kernel}
               key={`${entry.kind}:${entry.id}`}
               turnInFlight={turnInFlight}
               linkLive={linkLive}
@@ -269,7 +266,6 @@ export function MessageStream({
              * heard should be the turn, not the typing.
              */
             <article className="turn" data-role="assistant" aria-live="off">
-              <Eyebrow kernel={kernel} />
               <div className="turn__body">
                 <AgentContent text={live.text} />
                 {linkLive ? <b className="turn__caret" aria-hidden="true" /> : null}
@@ -293,9 +289,14 @@ export function MessageStream({
             </p>
           ) : null}
           {waiting ? (
-            /* §18.1: the §8 pulse with a word, claiming no progress. */
+            /*
+             * §18.1: a mark and a word, claiming no progress. The mark is the
+             * running state dot the rest of the product uses — a turn that is
+             * running and a session that is running are the same fact, and
+             * they were drawn two different ways.
+             */
             <p className="stream__waiting">
-              <span className="stream__waitdot pulse" aria-hidden="true" />
+              <StateDot state="ongoing" />
               Working
             </p>
           ) : null}
@@ -330,19 +331,6 @@ export function MessageStream({
 }
 
 /**
- * The agent turn's eyebrow — §18.1: a live dot, then the product and the
- * kernel in mono, uppercase by style rather than by text.
- */
-function Eyebrow({ kernel }: { readonly kernel: string }) {
-  return (
-    <span className="turn__eyebrow">
-      <span className="turn__dot" aria-hidden="true" />
-      chronobot · {kernel}
-    </span>
-  );
-}
-
-/**
  * The owner turn's eyebrow — §18.1: `You · HH:MM`, the time read from the
  * durable log. A turn whose time the record does not carry shows none rather
  * than an estimated one, on the section's equivalence rule.
@@ -357,14 +345,12 @@ function youLabel(entry: MessageEntry): string {
 
 function StreamEntry({
   entry,
-  kernel,
   turnInFlight,
   linkLive,
   onInspect,
   inspectingId,
 }: {
   entry: Entry;
-  kernel: string;
   turnInFlight: boolean;
   /** §18.13: the caret claims the agent is typing, so it stops when we cannot hear it. */
   linkLive: boolean;
@@ -375,11 +361,18 @@ function StreamEntry({
     case 'message':
       return (
         <article className="turn" data-role={entry.role}>
+          {/*
+            No eyebrow on an agent turn. It repeated "chronobot · codex" above
+            every single one, which is a label that stops being read after the
+            first and takes a line of the reading column with it each time.
+            Shape already tells the two roles apart — the owner's turns are
+            bubbles and the agent's run the full measure — and which kernel is
+            answering is a fact about the session, so the session header says
+            it once.
+          */}
           {entry.role === 'user' ? (
             <span className="turn__eyebrow turn__eyebrow--you">{youLabel(entry)}</span>
-          ) : (
-            <Eyebrow kernel={kernel} />
-          )}
+          ) : null}
           <div className="turn__body">
             <AgentContent text={entry.text} />
             {/*

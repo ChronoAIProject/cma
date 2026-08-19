@@ -94,3 +94,11 @@
 .sessionheader__spacer {
   flex: 1;
 }
+
+/* The kernel, in the code face because it is an identifier. */
+.sessionheader__kernel {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+}
