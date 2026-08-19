@@ -48,6 +48,10 @@ impl SessionService {
                 self.fold_completion(id, completed).await;
                 return;
             }
+            ConversationUpdate::SignInRequired { url, code, message } => {
+                self.fold_sign_in(id, url, code, message).await;
+                return;
+            }
             ConversationUpdate::Failed {
                 message,
                 capability,
@@ -269,6 +273,33 @@ impl SessionService {
                     capability: None,
                 },
             );
+        }
+        self.flush(id).await;
+    }
+
+    /// Record that the agent is waiting for its owner to sign in.
+    ///
+    /// Durable rather than live-only. This is the one thing on this plane a
+    /// person has to act on somewhere else, and a prompt that vanished with a
+    /// reload would leave a session waiting on a code nobody can see any more.
+    ///
+    /// What is written is an address and a short-lived code, and nothing else
+    /// could be: the credential the sign-in produces is written by the agent
+    /// inside its own sandbox and never reaches this service.
+    async fn fold_sign_in(
+        &self,
+        id: &SessionId,
+        url: String,
+        code: Option<String>,
+        message: Option<String>,
+    ) {
+        tracing::info!(session_id = %id, "this session is waiting for its owner to sign in");
+        {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(id) else {
+                return;
+            };
+            append(entry, EventKind::SignInRequired { url, code, message });
         }
         self.flush(id).await;
     }
