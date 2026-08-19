@@ -1,6 +1,8 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import type { ConcurrentInput, SessionCapabilities } from '../agui';
+import type { AvailableCommand } from './conversation';
+import { CommandMenu } from './CommandMenu';
 import './Composer.css';
 
 /**
@@ -43,6 +45,15 @@ interface ComposerProps {
    * resolves is not evidence the service took anything.
    */
   readonly onSend: (text: string) => boolean | Promise<boolean>;
+  /**
+   * The commands this kernel says it offers, right now — §18.4.
+   *
+   * Liveness rather than history: the list arrives on the live lane and is
+   * absent after a reload until the kernel says again. That is why it belongs
+   * here and not in the stream, where §18.1's equivalence rule would have a
+   * stale list replayed from the log offering commands that no longer exist.
+   */
+  readonly availableCommands?: readonly AvailableCommand[];
   readonly onInterrupt: () => void;
   readonly busy?: boolean;
 }
@@ -60,11 +71,24 @@ export function Composer({
   turnInFlight,
   refusedReason,
   onSend,
+  availableCommands,
   onInterrupt,
   busy = false,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  /*
+   * The command menu is open when the draft is a lone `/word` — §18.4.
+   *
+   * Derived from the draft rather than held as its own state, so there is one
+   * answer to "is it open" and it cannot disagree with what is in the field.
+   * Only at the head of the draft: an agent is asked to do things in prose, and
+   * a `/` in the middle of a sentence is a path or a date, not a command.
+   */
+  const slash = /^\/(\S*)$/.exec(text);
+  const [dismissed, setDismissed] = useState(false);
+  const commandQuery = slash === null || dismissed ? undefined : (slash[1] ?? '');
 
   /*
    * Grow the field with what is in it, to §18.4's six lines and no further.
@@ -89,6 +113,18 @@ export function Composer({
     field.style.height = 'auto';
     field.style.height = `${String(field.scrollHeight)}px`;
   }, [text]);
+
+  /*
+   * Focus rests on the prompt — §10, which has said so all along and was
+   * honoured only by the landing. Opening a session and typing cost a mouse
+   * click every time, on the surface whose entire purpose is typing.
+   *
+   * Once, on mount. A session that refuses input renders no field at all, so
+   * there is nothing to focus and nothing to do.
+   */
+  useEffect(() => {
+    fieldRef.current?.focus();
+  }, []);
 
   const policy = capabilities.concurrentInput;
 
@@ -147,6 +183,24 @@ export function Composer({
   return (
     <div className="composer-block">
       <div className="composer">
+        {commandQuery === undefined ? null : (
+          <CommandMenu
+            commands={availableCommands}
+            query={commandQuery}
+            onPick={(command) => {
+              // The name and a trailing space, so the caret lands where the
+              // argument goes. The reader types what they meant, not what the
+              // list happened to spell.
+              setText(`/${command.name} `);
+              setDismissed(true);
+              fieldRef.current?.focus();
+            }}
+            onDismiss={() => {
+              setDismissed(true);
+              fieldRef.current?.focus();
+            }}
+          />
+        )}
         <textarea
           className="composer__field"
           aria-label="Message"
@@ -156,9 +210,16 @@ export function Composer({
           placeholder="Say what you want done"
           onChange={(event) => {
             setText(event.target.value);
+            // A draft that stops being a command re-arms the menu, so pressing
+            // Escape once does not silence it for the rest of the session.
+            if (!event.target.value.startsWith('/')) {
+              setDismissed(false);
+            }
           }}
           onKeyDown={(event) => {
             // Enter sends; Shift+Enter opens a line.
+            // While the menu is open it owns Enter, Escape and the arrows; it
+            // listens in the capture phase and stops them reaching here.
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
               if (canSend) {
