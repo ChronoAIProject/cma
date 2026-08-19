@@ -11,18 +11,30 @@
   flex-direction: column;
 }
 
+/*
+ * The chrome is tight where the reading column is airy — §20.6.
+ *
+ * A tool call is not something to read at length; it is something to scan and
+ * open when it matters. So the row is a compact disclosure rather than a card,
+ * and its ground is a tint rather than a surface — since §20.1 made the light
+ * layers one white, `--raised` here separated from nothing.
+ */
 .toolcall__row {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-2);
   align-items: center;
   width: 100%;
-  height: var(--control-h-lg);
-  padding-inline: var(--space-3);
+  height: var(--control-h);
+  padding-inline: var(--space-2);
   text-align: left;
   cursor: pointer;
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  background: var(--tint-hover);
+  border: 1px solid var(--edge-hairline);
+  border-radius: var(--radius-sm);
+}
+
+.toolcall__row:hover {
+  background: var(--tint-active);
 }
 
 /* A failed call's row takes the fail tint on its border — §18.2. */
