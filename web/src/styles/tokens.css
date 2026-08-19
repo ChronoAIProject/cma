@@ -136,10 +136,16 @@
   --read-column: 760px;
 
   /* Radius — §3. Five steps: control, row, card, panel, pill. */
-  --radius-sm: 8px;
-  --radius: 10px;
-  --radius-md: 12px;
+  /*
+   * §20.4. A container takes a fixed step; an interactive capsule takes half
+   * its own height, which is what makes a 32px control read as a pill and a
+   * card read as a panel without either being told which it is.
+   */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
   --radius-lg: 14px;
+  --radius-xl: 20px;
   --radius-pill: 999px;
 
   /* Controls — §7 */
