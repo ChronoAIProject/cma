@@ -24,6 +24,30 @@
   white-space: normal;
 }
 
+.actions__more {
+  width: 36px;
+  min-width: 0;
+  padding: 0;
+}
+
+/*
+ * A disabled row says why underneath its own label. The reasons run long, and
+ * beside the label they pushed the row's name out of the card.
+ */
+.actions__whynot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.actions__reason {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: normal;
+}
+
 .actions__overflow {
   position: relative;
   flex: none;
