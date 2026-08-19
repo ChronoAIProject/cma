@@ -423,6 +423,12 @@ pub enum LiveFrame {
     /// watch it think a second time. The turn's own boundaries already say
     /// when the thinking happened.
     ThoughtDelta(String),
+    /// The actions the owner may invoke right now.
+    ///
+    /// Liveness, not history: this describes the session as it is at this
+    /// moment, and a list replayed from the log would offer actions that no
+    /// longer exist. A client that missed it sees none rather than a stale one.
+    AvailableCommands(Vec<AvailableCommand>),
     /// The runtime process ended.
     Exited {
         /// Process exit code, when one was reported.
@@ -430,6 +436,18 @@ pub enum LiveFrame {
         /// Why the session stopped.
         reason: StopReason,
     },
+}
+
+/// One action the owner may invoke, as the kernel offers it.
+///
+/// Carried opaquely: the kernel names the action and what it does, and a
+/// client renders both verbatim, never mapped onto a set this service invented.
+#[derive(Debug, Clone)]
+pub struct AvailableCommand {
+    /// What the command is, as the kernel named it.
+    pub name: String,
+    /// What it does, as the kernel described it.
+    pub description: String,
 }
 
 #[cfg(test)]
