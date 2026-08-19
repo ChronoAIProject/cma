@@ -26,7 +26,7 @@ import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
 import { ApiError, followSession, listKernels, listSessions } from './api/client';
 import { abilitiesFor, listable } from './sessions/availability';
-import { useSessionActions } from './sessions/useSessionActions';
+import { useSessionActions, type FailureNotice } from './sessions/useSessionActions';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
 import { createRestProfileStore } from './environment/rest';
 import type { EnvironmentProfile, EnvironmentProfileStore } from './environment/types';
@@ -83,7 +83,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
   const [sessions, setSessions] = useState<readonly Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<FailureNotice | null>(null);
   /*
    * Bumped when the terminal palette changes. xterm reads its theme when the
    * terminal is constructed, so remounting is what applies a new one — and
@@ -177,8 +177,21 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     );
   }, []);
 
-  const report = useCallback((cause: unknown) => {
-    setNotice(cause instanceof ApiError ? cause.message : `something went wrong: ${String(cause)}`);
+  /*
+   * §12: the card carries what failed — ending with the API's own words
+   * where it gave any — what was not changed, and the API's code in
+   * identifier style. A client-side failure has no code to show.
+   */
+  const report = useCallback((cause: unknown, failed: string, unchanged: string) => {
+    if (cause instanceof ApiError) {
+      setNotice({
+        failed: `${failed} ${cause.message}`,
+        unchanged,
+        code: cause.status > 0 ? `HTTP ${String(cause.status)}` : undefined,
+      });
+      return;
+    }
+    setNotice({ failed: `${failed} ${String(cause)}`, unchanged });
   }, []);
 
   /** Replace a session's lifecycle wherever it is listed. */
@@ -207,7 +220,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         }
       } catch (cause) {
         if (!cancelled) {
-          report(cause);
+          report(cause, 'Loading your sessions failed.', 'Nothing was changed.');
         }
       } finally {
         if (!cancelled) {
@@ -259,7 +272,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         }
       },
       (message) => {
-        setNotice(message);
+        setNotice({ failed: message });
       },
       (stage) => {
         setStages((prev) => ({ ...prev, [id]: stage }));
@@ -606,8 +619,25 @@ export function Console({ user, onSignOut }: ConsoleProps) {
              * is the terminal, and it does.
              */}
             {notice !== null ? (
-              <div className="band console__notice" role="alert">
-                <span className="band__value console__noticetext">{notice}</span>
+              <div className="notice notice--fail console__notice" role="alert">
+                <div className="console__noticebody">
+                  <p className="notice__title">{notice.failed}</p>
+                  {notice.unchanged === undefined ? null : (
+                    <p className="notice__detail">{notice.unchanged}</p>
+                  )}
+                </div>
+                {notice.code === undefined ? null : (
+                  <span className="console__noticecode">{notice.code}</span>
+                )}
+                <button
+                  type="button"
+                  className="button button--sm console__noticedismiss"
+                  onClick={() => {
+                    setNotice(null);
+                  }}
+                >
+                  Dismiss
+                </button>
               </div>
             ) : null}
 
