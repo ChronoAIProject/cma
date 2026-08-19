@@ -19,7 +19,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 export type ButtonTone = 'quiet' | 'accent' | 'danger';
 
 /** Which of §7's heights the control takes. */
-export type ButtonSize = 'default' | 'sm' | 'block' | 'lg';
+export type ButtonSize = 'default' | 'sm' | 'md' | 'block' | 'lg';
 
 interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
   readonly children: ReactNode;
@@ -41,6 +41,7 @@ const TONE: Record<ButtonTone, string> = {
 const SIZE: Record<ButtonSize, string> = {
   default: '',
   sm: 'button--sm',
+  md: 'button--md',
   block: 'button--block',
   lg: 'button--xl',
 };
