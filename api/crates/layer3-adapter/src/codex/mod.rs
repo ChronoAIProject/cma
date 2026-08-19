@@ -107,6 +107,7 @@ impl KernelAdapter for CodexAdapter {
             Some(permission::mode_for(options.permission).to_string()),
             options.resume_conversation.clone(),
             Some((self.hosted.switch_waiters(), handle.0.clone())),
+            options.own_credential,
         )
         .await?;
         // Recorded here so a credential can reach a session that never attaches
