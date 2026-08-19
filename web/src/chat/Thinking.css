@@ -1,31 +1,38 @@
 /*
- * The reasoning band — docs/Web_Style.md §18.8.
+ * The reasoning row — docs/Web_Style.md §18.8.
  *
- * Collapsed by default to one pill key; open, a height-capped band on the
- * raised ground pinned to the newest. No colour, ever: §2 reserves the
- * semantic inks for session and system state, and reasoning is neither.
+ * A row rather than a pill, because it carries a line of the agent's own
+ * words: a pill sized to its label would truncate every one of them to
+ * nothing. No colour, ever — §2 reserves the semantic inks for session and
+ * system state, and reasoning is neither.
  */
 
 .thinking {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  align-items: flex-start;
+  gap: 4px;
+  align-items: stretch;
+  min-width: 0;
 }
 
 .thinking__key {
-  display: inline-flex;
+  display: flex;
+  gap: 6px;
   align-items: center;
-  height: var(--chip-h);
-  padding-inline: var(--space-3);
-  color: var(--ink-3);
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 24px;
+  text-align: left;
   white-space: nowrap;
+  background: none;
+  border: none;
   cursor: pointer;
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-pill);
 }
 
 .thinking__key:hover {
@@ -54,4 +61,39 @@
   background: var(--raised);
   border: 1px solid var(--rule);
   border-radius: var(--radius-md);
+}
+
+.thinking__glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.thinking__title {
+  flex: none;
+}
+
+/* A 2px dot between the title and the line, rather than a bullet character. */
+.thinking__dot {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  background: var(--dsw-alias-label-tertiary);
+  border-radius: 50%;
+}
+
+/*
+ * The agent's newest line. It never wraps: a row that grows with the longest
+ * sentence would move the conversation under it several times a second.
+ */
+.thinking__summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
 }
