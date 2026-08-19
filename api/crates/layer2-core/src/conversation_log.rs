@@ -25,7 +25,7 @@ use layer3_adapter::{
 };
 use tokio::sync::mpsc;
 
-use crate::event::{EventKind, LiveFrame, ToolBody};
+use crate::event::{EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
@@ -345,6 +345,23 @@ fn durable(
             input_tokens: 0,
             output_tokens: 0,
             context_used: usage.used,
+        }),
+        // A permission mode change is a safety matter: it decides how much the
+        // agent may do unattended, so it is recorded rather than only shown.
+        SessionUpdate::CurrentModeUpdate(update) => Some(EventKind::ModeChanged {
+            mode: update.current_mode_id.0.to_string(),
+        }),
+        // The agent's plan, a full revision each time. Steps are carried in the
+        // kernel's own words, never mapped.
+        SessionUpdate::Plan(plan) => Some(EventKind::PlanSet {
+            entries: plan
+                .entries
+                .into_iter()
+                .map(|entry| PlanStep {
+                    title: entry.content,
+                    status: wire_name(&entry.status),
+                })
+                .collect(),
         }),
         // Everything else the protocol can say is either liveness this core
         // does not record, or a runtime's own configuration surface, which is
