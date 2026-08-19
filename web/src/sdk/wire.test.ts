@@ -90,3 +90,41 @@ describe('one durable event may project to several frames', () => {
     expect(frameKey(7, 'TEXT_MESSAGE_CONTENT')).toBe(frameKey(7, 'TEXT_MESSAGE_CONTENT'));
   });
 });
+
+describe('the paths match what the service emits', () => {
+  /*
+   * The list on the right was read out of `api/crates/layer1-public/src/agui/`
+   * on 2026-08-19 by listing every `"path"` the projection writes. It is the
+   * whole set, so this catches both halves of the drift that caused the
+   * original defect: a path declared here that nothing writes, and a path the
+   * service writes that nothing here reads.
+   *
+   * `/usage/cost` is the one deliberate exception and is asserted as such
+   * below — declared, unwritten, and recorded as unwritten.
+   */
+  const EMITTED = [
+    '/availableCommands',
+    '/configOptions',
+    '/gaps/-',
+    '/mode',
+    '/plan',
+    '/planeChanges/-',
+    '/usage/contextUsed',
+    '/usage/inputTokens',
+    '/usage/outputTokens',
+  ];
+
+  it('declares every path the service writes', () => {
+    const declared = new Set(Object.values(PATHS));
+    for (const path of EMITTED) {
+      expect(declared, `the service emits ${path} and nothing here reads it`).toContain(path);
+    }
+  });
+
+  it('declares nothing beyond those, but for the one recorded absence', () => {
+    // A path declared here that the service never writes is a promise this
+    // client cannot keep, and the reason the usage panel read zero for months.
+    const extra = Object.values(PATHS).filter((path) => !EMITTED.includes(path));
+    expect(extra).toEqual(['/usage/cost']);
+  });
+});
