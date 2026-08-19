@@ -9,6 +9,9 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
+use tokio::sync::mpsc;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
 use super::Bridge;
 use crate::supervisor;
 use crate::AdapterError;
@@ -148,11 +151,45 @@ async fn connect(
     stream
 }
 
+/// Open a bridge the way the core does: already draining before it calls.
+///
+/// The receiver comes back beside the channel so a test can assert on what was
+/// reported *during* the open — which is the only place a sign-in request
+/// exists, since the kernel is blocked on it for the whole of the rest of it.
+async fn open_bridge(
+    stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    cwd: String,
+    mode: Option<String>,
+    rejoin: Option<String>,
+    switches: Option<(super::super::SwitchWaiters, String)>,
+    own_credential: bool,
+) -> Result<
+    (
+        crate::ConversationChannel,
+        mpsc::Sender<crate::TerminalInput>,
+        mpsc::Receiver<crate::ConversationUpdate>,
+    ),
+    AdapterError,
+> {
+    let (updates_tx, updates_rx) = mpsc::channel(64);
+    let (channel, control) = Bridge::open(
+        stream,
+        cwd,
+        mode,
+        rejoin,
+        switches,
+        own_credential,
+        updates_tx,
+    )
+    .await?;
+    Ok((channel, control, updates_rx))
+}
+
 #[tokio::test]
 async fn a_fresh_conversation_is_started_and_held_to_its_mode() {
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(
+    open_bridge(
         stream,
         "/home/chrono".into(),
         Some("read-only".into()),
@@ -177,7 +214,7 @@ async fn a_carried_conversation_is_loaded_rather_than_started_again() {
     // identifier, so its owner's history is still there after a rotation.
     let (url, served) = bridging(Some("conv-carried"), None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(
+    open_bridge(
         stream,
         "/home/chrono".into(),
         Some("agent".into()),
@@ -202,7 +239,7 @@ async fn a_bridge_with_no_modes_is_not_asked_to_set_one() {
     // names none and this step is skipped rather than defaulted.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
+    open_bridge(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect("a bridge without modes still opens");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -216,7 +253,7 @@ async fn a_session_whose_mode_did_not_take_is_refused_rather_than_started() {
     // unattended while its owner had asked to be asked.
     let (url, served) = bridging(None, Some("session/set_mode"), Some(3)).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(
+    let err = open_bridge(
         stream,
         "/home/chrono".into(),
         Some("read-only".into()),
@@ -239,7 +276,7 @@ async fn a_conversation_that_could_not_be_resumed_fails_loudly() {
     // here would lose somebody's history with nothing said about it.
     let (url, served) = bridging(Some("conv-carried"), Some("session/load"), Some(3)).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(
+    let err = open_bridge(
         stream,
         "/home/chrono".into(),
         Some("agent".into()),
@@ -271,7 +308,7 @@ async fn a_link_that_declares_nothing_is_not_a_conversation() {
         let _ = ws.close(None).await;
     });
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
+    let err = open_bridge(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect_err("a silent link is not a conversation");
     assert!(
@@ -293,7 +330,7 @@ async fn a_conversation_the_bridge_still_holds_is_adopted_rather_than_loaded() {
     // initialize is the mode.
     let (url, served) = bridging(None, None, Some(2)).await;
     let stream = connect(&url).await;
-    Bridge::open(
+    open_bridge(
         stream,
         "/home/chrono".into(),
         Some("read-only".into()),
@@ -318,7 +355,7 @@ async fn rejoining_wins_over_what_the_pod_says_it_was_handed() {
     // the conversation that is running now.
     let (url, served) = bridging(Some("conv-carried"), None, Some(2)).await;
     let stream = connect(&url).await;
-    Bridge::open(
+    open_bridge(
         stream,
         "/home/chrono".into(),
         Some("agent".into()),
@@ -349,9 +386,10 @@ async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
     // is where it was wrong. Every existing test here passed throughout.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    let (channel, _control) = Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
-        .await
-        .expect("the bridge answered the handshake");
+    let (channel, _control, _updates) =
+        open_bridge(stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the bridge answered the handshake");
 
     channel
         .input
@@ -392,7 +430,7 @@ async fn every_request_this_bridge_sends_is_dispatchable() {
     // and the failure is silent at both ends.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    let (channel, _control) = Bridge::open(
+    let (channel, _control, _updates) = open_bridge(
         stream,
         "/home/chrono".into(),
         Some("agent".into()),
@@ -546,7 +584,7 @@ async fn an_own_account_session_signs_in_before_opening_a_conversation() {
     // exists.
     let (url, served) = bridging_offering(None, None, Some(3), device_code_offer()).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), None, None, None, true)
+    open_bridge(stream, "/home/chrono".into(), None, None, None, true)
         .await
         .expect("an own-account session opens");
     // Bounded, because the failure this guards against is a call that never
@@ -580,7 +618,7 @@ async fn a_delegated_session_never_signs_in() {
     // its owner has no way to answer.
     let (url, served) = bridging_offering(None, None, Some(2), device_code_offer()).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), None, None, None, false)
+    open_bridge(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect("a delegated session opens");
     let done = tokio::time::timeout(std::time::Duration::from_secs(10), served)
@@ -603,7 +641,7 @@ async fn a_bridge_offering_no_reachable_sign_in_is_refused_by_name() {
     let only_browser = serde_json::json!([{ "id": "browser", "name": "Browser" }]);
     let (url, served) = bridging_offering(None, None, Some(1), only_browser).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), None, None, None, true)
+    let err = open_bridge(stream, "/home/chrono".into(), None, None, None, true)
         .await
         .expect_err("a session that cannot sign in must not open");
     drop(served);
