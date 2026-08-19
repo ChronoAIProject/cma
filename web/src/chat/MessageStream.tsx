@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
-import { BouncingText } from '../sessions/BouncingText';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
 import type { Entry } from './conversation';
@@ -10,9 +9,12 @@ import './MessageStream.css';
 /**
  * The turn-by-turn record of the conversation — `Web_Style.md` §18.1.
  *
- * Turns, not bubbles: a band of content separated from the one before it by a
- * rule, labelled with who is speaking, and inked so the agent's words are the
- * ones being read.
+ * A reading column, 760px, centred. The two roles are told apart by shape as
+ * well as ink: the agent's turn is full width and unboxed under its eyebrow,
+ * at the reading size, because the agent's words are the ones being read and
+ * they get the whole column; the owner's turn is a right-aligned block on
+ * the inset, because it is short, it is already known, and a shape means the
+ * eye finds where a request starts without reading a label.
  *
  * **Nothing about a message changes when it commits.** A message that
  * restyled itself on commit would tell a reader the earlier state was
@@ -27,6 +29,8 @@ import './MessageStream.css';
 
 interface MessageStreamProps {
   readonly entries: readonly Entry[];
+  /** The kernel's name, for the agent turns' eyebrow — §18.1. */
+  readonly kernel: string;
   /** Drawn under the last entry while a turn is in flight. */
   readonly turnInFlight?: boolean;
   /**
@@ -55,6 +59,7 @@ const PINNED_WITHIN_PX = 48;
 
 export function MessageStream({
   entries,
+  kernel,
   turnInFlight = false,
   live,
   reasoning,
@@ -113,35 +118,40 @@ export function MessageStream({
           setSeenAt(entries.length);
         }}
       >
-        {entries.map((entry) => (
-          <StreamEntry
-            entry={entry}
-            key={`${entry.kind}:${entry.id}`}
-            turnInFlight={turnInFlight}
-          />
-        ))}
-        {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
-        {live === undefined ? null : (
-          /*
-           * The in-flight message. Same band, same ink, same everything as a
-           * committed one — §18.1 forbids a message restyling itself when it
-           * settles, and this is the same rule read forwards. The caret is the
-           * one difference, and it belongs to this and to nothing else.
-           */
-          <article className="turn" data-role="assistant">
-            <span className="turn__who">Agent</span>
-            <div className="turn__body">
-              <AgentContent text={live.text} />
-              <b className="turn__caret" aria-hidden="true" />
-            </div>
-          </article>
-        )}
-        {waiting ? (
-          <p className="stream__waiting">
-            <BouncingText text="Working" />
-          </p>
-        ) : null}
-        {footer}
+        <div className="stream__column">
+          {entries.map((entry) => (
+            <StreamEntry
+              entry={entry}
+              kernel={kernel}
+              key={`${entry.kind}:${entry.id}`}
+              turnInFlight={turnInFlight}
+            />
+          ))}
+          {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
+          {live === undefined ? null : (
+            /*
+             * The in-flight message. Same shape, same ink, same everything as
+             * a committed one — §18.1 forbids a message restyling itself when
+             * it settles, and this is the same rule read forwards. The caret
+             * is the one difference, and it belongs to this and nothing else.
+             */
+            <article className="turn" data-role="assistant">
+              <Eyebrow kernel={kernel} />
+              <div className="turn__body">
+                <AgentContent text={live.text} />
+                <b className="turn__caret" aria-hidden="true" />
+              </div>
+            </article>
+          )}
+          {waiting ? (
+            /* §18.1: the §8 pulse with a word, claiming no progress. */
+            <p className="stream__waiting">
+              <span className="stream__waitdot pulse" aria-hidden="true" />
+              Working
+            </p>
+          ) : null}
+          {footer}
+        </div>
       </div>
 
       {/*
@@ -164,12 +174,37 @@ export function MessageStream({
   );
 }
 
-function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: boolean }) {
+/**
+ * The agent turn's eyebrow — §18.1: a live dot, then the product and the
+ * kernel in mono, uppercase by style rather than by text.
+ */
+function Eyebrow({ kernel }: { readonly kernel: string }) {
+  return (
+    <span className="turn__eyebrow">
+      <span className="turn__dot" aria-hidden="true" />
+      chronobot · {kernel}
+    </span>
+  );
+}
+
+function StreamEntry({
+  entry,
+  kernel,
+  turnInFlight,
+}: {
+  entry: Entry;
+  kernel: string;
+  turnInFlight: boolean;
+}) {
   switch (entry.kind) {
     case 'message':
       return (
         <article className="turn" data-role={entry.role}>
-          <span className="turn__who">{entry.role === 'user' ? 'You' : 'Agent'}</span>
+          {entry.role === 'user' ? (
+            <span className="turn__eyebrow turn__eyebrow--you">You</span>
+          ) : (
+            <Eyebrow kernel={kernel} />
+          )}
           <div className="turn__body">
             <AgentContent text={entry.text} />
             {/*
@@ -237,7 +272,7 @@ function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: bool
        */
       return (
         <div className="turn turn--unknown">
-          <span className="turn__who">{entry.eventKind}</span>
+          <span className="turn__eyebrow">{entry.eventKind}</span>
           <span className="turn__body">
             This build does not know how to draw this yet. It was not lost.
           </span>

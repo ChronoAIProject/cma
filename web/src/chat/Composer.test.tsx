@@ -103,9 +103,9 @@ describe('steering', () => {
     expect(screen.queryByText(/steer/i)).toBeNull();
   });
 
-  it('shows it where it was granted', () => {
+  it('shows it where it was granted, as a tag on the composer row', () => {
     renderComposer({ capabilities: capabilities({ steer: true }), turnInFlight: true });
-    expect(screen.getByText(/can be steered/i)).toBeInTheDocument();
+    expect(screen.getByText('steerable')).toBeInTheDocument();
   });
 });
 
@@ -152,19 +152,21 @@ describe('interrupt', () => {
 
 describe('a session that cannot take input', () => {
   it('refuses and says why, rather than being inert', () => {
-    // §11 and §18.4. A composer that has quietly stopped working is the thing
-    // people report as broken.
-    renderComposer({ refusedReason: 'This session is moving to an updated runtime.' });
+    // §11 and §18.4: a dashed-border card carrying the reason — never a
+    // quietly dead field, which is the thing people report as broken.
+    const refused = renderComposer({
+      refusedReason: 'This session is moving to an updated runtime.',
+    });
 
-    expect(screen.getByLabelText('Message')).toBeDisabled();
+    expect(refused.container.querySelector('.composer--refused')).not.toBeNull();
     expect(screen.getByText('This session is moving to an updated runtime.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
-  it('never sends while it is refusing', async () => {
-    const user = userEvent.setup();
-    const { onSend } = renderComposer({ refusedReason: 'This session has ended.' });
-    await user.click(screen.getByRole('button', { name: 'Send' }));
-    expect(onSend).not.toHaveBeenCalled();
+  it('offers nothing to send while it is refusing', () => {
+    // The refusal card replaces the field and the keys entirely: a Send key
+    // beside a refusal would be a control that can never work (§18.4).
+    renderComposer({ refusedReason: 'This session has ended.' });
+    expect(screen.queryByRole('button', { name: /send/i })).toBeNull();
+    expect(screen.queryByLabelText('Message')).toBeNull();
   });
 });
