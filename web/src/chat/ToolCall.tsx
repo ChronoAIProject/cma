@@ -1,5 +1,5 @@
-import { useId, useState } from 'react';
 import type { ToolCallEntry } from './conversation';
+import type { DetailsSection } from './DetailsPanel';
 import './ToolCall.css';
 
 /**
@@ -24,6 +24,15 @@ import './ToolCall.css';
 
 interface ToolCallProps {
   readonly call: ToolCallEntry;
+  /**
+   * Open this call in the details column.
+   *
+   * Absent where there is no column to open — the row is then a summary and
+   * says so by not being pressable, rather than by opening onto nothing.
+   */
+  readonly onInspect?: (call: ToolCallEntry) => void;
+  /** Whether this is the call the column is currently showing. */
+  readonly inspecting?: boolean;
 }
 
 /**
@@ -77,30 +86,58 @@ function durationOf(call: ToolCallEntry): string | undefined {
  * the order they happened in and the order a reader reconstructs them in.
  */
 const BODIES = [
-  { key: 'arguments', label: 'arguments' },
-  { key: 'result', label: 'result' },
+  { key: 'arguments', label: 'Arguments' },
+  { key: 'result', label: 'Result' },
 ] as const;
 
-export function ToolCall({ call }: ToolCallProps) {
-  const [open, setOpen] = useState(false);
-  const bodyId = useId();
+/**
+ * What this call has to show, in the order it happened.
+ *
+ * Built here rather than in the panel because it is a fact about the log's
+ * shape, and the panel is a way of drawing things. A body that did not arrive
+ * contributes nothing rather than an empty region — an absence is a fact, not
+ * a zero.
+ */
+export function sectionsOf(call: ToolCallEntry): readonly DetailsSection[] {
+  const sections: DetailsSection[] = [];
+  for (const { key, label } of BODIES) {
+    const body = call[key];
+    if (body !== undefined) {
+      sections.push({
+        id: key,
+        label,
+        body: body.text,
+        truncated: body.truncated,
+        failed: key === 'result' && toneOf(call.status) === 'failed',
+      });
+    }
+  }
+  if (call.output !== undefined && call.output !== '') {
+    sections.push({ id: 'output', label: 'Output', body: call.output });
+  }
+  return sections;
+}
+
+export function ToolCall({ call, onInspect, inspecting = false }: ToolCallProps) {
   const tone = toneOf(call.status);
   const duration = durationOf(call);
-  const hasDetail =
-    (call.output !== undefined && call.output !== '') ||
-    call.arguments !== undefined ||
-    call.result !== undefined;
+  const hasDetail = sectionsOf(call).length > 0;
 
   return (
     <div className="toolcall" data-tone={tone}>
       <button
         type="button"
         className="toolcall__row"
-        aria-expanded={open}
-        aria-controls={hasDetail ? bodyId : undefined}
-        disabled={!hasDetail}
+        /*
+         * Not a disclosure any more. The row opens the details column rather
+         * than growing: what a call carries is unbounded and is not prose,
+         * and inside the reading column it pushed the conversation it belongs
+         * to off the screen.
+         */
+        aria-pressed={inspecting}
+        disabled={!hasDetail || onInspect === undefined}
         onClick={() => {
-          setOpen((wasOpen) => !wasOpen);
+          onInspect?.(call);
         }}
       >
         {/*
@@ -130,51 +167,6 @@ export function ToolCall({ call }: ToolCallProps) {
           <span className="toolcall__status">{tone === 'running' ? 'running' : call.status}</span>
         )}
       </button>
-
-      {/*
-       * Disclosure, not truncation (§18.2). Output is agent-emitted content
-       * and §1's fidelity rule applies, so nothing is silently shortened —
-       * bounding it behind this control is a frame decision and is permitted,
-       * dropping the tail of it is not. It scrolls inside itself.
-       */}
-      {open && hasDetail ? (
-        /*
-         * Each body the log carried is its own region — §18.2.
-         *
-         * They used to share one `<pre>` and one scroll position, so a long
-         * argument payload pushed the result out of view and the reader had to
-         * scroll past what they already knew to reach the thing they opened
-         * the row for. That is the scrollback this section exists to replace.
-         *
-         * A body that did not arrive draws nothing rather than an empty
-         * labelled region: §18.5's rule that an absence is a fact and not a
-         * zero. Truncation is reported per body, because the log bounds them
-         * separately.
-         */
-        <div className="toolcall__bodies" id={bodyId}>
-          {BODIES.map(({ key, label }) => {
-            const body = call[key];
-            if (body === undefined) {
-              return null;
-            }
-            return (
-              <section className="toolcall__body" key={key}>
-                <p className="toolcall__bodylabel">
-                  {label}
-                  {body.truncated ? ' (truncated)' : ''}
-                </p>
-                <pre className="toolcall__output">{body.text}</pre>
-              </section>
-            );
-          })}
-          {call.output === undefined || call.output === '' ? null : (
-            <section className="toolcall__body">
-              <p className="toolcall__bodylabel">output</p>
-              <pre className="toolcall__output">{call.output}</pre>
-            </section>
-          )}
-        </div>
-      ) : null}
     </div>
   );
 }
