@@ -77,7 +77,7 @@ describe('telling calls apart without reading them', () => {
     // §18.2, and the transcript the milestone asks for: a turn with two tool
     // calls, one still running when it is read.
     const conversation = await conversationFrom('two-tool-calls');
-    const { container } = render(<MessageStream entries={conversation.entries} />);
+    const { container } = render(<MessageStream kernel="codex" entries={conversation.entries} />);
 
     const calls = [...container.querySelectorAll('.toolcall')];
     expect(calls).toHaveLength(2);
@@ -89,7 +89,7 @@ describe('telling calls apart without reading them', () => {
 
   it('distinguishes a failed call from a successful one', async () => {
     const conversation = await conversationFrom('failed-tool-call');
-    const { container } = render(<MessageStream entries={conversation.entries} />);
+    const { container } = render(<MessageStream kernel="codex" entries={conversation.entries} />);
     const call = container.querySelector('.toolcall');
 
     expect(call?.getAttribute('data-tone')).toBe('failed');
@@ -121,11 +121,11 @@ describe('telling calls apart without reading them', () => {
     const live = await conversationFrom('two-tool-calls');
     const replayed = await conversationFrom('two-tool-calls', { dropAfter: 2 });
 
-    const watching = render(<MessageStream entries={live.entries} />);
+    const watching = render(<MessageStream kernel="codex" entries={live.entries} />);
     const html = withoutGeneratedIds(watching.container.innerHTML);
     watching.unmount();
 
-    const reading = render(<MessageStream entries={replayed.entries} />);
+    const reading = render(<MessageStream kernel="codex" entries={replayed.entries} />);
     expect(withoutGeneratedIds(reading.container.innerHTML)).toBe(html);
   });
 });
@@ -160,5 +160,41 @@ describe('disclosure, not truncation', () => {
   it('offers no disclosure when there is nothing behind it', () => {
     render(<ToolCall call={{ kind: 'tool', id: 't1', toolKind: 'shell', status: 'ok', seq: 2 }} />);
     expect(screen.getByRole('button')).toBeDisabled();
+  });
+
+  it('carries the time a finished call took', () => {
+    render(
+      <ToolCall
+        call={{
+          kind: 'tool',
+          id: 't1',
+          toolKind: 'read',
+          status: 'ok',
+          seq: 2,
+          startedAt: '2026-08-19T04:00:00Z',
+          finishedAt: '2026-08-19T04:00:02Z',
+        }}
+      />,
+    );
+    // Two seconds apart, from the durable log — never estimated.
+    expect(screen.getByText('2s')).toBeInTheDocument();
+  });
+
+  it('shows no duration when either instant is absent', () => {
+    // A call whose start or finish the record does not carry shows no duration
+    // rather than one invented (§18.2).
+    const { container } = render(
+      <ToolCall
+        call={{
+          kind: 'tool',
+          id: 't1',
+          toolKind: 'read',
+          status: 'ok',
+          seq: 2,
+          startedAt: '2026-08-19T04:00:00Z',
+        }}
+      />,
+    );
+    expect(container.querySelector('.toolcall__duration')).toBeNull();
   });
 });

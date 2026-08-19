@@ -224,6 +224,24 @@ pub trait KernelAdapter: Send + Sync {
             "this runtime cannot enumerate what it is running".to_string(),
         ))
     }
+
+    /// Move a live session between the terminal and conversation planes
+    /// without replacing its sandbox.
+    ///
+    /// Distinct from a rotation: the program inside the existing pod is
+    /// restarted under the other front-end against the same filesystem and the
+    /// same conversation, so nothing travels and nothing is lost. Defaults to
+    /// unsupported — a kernel that cannot switch in place says so, and the
+    /// caller falls back to the rotation that replaces the pod.
+    async fn switch_plane(
+        &self,
+        _handle: &RuntimeHandle,
+        _mode: RuntimeMode,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this kernel cannot switch plane in place".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]

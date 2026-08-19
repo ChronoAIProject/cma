@@ -162,7 +162,7 @@ describe('the namespace', () => {
     expect(await screen.findByText('unknown')).toBeInTheDocument();
     expect(screen.getByText('cannot enumerate')).toBeInTheDocument();
     // A partial total presented as a total is the same lie as an empty list.
-    expect(screen.getByText(/running total unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/running total withheld/i)).toBeInTheDocument();
   });
 
   it('renders a provider running nothing as running nothing', async () => {

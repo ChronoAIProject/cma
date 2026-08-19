@@ -20,7 +20,9 @@ export const KNOWN_EVENTS = [
   'TEXT_MESSAGE_CONTENT',
   'TEXT_MESSAGE_END',
   'TOOL_CALL_START',
+  'TOOL_CALL_ARGS',
   'TOOL_CALL_END',
+  'TOOL_CALL_RESULT',
   'REASONING_MESSAGE_CONTENT',
   'STATE_DELTA',
 ] as const;
@@ -58,6 +60,14 @@ interface EventBase {
    * deduplicating on that would drop every liveness frame in silence.
    */
   readonly ephemeral?: boolean;
+  /**
+   * When the durable event this was projected from was appended, RFC 3339.
+   *
+   * Absent for liveness (which has no log position) and for events a control
+   * plane predating timestamps wrote. §18.1 renders no time then — never an
+   * estimated one.
+   */
+  readonly timestamp?: string;
 }
 
 export interface RunStarted extends EventBase {
@@ -205,6 +215,24 @@ export interface ToolCallEnd extends EventBase {
   readonly output?: string;
 }
 
+/** A tool call's arguments, when the session records tool bodies. */
+export interface ToolCallArgs extends EventBase {
+  readonly type: 'TOOL_CALL_ARGS';
+  readonly toolCallId: string;
+  readonly delta: string;
+  /** Whether the body was cut to fit the log's bound. */
+  readonly truncated: boolean;
+}
+
+/** A tool call's result, when the session records tool bodies. */
+export interface ToolCallResult extends EventBase {
+  readonly type: 'TOOL_CALL_RESULT';
+  readonly toolCallId: string;
+  readonly content: string;
+  /** Whether the body was cut to fit the log's bound. */
+  readonly truncated: boolean;
+}
+
 /**
  * An RFC 6902 patch against the run's state.
  *
@@ -244,7 +272,9 @@ export type AguiEvent =
   | TextMessageContent
   | TextMessageEnd
   | ToolCallStart
+  | ToolCallArgs
   | ToolCallEnd
+  | ToolCallResult
   | ReasoningContent
   | StateDelta
   | UnknownEvent;
@@ -276,6 +306,7 @@ export function toEvent(raw: unknown): AguiEvent {
     threadId: str(frame.threadId),
     runId: str(frame.runId),
     seq: num(frame.seq),
+    timestamp: typeof frame.timestamp === 'string' ? frame.timestamp : undefined,
     ephemeral: frame['chrono:live'] === true,
   };
   const kind = str(frame.type);
@@ -325,6 +356,14 @@ export function toEvent(raw: unknown): AguiEvent {
         toolKind: str(frame['chrono:toolKind'] ?? frame.toolKind, 'tool'),
         target: firstString(frame.toolCallName, frame.target),
       };
+    case 'TOOL_CALL_ARGS':
+      return {
+        ...base,
+        type: 'TOOL_CALL_ARGS',
+        toolCallId: str(frame.toolCallId),
+        delta: str(frame.delta),
+        truncated: frame['chrono:truncated'] === true,
+      };
     case 'TOOL_CALL_END':
       return {
         ...base,
@@ -332,6 +371,14 @@ export function toEvent(raw: unknown): AguiEvent {
         toolCallId: str(frame.toolCallId),
         status: str(frame['chrono:status'] ?? frame.status, 'finished'),
         output: typeof frame.output === 'string' ? frame.output : undefined,
+      };
+    case 'TOOL_CALL_RESULT':
+      return {
+        ...base,
+        type: 'TOOL_CALL_RESULT',
+        toolCallId: str(frame.toolCallId),
+        content: str(frame.content),
+        truncated: frame['chrono:truncated'] === true,
       };
     case 'REASONING_MESSAGE_CONTENT':
       return {

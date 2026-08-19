@@ -26,6 +26,15 @@ import { terminalUrl } from '../api/client';
 export type DriverKind = 'live' | 'transcript' | 'none';
 
 export function driverKindFor(session: Session): DriverKind {
+  /*
+   * A conversation session has no screen to relay: its surface and its canvas
+   * recap both fold the AG-UI log. A terminal driver here would open a socket
+   * to a runtime that serves no terminal, and spend a canvas attachment slot
+   * on a node that draws no terminal (§13).
+   */
+  if (session.plane === 'conversation') {
+    return 'none';
+  }
   const can = abilitiesFor(session);
   if (can.interactive) {
     return 'live';

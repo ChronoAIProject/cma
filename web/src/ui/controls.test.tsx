@@ -9,28 +9,27 @@ import { Select } from './Select';
 /**
  * Controls — docs/Web_Style.md §7.
  *
- * Two heights and no others, `box-sizing: border-box` everywhere, the
- * letterpress state contract, and one dropdown pattern. jsdom does not lay
- * out, so the height rule is checked where it is actually decided: in the
- * stylesheets, which is also where a fourth height would be introduced.
+ * The five control heights and no others, `box-sizing: border-box`
+ * everywhere, the lift state contract, and one dropdown pattern. jsdom does
+ * not lay out, so the height rule is checked where it is actually decided:
+ * in the stylesheets, which is also where a sixth height would be introduced.
  */
 
 const SRC = resolve(process.cwd(), 'src');
 
-/** Every height §7 permits a control to take, plus the chip and the segment. */
+/** Every height §7 permits a control to take, plus the chip. */
 const PERMITTED_HEIGHTS = new Set([
   'var(--control-h)',
   'var(--control-h-sm)',
-  'var(--control-h-block)',
+  'var(--control-h-md)',
   'var(--control-h-lg)',
+  'var(--control-h-xl)',
   'var(--chip-h)',
-  'var(--segment-h)',
   'var(--hit)',
   'var(--band-head)',
   'var(--band-foot)',
   'var(--bar-height)',
   'var(--canvas-node-h)',
-  'var(--stacked-min)',
   '100%',
   'auto',
   '1em',
@@ -38,6 +37,8 @@ const PERMITTED_HEIGHTS = new Set([
   // A textarea grows; its floor is stated in control heights rather than in
   // pixels, which is the property this check exists to hold.
   'calc(var(--control-h) * 2)',
+  // §18.3's own number: the approval's answers sit two above the field step.
+  'calc(var(--control-h-md) + 2px)',
 ]);
 
 function stylesheets(dir: string): string[] {
@@ -89,34 +90,37 @@ describe('the control heights', () => {
 });
 
 describe('the button', () => {
-  it('carries the impression its tone calls for', () => {
+  it('takes the primary fill when the surface spends it', () => {
     const { container } = render(<Button tone="accent">Start</Button>);
-    expect(container.firstElementChild).toHaveClass('button', 'button--accent', 'press--accent');
+    expect(container.firstElementChild).toHaveClass('button', 'button--primary');
   });
 
-  it('carries no impression when disabled, and says why', () => {
-    // §7: the impression is what says a thing can be pressed, so a greyed key
-    // that still looks pressable reads as broken rather than unavailable. The
-    // reason is part of the button, because a tooltip is unreachable by touch.
+  it('takes the disabled treatment, and the reason lives beside it', () => {
+    // §7: disabled, never removed — and the reason is a sibling
+    // .control-reason drawn once per row, never stacked into the key, which
+    // made every disabled control taller than its enabled neighbour.
     render(
-      <Button disabled reason="This session is not running">
-        End session
-      </Button>,
+      <div>
+        <Button disabled>End session</Button>
+        <span className="control-reason">This session is not running</span>
+      </div>,
     );
     const button = screen.getByRole('button', { name: /end session/i });
     expect(button).toBeDisabled();
-    expect(button).toHaveClass('button--stacked');
-    expect(button.textContent).toContain('This session is not running');
+    expect(button.textContent).not.toContain('This session is not running');
 
     const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    expect(components).toMatch(/\.press--quiet:disabled[\s\S]*?box-shadow: var\(--press-none\)/);
+    // §3: disabled takes the inset fill with an --ink-3 label.
+    expect(components).toMatch(/\.button:disabled,[\s\S]*?background: var\(--inset\)/);
+    // The reason class is part of the shared vocabulary, at note size in ink-3.
+    expect(components).toMatch(/\.control-reason\s*\{[^}]*font-size: var\(--text-note\)/);
   });
 
   it('is quiet unless something is spent on it', () => {
-    // §7: one accent button per view, spent on the action the view exists for.
+    // §7: one primary per surface, spent on the action it exists for.
     const { container } = render(<Button>Cancel</Button>);
-    expect(container.firstElementChild).toHaveClass('press--quiet');
-    expect(container.firstElementChild).not.toHaveClass('button--accent');
+    expect(container.firstElementChild).toHaveClass('button');
+    expect(container.firstElementChild).not.toHaveClass('button--primary');
   });
 });
 
@@ -185,20 +189,18 @@ describe('the dropdown', () => {
     expect(onChange).toHaveBeenCalledWith('b');
   });
 
-  it('marks the chosen option on its leading edge and by a tick', () => {
-    // §7 asks for both, because a mark carried by colour alone is not a mark
-    // to everyone (§10).
+  it('marks the chosen option by weight and by a tick', () => {
+    // §7 asks for both, because a mark carried by one channel alone is not a
+    // mark to everyone (§10).
     const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    expect(components).toMatch(
-      /\.menu__item\[aria-selected='true'\][\s\S]*?border-left-color: var\(--accent\)/,
-    );
+    expect(components).toMatch(/\.menu__item\[aria-selected='true'\][\s\S]*?font-weight: 600/);
     expect(components).toMatch(/\.menu__tick::before\s*\{\s*content: '✓'/);
   });
 
-  it('holds the 160px minimum when it filters, and flips rather than rotates', () => {
+  it('holds the 200px minimum when it filters, and flips rather than rotates', () => {
     const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    expect(components).toMatch(/\.select--filter\s*\{\s*min-width: var\(--dropdown-min\)/);
-    // Content swap, not a transform: at 10px a rotation reads as a wobble.
+    expect(components).toMatch(/\.select--filter\s*\{\s*min-width: 200px/);
+    // Content swap, not a transform: at this size a rotation reads as a wobble.
     expect(components).toMatch(/\.select\[aria-expanded='true'\] \.select__caret::before/);
     expect(components).not.toMatch(/\.select__caret[\s\S]{0,120}transform:/);
   });

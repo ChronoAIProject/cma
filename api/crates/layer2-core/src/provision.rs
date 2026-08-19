@@ -62,6 +62,7 @@ impl SessionService {
         adapter: Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
         restore: Option<Vec<u8>>,
+        outcome: crate::provision_failure::Abandonment,
     ) {
         let id = session.id.clone();
         // Nobody may have been present to delegate one — a session recovered by
@@ -84,7 +85,7 @@ impl SessionService {
         .await
         {
             Ok(Ok(())) => {}
-            Ok(Err(failure)) => self.abandon(&id, &adapter, &failure).await,
+            Ok(Err(failure)) => self.abandon(&id, &adapter, &failure, outcome).await,
             Err(_) => {
                 self.abandon(
                     &id,
@@ -93,6 +94,7 @@ impl SessionService {
                         "the runtime did not become usable within {}s",
                         PROVISION_DEADLINE.as_secs()
                     )),
+                    outcome,
                 )
                 .await
             }
@@ -103,6 +105,12 @@ impl SessionService {
         self.finish_start(&id).await;
     }
 
+    /// What becomes of the session if this cannot be done.
+    ///
+    /// Taken as a parameter rather than decided here, because from inside a
+    /// bring-up a session being created and a session being carried onto a
+    /// replacement runtime look identical — and the right answer is opposite.
+    ///
     /// The successful path, from nothing to an attached terminal.
     pub(crate) async fn start_runtime(
         self: &Arc<Self>,
@@ -176,6 +184,9 @@ impl SessionService {
             .into_iter()
             .map(|service| service.0)
             .collect();
+        // Kept for redaction: a tool body must not carry a value the session
+        // was handed, and these are exactly those values.
+        let environment_values: Vec<String> = environment.variables.values().cloned().collect();
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
@@ -280,6 +291,7 @@ impl SessionService {
             session: seeded,
             sequences: Arc::clone(&self.sequences),
             subject_credential: spec.subject_credential.clone(),
+            environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
@@ -385,6 +397,7 @@ impl SessionService {
                     session_id: id.clone(),
                     seq,
                     kind: EventKind::Progress { stage },
+                    appended_at: String::new(),
                 }],
             )
             .await

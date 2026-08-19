@@ -53,6 +53,7 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             run_id: run_id.to_string(),
             thread_id: thread_id.to_string(),
             body: serde_json::json!({ "messageId": IN_FLIGHT, "delta": text }),
+            timestamp: None,
             seq: None,
         }),
         /*
@@ -76,6 +77,24 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             run_id: run_id.to_string(),
             thread_id: thread_id.to_string(),
             body: serde_json::json!({ "messageId": REASONING, "delta": text }),
+            timestamp: None,
+            seq: None,
+        }),
+        // The actions the owner may invoke, as a state patch on the live
+        // lane. A stale list is worse than none, so this never rides the log:
+        // a client that missed it shows no commands rather than dead ones.
+        LiveFrame::AvailableCommands(commands) => Some(AguiEvent {
+            kind: "STATE_DELTA",
+            run_id: run_id.to_string(),
+            thread_id: thread_id.to_string(),
+            body: serde_json::json!({ "delta": [
+                { "op": "replace", "path": "/availableCommands", "value": commands
+                    .iter()
+                    .map(|c| serde_json::json!({ "name": c.name, "description": c.description }))
+                    .collect::<Vec<_>>()
+                },
+            ]}),
+            timestamp: None,
             seq: None,
         }),
         LiveFrame::TerminalOutput(_) | LiveFrame::Exited { .. } => None,

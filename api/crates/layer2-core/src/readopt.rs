@@ -70,6 +70,7 @@ impl SessionService {
                     detail: None,
                     capability: None,
                 },
+                appended_at: String::new(),
             }],
         )
         .await
@@ -92,7 +93,14 @@ impl SessionService {
         let spawned = session.clone();
         tokio::spawn(async move {
             service
-                .bring_up(spawned, spec, adapter, geometry, None)
+                .bring_up(
+                    spawned,
+                    spec,
+                    adapter,
+                    geometry,
+                    None,
+                    crate::provision_failure::Abandonment::Keep,
+                )
                 .await;
         });
 
@@ -124,6 +132,7 @@ impl SessionService {
                         detail: None,
                         capability: None,
                     },
+                    appended_at: String::new(),
                 }],
             )
             .await
@@ -265,12 +274,26 @@ impl SessionService {
         let screen: Arc<Mutex<Box<dyn ScreenModel>>> = Arc::new(Mutex::new(model));
         let captured_len = screen.lock().await.repaint_bytes().len();
 
+        // Resolved again for redaction, not for provisioning: the runtime
+        // survives and needs nothing, but a tool body it echoes must not carry
+        // a value the session was handed. A profile that has since gone yields
+        // nothing, which redacts nothing — honest incompleteness, not a guess.
+        let environment_values: Vec<String> = self
+            .environments
+            .resolve_for_owner(
+                &record.session.owner,
+                record.session.environment_profile.as_ref(),
+            )
+            .await
+            .map(|e| e.variables.values().cloned().collect())
+            .unwrap_or_default();
         let mut adopted = record.session.clone();
         adopted.capabilities = capabilities;
         let entry = SessionEntry {
             session: adopted,
             sequences: Arc::clone(&self.sequences),
             subject_credential: None,
+            environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle),

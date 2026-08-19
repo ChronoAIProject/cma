@@ -43,11 +43,42 @@ function toneOf(status: string | undefined): 'running' | 'failed' | 'done' {
   return FAILED.has(status.toLowerCase()) ? 'failed' : 'done';
 }
 
+/**
+ * The time a finished call took, formatted for the row — §18.2.
+ *
+ * Only when both instants are in the record: a running call has no finish, and
+ * a finished call whose start or finish the log does not carry shows no
+ * duration rather than one estimated.
+ */
+function durationOf(call: ToolCallEntry): string | undefined {
+  if (call.startedAt === undefined || call.finishedAt === undefined) {
+    return undefined;
+  }
+  const ms = Date.parse(call.finishedAt) - Date.parse(call.startedAt);
+  if (!Number.isFinite(ms) || ms < 0) {
+    return undefined;
+  }
+  if (ms < 1000) {
+    return '<1s';
+  }
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 export function ToolCall({ call }: ToolCallProps) {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   const tone = toneOf(call.status);
-  const hasDetail = call.output !== undefined && call.output !== '';
+  const duration = durationOf(call);
+  const hasDetail =
+    (call.output !== undefined && call.output !== '') ||
+    call.arguments !== undefined ||
+    call.result !== undefined;
 
   return (
     <div className="toolcall" data-tone={tone}>
@@ -62,27 +93,31 @@ export function ToolCall({ call }: ToolCallProps) {
         }}
       >
         {/*
-         * The caret flips rather than rotating (§7): at this size a rotation
-         * reads as a wobble. While the call is running its place is taken by
-         * the wait animation §11 uses, so a running call is distinguishable
-         * from a finished one without reading either.
+         * The status glyph — §18.2: a tick for finished, a cross for failed,
+         * a pulsing dot while it runs. Reinforced by the word at the row's
+         * end, because §2 forbids colour carrying meaning alone.
          */}
         {tone === 'running' ? (
-          <span className="toolcall__running" aria-hidden="true" />
+          <span className="toolcall__glyph toolcall__glyph--running pulse" aria-hidden="true" />
         ) : (
-          <span className="toolcall__caret" aria-hidden="true" />
+          <span className="toolcall__glyph" aria-hidden="true">
+            {tone === 'failed' ? '×' : '✓'}
+          </span>
         )}
 
         <span className="toolcall__kind">{call.toolKind}</span>
         {call.target === undefined ? null : <span className="toolcall__target">{call.target}</span>}
 
+        {duration === undefined ? null : <span className="toolcall__duration">{duration}</span>}
+
         {/*
-         * The status as a word as well as a colour, because §2 forbids colour
-         * carrying meaning alone.
+         * The status word, drawn for a failed or a running call. A finished
+         * call's word is its glyph and its stillness; §18.2 spends the words
+         * where the state needs one.
          */}
-        <span className="toolcall__status">
-          {tone === 'running' ? 'running' : (call.status ?? 'finished')}
-        </span>
+        {tone === 'done' && call.status === undefined ? null : (
+          <span className="toolcall__status">{tone === 'running' ? 'running' : call.status}</span>
+        )}
       </button>
 
       {/*
@@ -93,7 +128,13 @@ export function ToolCall({ call }: ToolCallProps) {
        */}
       {open && hasDetail ? (
         <pre className="toolcall__output" id={bodyId}>
-          {call.output}
+          {call.arguments === undefined
+            ? null
+            : `arguments${call.arguments.truncated ? ' (truncated)' : ''}:\n${call.arguments.text}\n`}
+          {call.result === undefined
+            ? null
+            : `result${call.result.truncated ? ' (truncated)' : ''}:\n${call.result.text}\n`}
+          {call.output ?? ''}
         </pre>
       ) : null}
     </div>
