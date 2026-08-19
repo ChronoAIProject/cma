@@ -24,8 +24,8 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
-    background var(--motion-colour),
-    color var(--motion-colour);
+    background var(--ds-transition-duration) var(--ds-ease-in-out),
+    color var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
 .copykey:hover:not(:disabled) {
