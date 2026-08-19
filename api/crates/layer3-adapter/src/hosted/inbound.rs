@@ -88,11 +88,8 @@ impl Bridge {
     /// produces is written inside the sandbox by the kernel, which is the
     /// whole basis of `CredentialMode::Own`'s promise.
     async fn sign_in(&self, frame: &serde_json::Value, updates: &mpsc::Sender<ConversationUpdate>) {
-        let params = frame.get("params");
-        let url = params
-            .and_then(|p| p.get("url"))
-            .and_then(serde_json::Value::as_str);
-        let Some(url) = url else {
+        let asked = sign_in_from(frame.get("params"));
+        let Some((url, code, message)) = asked else {
             // Nothing to show. Refused rather than accepted, so the kernel
             // stops waiting on a sign-in that was never going to appear.
             tracing::warn!("a sign-in request carrying no address");
@@ -107,26 +104,9 @@ impl Bridge {
             }
             return;
         };
-        let message = params
-            .and_then(|p| p.get("message"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        // The code is carried in its own field by some bridges and only inside
-        // the sentence by others. Read where it is declared and left alone
-        // otherwise: a code parsed out of prose would break the first time the
-        // wording changed, and the sentence is shown anyway.
-        let code = params
-            .and_then(|p| p.get("userCode").or_else(|| p.get("code")))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-
         tracing::info!(%url, "the agent is waiting for its owner to sign in");
         let _ = updates
-            .send(ConversationUpdate::SignInRequired {
-                url: url.to_string(),
-                code,
-                message,
-            })
+            .send(ConversationUpdate::SignInRequired { url, code, message })
             .await;
 
         if let Some(id) = frame.get("id") {
@@ -181,6 +161,31 @@ impl Bridge {
 /// An intent with nothing to match is cancelled, which every ACP agent
 /// understands and which stops the turn rather than letting it proceed — the
 /// safe direction when the answer was "no" and we cannot say which kind.
+/// Read a sign-in request into the three things a person needs.
+///
+/// Separated from the sending so it can be tested without a bridge: what a
+/// client shows somebody is decided here, and getting it wrong shows them a
+/// card they cannot act on.
+///
+/// The code is read only from where it is declared. Some bridges carry it in
+/// its own field and some only inside the sentence; parsing it out of prose
+/// would break the first time the wording changed, and the sentence is shown
+/// whole either way.
+pub(crate) fn sign_in_from(
+    params: Option<&serde_json::Value>,
+) -> Option<(String, Option<String>, Option<String>)> {
+    let text = |key: &str| {
+        params
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    // No address, nothing to show. Everything else is optional.
+    let url = text("url")?;
+    let code = text("userCode").or_else(|| text("code"));
+    Some((url, code, text("message")))
+}
+
 pub(crate) fn outcome_for(
     decision: PermissionDecision,
     options: &[PermissionOption],
