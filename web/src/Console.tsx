@@ -22,6 +22,7 @@ import { loadCollapsed, saveCollapsed } from './shell/collapse';
 import { canvasFits, railIsColumn, useWidth } from './shell/widths';
 import type { Arrangement } from './sessions/arrangement';
 import { ProfileMenu } from './profile/ProfileMenu';
+import { CommandBar } from './shell/CommandBar';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
 import { ApiError, followSession, listKernels, listSessions } from './api/client';
@@ -152,6 +153,29 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * folds the log, so it reports the fact up and this is where it lands.
    */
   const [waitingId, setWaitingId] = useState<string | null>(null);
+  /*
+   * The command bar plate — §6. Opened from the bar's trigger and by ⌘K;
+   * closing returns focus to whatever opened it via the plate machinery.
+   */
+  const [commandOpen, setCommandOpen] = useState(false);
+
+  /*
+   * §6: ⌘K opens and closes the command bar. On the document, because the
+   * shortcut has to work wherever the caret is — that is the whole point of
+   * having one.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
   // Validated on read: web storage is untrusted input, and an unrecognised
   // value reaching the layout would be a rail nobody can draw (§7).
   const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
@@ -442,6 +466,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       showing={showing}
       note={note}
       live={loading ? undefined : liveCount}
+      onCommand={() => {
+        setCommandOpen(true);
+      }}
       views={compact ? undefined : viewSwitch}
       account={
         <ProfileMenu
@@ -744,6 +771,27 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           ) : null}
         </div>
       )}
+
+      {commandOpen ? (
+        <CommandBar
+          sessions={listed}
+          canvasAvailable={canvasFits(width)}
+          onClose={() => {
+            setCommandOpen(false);
+          }}
+          onSelectSession={(id) => {
+            setView('sessions');
+            select(id);
+          }}
+          onArrange={(next) => {
+            setView('sessions');
+            changeArrangement(next);
+          }}
+          onNewSession={() => {
+            setChoosing(true);
+          }}
+        />
+      ) : null}
 
       <NewSessionDialog
         open={choosing}
