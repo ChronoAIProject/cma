@@ -318,16 +318,23 @@ where
     let (tx, mut rx) = mpsc::channel::<TerminalInput>(CONTROL_BUFFER);
     tokio::spawn(async move {
         while let Some(input) = rx.recv().await {
-            let TerminalInput::Credential(value) = input else {
-                tracing::warn!(
-                    "a conversation's control lane carries credentials and nothing else"
-                );
-                continue;
+            let message = match input {
+                TerminalInput::Credential(value) => tokio_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "t": "credential", "value": value }).to_string(),
+                ),
+                TerminalInput::SwitchPlane { command } => {
+                    tokio_tungstenite::tungstenite::Message::Text(
+                        serde_json::json!({ "t": "switch_plane", "command": command }).to_string(),
+                    )
+                }
+                _ => {
+                    tracing::warn!(
+                        "a conversation's control lane carries credentials and plane switches only"
+                    );
+                    continue;
+                }
             };
-            let message = tokio_tungstenite::tungstenite::Message::Text(
-                serde_json::json!({ "t": "credential", "value": value }).to_string(),
-            );
-            // Never logged with its value, here or anywhere below this line.
+            // Never logged with a credential's value, here or anywhere below this line.
             if sink.lock().await.send(message).await.is_err() {
                 tracing::warn!("a conversation's control lane closed");
                 break;

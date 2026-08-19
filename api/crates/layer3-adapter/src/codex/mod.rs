@@ -17,7 +17,7 @@ use crate::hosted::{acp, HostedKernel};
 use crate::sandbox::SandboxClient;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, RuntimeHandle,
-    RuntimeListing, RuntimeOptions, RuntimeSpec, TerminalChannel,
+    RuntimeListing, RuntimeMode, RuntimeOptions, RuntimeSpec, TerminalChannel,
 };
 
 /// Drives Codex inside a provider-managed sandbox.
@@ -122,6 +122,20 @@ impl KernelAdapter for CodexAdapter {
         credential: &str,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
+    }
+
+    async fn switch_plane(
+        &self,
+        handle: &RuntimeHandle,
+        mode: RuntimeMode,
+    ) -> Result<(), AdapterError> {
+        // The command for each front-end, in this kernel's own vocabulary.
+        // The supervisor refuses a command it was not told at boot it may run.
+        let command = match mode {
+            RuntimeMode::Terminal => "codex".to_string(),
+            RuntimeMode::Conversation => self.spec.deployment.bridge_command.clone(),
+        };
+        self.hosted.switch_plane(handle, &command).await
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
