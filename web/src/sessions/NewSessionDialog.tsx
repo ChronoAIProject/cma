@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { Select } from '../ui/Select';
+import { Picker } from '../ui/Picker';
 import { ServicePicker } from '../environment/ServicePicker';
 import { emptyDraft, validate } from '../environment/types';
 import type {
@@ -210,7 +210,7 @@ export function NewSessionDialog({
          * agent, which model, how freely it acts — so this chooses between
          * described sessions rather than between something and nothing.
          */}
-        <Select
+        <Picker
           label="Environment profile"
           value={profile}
           options={[
@@ -259,7 +259,7 @@ export function NewSessionDialog({
             <label className="field__label" htmlFor={kernelId}>
               Agent
             </label>
-            <Select
+            <Picker
               id={kernelId}
               label="Agent"
               value={draft.agent.kernel}

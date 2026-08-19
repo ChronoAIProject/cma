@@ -129,9 +129,9 @@ describe('starting from what already exists', () => {
     // where it is authoring one.
     renderDialog({ profiles: [profile('envp_1', 'Talos Controller')] });
 
-    expect(screen.queryByRole('combobox', { name: /^agent$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^agent$/i })).toBeNull();
     expect(screen.queryByRole('radiogroup', { name: /^plane$/i })).toBeNull();
-    expect(screen.queryByRole('combobox', { name: /thinking effort/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /thinking effort/i })).toBeNull();
   });
 });
 

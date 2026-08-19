@@ -59,3 +59,45 @@
   color: var(--ink-3);
   font-size: var(--text-note);
 }
+
+/*
+ * The command rows.
+ *
+ * Their own classes rather than the dropdown's: this list is a search result
+ * with a keyboard cursor running down it, which the dropdown has no notion
+ * of, and sharing the vocabulary meant one of them silently changed whenever
+ * the other did.
+ */
+.commandbar__item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/*
+ * The cursor is drawn, not focused. Focus stays in the search field so typing
+ * keeps working, which means the highlighted row has to be styled rather than
+ * relying on `:focus`.
+ */
+.commandbar__item:hover,
+.commandbar__item--active {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.commandbar__detail {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+}

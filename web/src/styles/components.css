@@ -86,105 +86,6 @@
   font-size: var(--text-note);
 }
 
-/* ── Dropdowns, §7 ───────────────────────────────────────────────────────
- *
- * An instrument closed and a plate open. Choosing a VALUE is a select;
- * choosing an ACTION is a menu. A select never runs anything when it opens.
- */
-
-.select {
-  display: inline-flex;
-  gap: var(--space-2);
-  align-items: center;
-  justify-content: space-between;
-  height: var(--control-h);
-  min-width: 0;
-  padding-inline: var(--space-3);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  background: var(--surface);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
-}
-
-.select__value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The caret flips rather than rotating: at this size a rotation reads as a wobble. */
-.select__caret::before {
-  content: '▾';
-  color: var(--ink-3);
-  font-size: 9px;
-  line-height: 1;
-}
-
-.select[aria-expanded='true'] .select__caret::before {
-  content: '▴';
-}
-
-.menu {
-  position: absolute;
-  z-index: 20;
-  min-width: 200px;
-  margin: 0;
-  padding: var(--space-2);
-  list-style: none;
-  background: var(--raised);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-plate);
-}
-
-.menu__item {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  width: 100%;
-  height: var(--control-h-lg);
-  padding-inline: var(--space-3);
-  color: var(--ink-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-sm);
-}
-
-.menu__item:hover,
-.menu__item--active {
-  color: var(--ink);
-  background: var(--tint-hover);
-}
-
-.menu__item[aria-disabled='true'] {
-  color: var(--ink-3);
-  cursor: not-allowed;
-}
-
-/* Selected is marked by a tick as well as by weight — never colour alone. */
-.menu__item[aria-selected='true'] {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.menu__tick::before {
-  content: '✓';
-  color: var(--accent);
-}
-
-.menu__kind {
-  margin-left: auto;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-}
-
 /* ── Rows, §12 and §14 ────────────────────────────────────────────────────
  *
  * A selectable row (the rail) and a record row (operations) are different
@@ -529,13 +430,4 @@
 .collapse-handle:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-}
-
-/*
- * A filter select holds §7's 200px minimum so its row does not resize as the
- * value changes. Kept beside .select rather than in Select.css because the
- * minimum is the shared dropdown contract, not one component's choice.
- */
-.select--filter {
-  min-width: 200px;
 }
