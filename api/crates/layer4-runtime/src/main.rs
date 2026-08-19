@@ -79,6 +79,28 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
+    /// An otherwise-inert pod that may run these programs.
+    ///
+    /// For tests that exercise the control lane, which needs the allowlist and
+    /// nothing else: no pty is started and no bridge is spawned.
+    #[cfg(test)]
+    pub(crate) fn for_test(commands: &[&str]) -> Self {
+        Self {
+            registry: PtyRegistry::new(),
+            command: std::sync::Arc::new(std::sync::Mutex::new(
+                commands.first().unwrap_or(&"").to_string(),
+            )),
+            commands: commands.iter().map(|c| (*c).to_string()).collect(),
+            credential: CredentialHolder::new(),
+            home: std::path::PathBuf::from("/home/chrono"),
+            snapshot_dir: None,
+            resume_args: None,
+            snapshot_named: false,
+            resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            conversation: std::sync::Arc::new(Mutex::new(None)),
+        }
+    }
+
     /// The kernel's conversation bridge, started if it is not already running.
     ///
     /// Lazy for the same reason the pty is: a pod hosts one session on one

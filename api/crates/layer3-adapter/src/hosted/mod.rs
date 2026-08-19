@@ -23,7 +23,7 @@ mod link;
 
 use std::collections::BTreeMap;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{AdapterError, RuntimeHandle, RuntimeListing, RuntimeSpec, TerminalInput};
@@ -113,6 +113,39 @@ impl Default for SandboxShape {
 }
 
 /// A kernel running in a provider-managed sandbox.
+/// Who is waiting to hear whether a plane switch happened, by runtime handle.
+///
+/// Shared rather than owned: a link's inbound task is what hears the answer,
+/// and it outlives the call that asked the question.
+#[derive(Clone, Default)]
+pub(crate) struct SwitchWaiters(
+    std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, oneshot::Sender<bool>>>>,
+);
+
+impl SwitchWaiters {
+    /// Register interest in the next answer from this runtime.
+    pub(crate) async fn expect(&self, handle: &str) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+        // A second switch replaces the first waiter; the earlier caller sees
+        // its sender dropped and rotates, which is the safe reading.
+        self.0.lock().await.insert(handle.to_string(), tx);
+        rx
+    }
+
+    /// Hand an answer to whoever asked. An answer nobody awaits is dropped:
+    /// it belongs to a caller that has already given up and rotated.
+    pub(crate) async fn settle(&self, handle: &str, accepted: bool) {
+        if let Some(waiter) = self.0.lock().await.remove(handle) {
+            let _ = waiter.send(accepted);
+        }
+    }
+
+    /// Forget a waiter whose link has gone.
+    pub(crate) async fn forget(&self, handle: &str) {
+        self.0.lock().await.remove(handle);
+    }
+}
+
 pub struct HostedKernel {
     pub(crate) client: SandboxClient,
     shape: SandboxShape,
@@ -126,6 +159,14 @@ pub struct HostedKernel {
     /// option: attaching declares a geometry, and a connection made without
     /// one would resize the pty under whoever is looking at it.
     links: tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>,
+    /// Who is waiting to hear whether a plane switch was performed.
+    ///
+    /// A switch is only recorded once the runtime says it happened (#289):
+    /// the frame reaching the socket says nothing about the program actually
+    /// being swapped, and a supervisor too old to know the frame ignores it
+    /// in silence. One waiter per runtime, because a session has one plane
+    /// and cannot be moved twice at once.
+    switch_waiters: SwitchWaiters,
 }
 
 impl HostedKernel {
@@ -136,6 +177,7 @@ impl HostedKernel {
             shape,
             kernel,
             links: tokio::sync::Mutex::new(BTreeMap::new()),
+            switch_waiters: SwitchWaiters::default(),
         }
     }
 
@@ -271,6 +313,15 @@ impl HostedKernel {
     /// Forget a link that has closed.
     pub(crate) async fn forget_link(&self, handle: &str) {
         self.links.lock().await.remove(handle);
+        // A waiter on a link that has gone will never be answered, so it is
+        // dropped here rather than left to time out: dropping the sender
+        // wakes the waiter at once and the caller rotates.
+        self.switch_waiters.forget(handle).await;
+    }
+
+    /// The registry a link's inbound task answers into.
+    pub(crate) fn switch_waiters(&self) -> SwitchWaiters {
+        self.switch_waiters.clone()
     }
 
     /// Wait until a sandbox reports itself running.
