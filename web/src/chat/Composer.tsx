@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import type { ConcurrentInput, SessionCapabilities } from '../agui';
 import './Composer.css';
@@ -64,6 +64,32 @@ export function Composer({
   busy = false,
 }: ComposerProps) {
   const [text, setText] = useState('');
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  /*
+   * Grow the field with what is in it, to §18.4's six lines and no further.
+   *
+   * §18.4 has required this since it was written, and the comment above the
+   * rule in `Composer.css` restates it, but nothing implemented it: the
+   * textarea was `rows={1}`, so its intrinsic height sat on the CSS floor and
+   * a multi-paragraph prompt scrolled inside a two-line porthole. Somebody
+   * writing the careful instruction that a long run turns on could see two
+   * lines of it.
+   *
+   * Measured rather than declared. `field-sizing: content` would do this in
+   * CSS, and §9 forbids relying on an ability that has not been demonstrated
+   * in the browsers this ships to; a height sync works everywhere. Reset to
+   * `auto` first, because `scrollHeight` of an already-tall box never shrinks.
+   */
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (field === null) {
+      return;
+    }
+    field.style.height = 'auto';
+    field.style.height = `${String(field.scrollHeight)}px`;
+  }, [text]);
+
   const policy = capabilities.concurrentInput;
 
   /*
@@ -124,6 +150,7 @@ export function Composer({
         <textarea
           className="composer__field"
           aria-label="Message"
+          ref={fieldRef}
           rows={1}
           value={text}
           placeholder="Say what you want done"
