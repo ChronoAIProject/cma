@@ -7,6 +7,7 @@ import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
 import './SessionDrawer.css';
 import { Button } from '../ui/Button';
 import { RiskConfirmation } from '../ui/RiskConfirmation';
+import { IconCloseOutline16 } from '../ui/icons';
 
 /**
  * What is known about the open session — docs/Web_Style.md §12.
@@ -77,16 +78,15 @@ export function SessionDrawer({
 
   return (
     <aside className="drawer" aria-label="Session details">
-      <div className="band band--head drawer__head">
-        <span className="band__label">Details</span>
-        <span className="band__spacer" />
+      <div className="drawer__head">
+        <h2 className="drawer__title">Details</h2>
         <button
           type="button"
-          className="collapse-handle"
+          className="drawer__close"
           aria-label="Close session details"
           onClick={onClose}
         >
-          <span aria-hidden="true">›</span>
+          <IconCloseOutline16 size={14} />
         </button>
       </div>
 

@@ -35,13 +35,16 @@ function rule(css: string, selector: string): string {
 }
 
 describe('the band grid', () => {
-  it('keeps the centre column header on the band', () => {
-    // The centre column is the one that still shares the page's head rule.
-    // §9 gave the sidebar its own column with its own proportions, so its
-    // list no longer lines up with anything across the page and no longer
-    // pretends to.
+  it('leaves the band vocabulary behind entirely', () => {
+    /*
+     * The bands existed so column headers landed on one rule across a page
+     * that had a bar above them. §9 gave every column its own proportions and
+     * deleted the bar, so a header still claiming to be a band would be
+     * claiming an alignment nothing holds it to.
+     */
     const header = render(<SessionHeader session={SESSION} />);
-    expect(header.container.firstElementChild).toHaveClass('band', 'band--head');
+    expect(header.container.firstElementChild).toHaveClass('sessionheader');
+    expect(header.container.firstElementChild).not.toHaveClass('band');
   });
 
   it('sets band heights rather than accumulating them', () => {
@@ -52,12 +55,6 @@ describe('the band grid', () => {
     expect(rule(components, '.band--head')).toContain('height: var(--band-head)');
     expect(rule(components, '.band--foot')).toContain('height: var(--band-foot)');
     expect(rule(components, '.band')).not.toMatch(/padding(-block|-top|-bottom)?:/);
-
-    for (const [name, selector] of [['sessions/SessionDrawer.css', '.drawer__head']] as const) {
-      expect(rule(sheet(name), selector), selector).not.toMatch(
-        /padding(-block|-top|-bottom)?:|height:/,
-      );
-    }
   });
 
   it('lets the centre column header set its own proportions', () => {

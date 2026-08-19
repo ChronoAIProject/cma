@@ -242,12 +242,20 @@ describe('the details drawer', () => {
     expect(copy.textContent).toContain('Copy');
   });
 
-  it('takes width, not height, and overlays below 75rem', () => {
-    // §12: the drawer takes width from a surface that has a thousand pixels
-    // of it and none of the height. §16: below 75rem it overlays instead.
+  it('fills its column and scrolls inside itself', () => {
+    /*
+     * The width is the frame's decision now (§9), so declaring one here would
+     * be a width the solver cannot honour. And the body scrolls rather than
+     * the column: a column that grew with its contents would push the foot's
+     * destructive keys off the window.
+     *
+     * The old overlay below 75rem goes with it. The concession chain closes
+     * this column when there is no room for it, and a second mechanism for
+     * the same thing is one that can disagree with the first.
+     */
     const css = readFileSync(resolve(process.cwd(), 'src/sessions/SessionDrawer.css'), 'utf8');
-    expect(css).toMatch(/\.drawer\s*\{[^}]*width: var\(--drawer-width\)/);
-    expect(css).toMatch(/@media \(max-width: 74\.999rem\)[\s\S]*position: absolute/);
+    expect(css).not.toMatch(/\.drawer\s*\{[^}]*width:/);
+    expect(css).not.toMatch(/@media \(max-width: 74\.999rem\)/);
     expect(css).toMatch(/\.drawer__body\s*\{[^}]*overflow-y: auto/);
   });
 });
