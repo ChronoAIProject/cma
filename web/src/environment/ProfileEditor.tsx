@@ -2,7 +2,7 @@ import { Button } from '../ui/Button';
 import { useId, useState } from 'react';
 import { ServicePicker } from './ServicePicker';
 import { SkillPicker } from './SkillPicker';
-import { Chip } from '../ui/Chip';
+import { Pill } from '../ui/Pill';
 import { Select } from '../ui/Select';
 import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
 import { kernelLabel, modesOf, planeRefusal, PLANES } from '../sessions/kernels';
@@ -300,9 +300,7 @@ export function ProfileEditor({
               {' '}
               Every session also carries{' '}
               {mandatory.packages.map((name) => (
-                <Chip inline key={name}>
-                  {name}
-                </Chip>
+                <Pill key={name}>{name}</Pill>
               ))}
             </>
           )}

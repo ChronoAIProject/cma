@@ -205,81 +205,6 @@
   font-size: var(--text-label);
 }
 
-/* ── Status, §2 and §7 ────────────────────────────────────────────────────
- *
- * A pill carrying a dot and a word. The word is mandatory: colour never carries
- * meaning alone, and `stopped` is never drawn as a failure.
- */
-
-.status {
-  display: inline-flex;
-  gap: 7px;
-  align-items: center;
-  height: var(--chip-h);
-  padding-inline: 10px;
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
-  font-weight: 500;
-  white-space: nowrap;
-  border-radius: var(--radius-pill);
-}
-
-.status__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentcolor;
-}
-
-.status--live {
-  color: var(--live);
-  background: var(--live-wash);
-}
-.status--wait {
-  color: var(--wait);
-  background: var(--wait-wash);
-}
-.status--fail {
-  color: var(--fail);
-  background: var(--fail-wash);
-}
-/*
- * The ended chip needs a ground of its own — §20.1 and §20.5.
- *
- * It was `--raised`, which is the same white as the page in light now, so the
- * chip lost its shape entirely there while the other three kept theirs from
- * their status washes. A neutral tint gives it one in both themes without
- * borrowing a status colour it has no right to.
- */
-.status--ended {
-  color: var(--ended);
-  background: var(--tint-hover);
-}
-
-/* A neutral tag: a count, a filter that is off, a fact about a service. */
-.tag {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  height: var(--chip-h);
-  padding-inline: 10px;
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: 0.06em;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-pill);
-}
-
-.tag--on {
-  color: var(--on-accent);
-  font-family: var(--font-ui);
-  font-weight: 500;
-  background: var(--accent-fill);
-  border-color: transparent;
-}
-
 /* ── Rows, §12 and §14 ────────────────────────────────────────────────────
  *
  * A selectable row (the rail) and a record row (operations) are different
@@ -319,9 +244,6 @@
   grid-row: 1 / span 2;
   align-self: start;
   margin-top: 5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
 }
 
 .row-item__subject {
@@ -552,19 +474,6 @@
 }
 .tone-ink-ended {
   color: var(--ended);
-}
-
-.tone-bg-live {
-  background: var(--live);
-}
-.tone-bg-wait {
-  background: var(--wait);
-}
-.tone-bg-fail {
-  background: var(--fail);
-}
-.tone-bg-ended {
-  background: var(--ended);
 }
 
 /* ── Waiting, §8 and §11 ─────────────────────────────────────────────────
