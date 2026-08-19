@@ -160,6 +160,17 @@ export function MessageStream({
         role="log"
         aria-label="Conversation"
         aria-live="polite"
+        /*
+         * Announce turns as they arrive, not characters as they are typed.
+         *
+         * The default for a live region includes text changes inside nodes it
+         * already holds, and the agent's message grows one delta at a time —
+         * so a screen reader was re-reading the message from the top on every
+         * token, which for a long answer never finishes and cannot be
+         * interrupted. Restricted to additions, the reader hears each turn
+         * once, when it lands.
+         */
+        aria-relevant="additions"
         onScroll={(event) => {
           const surface = event.currentTarget;
           const atBottom =
@@ -222,7 +233,13 @@ export function MessageStream({
              * it settles, and this is the same rule read forwards. The caret
              * is the one difference, and it belongs to this and nothing else.
              */
-            <article className="turn" data-role="assistant">
+            /*
+             * Silent while it is being typed. The committed message that
+             * replaces it is an addition and is announced then, once and
+             * whole — §18.1's equivalence rule read for a listener: what is
+             * heard should be the turn, not the typing.
+             */
+            <article className="turn" data-role="assistant" aria-live="off">
               <Eyebrow kernel={kernel} />
               <div className="turn__body">
                 <AgentContent text={live.text} />
