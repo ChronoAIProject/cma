@@ -189,7 +189,11 @@ export function SessionRail({
        */}
       <div className="band rail__chrome">
         {/* §12: the rail's one full-width primary key. */}
-        <button type="button" className="button button--primary button--block" onClick={onCreate}>
+        <button
+          type="button"
+          className="button button--primary button--md rail__newsession"
+          onClick={onCreate}
+        >
           <span aria-hidden="true">+</span> New session
         </button>
         <div className="rail__filters">
@@ -209,7 +213,7 @@ export function SessionRail({
           <span className="band__spacer" />
           <button
             type="button"
-            className="button button--sm"
+            className="button button--ghost button--sm"
             onClick={() => {
               onReorder(order === 'newest' ? 'oldest' : 'newest');
             }}

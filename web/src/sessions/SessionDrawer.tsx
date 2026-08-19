@@ -194,7 +194,7 @@ export function SessionDrawer({
             </span>
             <button
               type="button"
-              className="button"
+              className="button button--ghost button--md"
               onClick={() => {
                 setConfirmingDelete(false);
               }}
@@ -203,7 +203,7 @@ export function SessionDrawer({
             </button>
             <button
               type="button"
-              className="button button--danger"
+              className="button button--primary button--md"
               disabled={busy}
               onClick={() => {
                 setConfirmingDelete(false);
@@ -218,7 +218,7 @@ export function SessionDrawer({
             {can.reason === undefined ? null : <span className="control-reason">{can.reason}</span>}
             <button
               type="button"
-              className="button"
+              className="button button--ghost button--md"
               disabled={busy || !can.canStop}
               onClick={onStop}
             >
@@ -226,7 +226,7 @@ export function SessionDrawer({
             </button>
             <button
               type="button"
-              className="button button--danger"
+              className="button button--primary button--md"
               disabled={busy || !can.canDelete}
               onClick={() => {
                 setConfirmingDelete(true);

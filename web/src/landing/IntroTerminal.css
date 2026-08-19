@@ -275,3 +275,14 @@
     animation: intro-blink 1060ms step-end infinite;
   }
 }
+
+/*
+ * The landing's opening action, sized for a page with one thing on it.
+ * Local for the same reason the rail's is — see `docs/Web_Style.md` §7.
+ */
+.intro__cta {
+  height: 46px;
+  padding-inline: 20px;
+  font-size: 15px;
+  font-weight: 600;
+}

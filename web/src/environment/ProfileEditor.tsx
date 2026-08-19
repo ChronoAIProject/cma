@@ -354,7 +354,7 @@ export function ProfileEditor({
                   </span>
                 </Button>
                 <Button
-                  tone="danger"
+                  variant="primary"
                   onClick={() => {
                     setRevealed((current) => current.filter((i) => i !== index));
                     onChange({
