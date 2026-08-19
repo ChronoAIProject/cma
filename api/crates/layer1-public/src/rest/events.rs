@@ -137,6 +137,7 @@ mod tests {
             session_id: SessionId("sesn_1".into()),
             seq: 7,
             kind: EventKind::SessionCreated,
+            appended_at: String::new(),
         };
         // Serialised form is checked rather than the builder's fields, since
         // the id is only load-bearing once it reaches the wire.
@@ -155,6 +156,7 @@ mod tests {
                 detail: None,
                 capability: None,
             },
+            appended_at: String::new(),
         };
         let payload = serde_json::json!({
             "seq": e.seq,

@@ -406,3 +406,42 @@ describe('what the agent is working through, §18.8', () => {
     expect(screen.queryByText('Working')).toBeNull();
   });
 });
+
+describe('the owner turn label, §18.1', () => {
+  it('carries the time the owner sent it', () => {
+    // 04:00 UTC is 12:00 in Singapore, the fixed zone §12 uses — so the label
+    // means the same moment whoever is looking.
+    render(
+      <MessageStream
+        kernel="codex"
+        entries={[
+          {
+            kind: 'message',
+            id: 'm1',
+            role: 'user',
+            text: 'build me a scraper',
+            committed: true,
+            seq: 1,
+            at: '2026-08-19T04:00:00Z',
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/You · 12:00/)).toBeInTheDocument();
+  });
+
+  it('shows no time when the log carries none', () => {
+    // A control plane predating timestamps wrote no time; absence is shown as
+    // absence, never as an estimated moment.
+    render(
+      <MessageStream
+        kernel="codex"
+        entries={[{ kind: 'message', id: 'm1', role: 'user', text: 'hi', committed: true, seq: 1 }]}
+      />,
+    );
+
+    expect(screen.getByText('You')).toBeInTheDocument();
+    expect(screen.queryByText(/You ·/)).toBeNull();
+  });
+});

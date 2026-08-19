@@ -40,6 +40,13 @@ pub(super) struct AguiEvent {
     /// Everything else the event carries.
     #[serde(flatten)]
     pub body: serde_json::Value,
+    /// When the durable event this was projected from was appended, RFC 3339.
+    ///
+    /// Absent for a liveness frame — which has no log position — and for an
+    /// event written by a control plane that predates timestamps. A client
+    /// renders no time rather than an invented one.
+    #[serde(rename = "timestamp", skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
     /// The durable sequence this was projected from, when there is one.
     ///
     /// Not part of the protocol's own payload: it rides as the SSE id, which
@@ -154,11 +161,16 @@ impl Projected {
 
 /// Project one durable event.
 pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected {
+    // A durable event's time is the one the log stamped when it was appended;
+    // empty means a control plane that predates the field, and that is carried
+    // as absence rather than as a made-up moment.
+    let timestamp = (!event.appended_at.is_empty()).then(|| event.appended_at.clone());
     let make = |kind: &'static str, body: serde_json::Value| AguiEvent {
         kind,
         run_id: run_id.to_string(),
         thread_id: thread_id.to_string(),
         body,
+        timestamp: timestamp.clone(),
         seq: Some(event.seq),
     };
 
@@ -175,6 +187,26 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                 make(
                     "TEXT_MESSAGE_START",
                     serde_json::json!({ "messageId": message_id(event.seq), "role": "assistant" }),
+                ),
+                make(
+                    "TEXT_MESSAGE_CONTENT",
+                    serde_json::json!({ "messageId": message_id(event.seq), "delta": content }),
+                ),
+                make(
+                    "TEXT_MESSAGE_END",
+                    serde_json::json!({ "messageId": message_id(event.seq) }),
+                ),
+            ],
+            ending: None,
+        },
+        // The owner's side of the conversation, projected as a user turn. It is
+        // durable for exactly this reason: a replayed conversation shows both
+        // sides, and the owner's turn is the one §18.1 labels with its time.
+        EventKind::OwnerMessage { content } => Projected {
+            events: vec![
+                make(
+                    "TEXT_MESSAGE_START",
+                    serde_json::json!({ "messageId": message_id(event.seq), "role": "user" }),
                 ),
                 make(
                     "TEXT_MESSAGE_CONTENT",

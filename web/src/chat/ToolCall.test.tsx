@@ -161,4 +161,40 @@ describe('disclosure, not truncation', () => {
     render(<ToolCall call={{ kind: 'tool', id: 't1', toolKind: 'shell', status: 'ok', seq: 2 }} />);
     expect(screen.getByRole('button')).toBeDisabled();
   });
+
+  it('carries the time a finished call took', () => {
+    render(
+      <ToolCall
+        call={{
+          kind: 'tool',
+          id: 't1',
+          toolKind: 'read',
+          status: 'ok',
+          seq: 2,
+          startedAt: '2026-08-19T04:00:00Z',
+          finishedAt: '2026-08-19T04:00:02Z',
+        }}
+      />,
+    );
+    // Two seconds apart, from the durable log — never estimated.
+    expect(screen.getByText('2s')).toBeInTheDocument();
+  });
+
+  it('shows no duration when either instant is absent', () => {
+    // A call whose start or finish the record does not carry shows no duration
+    // rather than one invented (§18.2).
+    const { container } = render(
+      <ToolCall
+        call={{
+          kind: 'tool',
+          id: 't1',
+          toolKind: 'read',
+          status: 'ok',
+          seq: 2,
+          startedAt: '2026-08-19T04:00:00Z',
+        }}
+      />,
+    );
+    expect(container.querySelector('.toolcall__duration')).toBeNull();
+  });
 });

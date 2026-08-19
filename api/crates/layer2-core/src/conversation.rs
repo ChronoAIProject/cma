@@ -84,6 +84,10 @@ impl SessionService {
         let input = self
             .conversation_input(caller, id, Capability::Conversation)
             .await?;
+        // Recorded before the turn begins: the owner's message is what the
+        // conversation replays as the owner's side of it, and its time is what
+        // §18.1 labels that turn with.
+        let owner_text = text.clone();
         self.toward_runtime(
             id,
             &input,
@@ -97,6 +101,12 @@ impl SessionService {
             };
             entry.session.status = SessionStatus::Running;
             entry.session.stop_reason = None;
+            append(
+                entry,
+                EventKind::OwnerMessage {
+                    content: owner_text,
+                },
+            );
             append(entry, EventKind::TurnStarted);
             append(
                 entry,

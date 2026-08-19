@@ -351,6 +351,7 @@ impl SessionService {
                             to: *mode,
                             snapshot_at: taken_at.clone(),
                         },
+                        appended_at: String::new(),
                     }],
                 )
                 .await
@@ -414,6 +415,7 @@ impl SessionService {
                         detail: Some(change.detail().to_string()),
                         capability: None,
                     },
+                    appended_at: String::new(),
                 }],
             )
             .await

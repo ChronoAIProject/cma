@@ -418,6 +418,7 @@ impl SessionService {
                     session_id: id.clone(),
                     seq: first,
                     kind: EventKind::SessionCreated,
+                    appended_at: String::new(),
                 },
                 Event {
                     session_id: id.clone(),
@@ -428,6 +429,7 @@ impl SessionService {
                         detail: None,
                         capability: None,
                     },
+                    appended_at: String::new(),
                 },
                 Event {
                     session_id: id.clone(),
@@ -435,6 +437,7 @@ impl SessionService {
                     kind: EventKind::Progress {
                         stage: crate::session::ProvisioningStage::Accepted,
                     },
+                    appended_at: String::new(),
                 },
             ],
         )
