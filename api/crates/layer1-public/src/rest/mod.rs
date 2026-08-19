@@ -114,13 +114,13 @@ pub struct CreateSessionRequest {
     /// Every other unknown field keeps serde's message, which is right for
     /// them: a typo has no remedy worth spelling out.
     #[serde(default)]
-    pub kernel: Option<String>,
+    kernel: Option<String>,
     /// Initial terminal width.
     #[serde(default)]
-    pub cols: Option<u16>,
+    cols: Option<u16>,
     /// Initial terminal height.
     #[serde(default)]
-    pub rows: Option<u16>,
+    rows: Option<u16>,
     /// The environment profile to start the session from.
     ///
     /// The whole description of the session: which agent, which model, how
@@ -129,7 +129,56 @@ pub struct CreateSessionRequest {
     /// this deployment says an unqualified session should start, which is not
     /// the same as a bare one.
     #[serde(default)]
+    environment_profile: Option<String>,
+}
+
+/// What a create request means, once it has been checked.
+#[derive(Debug)]
+pub struct CreateSessionParts {
+    pub geometry: Option<TerminalGeometry>,
     pub environment_profile: Option<String>,
+}
+
+impl CreateSessionRequest {
+    /// Read the request, or say why it cannot be honoured.
+    ///
+    /// The fields are private and this is the only way to them, deliberately.
+    /// The first version of this check sat in the handler as a loose `if`, and
+    /// deleting it left the entire suite green: the test named after the
+    /// behaviour asserted that the field *parsed*, which is the opposite of
+    /// refused, so #298 could have reopened in silence.
+    ///
+    /// Declaring `kernel` is what made that possible — a declared field is no
+    /// longer unknown, so `deny_unknown_fields` stops guarding it and this
+    /// check becomes the only thing standing there. Putting it on the only
+    /// path to the data is what makes it hard to lose: removing it now means
+    /// editing a function the tests call directly, and removing the call does
+    /// not compile.
+    pub fn into_parts(self) -> Result<CreateSessionParts, CoreError> {
+        if let Some(named) = self.kernel.as_deref() {
+            // Refused rather than honoured. Which runtime a session runs on is
+            // a property of the session, and §3 forbids an interface deciding
+            // one — a request that could name a kernel would resolve
+            // differently depending on which deployment received it.
+            tracing::debug!(kernel = %named, "a create request named a kernel");
+            return Err(CoreError::InvalidRequest(
+                "this interface accepts no 'kernel' field: which runtime a session runs on is \
+                 decided by the environment profile it names. Choose or create one whose \
+                 agent.kernel is the runtime you want (GET or POST /api/v1/environment-profiles) \
+                 and send its id as 'environment_profile'"
+                    .to_string(),
+            ));
+        }
+        // Geometry travels as a pair or not at all: half of it is not a size.
+        let geometry = match (self.cols, self.rows) {
+            (Some(c), Some(r)) => Some(TerminalGeometry::new(c, r).map_err(CoreError::from)?),
+            _ => None,
+        };
+        Ok(CreateSessionParts {
+            geometry,
+            environment_profile: self.environment_profile,
+        })
+    }
 }
 
 /// A session as this interface renders it.
@@ -629,33 +678,15 @@ async fn create(
     body: Result<Json<CreateSessionRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<SessionView>), RequestFailure> {
     let Json(body) = body.map_err(BodyProblem)?;
-    if let Some(named) = body.kernel.as_deref() {
-        // Refused rather than honoured. Which runtime a session runs on is a
-        // property of the session, and §3 forbids an interface deciding one —
-        // a request that could name a kernel would resolve differently
-        // depending on which deployment received it.
-        tracing::debug!(kernel = %named, "a create request named a kernel");
-        return Err(CoreError::InvalidRequest(
-            "this interface accepts no 'kernel' field: which runtime a session runs on is \
-             decided by the environment profile it names. Choose or create one whose \
-             agent.kernel is the runtime you want (GET or POST /api/v1/environment-profiles) \
-             and send its id as 'environment_profile'"
-                .to_string(),
-        )
-        .into());
-    }
-    let geometry = match (body.cols, body.rows) {
-        (Some(c), Some(r)) => Some(TerminalGeometry::new(c, r).map_err(CoreError::from)?),
-        _ => None,
-    };
+    let parts = body.into_parts()?;
     let session = service
         .create_session(
             &caller,
             SessionSpec {
-                environment_profile: body
+                environment_profile: parts
                     .environment_profile
                     .map(layer2_core::EnvironmentProfileId),
-                geometry,
+                geometry: parts.geometry,
                 // Replaced by the core from the profile this session names.
                 // Sent as a default rather than left out because the spec is
                 // also what a rotation rebuilds a session from, where these
