@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SessionRail } from './sessions/SessionRail';
 import { SessionDrawer } from './sessions/SessionDrawer';
-import { PageFrame } from './shell/PageFrame';
-import { ViewSwitch } from './shell/ViewSwitch';
+import { AppFrame } from './shell/AppFrame';
+import { Sidebar } from './shell/Sidebar';
 import type { SortOrder } from './sessions/sessionTime';
 import type { KernelOffer, Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
@@ -17,8 +17,6 @@ import { SessionCanvas } from './canvas/SessionCanvas';
 import { selectLiveWindow, unattachedNote } from './canvas/layout';
 import { ArrangementToggle } from './sessions/ArrangementToggle';
 import { loadArrangement, saveArrangement } from './sessions/arrangement';
-import { loadCollapsed, saveCollapsed } from './shell/collapse';
-import { canvasFits, railIsColumn, useWidth } from './shell/widths';
 import type { Arrangement } from './sessions/arrangement';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { CommandBar } from './shell/CommandBar';
@@ -177,14 +175,8 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, []);
   // Validated on read: web storage is untrusted input, and an unrecognised
   // value reaching the layout would be a rail nobody can draw (§7).
-  const [railCollapsed, setRailCollapsed] = useState(() => loadCollapsed('rail'));
-  /*
-   * Which of §16's four widths the window is at. The number of columns changes
-   * with it and the bands never do.
-   */
-  const width = useWidth();
+  const [railCollapsed, setRailCollapsed] = useState(false);
   /* Below 60rem the rail is a drawer over the layout rather than a column. */
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [arrangement, setArrangement] = useState<Arrangement>(() => loadArrangement());
   /*
@@ -349,73 +341,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
   /*
    * Collapsing changes no session's state. It is a display preference about
-   * this browser, and nothing here reaches the control plane.
+   * this window — and about this window only: §9 makes widths transient, so
+   * it is not written down. A visit on a laptop does not decide what a desk
+   * looks like.
    */
   const toggleRail = useCallback(() => {
-    setRailCollapsed((wasCollapsed) => {
-      saveCollapsed('rail', !wasCollapsed);
-      return !wasCollapsed;
-    });
+    setRailCollapsed((wasCollapsed: boolean) => !wasCollapsed);
   }, []);
 
-  /*
-   * §16: between 60rem and 75rem "the rail arrives collapsed to its 56px
-   * strip". Arrives, not is locked — crossing the boundary collapses it and
-   * the handle still opens it, because somebody working at 70rem who wants
-   * their list should not have to widen the window to see it.
-   *
-   * Not persisted: this is the window's answer, not the person's, and writing
-   * it would mean a visit on a laptop decided what a desk looks like.
-   */
-  // Seeded true so a window that OPENS below 75rem is treated as having
-  // arrived there. Seeding it from the mounted width would mean the rail
-  // arrived collapsed when somebody narrowed the window and expanded when they
-  // reloaded at the same size, which is the same layout answering differently.
-  const wasColumnWidth = useRef(true);
-  useEffect(() => {
-    const isWide = width === 'wide';
-    if (wasColumnWidth.current && !isWide) {
-      setRailCollapsed(true);
-    }
-    wasColumnWidth.current = isWide;
-  }, [width]);
-
-  /*
-   * The canvas is offered at 60rem and above only (§16): a grid of terminals
-   * in a narrow window is several terminals nobody can read. A session already
-   * on the canvas when the window narrows goes back to tabs rather than being
-   * drawn at a size it cannot be read at.
-   */
-  const arrangementShown: Arrangement = canvasFits(width) ? arrangement : 'list';
-  const compact = width === 'compact';
-
-  /*
-   * Built once and placed where §16 puts it: in the app bar, or in the drawer
-   * below 30rem. A view somebody can no longer reach is worse than one they
-   * have to open a drawer for, so it moves rather than disappearing.
-   */
-  const viewSwitch = (
-    <ViewSwitch
-      /*
-       * The operations segment is drawn only for a caller the control plane
-       * says holds a capability that page can act on. This is presentation and
-       * never protection: the API refuses on its own and would refuse a
-       * hand-written request just the same. Both halves are required — a
-       * control nobody can use should not be drawn, and a drawn control is not
-       * what makes it safe.
-       */
-      views={
-        canOperate(user.capabilities)
-          ? [
-              { name: 'sessions' as const, label: 'Sessions' },
-              { name: 'operations' as const, label: 'Operations' },
-            ]
-          : [{ name: 'sessions' as const, label: 'Sessions' }]
-      }
-      active={view}
-      onSelect={setView}
-    />
-  );
+  const arrangementShown: Arrangement = arrangement;
 
   /*
    * What the canvas's attachment budget cost, for the status band (§13).
@@ -461,167 +395,88 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, [view, loading, listed, liveCount]);
 
   return (
-    <PageFrame
-      showing={showing}
-      note={note}
-      live={loading ? undefined : liveCount}
-      onCommand={() => {
-        setCommandOpen(true);
-      }}
-      views={compact ? undefined : viewSwitch}
-      account={
-        <ProfileMenu
-          user={user}
-          onSignOut={onSignOut}
-          onTerminalThemeChange={() => {
-            setPaletteEpoch((n) => n + 1);
+    <AppFrame
+      detailsOpen={active !== null && detailsOpen}
+      sidebar={
+        <Sidebar
+          collapsed={railCollapsed}
+          onToggleCollapsed={toggleRail}
+          onCreate={() => {
+            setChoosing(true);
           }}
-          onManageEnvironments={() => {
-            setManagingProfiles(true);
+          onSearch={() => {
+            setCommandOpen(true);
           }}
-        />
-      }
-    >
-      {view === 'operations' ? (
-        <OperatorPage store={operatorStore} capabilities={user.capabilities} />
-      ) : (
-        <div className="console__body">
-          {railIsColumn(width) ? (
-            <SessionRail
-              sessions={listed}
-              activeId={activeId}
-              order={order}
-              onSelect={select}
-              onCreate={() => {
-                setChoosing(true);
+          status={note === undefined ? showing : `${showing} · ${note}`}
+          operationsActive={view === 'operations'}
+          onOperations={
+            canOperate(user.capabilities)
+              ? () => {
+                  setView(view === 'operations' ? 'sessions' : 'operations');
+                }
+              : undefined
+          }
+          account={
+            <ProfileMenu
+              user={user}
+              onSignOut={onSignOut}
+              onTerminalThemeChange={() => {
+                setPaletteEpoch((n) => n + 1);
               }}
-              onReorder={setOrder}
-              /*
-               * The arrangement of this list, drawn with the list it rearranges
-               * rather than in the app bar. It does not stop at the browser: a
-               * terminal declares its own measurements to the runtime drawing
-               * into it, so putting every attached session in a 420×280 node
-               * resizes every one of them to roughly 47 columns. §13 records why
-               * that is right and what it costs.
-               */
-              arrangement={
-                <ArrangementToggle
-                  arrangement={arrangementShown}
-                  onChange={changeArrangement}
-                  canvasAvailable={canvasFits(width)}
-                />
-              }
-              collapsed={railCollapsed}
-              onToggleCollapsed={toggleRail}
-              stages={stages}
-              waitingId={waitingId}
+              onManageEnvironments={() => {
+                setManagingProfiles(true);
+              }}
             />
-          ) : drawerOpen ? (
-            <>
-              {/*
-               * §16: below 60rem the rail leaves the layout and becomes a
-               * drawer over it, so the terminal keeps the full width. The
-               * scrim dismisses it, and is also what stops a gesture meant
-               * for the drawer landing in a live terminal beneath it.
-               */}
-              <div
-                className="console__drawerscrim"
-                role="presentation"
-                onClick={() => {
-                  setDrawerOpen(false);
-                }}
+          }
+        >
+          <SessionRail
+            sessions={listed}
+            activeId={activeId}
+            order={order}
+            onSelect={select}
+            onReorder={setOrder}
+            /*
+             * The arrangement of this list, drawn with the list it rearranges.
+             * It does not stop at the browser: a terminal declares its own
+             * measurements to the runtime drawing into it, so putting every
+             * attached session in a node resizes every one of them.
+             */
+            arrangement={
+              <ArrangementToggle
+                arrangement={arrangementShown}
+                onChange={changeArrangement}
+                canvasAvailable
               />
-              <div className="console__drawer">
-                {/*
-                 * §16: below 30rem the app bar gives the switch and the
-                 * command trigger to the drawer — a view somebody can no
-                 * longer reach is worse than one they have to open a drawer
-                 * for. Both are real controls here, never dead fields (§6).
-                 */}
-                {compact ? (
-                  <div className="band console__drawerchrome">
-                    {viewSwitch}
-                    <button
-                      type="button"
-                      className="topbar__trigger"
-                      onClick={() => {
-                        setDrawerOpen(false);
-                        setCommandOpen(true);
-                      }}
-                    >
-                      <span className="topbar__triggerlabel">
-                        Find a session, or type a command
-                      </span>
-                      <kbd className="topbar__triggerkey">⌘K</kbd>
-                    </button>
-                  </div>
-                ) : null}
-                <SessionRail
-                  sessions={listed}
-                  activeId={activeId}
-                  order={order}
-                  onSelect={select}
-                  onCreate={() => {
-                    setChoosing(true);
-                  }}
-                  onReorder={setOrder}
-                  /*
-                   * The arrangement of this list, drawn with the list it rearranges
-                   * rather than in the app bar. It does not stop at the browser: a
-                   * terminal declares its own measurements to the runtime drawing
-                   * into it, so putting every attached session in a 420×280 node
-                   * resizes every one of them to roughly 47 columns. §13 records why
-                   * that is right and what it costs.
-                   */
-                  arrangement={
-                    <ArrangementToggle
-                      arrangement={arrangementShown}
-                      onChange={changeArrangement}
-                      canvasAvailable={canvasFits(width)}
-                    />
-                  }
-                  /*
-                   * Always expanded in the drawer. Collapsing is what a column
-                   * does to give the terminal its width back; a drawer has
-                   * already given all of it, so a 56px strip inside one is a
-                   * drawer holding nothing.
-                   */
-                  collapsed={false}
-                  onToggleCollapsed={() => {
-                    setDrawerOpen(false);
-                  }}
-                  stages={stages}
-                  waitingId={waitingId}
-                />
-              </div>
-            </>
-          ) : null}
-
+            }
+            collapsed={railCollapsed}
+            onToggleCollapsed={toggleRail}
+            stages={stages}
+            waitingId={waitingId}
+          />
+        </Sidebar>
+      }
+      details={
+        active === null ? null : (
+          <SessionDrawer
+            session={active}
+            ending={endings[active.id]}
+            busy={acting}
+            onClose={() => {
+              setDetailsOpen(false);
+            }}
+            onStop={() => void endSession(active.id)}
+            onDelete={() => void removeSession(active.id)}
+          />
+        )
+      }
+      center={
+        view === 'operations' ? (
+          <OperatorPage store={operatorStore} capabilities={user.capabilities} />
+        ) : (
           <main className="console__surface">
             <SessionHeader
               session={active}
               waiting={active !== null && active.id === waitingId}
-              /*
-               * §16 takes the rail out of the layout below 60rem, so the way
-               * to the list goes here, at the head of the column the drawer
-               * covers. Absent at widths where the rail is a column of its
-               * own, which already carries its own handle.
-               */
-              listHandle={
-                railIsColumn(width) ? undefined : (
-                  <button
-                    type="button"
-                    className="collapse-handle"
-                    aria-expanded={drawerOpen}
-                    aria-label="Show the session list"
-                    onClick={() => {
-                      setDrawerOpen(true);
-                    }}
-                  >
-                    <span aria-hidden="true">☰</span>
-                  </button>
-                )
-              }
               actions={
                 active === null ? undefined : (
                   <SessionActions
@@ -770,90 +625,72 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               />
             )}
           </main>
-
-          {/*
-           * The details drawer — §12: 360px on the right, closed by default,
-           * opened from the header's Details key. A sibling of the surface
-           * rather than a wrapper around it, because a component that wrapped
-           * the terminal would remount it on every toggle and take the
-           * scrollback with it; opening the drawer changes the surface's
-           * width and nothing else.
-           */}
-          {active !== null && detailsOpen ? (
-            <SessionDrawer
-              session={active}
-              ending={endings[active.id]}
-              busy={acting}
+        )
+      }
+      overlay={
+        <>
+          {commandOpen ? (
+            <CommandBar
+              sessions={listed}
+              canvasAvailable
               onClose={() => {
-                setDetailsOpen(false);
+                setCommandOpen(false);
               }}
-              onStop={() => void endSession(active.id)}
-              onDelete={() => void removeSession(active.id)}
+              onSelectSession={(id) => {
+                setView('sessions');
+                select(id);
+              }}
+              onArrange={(next) => {
+                setView('sessions');
+                changeArrangement(next);
+              }}
+              onNewSession={() => {
+                setChoosing(true);
+              }}
             />
           ) : null}
-        </div>
-      )}
 
-      {commandOpen ? (
-        <CommandBar
-          sessions={listed}
-          canvasAvailable={canvasFits(width)}
-          onClose={() => {
-            setCommandOpen(false);
-          }}
-          onSelectSession={(id) => {
-            setView('sessions');
-            select(id);
-          }}
-          onArrange={(next) => {
-            setView('sessions');
-            changeArrangement(next);
-          }}
-          onNewSession={() => {
-            setChoosing(true);
-          }}
-        />
-      ) : null}
+          <NewSessionDialog
+            open={choosing}
+            profiles={profiles}
+            kernels={kernels}
+            store={profileStore}
+            onCancel={() => {
+              setChoosing(false);
+            }}
+            onProfileCreated={(created) => {
+              // Added here rather than re-read: it is selectable for the next
+              // session immediately, and the list this console holds is the one
+              // the dialog will be given again.
+              setProfiles((previous) => [created, ...previous]);
+            }}
+            onStart={(environmentProfile) => {
+              setChoosing(false);
+              void start(environmentProfile);
+            }}
+          />
 
-      <NewSessionDialog
-        open={choosing}
-        profiles={profiles}
-        kernels={kernels}
-        store={profileStore}
-        onCancel={() => {
-          setChoosing(false);
-        }}
-        onProfileCreated={(created) => {
-          // Added here rather than re-read: it is selectable for the next
-          // session immediately, and the list this console holds is the one
-          // the dialog will be given again.
-          setProfiles((previous) => [created, ...previous]);
-        }}
-        onStart={(environmentProfile) => {
-          setChoosing(false);
-          void start(environmentProfile);
-        }}
-      />
-
-      {managingProfiles ? (
-        <EnvironmentProfiles
-          store={profileStore}
-          kernels={kernels}
-          onClose={() => {
-            setManagingProfiles(false);
-            // Reread on close rather than on every render: what someone just
-            // authored has to be selectable in the next session they start,
-            // and this is the only moment it can have changed.
-            void profileStore
-              .list()
-              .then(setProfiles)
-              .catch(() => {
-                // Already reported inside the manager; failing to refresh the
-                // selector is not worth a second message about the same thing.
-              });
-          }}
-        />
-      ) : null}
-    </PageFrame>
+          {managingProfiles ? (
+            <EnvironmentProfiles
+              store={profileStore}
+              kernels={kernels}
+              onClose={() => {
+                setManagingProfiles(false);
+                // Reread on close rather than on every render: what someone just
+                // authored has to be selectable in the next session they start,
+                // and this is the only moment it can have changed.
+                void profileStore
+                  .list()
+                  .then(setProfiles)
+                  .catch(() => {
+                    // Already reported inside the manager; failing to refresh the
+                    // selector is not worth a second message about the same thing.
+                  });
+              }}
+            />
+          ) : null}
+        </>
+      }
+    />
   );
 }
