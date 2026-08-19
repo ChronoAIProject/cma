@@ -518,7 +518,13 @@
  * exception, and a link is where that exception arrives by habit: underline
  * and cursor are what distinguish it, and they are enough.
  */
+/*
+ * Underline and cursor, never colour — §18.1, which forbids colour on agent
+ * content without exception. Without `color: inherit` the browser's own blue
+ * wins, and that exception arrives by habit rather than by decision.
+ */
 .agent__link {
+  color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -611,4 +617,31 @@
  */
 .agent__paragraph {
   white-space: pre-wrap;
+}
+
+/*
+ * A task list's box. Drawn at the reading size and never interactive: it
+ * records what the agent decided, and a control here would imply ticking it
+ * changed something.
+ */
+.agent__check {
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+  accent-color: var(--dsw-alias-label-tertiary);
+}
+
+/* An image the agent linked, never allowed to set the column's width. */
+.agent__image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.agent__rule {
+  height: 1px;
+  margin: 16px 0;
+  background: var(--dsw-alias-border-l1);
+  border: 0;
 }
