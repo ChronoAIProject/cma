@@ -491,3 +491,82 @@ async fn reasoning_does_not_become_part_of_the_message_the_agent_commits() {
         "no part of the reasoning may be in the record: {logged:?}"
     );
 }
+
+/// A tool call with a body a session might hand over in its environment.
+fn call_with_secret() -> layer3_adapter::ToolCall {
+    layer3_adapter::ToolCall::new(
+        layer3_adapter::ToolCallId::new("call-1"),
+        "run a command".to_string(),
+    )
+    .raw_input(Some(serde_json::json!({
+        "command": "curl -H 'Authorization: Bearer the-token'",
+    })))
+}
+
+#[test]
+fn a_tool_body_is_redacted_of_values_the_session_was_handed() {
+    use super::durable;
+    let kind = durable(
+        layer3_adapter::SessionUpdate::ToolCall(call_with_secret()),
+        true,
+        &["the-token".to_string()],
+    )
+    .expect("a tool call folds");
+    match kind {
+        EventKind::ToolCallStarted {
+            arguments: Some(body),
+            ..
+        } => {
+            assert!(
+                !body.text.contains("the-token"),
+                "secret leaked: {}",
+                body.text
+            );
+            assert!(body.text.contains("[redacted]"));
+            assert!(!body.truncated);
+        }
+        other => panic!("expected a started call with arguments, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_tool_body_is_withheld_when_the_session_is_not_granted() {
+    use super::durable;
+    let kind = durable(
+        layer3_adapter::SessionUpdate::ToolCall(call_with_secret()),
+        false,
+        &["the-token".to_string()],
+    )
+    .expect("a tool call folds");
+    match kind {
+        EventKind::ToolCallStarted {
+            arguments: None, ..
+        } => {}
+        other => panic!("expected no arguments when not granted, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_tool_body_over_the_cap_says_it_was_cut() {
+    use super::durable;
+    let big = "x".repeat(9000);
+    let fields = layer3_adapter::ToolCallUpdateFields::default()
+        .raw_output(Some(serde_json::Value::String(big)));
+    let update =
+        layer3_adapter::ToolCallUpdate::new(layer3_adapter::ToolCallId::new("call-1"), fields);
+    let kind = durable(
+        layer3_adapter::SessionUpdate::ToolCallUpdate(update),
+        true,
+        &[],
+    )
+    .expect("a tool update folds");
+    match kind {
+        EventKind::ToolCallUpdated {
+            result: Some(body), ..
+        } => {
+            assert!(body.truncated);
+            assert!(body.text.len() <= 8192);
+        }
+        other => panic!("expected a truncated result, got {other:?}"),
+    }
+}

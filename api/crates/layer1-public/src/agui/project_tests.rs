@@ -141,6 +141,7 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
         call_id: "call-1".into(),
         title: "read notes".into(),
         kind: "a-kind-this-build-has-never-seen".into(),
+        arguments: None,
     });
     assert_eq!(kinds(&p), vec!["TOOL_CALL_START"]);
     assert_eq!(p.events[0].body["toolCallId"], "call-1");
