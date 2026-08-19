@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Pill } from '../ui/Pill';
 import type { CatalogSkill } from './types';
+import { Input } from '../ui/Input';
 
 /**
  * The multi-select over the skill registry.
@@ -61,9 +62,9 @@ export function SkillPicker({ skills, selected, mandatory, onChange, error }: Sk
   return (
     <>
       {skills.length > SEARCH_THRESHOLD ? (
-        <input
+        <Input
           type="search"
-          className="field__input"
+          placement="field__input"
           aria-label="Search skills"
           placeholder="Search skills"
           value={query}
@@ -85,6 +86,11 @@ export function SkillPicker({ skills, selected, mandatory, onChange, error }: Sk
             const required = mandatory.includes(skill.id);
             return (
               <label className="picker__row" key={skill.id}>
+                {/*
+                  A checkbox is not a text field and does not take the field
+                  wrapper: that wrapper exists to put a border and a glyph
+                  around a line of text, and a tick has neither.
+                */}
                 <input
                   type="checkbox"
                   checked={required || selected.includes(skill.id)}
