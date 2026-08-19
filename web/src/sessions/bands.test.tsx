@@ -105,7 +105,7 @@ describe('the band grid', () => {
     const chrome = container.querySelector('.rail__chrome');
     expect(chrome).toHaveClass('band');
     expect(chrome).not.toHaveClass('band--head');
-    expect(chrome?.querySelector('.button--block')).not.toBeNull();
+    expect(chrome?.querySelector('.rail__newsession')).not.toBeNull();
 
     // The rail draws no footer of its own: it ends at the status band's rule.
     expect(container.querySelector('.band--foot')).toBeNull();
