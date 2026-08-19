@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 /**
  * Which of §16's four widths the window is at — docs/Web_Style.md.
  *
- * The number of columns changes and the bands never do: 52px header and 40px
+ * The number of columns changes and the bands never do: 56px header and 40px
  * footer hold at every width, so the page reads as the same shape on a phone
  * as on a desk.
  *
@@ -14,11 +14,11 @@ import { useEffect, useState } from 'react';
 export type Width =
   /** ≥ 75rem — three columns; nothing collapses on its own. */
   | 'wide'
-  /** 60–75rem — the rail arrives collapsed to its 48px strip. */
+  /** 60–75rem — the rail arrives collapsed to its 56px strip. */
   | 'medium'
   /** < 60rem — the rail leaves the layout and becomes a drawer over it. */
   | 'narrow'
-  /** < 30rem — the bar drops to 48px and gives its chrome to the drawer. */
+  /** < 30rem — the bar drops to 52px and gives its chrome to the drawer. */
   | 'compact';
 
 /** §16's boundaries, in px at the browser's default root size. */
