@@ -157,7 +157,6 @@ export function ConversationSurface({
         plan={conversation.plan}
         mode={conversation.mode}
         configOptions={conversation.configOptions}
-        availableCommands={conversation.availableCommands}
         footer={
           pending === undefined ? null : (
             <ApprovalCard
@@ -180,6 +179,7 @@ export function ConversationSurface({
         <div className="conversation__footcolumn">
           <Composer
             capabilities={capabilities}
+            availableCommands={conversation.availableCommands}
             turnInFlight={conversation.turnInFlight}
             refusedReason={state.interactive ? undefined : reason}
             busy={busy}
