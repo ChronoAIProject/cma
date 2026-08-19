@@ -373,9 +373,17 @@
   color: var(--fail);
   background: var(--fail-wash);
 }
+/*
+ * The ended chip needs a ground of its own — §20.1 and §20.5.
+ *
+ * It was `--raised`, which is the same white as the page in light now, so the
+ * chip lost its shape entirely there while the other three kept theirs from
+ * their status washes. A neutral tint gives it one in both themes without
+ * borrowing a status colour it has no right to.
+ */
 .status--ended {
   color: var(--ended);
-  background: var(--raised);
+  background: var(--tint-hover);
 }
 
 /* A neutral tag: a count, a filter that is off, a fact about a service. */
