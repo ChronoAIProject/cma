@@ -44,10 +44,12 @@ pub use environment::DshSandboxSpec;
 
 use crate::hosted::HostedKernel;
 use crate::sandbox::SandboxClient;
+use crate::ConversationUpdate;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, RuntimeHandle,
     RuntimeListing, RuntimeOptions, RuntimePermission, RuntimeSpec,
 };
+use tokio::sync::mpsc;
 
 /// Drives the DeepSeek Harness inside a provider-managed sandbox.
 pub struct DshAdapter {
@@ -139,6 +141,7 @@ impl KernelAdapter for DshAdapter {
         &self,
         handle: &RuntimeHandle,
         options: &RuntimeOptions,
+        updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
@@ -150,6 +153,7 @@ impl KernelAdapter for DshAdapter {
             self.hosted.workspace().to_string(),
             &self.spec,
             options.resume_conversation.clone(),
+            updates,
         )
         .await?;
         // Recorded here so a credential can reach a session that never attaches

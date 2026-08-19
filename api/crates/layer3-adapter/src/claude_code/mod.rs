@@ -40,10 +40,12 @@ pub use environment::ClaudeCodeSandboxSpec;
 
 use crate::hosted::{acp, HostedKernel};
 use crate::sandbox::SandboxClient;
+use crate::ConversationUpdate;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, RuntimeHandle,
     RuntimeListing, RuntimeOptions, RuntimeSpec,
 };
+use tokio::sync::mpsc;
 
 /// Drives Claude Code inside a provider-managed sandbox.
 pub struct ClaudeCodeAdapter {
@@ -142,6 +144,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
         &self,
         handle: &RuntimeHandle,
         options: &RuntimeOptions,
+        updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
@@ -155,6 +158,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
             // provisioning, permanently and for a stated reason, so one can
             // never reach here asking to sign in.
             false,
+            updates,
         )
         .await?;
         // Recorded here so a credential can reach a session that never attaches
