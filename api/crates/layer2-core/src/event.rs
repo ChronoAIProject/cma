@@ -233,6 +233,35 @@ pub enum EventKind {
         /// How much of the model's context the conversation currently fills.
         context_used: u64,
     },
+    /// The session's permission mode changed under its owner.
+    ///
+    /// Durable rather than only shown live, because a mode is how much the
+    /// agent may do unattended, and a session whose mode changed is acting
+    /// under a different amount of trust — the record must say so. The name is
+    /// the kernel's own and is carried opaquely, exactly like a tool's kind.
+    ModeChanged {
+        /// The new mode, in the kernel's own word.
+        mode: String,
+    },
+    /// The agent set a plan for the work it is doing.
+    ///
+    /// A revision replaces the previous one whole — the agent sends the
+    /// complete list each time — so a client draws the latest rather than
+    /// accumulating. Per-revision volume, not per token, which is why it is
+    /// durable where a message delta is not.
+    PlanSet {
+        /// The steps, in order, each in the kernel's own words.
+        entries: Vec<PlanStep>,
+    },
+    /// The kernel reported the settings a session may change.
+    ///
+    /// Durable so a client can render a selection rather than a free-text box,
+    /// from the kernel's own names and kinds — never a set this service
+    /// invented.
+    ConfigOptionsSet {
+        /// The settable options, each in the kernel's own words.
+        options: Vec<ConfigOption>,
+    },
     /// Part of the conversation was lost rather than recorded.
     ///
     /// Written where the loss happened, in the same spirit as a rotation's
@@ -299,6 +328,33 @@ pub struct ToolBody {
     pub truncated: bool,
 }
 
+/// One step of an agent's plan, in the kernel's own words.
+///
+/// Nothing is mapped onto a vocabulary this service invented: the kernel names
+/// the step and its state, and a client renders both verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    /// What the step is, as the agent described it.
+    pub title: String,
+    /// Where it has got to, in the kernel's own word.
+    pub status: String,
+}
+
+/// One setting the kernel says is settable, in its own words.
+///
+/// The kernel names the setting and the kind of value it takes; a client
+/// renders a selection from these rather than a free-text box, exactly as it
+/// does for the answers an approval offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigOption {
+    /// The kernel's identifier for the setting.
+    pub id: String,
+    /// What it is called, as the kernel named it.
+    pub name: String,
+    /// What kind of value it takes, in the kernel's own word.
+    pub kind: String,
+}
+
 /// Every discriminator this build owns, exactly as serde spells it.
 ///
 /// Must name every variant of [`EventKind`]. A variant missing from here would
@@ -316,6 +372,9 @@ const KNOWN_TAGS: &[&str] = &[
     "tool_call_started",
     "tool_call_updated",
     "usage_reported",
+    "mode_changed",
+    "plan_set",
+    "config_options_set",
     "conversation_gap",
     "terminal_attached",
     "terminal_detached",
@@ -364,6 +423,12 @@ pub enum LiveFrame {
     /// watch it think a second time. The turn's own boundaries already say
     /// when the thinking happened.
     ThoughtDelta(String),
+    /// The actions the owner may invoke right now.
+    ///
+    /// Liveness, not history: this describes the session as it is at this
+    /// moment, and a list replayed from the log would offer actions that no
+    /// longer exist. A client that missed it sees none rather than a stale one.
+    AvailableCommands(Vec<AvailableCommand>),
     /// The runtime process ended.
     Exited {
         /// Process exit code, when one was reported.
@@ -371,6 +436,18 @@ pub enum LiveFrame {
         /// Why the session stopped.
         reason: StopReason,
     },
+}
+
+/// One action the owner may invoke, as the kernel offers it.
+///
+/// Carried opaquely: the kernel names the action and what it does, and a
+/// client renders both verbatim, never mapped onto a set this service invented.
+#[derive(Debug, Clone)]
+pub struct AvailableCommand {
+    /// What the command is, as the kernel named it.
+    pub name: String,
+    /// What it does, as the kernel described it.
+    pub description: String,
 }
 
 #[cfg(test)]
@@ -447,6 +524,22 @@ mod tests {
                 output_tokens: 56,
                 context_used: 1290,
             },
+            EventKind::ModeChanged {
+                mode: "autonomous".into(),
+            },
+            EventKind::PlanSet {
+                entries: vec![PlanStep {
+                    title: "read the file".into(),
+                    status: "pending".into(),
+                }],
+            },
+            EventKind::ConfigOptionsSet {
+                options: vec![ConfigOption {
+                    id: "thought".into(),
+                    name: "Thinking level".into(),
+                    kind: "select".into(),
+                }],
+            },
             EventKind::ConversationGap { frames: 7 },
             EventKind::TerminalAttached,
             EventKind::TerminalDetached,
@@ -485,6 +578,9 @@ mod tests {
                 | EventKind::ToolCallStarted { .. }
                 | EventKind::ToolCallUpdated { .. }
                 | EventKind::UsageReported { .. }
+                | EventKind::ModeChanged { .. }
+                | EventKind::PlanSet { .. }
+                | EventKind::ConfigOptionsSet { .. }
                 | EventKind::ConversationGap { .. }
                 | EventKind::TerminalAttached
                 | EventKind::TerminalDetached
