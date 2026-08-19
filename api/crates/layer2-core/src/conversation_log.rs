@@ -48,6 +48,13 @@ impl SessionService {
                 self.fold_completion(id, completed).await;
                 return;
             }
+            ConversationUpdate::Failed {
+                message,
+                capability,
+            } => {
+                self.fold_failure(id, message, capability).await;
+                return;
+            }
             ConversationUpdate::Lost { frames } => {
                 // Recorded where it happened, in the same spirit as a
                 // rotation's timestamp: the owner is shown a boundary rather
@@ -260,6 +267,43 @@ impl SessionService {
                     stop_reason: Some(reason),
                     detail: None,
                     capability: None,
+                },
+            );
+        }
+        self.flush(id).await;
+    }
+
+    /// Record a turn that stopped because something went wrong.
+    ///
+    /// Modelled on `close_open_turn` rather than on `fold_completion`: what
+    /// happened is a failure, not an ending, and the difference is exactly
+    /// what lets a client tell "the agent had nothing more to say" from "the
+    /// agent could not answer". The reason travels as the status change's
+    /// detail, which every interface already projects — so every caller is
+    /// told the same thing without any interface being taught a new shape.
+    async fn fold_failure(&self, id: &SessionId, message: String, capability: Option<String>) {
+        tracing::warn!(session_id = %id, %message, "a turn failed");
+        {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(id) else {
+                return;
+            };
+            // Half a message is still what the agent said, and it is the last
+            // thing anybody saw. Committed before the failure so the log
+            // reads in the order it happened.
+            if let Some((_, content)) = entry.assembling.take() {
+                append(entry, EventKind::MessageCommitted { content });
+            }
+            entry.session.status = SessionStatus::Ready;
+            entry.session.stop_reason = Some(StopReason::Error);
+            append(entry, EventKind::TurnCompleted);
+            append(
+                entry,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: Some(StopReason::Error),
+                    detail: Some(message),
+                    capability,
                 },
             );
         }
