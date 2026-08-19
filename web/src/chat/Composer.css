@@ -72,13 +72,30 @@
   color: var(--dsw-alias-label-dimmed);
 }
 
+/*
+ * The field opts out of the global focus ring, and the capsule carries its
+ * focus instead.
+ *
+ * The ring is a square-cornered 4px halo drawn on the element that has focus
+ * — inside a 22px capsule that is a rectangle floating in a pill, which is
+ * what it looked like. A field's focus belongs to the control it is part of.
+ */
 .composer__field:focus-visible {
   outline: none;
+  box-shadow: none;
 }
 
+/*
+ * Focus is a border, not the ring.
+ *
+ * `--focus-ring` is a 4px double halo built for a discrete control somebody
+ * tabbed to. On a capsule the width of the reading column it is a permanent
+ * blue frame around the page's largest element, and `:focus-within` fires on
+ * a mouse click too — so it shouted on every interaction rather than marking
+ * a keyboard one. The field's own caret already says where the focus is.
+ */
 .composer:focus-within {
-  border-color: var(--rule-2);
-  box-shadow: var(--focus-ring);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .composer__row {

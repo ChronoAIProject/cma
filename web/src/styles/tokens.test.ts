@@ -184,7 +184,11 @@ describe('the component layer', () => {
       for (const [index, line] of readFileSync(path, 'utf8').split('\n').entries()) {
         const match = /box-shadow:\s*(.+);/.exec(line);
         const value = match?.[1];
-        if (value === undefined || value.startsWith('var(--')) {
+        /*
+         * `none` is an opt-out, not a hand-rolled depth: removing a shadow
+         * cannot introduce a value the elevation system has not seen.
+         */
+        if (value === undefined || value.startsWith('var(--') || value === 'none') {
           continue;
         }
         const ring = /^inset\s+[\d\s.px-]+\s+var\(--[a-z0-9-]+\)$/.test(value);
