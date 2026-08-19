@@ -22,6 +22,8 @@ function delta(seq: number, path: string, value: Record<string, unknown>): AguiE
     seq,
     threadId: 'sesn_1',
     runId: 'run_1',
+    // A parsed event, not a wire frame: `delta` is what the service sends and
+    // `patch` is what this client calls it once read (sdk/wire.ts).
     patch: [{ op: 'add', path, value }],
   };
 }
