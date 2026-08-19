@@ -75,10 +75,12 @@ fn every_current_variant_survives_the_round_trip() {
             call_id: "call-1".into(),
             title: "read a file".into(),
             kind: "read".into(),
+            arguments: None,
         },
         EventKind::ToolCallUpdated {
             call_id: "call-1".into(),
             status: "completed".into(),
+            result: None,
         },
         EventKind::UsageReported {
             input_tokens: 1234,
