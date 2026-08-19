@@ -15,12 +15,13 @@
 }
 
 /*
- * The head band every column shares. Its height comes from .band--head, so the
+ * The header's proportions come from `.sessionheader`, so the
  * page's rule lands where the sessions view's does and the window does not
  * shift as somebody switches between them.
  */
+/* The header's proportions come from `.sessionheader`; only its gap differs. */
 .operator__head {
-  gap: var(--space-2);
+  gap: 8px;
 }
 
 /* §14: the page title and its one-line description. */
@@ -28,8 +29,8 @@
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-5) var(--page-gutter) var(--space-3);
+  gap: 4px;
+  padding: 20px 20px 12px;
 }
 
 .operator__title {
@@ -51,21 +52,31 @@
  * selected by weight, accent ink, a 2px accent bottom border AND
  * aria-selected, so colour is never the only signal.
  */
+/*
+ * The same tab strip the session header uses for its planes: a page with two
+ * kinds of tab that look different is a page where somebody has to learn
+ * which kind they are looking at.
+ */
 .operator__tabs {
-  gap: var(--space-1);
-  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex: none;
+  gap: 36px;
+  align-items: flex-end;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .operator__tab {
-  height: var(--control-h);
-  padding-inline: var(--space-3);
-  color: var(--ink-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  cursor: pointer;
+  padding: 0 0 11px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
 }
 
 .operator__tab:focus-visible {
@@ -74,9 +85,8 @@
 }
 
 .operator__tab--on {
-  color: var(--accent);
-  font-weight: 600;
-  border-bottom-color: var(--accent);
+  color: var(--dsw-alias-state-business-primary);
+  border-bottom-color: var(--dsw-alias-state-business-primary);
 }
 
 /*
