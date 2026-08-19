@@ -108,65 +108,117 @@ fn a_missing_ability_is_unprocessable_rather_than_missing() {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
-#[test]
-fn a_create_body_refuses_a_field_this_interface_cannot_honour() {
-    // The failure this closes: `{"kernel":"claude_code"}` was accepted,
-    // discarded, and answered with a 201 for a session on a different runtime.
-    // `GET /api/v1/kernels` enumerates the runtimes, so sending one here is the
-    // obvious next move for anybody integrating.
-    let refused = serde_json::from_str::<CreateSessionRequest>(
-        r#"{"cols":120,"rows":32,"kernel":"claude_code"}"#,
-    );
-    let message = refused
-        .expect_err("an unhonourable field must not parse")
-        .to_string();
+/// What a client actually receives for a body this interface could not take.
+///
+/// Drives axum's real extractor rather than serde directly. The bug behind all
+/// of this was end to end — a 201 on the wrong runtime — and a test that stops
+/// at `serde_json::from_str` would pass even if the rejection rendered as a
+/// 500.
+async fn body_rejection(content_type: &str, body: &'static str) -> (StatusCode, serde_json::Value) {
+    use axum::extract::FromRequest;
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/v1/sessions")
+        .header("content-type", content_type)
+        .body(axum::body::Body::from(body))
+        .expect("request builds");
+    let rejection = Json::<CreateSessionRequest>::from_request(request, &())
+        .await
+        .expect_err("this body must be rejected");
+    let response = BodyProblem(rejection).into_response();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("problem documents are small");
+    (
+        status,
+        serde_json::from_slice(&bytes).expect("a problem document is json"),
+    )
+}
+
+#[tokio::test]
+async fn an_unknown_field_is_refused_and_named() {
+    // The shape of request that produced #298: accepted, discarded, and
+    // answered 201 for a session that was not what was asked for.
+    let (status, body) = body_rejection(
+        "application/json",
+        r#"{"cols":120,"rows":32,"nonsense":"claude_code"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "invalid_request");
+    let detail = body["detail"].as_str().expect("detail is a string");
     assert!(
-        message.contains("kernel"),
-        "the refusal has to name the field: {message}"
+        detail.contains("nonsense"),
+        "it must name the field: {detail}"
     );
-    // serde lists what was expected, which is the part that tells a caller
-    // where to put what they were trying to say.
     assert!(
-        message.contains("environment_profile"),
-        "and say what it would have accepted: {message}"
+        detail.contains("environment_profile"),
+        "and say what it would have taken: {detail}"
     );
 }
 
-#[test]
-fn a_bad_body_keeps_the_status_that_says_what_is_wrong() {
-    // The three cases carry real information and must not be flattened into
-    // one: a wrong `Content-Type` is 415, syntactically broken JSON is 400, and
-    // a body that parsed but cannot be honoured is 422. Answering all three
-    // with 422 sends somebody whose header is wrong to stare at their JSON.
-    for (slug, status) in [
-        ("invalid-request", StatusCode::UNPROCESSABLE_ENTITY),
-        ("malformed-json", StatusCode::BAD_REQUEST),
-        ("unsupported-media-type", StatusCode::UNSUPPORTED_MEDIA_TYPE),
-    ] {
-        let body = problem_document(status, slug, "something was wrong", "x");
-        assert_eq!(body["status"], status.as_u16());
-        assert_eq!(body["type"], format!("{PROBLEM_BASE}/{slug}"));
-    }
+#[tokio::test]
+async fn a_misspelled_profile_no_longer_starts_the_wrong_session() {
+    // The silent case nobody would have reported. `environmentProfile` is the
+    // camelCase spelling this project's own SDK and its AG-UI interface both
+    // use, and it used to start a session on the deployment's default profile
+    // instead of the named one — a working session, quietly not the one asked
+    // for.
+    let (status, body) = body_rejection(
+        "application/json",
+        r#"{"cols":120,"rows":32,"environmentProfile":"envp_1"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["detail"]
+        .as_str()
+        .expect("detail is a string")
+        .contains("environmentProfile"));
 }
 
-#[test]
-fn every_failure_renders_the_same_document_shape() {
-    // The point of sharing the renderer. A caller writing one parser for this
-    // API's failures must not meet a second shape because the wrong half of
-    // their request was at fault.
-    let doc = problem_document(
-        StatusCode::BAD_REQUEST,
-        "malformed-json",
-        "bad",
-        "malformed_json",
+#[tokio::test]
+async fn a_bad_body_keeps_the_status_that_says_what_is_wrong() {
+    // Three conditions, three statuses, because each sends the reader
+    // somewhere different. Answering all of them 422 would send somebody whose
+    // header is wrong to go and stare at their JSON.
+    let (status, body) = body_rejection("application/json", r#"{"cols":"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "malformed json is 400");
+    assert_eq!(body["code"], "malformed_json");
+
+    let (status, body) = body_rejection("text/plain", r#"{"cols":120}"#).await;
+    assert_eq!(
+        status,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "a wrong content type is 415"
     );
+    assert_eq!(body["code"], "unsupported_media_type");
+}
+
+#[tokio::test]
+async fn every_failure_renders_the_same_document_shape() {
+    // A caller writing one parser for this API's failures must not meet a
+    // second shape because the wrong half of their request was at fault.
+    let (_, from_body) = body_rejection("application/json", r#"{"nope":1}"#).await;
+    let (_, from_core) = rendered(CoreError::SessionTerminated).await;
     for field in ["type", "title", "status", "detail", "code"] {
-        assert!(
-            doc.get(field).is_some(),
-            "{field} is part of the shape: {doc}"
-        );
+        assert!(from_body.get(field).is_some(), "body problem lacks {field}");
+        assert!(from_core.get(field).is_some(), "core problem lacks {field}");
     }
-    assert_eq!(doc["title"], "malformed json");
+}
+
+#[test]
+fn a_named_kernel_is_refused_with_somewhere_to_put_it() {
+    // Declared on the struct so it can be refused in words. serde's generic
+    // sentence lists the accepted field names, which answers "what is wrong"
+    // and not "then how do I get claude_code?" — the only reason anybody sent
+    // it.
+    let body = serde_json::from_str::<CreateSessionRequest>(r#"{"kernel":"claude_code"}"#)
+        .expect("it parses, so the handler can refuse it properly");
+    assert_eq!(body.kernel.as_deref(), Some("claude_code"));
+
+    let refusal = CoreError::InvalidRequest(String::new()).code();
+    assert_eq!(refusal, "invalid_request");
 }
 
 #[test]
