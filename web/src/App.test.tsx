@@ -510,9 +510,11 @@ describe('App', () => {
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
       await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
-    // Delete sits at the drawer's foot now (§12), so the drawer opens first.
+    // Delete sits at the drawer's foot (§12), so the drawer opens first, and
+    // the deletion is gated behind an acknowledgement (§7).
     await user.click(screen.getByRole('button', { name: /^details$/i }));
     await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /delete permanently/i }));
 
     await waitFor(() => {
