@@ -48,136 +48,6 @@
   }
 }
 
-/* ── Buttons, §7 ──────────────────────────────────────────────────────────
- *
- * One primary per surface, spent on the action that surface exists for.
- * Everything else is secondary or quiet, and the rest goes in the overflow
- * menu — a header carrying four equally-weighted keys makes the reader choose
- * before they can read. Every control is border-box, so a bordered and an
- * unbordered control in the same row measure alike.
- */
-
-.button {
-  display: inline-flex;
-  gap: var(--space-2);
-  align-items: center;
-  justify-content: center;
-  height: var(--control-h);
-  min-width: var(--hit);
-  padding-inline: var(--space-3);
-  color: var(--ink-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-note);
-  white-space: nowrap;
-  background: none;
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
-}
-
-.button:hover:not(:disabled, [aria-disabled='true']) {
-  color: var(--ink);
-  /*
-   * A tint, not a surface — §20.5. Since §20.1 made the light layers all one
-   * white, a hover that swapped to `--raised` changed nothing there; and a
-   * solid grey would read as two different colours over a card and over the
-   * page. A translucent ink reads as one relationship wherever it lands.
-   */
-  background: var(--tint-hover);
-}
-
-.button:hover:active:not(:disabled, [aria-disabled='true']) {
-  background: var(--tint-active);
-}
-
-.button:active:not(:disabled, [aria-disabled='true']) {
-  background: var(--sunken);
-}
-
-.button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.button:disabled,
-.button[aria-disabled='true'] {
-  color: var(--ink-3);
-  background: var(--inset);
-  border-color: var(--rule);
-  cursor: not-allowed;
-}
-
-/* The primary. No border: the fill is the edge. */
-.button--primary {
-  /*
-   * §20.2: the primary is the darkest ink in light and the lightest in dark,
-   * not the accent. The accent now carries status only — a dot, a selected
-   * tab, a focus ring — so the thing you press is neutral and the surface has
-   * no loud element left on it.
-   */
-  color: var(--on-primary);
-  font-weight: 500;
-  background: var(--primary-fill);
-  border-color: transparent;
-}
-
-.button--primary:hover:not(:disabled) {
-  /*
-   * The primary is a neutral now — §20.2 — so it lightens or darkens toward
-   * its own hover fill rather than brightening an accent. `brightness()` on
-   * near-black does almost nothing, which is how this was found.
-   */
-  color: var(--on-primary);
-  background: var(--primary-fill-hover);
-}
-
-/* Quiet: no border at all. For a third-rank action beside two ranked ones. */
-.button--quiet {
-  color: var(--ink-2);
-  border-color: transparent;
-}
-
-/* Destructive. Confirms inline, in place of the controls that raised it. */
-.button--danger {
-  color: var(--fail);
-  border-color: var(--fail-wash);
-}
-
-.button--sm {
-  height: var(--control-h-sm);
-  padding-inline: var(--space-3);
-  font-size: var(--text-meta);
-  border-radius: var(--radius-sm);
-}
-
-.button--md {
-  height: var(--control-h-md);
-  font-size: var(--text-ui);
-}
-
-/* A panel's one full-width primary action — the rail's new-session key. */
-.button--block {
-  width: 100%;
-  height: var(--control-h-lg);
-  font-size: var(--text-ui);
-  font-weight: 600;
-}
-
-/* The landing's opening action. */
-.button--xl {
-  height: var(--control-h-xl);
-  padding-inline: var(--space-5);
-  font-size: var(--text-body);
-  font-weight: 600;
-  border-radius: var(--radius-md);
-}
-
-/* An icon-only control: the overflow key, a collapse handle, a dismiss. */
-.button--icon {
-  width: var(--control-h);
-  min-width: 0;
-  padding: 0;
-}
-
 /*
  * §7: controls are disabled, never removed, and the reason is stated on the
  * surface — once per row, beside the controls it explains, never in a tooltip
@@ -335,81 +205,6 @@
   font-size: var(--text-label);
 }
 
-/* ── Status, §2 and §7 ────────────────────────────────────────────────────
- *
- * A pill carrying a dot and a word. The word is mandatory: colour never carries
- * meaning alone, and `stopped` is never drawn as a failure.
- */
-
-.status {
-  display: inline-flex;
-  gap: 7px;
-  align-items: center;
-  height: var(--chip-h);
-  padding-inline: 10px;
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
-  font-weight: 500;
-  white-space: nowrap;
-  border-radius: var(--radius-pill);
-}
-
-.status__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentcolor;
-}
-
-.status--live {
-  color: var(--live);
-  background: var(--live-wash);
-}
-.status--wait {
-  color: var(--wait);
-  background: var(--wait-wash);
-}
-.status--fail {
-  color: var(--fail);
-  background: var(--fail-wash);
-}
-/*
- * The ended chip needs a ground of its own — §20.1 and §20.5.
- *
- * It was `--raised`, which is the same white as the page in light now, so the
- * chip lost its shape entirely there while the other three kept theirs from
- * their status washes. A neutral tint gives it one in both themes without
- * borrowing a status colour it has no right to.
- */
-.status--ended {
-  color: var(--ended);
-  background: var(--tint-hover);
-}
-
-/* A neutral tag: a count, a filter that is off, a fact about a service. */
-.tag {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  height: var(--chip-h);
-  padding-inline: 10px;
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: 0.06em;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-pill);
-}
-
-.tag--on {
-  color: var(--on-accent);
-  font-family: var(--font-ui);
-  font-weight: 500;
-  background: var(--accent-fill);
-  border-color: transparent;
-}
-
 /* ── Rows, §12 and §14 ────────────────────────────────────────────────────
  *
  * A selectable row (the rail) and a record row (operations) are different
@@ -449,9 +244,6 @@
   grid-row: 1 / span 2;
   align-self: start;
   margin-top: 5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
 }
 
 .row-item__subject {
@@ -682,19 +474,6 @@
 }
 .tone-ink-ended {
   color: var(--ended);
-}
-
-.tone-bg-live {
-  background: var(--live);
-}
-.tone-bg-wait {
-  background: var(--wait);
-}
-.tone-bg-fail {
-  background: var(--fail);
-}
-.tone-bg-ended {
-  background: var(--ended);
 }
 
 /* ── Waiting, §8 and §11 ─────────────────────────────────────────────────

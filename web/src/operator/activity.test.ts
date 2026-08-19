@@ -4,7 +4,7 @@ import {
   actorsIn,
   filtered,
   newestFirst,
-  outcomeTone,
+  outcomeState,
   readableAction,
 } from './activity';
 import type { ActivityEntry } from './types';
@@ -88,13 +88,17 @@ describe('how an entry reads', () => {
   });
 
   it('marks being turned away and failing as the outcomes worth noticing', () => {
-    expect(outcomeTone('denied')).toBe('fail');
-    expect(outcomeTone('failed')).toBe('wait');
-    expect(outcomeTone('succeeded')).toBe('live');
+    // Being refused is a decision and failing is a fault, so they read
+    // differently — the colours they carried are unchanged by the rename.
+    expect(outcomeState('denied')).toBe('error');
+    expect(outcomeState('failed')).toBe('warning');
+    expect(outcomeState('succeeded')).toBe('done');
   });
 
   it('draws an unfamiliar outcome plainly rather than guessing at it', () => {
-    expect(outcomeTone('rejected')).toBe('ended');
-    expect(outcomeTone('something_new')).toBe('ended');
+    // No dot at all. Every state the dot has asserts something specific, and
+    // an outcome this build has never seen supports none of those claims.
+    expect(outcomeState('rejected')).toBeUndefined();
+    expect(outcomeState('something_new')).toBeUndefined();
   });
 });

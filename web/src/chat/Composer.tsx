@@ -4,6 +4,7 @@ import type { ConcurrentInput, SessionCapabilities } from '../agui';
 import type { AvailableCommand } from './conversation';
 import { CommandMenu } from './CommandMenu';
 import './Composer.css';
+import { Pill } from '../ui/Pill';
 
 /**
  * Where a prompt is written and sent — `Web_Style.md` §18.4.
@@ -246,7 +247,7 @@ export function Composer({
            * composer's own row.
            */}
           {capabilities.steer && turnInFlight ? (
-            <span className="tag composer__steer">steerable</span>
+            <Pill placement="composer__steer">steerable</Pill>
           ) : null}
           <span className="composer__spacer" />
 
@@ -263,7 +264,7 @@ export function Composer({
           ) : null}
 
           <Button
-            tone="accent"
+            variant="primary"
             disabled={!canSend}
             onClick={() => {
               void send();

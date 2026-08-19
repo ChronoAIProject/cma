@@ -1,4 +1,4 @@
-import { Chip } from '../ui/Chip';
+import { Pill } from '../ui/Pill';
 import type { PlatformService } from './types';
 
 /**
@@ -70,7 +70,7 @@ export function ServicePicker({
               <span className="picker__text">
                 <span className="picker__name">
                   {service.name}
-                  {required ? <Chip inline>always</Chip> : null}
+                  {required ? <Pill>always</Pill> : null}
                 </span>
                 {service.description === undefined ? null : (
                   <span className="picker__description">{service.description}</span>

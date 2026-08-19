@@ -32,7 +32,6 @@ const TOKEN_SHEETS = [
   'scrollbar.css',
   'shiki.css',
 ].map((name) => join(SRC, 'styles', name));
-const COMPONENTS = join(SRC, 'styles', 'components.css');
 
 function stylesheets(dir: string): string[] {
   const found: string[] = [];
@@ -168,15 +167,28 @@ describe('the component layer', () => {
     expect(offences).toEqual([]);
   });
 
-  it('declares no inline box-shadow', () => {
-    // §3: the depth tokens are the only shadow values permitted. An inline
-    // string is a value that cannot be checked against the letterpress system
-    // and will not change with the theme.
+  it('declares no hand-rolled depth', () => {
+    /*
+     * §3: depth comes from the shadow tokens. A hand-written offset and blur
+     * is a value that cannot be checked against the elevation system and will
+     * not change with the theme.
+     *
+     * An `inset` ring is exempt and is not an exception to the rule — it is a
+     * different thing wearing the same property. It draws a hairline without
+     * changing the element's box, which is why the selected pill uses one
+     * instead of a border that would shift its neighbours by a pixel as the
+     * selection moves. Its colour must still be a token.
+     */
     const offences: string[] = [];
     for (const path of COMPONENT_SHEETS) {
       for (const [index, line] of readFileSync(path, 'utf8').split('\n').entries()) {
         const match = /box-shadow:\s*(.+);/.exec(line);
-        if (match && !(match[1] ?? '').startsWith('var(--')) {
+        const value = match?.[1];
+        if (value === undefined || value.startsWith('var(--')) {
+          continue;
+        }
+        const ring = /^inset\s+[\d\s.px-]+\s+var\(--[a-z0-9-]+\)$/.test(value);
+        if (!ring) {
           offences.push(`${relative(SRC, path)}:${index + 1} ${line.trim()}`);
         }
       }
@@ -184,14 +196,24 @@ describe('the component layer', () => {
     expect(offences).toEqual([]);
   });
 
-  it('gives every semantic tone a dot colour', () => {
-    // SessionRail renders `tone-bg-${toneFor(lifecycle)}`, and until this
-    // change no stylesheet declared those classes — every status dot in the
-    // rail rendered with no colour at all. Recorded here rather than left to
-    // be re-fixed, per issue #111.
-    const css = readFileSync(COMPONENTS, 'utf8');
-    for (const tone of ['live', 'wait', 'fail', 'ended']) {
-      expect(css, `.tone-bg-${tone} is not declared`).toContain(`.tone-bg-${tone} {`);
+  it('gives every state the dot can take a colour', () => {
+    /*
+     * The rail once rendered `tone-bg-${lifecycle}` classes that no stylesheet
+     * declared, so every status dot in it drew with no colour at all — issue
+     * #111. The classes are gone and StateDot owns the colours now, so the
+     * guard moves with them rather than retiring.
+     *
+     * `ongoing` is not in the list: it is the animated chase, which takes its
+     * colour on the svg rather than through a state attribute.
+     */
+    const css = readFileSync(join(SRC, 'ui', 'StateDot.css'), 'utf8');
+    for (const state of ['done', 'warning', 'error']) {
+      expect(css, `no colour for the ${state} state`).toMatch(
+        new RegExp(`\\[data-state='${state}'\\]\\s*\\{[^}]*color: var\\(--`),
+      );
     }
+    expect(css, 'the running state has no colour').toMatch(
+      /\.statedot__chase\s*\{[^}]*color: var\(--/,
+    );
   });
 });
