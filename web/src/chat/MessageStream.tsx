@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
+import { CopyKey } from './CopyKey';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
 import type { AvailableCommand, ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
@@ -331,6 +332,30 @@ function StreamEntry({
             {!entry.committed && turnInFlight ? (
               <b className="turn__caret" aria-hidden="true" />
             ) : null}
+          </div>
+          {/*
+           * What a reader can take away — §18.11.
+           *
+           * It writes `entry.text`, the markdown source the model already
+           * holds, and not the rendered tree. That is the point rather than a
+           * detail: selection-copy already works and already yields degraded
+           * text, because the renderer strips heading hashes, list markers,
+           * fences and backticks before drawing. Somebody pasting an agent's
+           * numbered steps into an issue, or its backticked command into a
+           * shell, gets something the agent did not write.
+           *
+           * Persistently drawn, never revealed on hover — §3. Disabled with a
+           * reason while the turn is still being written rather than removed:
+           * copying half an answer is the thing to prevent, and taking the
+           * control away is the wrong instrument for it.
+           */}
+          <div className="turn__actions">
+            <CopyKey
+              text={entry.text}
+              refusedReason={
+                !entry.committed && turnInFlight ? 'This turn is still being written' : undefined
+              }
+            />
           </div>
         </article>
       );
