@@ -1,29 +1,33 @@
 /*
- * A tool call — docs/Web_Style.md §18.2.
+ * A tool call as structure — docs/Web_Style.md §18.2.
  *
- * Structure rather than prose: one control-height row that says what the call
- * was without being opened, and a disclosure for the rest.
+ * A 40px row on the raised ground inside the control radius, in a stack
+ * directly under the turn that made the calls. The collapsed row identifies
+ * the call without opening it: the kernel's own kind and target, verbatim.
  */
 
 .toolcall {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
 }
 
 .toolcall__row {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-3);
   align-items: center;
   width: 100%;
-  height: var(--control-h);
-  padding-inline: var(--space-2);
-  overflow: hidden;
+  height: var(--control-h-lg);
+  padding-inline: var(--space-3);
   text-align: left;
   cursor: pointer;
-  background: none;
-  border: 0;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+/* A failed call's row takes the fail tint on its border — §18.2. */
+.toolcall[data-tone='failed'] .toolcall__row {
+  border-color: var(--fail);
 }
 
 .toolcall__row:disabled {
@@ -35,72 +39,45 @@
   box-shadow: var(--focus-ring);
 }
 
-/*
- * The caret flips rather than rotating: at this size a rotation reads as a
- * wobble, and a content swap has nothing to animate.
- */
-.toolcall__caret {
+/* The status glyph: ✓ live, × fail, a pulsing wait dot while running. */
+.toolcall__glyph {
+  display: inline-flex;
   flex: none;
-  color: var(--ink-3);
-  font-size: var(--text-2xs);
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--live);
+  font-family: var(--font-mono);
+  font-size: var(--text-note);
   line-height: 1;
 }
 
-.toolcall__caret::before {
-  content: '▸';
+.toolcall[data-tone='failed'] .toolcall__glyph {
+  color: var(--fail);
 }
 
-.toolcall__row[aria-expanded='true'] .toolcall__caret::before {
-  content: '▾';
-}
-
-/*
- * A running call takes the wave §11 uses for waiting rather than a caret,
- * so it is distinguishable from a finished one without reading either.
- */
-.toolcall__running {
-  flex: none;
-  width: 6px;
-  height: 6px;
+.toolcall__glyph--running {
+  width: 7px;
+  height: 7px;
   background: var(--wait);
   border-radius: 50%;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .toolcall__running {
-    animation: toolcall-wait 1.4s ease-in-out infinite;
-  }
-}
-
-@keyframes toolcall-wait {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* The kernel's own word for what kind of tool this is. Rendered verbatim. */
+/* The kernel's own word for what kind of tool this is, verbatim. */
 .toolcall__kind {
   flex: none;
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: var(--text-base);
+  font-size: var(--text-note);
 }
 
-/*
- * What it acted on. It is the part that can run long, so it is the part that
- * truncates — losing the kind would leave a row that identifies nothing.
- */
+/* What it acted on — the part that runs long, so the part that truncates. */
 .toolcall__target {
   flex: 1 1 auto;
-  min-width: 0;
   overflow: hidden;
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -108,23 +85,19 @@
 .toolcall__status {
   flex: none;
   margin-left: auto;
+  color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-label);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
 
-.toolcall[data-tone='running'] .toolcall__status {
-  color: var(--wait);
-}
-
-.toolcall[data-tone='done'] .toolcall__status {
-  color: var(--live);
-}
-
-/* A failed call is distinguishable from a successful one, §18.2. */
-.toolcall[data-tone='failed'] {
-  border-color: var(--fail);
+/* The time a finished call took, §18.2 — from the log, never estimated. */
+.toolcall__duration {
+  flex: none;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
 }
 
 .toolcall[data-tone='failed'] .toolcall__status {
@@ -132,18 +105,20 @@
 }
 
 /*
- * The disclosure. Output is agent-emitted content, so it is never silently
- * shortened — it is bounded by this control and scrolls inside itself, which
- * is a frame decision and permitted.
+ * Disclosure, not truncation — §18.2: expanded output takes the code-block
+ * treatment and scrolls inside itself, capped at 120px in the stack. Nothing
+ * is silently shortened.
  */
 .toolcall__output {
-  max-height: 18rem;
-  margin: 0;
+  max-height: 120px;
+  margin: var(--space-1) 0 0;
   padding: var(--space-3);
   overflow: auto;
+  color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: var(--text-base);
+  font-size: calc(var(--term-size) - 0.5px);
   line-height: var(--term-leading);
-  background: var(--inset);
-  border-top: 1px solid var(--rule);
+  background: var(--sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
 }

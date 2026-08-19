@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import type { Session } from './types';
-import { labelFor } from './types';
+import { labelFor, toneFor } from './types';
 import { tabLabel } from './sessionTime';
+import { Chip } from '../ui/Chip';
 import './SessionHeader.css';
 
 /**
@@ -27,6 +28,12 @@ import './SessionHeader.css';
 interface SessionHeaderProps {
   /** The session the surface beneath is showing, or none. */
   readonly session: Session | null;
+  /**
+   * Whether it is parked on an answerable approval — §18.3: the pill reads
+   * "Waiting for you" rather than the state's own name, because the wording
+   * of a refusal belongs to the reason it exists.
+   */
+  readonly waiting?: boolean;
   /** The lifecycle controls that act on it. */
   readonly actions?: ReactNode;
   /**
@@ -39,7 +46,12 @@ interface SessionHeaderProps {
   readonly listHandle?: ReactNode;
 }
 
-export function SessionHeader({ session, actions, listHandle }: SessionHeaderProps) {
+export function SessionHeader({
+  session,
+  waiting = false,
+  actions,
+  listHandle,
+}: SessionHeaderProps) {
   if (session === null) {
     return (
       <div className="band band--head sessionheader">
@@ -54,8 +66,15 @@ export function SessionHeader({ session, actions, listHandle }: SessionHeaderPro
     <div className="band band--head sessionheader">
       {listHandle}
       <span className="band__subject">{tabLabel(session.createdAt)}</span>
+      {/* §12: the status pill — the state as a dot and a word. */}
+      {waiting ? (
+        <Chip tone="wait">Waiting for you</Chip>
+      ) : (
+        <Chip tone={toneFor(session.lifecycle)}>{labelFor(session.lifecycle)}</Chip>
+      )}
+      {/* The kernel and the plane, in mono, because both are identifiers. */}
       <span className="band__label">{session.kernel}</span>
-      <span className="band__value">{labelFor(session.lifecycle)}</span>
+      {session.plane === undefined ? null : <span className="band__label">{session.plane}</span>}
       <span className="band__spacer" />
       {actions}
     </div>

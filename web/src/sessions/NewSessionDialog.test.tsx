@@ -65,7 +65,8 @@ function renderDialog(options: DialogOptions = {}) {
 /** Open the authoring branch, which is where every field below lives. */
 async function author(user: ReturnType<typeof userEvent.setup>) {
   await chooseOption(user, /environment profile/i, /new profile/i);
-  await screen.findByRole('combobox', { name: /^plane$/i });
+  // §7: the plane choice is two labelled cards in a radiogroup, not a select.
+  await screen.findByRole('radiogroup', { name: /^plane$/i });
 }
 
 describe('starting from what already exists', () => {
@@ -129,7 +130,7 @@ describe('starting from what already exists', () => {
     renderDialog({ profiles: [profile('envp_1', 'Talos Controller')] });
 
     expect(screen.queryByRole('combobox', { name: /^agent$/i })).toBeNull();
-    expect(screen.queryByRole('combobox', { name: /^plane$/i })).toBeNull();
+    expect(screen.queryByRole('radiogroup', { name: /^plane$/i })).toBeNull();
     expect(screen.queryByRole('combobox', { name: /thinking effort/i })).toBeNull();
   });
 });
@@ -144,7 +145,7 @@ describe('authoring a scoped profile in place', () => {
 
     await author(user);
     await user.type(screen.getByLabelText(/^name$/i), 'GitHub reviewer');
-    await chooseOption(user, /^plane$/i, 'Conversation');
+    await user.click(screen.getByRole('radio', { name: /conversation/i }));
     await user.click(await screen.findByRole('checkbox', { name: /GitHub/ }));
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
@@ -186,10 +187,10 @@ describe('authoring a scoped profile in place', () => {
     await author(user);
     await chooseOption(user, /^agent$/i, 'Claude Code');
 
-    expect(await openedOptions(user, /^plane$/i)).toEqual([
-      'TerminalNot on Claude Code',
-      'Conversation',
-    ]);
+    const terminal = screen.getByRole('radio', { name: /terminal/i });
+    expect(terminal).toBeDisabled();
+    expect(terminal.textContent).toContain('Not on Claude Code');
+    expect(screen.getByRole('radio', { name: /conversation/i })).toBeEnabled();
   });
 
   it('will not author a profile when the deployment’s runtimes are unknown', async () => {

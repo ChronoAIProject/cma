@@ -19,6 +19,7 @@ fn logged(seq: u64, kind: EventKind) -> Event {
         session_id: SessionId("sesn_1".into()),
         seq,
         kind,
+        appended_at: String::new(),
     }
 }
 
@@ -90,6 +91,7 @@ fn history_and_the_live_stream_are_the_same_frames() {
             call_id: "t1".into(),
             title: "cargo build".into(),
             kind: "shell".into(),
+            arguments: None,
         },
     );
 

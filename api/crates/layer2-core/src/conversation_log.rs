@@ -25,7 +25,7 @@ use layer3_adapter::{
 };
 use tokio::sync::mpsc;
 
-use crate::event::{EventKind, LiveFrame};
+use crate::event::{ConfigOption, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
@@ -125,7 +125,46 @@ impl SessionService {
             return;
         }
 
-        let Some(kind) = durable(update) else {
+        // The actions the owner may invoke are liveness, not history: a
+        // stale list replayed from the log would offer actions that no longer
+        // exist. Sent on the live lane rather than recorded.
+        if let SessionUpdate::AvailableCommandsUpdate(commands) = &update {
+            let live = {
+                let entries = self.entries.read().await;
+                let Some(entry) = entries.get(id) else {
+                    return;
+                };
+                entry.live_frames.clone()
+            };
+            let _ = live.send(LiveFrame::AvailableCommands(
+                commands
+                    .available_commands
+                    .iter()
+                    .map(|command| crate::event::AvailableCommand {
+                        name: command.name.clone(),
+                        description: command.description.clone(),
+                    })
+                    .collect(),
+            ));
+            return;
+        }
+
+        // Read the grant and the values to redact before folding. A tool body
+        // is only recorded when the owner asked for it, and it never carries a
+        // value the session was handed — the credential, or an environment
+        // variable's value.
+        let (record_tool_bodies, secrets) = {
+            let entries = self.entries.read().await;
+            let Some(entry) = entries.get(id) else {
+                return;
+            };
+            let mut secrets = entry.environment_values.clone();
+            if let Some(credential) = entry.subject_credential.as_ref() {
+                secrets.push(credential.clone());
+            }
+            (entry.session.options.record_tool_bodies, secrets)
+        };
+        let Some(kind) = durable(update, record_tool_bodies, &secrets) else {
             // A kind of update this core has no word for. Skipped rather than
             // guessed at: the vocabulary here is the core's own, and inventing
             // an event for something it does not model would put a runtime's
@@ -293,13 +332,22 @@ fn stop_reason_for(completed: &PromptResponse) -> StopReason {
 /// through opaquely rather than mapped: those sets differ between runtimes and
 /// grow without warning, and a session must not fail because a kernel invented
 /// a category.
-fn durable(update: SessionUpdate) -> Option<EventKind> {
+fn durable(
+    update: SessionUpdate,
+    record_tool_bodies: bool,
+    secrets: &[String],
+) -> Option<EventKind> {
     match update {
         SessionUpdate::AgentMessageChunk(_) => None,
         SessionUpdate::ToolCall(call) => Some(EventKind::ToolCallStarted {
             call_id: call.tool_call_id.0.to_string(),
             title: call.title,
             kind: wire_name(&call.kind),
+            arguments: if record_tool_bodies {
+                body_of(call.raw_input, secrets)
+            } else {
+                None
+            },
         }),
         SessionUpdate::ToolCallUpdate(update) => Some(EventKind::ToolCallUpdated {
             call_id: update.tool_call_id.0.to_string(),
@@ -311,11 +359,46 @@ fn durable(update: SessionUpdate) -> Option<EventKind> {
                 // to has still said something worth recording: the call is not
                 // where it was.
                 .unwrap_or_else(|| "updated".to_string()),
+            result: if record_tool_bodies {
+                body_of(update.fields.raw_output, secrets)
+            } else {
+                None
+            },
         }),
         SessionUpdate::UsageUpdate(usage) => Some(EventKind::UsageReported {
             input_tokens: 0,
             output_tokens: 0,
             context_used: usage.used,
+        }),
+        // A permission mode change is a safety matter: it decides how much the
+        // agent may do unattended, so it is recorded rather than only shown.
+        SessionUpdate::CurrentModeUpdate(update) => Some(EventKind::ModeChanged {
+            mode: update.current_mode_id.0.to_string(),
+        }),
+        // The agent's plan, a full revision each time. Steps are carried in the
+        // kernel's own words, never mapped.
+        SessionUpdate::Plan(plan) => Some(EventKind::PlanSet {
+            entries: plan
+                .entries
+                .into_iter()
+                .map(|entry| PlanStep {
+                    title: entry.content,
+                    status: wire_name(&entry.status),
+                })
+                .collect(),
+        }),
+        // The settings the kernel says are settable, so a client can render a
+        // selection rather than a free-text box.
+        SessionUpdate::ConfigOptionUpdate(update) => Some(EventKind::ConfigOptionsSet {
+            options: update
+                .config_options
+                .into_iter()
+                .map(|option| ConfigOption {
+                    id: option.id.0.to_string(),
+                    name: option.name,
+                    kind: wire_name(&option.kind),
+                })
+                .collect(),
         }),
         // Everything else the protocol can say is either liveness this core
         // does not record, or a runtime's own configuration surface, which is
@@ -340,6 +423,39 @@ fn wire_name<T: serde::Serialize>(value: &T) -> String {
         Ok(serde_json::Value::String(name)) => name,
         _ => "unknown".to_string(),
     }
+}
+
+/// Longest tool body recorded.
+///
+/// The same bound as an environment value (`MAX_VALUE`), so a tool's output
+/// cannot become a file store through the conversation log.
+const TOOL_BODY_CAP: usize = 8192;
+
+/// A tool call's arguments or result, redacted and bounded.
+///
+/// `None` for a runtime that offered none, or a body that redacts to nothing.
+/// The replacement is of exact known values only — what the core handed the
+/// session — and is deliberately not a pattern matcher over arbitrary text:
+/// a matcher would miss things and be sold as complete, where this is honest
+/// about redacting only what it knows.
+fn body_of(raw: Option<serde_json::Value>, secrets: &[String]) -> Option<ToolBody> {
+    let raw = raw?;
+    let mut text = raw.to_string();
+    for secret in secrets {
+        if !secret.is_empty() {
+            text = text.replace(secret.as_str(), "[redacted]");
+        }
+    }
+    let mut truncated = false;
+    if text.len() > TOOL_BODY_CAP {
+        truncated = true;
+        let mut cut = TOOL_BODY_CAP;
+        while cut > 0 && !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+    }
+    Some(ToolBody { text, truncated })
 }
 
 /// The text of a content block, if it is text at all.

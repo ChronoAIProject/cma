@@ -15,10 +15,10 @@
  * not user content: knowing somebody prefers a canvas leaks nothing.
  */
 
-export type Arrangement = 'tabs' | 'canvas';
+export type Arrangement = 'list' | 'canvas';
 
-/** Tabs is the historical surface and stays the default for a new browser. */
-export const DEFAULT_ARRANGEMENT: Arrangement = 'tabs';
+/** The list is the historical surface and stays the default for a new browser. */
+export const DEFAULT_ARRANGEMENT: Arrangement = 'list';
 
 /*
  * The stored key keeps its old name deliberately. Renaming it would discard
@@ -39,7 +39,7 @@ function storage(): Storage | null {
 }
 
 function isArrangement(value: unknown): value is Arrangement {
-  return value === 'tabs' || value === 'canvas';
+  return value === 'list' || value === 'canvas';
 }
 
 /**
@@ -62,6 +62,13 @@ export function loadArrangement(): Arrangement {
     raw = store.getItem(KEY);
   } catch {
     return DEFAULT_ARRANGEMENT;
+  }
+
+  // Earlier builds called the list arrangement "tabs". The stored word is
+  // migrated on read rather than discarded: the preference is the same one,
+  // under the name §12 now uses.
+  if (raw === 'tabs') {
+    return 'list';
   }
 
   return isArrangement(raw) ? raw : DEFAULT_ARRANGEMENT;

@@ -1,53 +1,114 @@
 /*
  * The composer — docs/Web_Style.md §18.4.
  *
- * A band at the foot of the surface: a field that grows to a handful of lines
- * and then scrolls inside itself, and one accent key.
+ * A card at the foot of the reading column, on the raised ground inside the
+ * panel radius, resting: the field, then a row carrying what the session's
+ * own policy means, interrupt while a turn is in flight, and the primary
+ * send with its return hint.
  */
+
+.composer-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
 
 .composer {
   display: flex;
-  flex: none;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3) var(--page-gutter);
-  border-top: 1px solid var(--rule);
+  padding: var(--space-3);
+  background: var(--raised);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--lift-rest);
+}
+
+/*
+ * The field grows to six lines and then scrolls inside itself. Borderless
+ * inside the card: the card is the field's edge.
+ */
+.composer__field {
+  min-height: calc(var(--control-h) * 2);
+  max-height: calc(6lh + var(--space-2));
+  padding: var(--space-2);
+  overflow-y: auto;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--leading-ui);
+  resize: none;
+  background: none;
+  border: 0;
+}
+
+.composer__field::placeholder {
+  color: var(--ink-3);
+}
+
+.composer__field:focus-visible {
+  outline: none;
+}
+
+.composer:focus-within {
+  border-color: var(--rule-2);
+  box-shadow: var(--focus-ring);
 }
 
 .composer__row {
   display: flex;
   gap: var(--space-2);
-  align-items: flex-end;
-}
-
-/*
- * Grows to six lines and then scrolls inside itself. A composer that grew
- * without bound would take the height from the conversation it is used to
- * talk about.
- */
-.composer__field {
-  flex: 1 1 auto;
+  align-items: center;
   min-width: 0;
-  max-height: calc(var(--control-h-block) * 6);
-  height: var(--control-h-block);
-  padding-block: var(--space-2);
-  overflow-y: auto;
-  font-family: var(--font-ui);
-  resize: none;
 }
 
-/*
- * What the session's own concurrency policy means for the person typing.
- * On the surface beside the key, never in a tooltip.
- */
+/* What the policy means for the person typing, on the surface (§18.4). */
 .composer__note {
-  margin: 0;
-  color: var(--ink-2);
-  font-size: var(--text-sm);
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--text-note);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer__steer {
+  flex: none;
+}
+
+.composer__spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer__hint {
+  color: var(--on-accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  opacity: 0.7;
+}
+
+/* Stated once, beneath the card. */
+.composer__keys {
   margin: 0;
   color: var(--ink-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-meta);
+  text-align: right;
+}
+
+/*
+ * The refusal — §18.4: a dashed-border card carrying the reason and what to
+ * do instead. Never merely inert.
+ */
+.composer--refused {
+  align-items: flex-start;
+  background: var(--surface);
+  border-style: dashed;
+  box-shadow: var(--lift-none);
+}
+
+.composer__refusal {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
 }
