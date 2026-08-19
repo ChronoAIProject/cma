@@ -27,6 +27,7 @@ fn event(seq: u64) -> Event {
         kind: EventKind::Progress {
             stage: crate::session::ProvisioningStage::Ready,
         },
+        appended_at: String::new(),
     }
 }
 
@@ -38,6 +39,7 @@ fn said(seq: u64, content: &str) -> Event {
         kind: EventKind::MessageCommitted {
             content: content.to_string(),
         },
+        appended_at: String::new(),
     }
 }
 
