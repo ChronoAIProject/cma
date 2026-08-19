@@ -411,6 +411,26 @@ describe('the send seat', () => {
     expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
   });
 
+  it('offers exactly one way to stop, never two', () => {
+    /*
+     * A rewrite left the old text key beside the new icon one, and every test
+     * here passed: they each looked for one name — "Interrupt" or "Stop
+     * generating" — and both controls existed, so neither query failed. What
+     * nothing asked was how many there were.
+     */
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: true, concurrentInput: 'enqueue' }),
+    });
+
+    const stops = screen
+      .getAllByRole('button')
+      .filter((button) =>
+        /stop|interrupt/i.test(button.getAttribute('aria-label') ?? button.textContent ?? ''),
+      );
+    expect(stops).toHaveLength(1);
+  });
+
   it('offers no stop at all where the session cannot be interrupted', () => {
     // §18.4 refuses by name rather than offering a stop that will not happen.
     renderComposer({
