@@ -179,7 +179,15 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
         <span className="band__label">Operations</span>
       </div>
 
-      {/* The four views, in the page's second band — §14. */}
+      {/* §14: a --text-page title with its one-line description. */}
+      <div className="operator__intro">
+        <h1 className="operator__title">Operations</h1>
+        <p className="operator__description">
+          Who is using the service, what it has been asked to do, what is running, and stop that.
+        </p>
+      </div>
+
+      {/* The four views, as an underlined tablist — §14. */}
       <div className="band operator__tabs" role="tablist" aria-label="Operator views">
         {views.map((view) => (
           <button
