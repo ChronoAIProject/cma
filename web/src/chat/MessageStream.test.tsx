@@ -808,3 +808,89 @@ describe('what an agent wrote, beyond code and lists', () => {
     expect(c.querySelector('.agent__paragraph')?.textContent).toBe('first line\nsecond line');
   });
 });
+
+describe('following the newest turn', () => {
+  /** A message entry, which is all this behaviour cares about. */
+  function turn(id: string): Entry {
+    return { kind: 'message', id, role: 'assistant', text: id, seq: Number(id), committed: true };
+  }
+
+  /** Put the surface at a scroll position, the way a person would. */
+  function scrollTo(distanceFromBottom: number) {
+    const surface = screen.getByRole('log', { name: 'Conversation' });
+    Object.defineProperty(surface, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(surface, 'clientHeight', { value: 400, configurable: true });
+    surface.scrollTop = 600 - distanceFromBottom;
+    fireEvent.scroll(surface);
+  }
+
+  it('says nothing while somebody is following along', () => {
+    // Pinned is the ordinary state, and a control counting entries somebody
+    // is already reading would be noise on every turn.
+    render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    expect(screen.queryByRole('button', { name: /newer/i })).toBeNull();
+  });
+
+  it('does not chase somebody who has scrolled away', () => {
+    /*
+     * §18.1's rule. A person reading something the agent said four turns ago
+     * has said what they want, so what arrives while they read is announced
+     * rather than scrolled to.
+     */
+    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    scrollTo(300);
+
+    view.rerender(<MessageStream entries={[turn('1'), turn('2'), turn('3')]} kernel="codex" />);
+
+    expect(screen.getByRole('button', { name: /2 newer entries/i })).toBeInTheDocument();
+  });
+
+  it('counts one entry as one, not as a plural', () => {
+    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    scrollTo(300);
+
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+
+    expect(screen.getByRole('button', { name: /1 newer entry\./i })).toBeInTheDocument();
+  });
+
+  it('follows again the moment somebody scrolls back to the bottom', () => {
+    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    scrollTo(300);
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+    expect(screen.getByRole('button', { name: /newer/i })).toBeInTheDocument();
+
+    scrollTo(0);
+    expect(screen.queryByRole('button', { name: /newer/i })).toBeNull();
+  });
+
+  it('treats near-enough to the bottom as the bottom', () => {
+    /*
+     * A few pixels of overscroll, a fractional layout, or a scrollbar that
+     * rounds should not read as having deliberately scrolled away — the
+     * effect of getting this wrong is the surface stopping following while
+     * somebody watches it, which looks like the stream dying.
+     *
+     * Checked by what arrives next: a scroll alone resets the count, so the
+     * threshold is only visible in whether the following entry is chased.
+     */
+    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    scrollTo(10);
+
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+
+    expect(screen.queryByRole('button', { name: /newer/i })).toBeNull();
+  });
+
+  it('names what the control does, since its glyph says it to nobody', () => {
+    // A circle with a chevron in it says "go down" to somebody who can see
+    // it, and says nothing at all otherwise.
+    const view = render(<MessageStream entries={[turn('1')]} kernel="codex" />);
+    scrollTo(300);
+    view.rerender(<MessageStream entries={[turn('1'), turn('2')]} kernel="codex" />);
+
+    const control = screen.getByRole('button', { name: /newer/i });
+    expect(control.getAttribute('aria-label')).toMatch(/go to the newest/i);
+    expect(control.textContent).toBe('');
+  });
+});
