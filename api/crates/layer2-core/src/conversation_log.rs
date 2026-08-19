@@ -25,7 +25,7 @@ use layer3_adapter::{
 };
 use tokio::sync::mpsc;
 
-use crate::event::{EventKind, LiveFrame, ToolBody};
+use crate::event::{ConfigOption, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
@@ -122,6 +122,30 @@ impl SessionService {
             // unwatched, and the whole message is committed either way.
             let _ = live.send(LiveFrame::MessageDelta(text));
             self.flush(id).await;
+            return;
+        }
+
+        // The actions the owner may invoke are liveness, not history: a
+        // stale list replayed from the log would offer actions that no longer
+        // exist. Sent on the live lane rather than recorded.
+        if let SessionUpdate::AvailableCommandsUpdate(commands) = &update {
+            let live = {
+                let entries = self.entries.read().await;
+                let Some(entry) = entries.get(id) else {
+                    return;
+                };
+                entry.live_frames.clone()
+            };
+            let _ = live.send(LiveFrame::AvailableCommands(
+                commands
+                    .available_commands
+                    .iter()
+                    .map(|command| crate::event::AvailableCommand {
+                        name: command.name.clone(),
+                        description: command.description.clone(),
+                    })
+                    .collect(),
+            ));
             return;
         }
 
@@ -345,6 +369,36 @@ fn durable(
             input_tokens: 0,
             output_tokens: 0,
             context_used: usage.used,
+        }),
+        // A permission mode change is a safety matter: it decides how much the
+        // agent may do unattended, so it is recorded rather than only shown.
+        SessionUpdate::CurrentModeUpdate(update) => Some(EventKind::ModeChanged {
+            mode: update.current_mode_id.0.to_string(),
+        }),
+        // The agent's plan, a full revision each time. Steps are carried in the
+        // kernel's own words, never mapped.
+        SessionUpdate::Plan(plan) => Some(EventKind::PlanSet {
+            entries: plan
+                .entries
+                .into_iter()
+                .map(|entry| PlanStep {
+                    title: entry.content,
+                    status: wire_name(&entry.status),
+                })
+                .collect(),
+        }),
+        // The settings the kernel says are settable, so a client can render a
+        // selection rather than a free-text box.
+        SessionUpdate::ConfigOptionUpdate(update) => Some(EventKind::ConfigOptionsSet {
+            options: update
+                .config_options
+                .into_iter()
+                .map(|option| ConfigOption {
+                    id: option.id.0.to_string(),
+                    name: option.name,
+                    kind: wire_name(&option.kind),
+                })
+                .collect(),
         }),
         // Everything else the protocol can say is either liveness this core
         // does not record, or a runtime's own configuration surface, which is
