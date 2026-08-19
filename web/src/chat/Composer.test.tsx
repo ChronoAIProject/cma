@@ -45,7 +45,7 @@ describe('sending', () => {
 
   it('will not send an empty prompt', () => {
     renderComposer();
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   });
 });
 
@@ -75,7 +75,7 @@ describe('what it does mid-turn', () => {
       expect(onSend).toHaveBeenCalledWith('and also this');
     } else {
       expect(onSend).not.toHaveBeenCalled();
-      expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     }
   });
 
@@ -113,18 +113,18 @@ describe('interrupt', () => {
   it('is offered only while a turn is in flight', () => {
     const granted = capabilities({ interrupt: true });
     const idle = renderComposer({ capabilities: granted, turnInFlight: false });
-    expect(idle.queryByRole('button', { name: 'Interrupt' })).toBeNull();
+    expect(idle.queryByRole('button', { name: 'Stop generating' })).toBeNull();
     idle.unmount();
 
     renderComposer({ capabilities: granted, turnInFlight: true });
-    expect(screen.getByRole('button', { name: 'Interrupt' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
   });
 
   it('is absent on a session whose kernel cannot withdraw a prompt', () => {
     // Refused by name rather than left waiting for something that will not
     // happen.
     renderComposer({ capabilities: capabilities({ interrupt: false }), turnInFlight: true });
-    expect(screen.queryByRole('button', { name: 'Interrupt' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).toBeNull();
   });
 
   it('stops the turn, and the surface reflects it without a reload', async () => {
@@ -134,7 +134,7 @@ describe('interrupt', () => {
       turnInFlight: true,
     });
 
-    await user.click(screen.getByRole('button', { name: 'Interrupt' }));
+    await user.click(screen.getByRole('button', { name: 'Stop generating' }));
     expect(onInterrupt).toHaveBeenCalledTimes(1);
 
     // The turn ends; the control goes with it, from state rather than a reload.
@@ -146,7 +146,7 @@ describe('interrupt', () => {
         onInterrupt={onInterrupt}
       />,
     );
-    expect(screen.queryByRole('button', { name: 'Interrupt' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).toBeNull();
   });
 });
 
@@ -380,5 +380,45 @@ describe('where the keyboard lands', () => {
     // There is no field to focus: a refused composer draws its reason instead.
     renderComposer({ refusedReason: 'This session is terminated' });
     expect(screen.queryByRole('textbox')).toBeNull();
+  });
+});
+
+describe('the send seat', () => {
+  it('holds Stop where the turn refuses input, because sending cannot work', () => {
+    /*
+     * A Send that cannot fire beside a Stop that can is two keys where only
+     * one of them ever applies, and the reader has to work out which before
+     * they can act.
+     */
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: true, concurrentInput: 'reject' }),
+    });
+
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
+  });
+
+  it('keeps Send in the seat where the policy accepts input mid-turn', () => {
+    // §18.4: sending during a turn is a real act on such a session, and it is
+    // the act the seat is for. Interrupt gets its own key beside it.
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: true, concurrentInput: 'enqueue' }),
+    });
+
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
+  });
+
+  it('offers no stop at all where the session cannot be interrupted', () => {
+    // §18.4 refuses by name rather than offering a stop that will not happen.
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: false, concurrentInput: 'reject' }),
+    });
+
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   });
 });
