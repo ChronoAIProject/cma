@@ -235,6 +235,90 @@ One capsule button in four variants — `primary` on the neutral brand fill, `gh
 `outline`, and `toolbar`. Two heights: 36px, and 28px for a compact row. Disabled is 0.4 opacity and
 a not-allowed cursor, never removal.
 
+Two heights and no third. A third is one everything else can then reach for, which is how a row ends
+up with three controls on two baselines. A surface that genuinely needs its own proportions declares
+them in its own sheet, where the decision is local and a reviewer can find it — never by widening the
+shared set.
+
+There is no destructive variant. A red button is a colour a person can click as fast as any other, so
+it was never the safeguard it looked like; what protects a destructive act is the second step in front
+of it, described below.
+
+### 12.1 Badges and state
+
+A **pill** is a 24px label at radius 12 — a span until it is given something to do, and a button the
+moment it is. That is not a convenience: a span that reacts to clicks is unreachable by keyboard and
+silent to a screen reader, and a button that never does anything announces every static label as
+pressable. Selection is an inset ring rather than a border, so moving it along a row does not shift
+the row.
+
+A **state dot** is reinforcement and never the signal — it is `aria-hidden`, and every caller pairs it
+with the word, so a state reads the same to somebody who cannot distinguish the colours. Three of its
+four states are a solid core inside a same-coloured halo. The fourth is not a colour: *running* is a
+claim about right now, and a still dot cannot say whether it is still true, so it is a chase around
+the eight cells of a 3×3 grid — phased at mount so it is already moving, and stopped entirely under
+`prefers-reduced-motion`.
+
+A state that has ended draws **no dot at all**. Every state the dot has asserts something — succeeding,
+needing you, running, failed — and a finished session asserts none of them; painting it green because
+green was the nearest colour would claim it finished well, which is a different fact.
+
+### 12.2 Fields
+
+A 32px field at radius 8, with its border on the **wrapper** rather than on the input. That is what
+lets a glyph sit inside the field instead of beside it, and it is why a field with an icon and one
+without focus identically. Everything the control says about itself — focus, invalidity — is said with
+the edge it already has, never with a ring outside it that would make the control appear to grow.
+
+This is not the composer. A message box grows with what is typed into it and is a different control
+with different rules; sharing one would make every search box growable.
+
+### 12.3 The dropdown
+
+One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
+fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 10.
+
+Rows are reachable by arrow keys, Home and End, and **wrap** rather than stopping dead — a list that
+stops at the last row puts the first one four presses away in a menu of five. Opening a value picker
+puts focus on the row already selected, so arrows move from where you are.
+
+A row that cannot be chosen is `aria-disabled` rather than `disabled`, so it keeps its place in the
+keyboard order: the reason for listing an unavailable option at all is that the reason can be read,
+and a row nobody can reach cannot have its reason read. The reason sits under the label, not beside
+it, because these reasons run long.
+
+A menu carrying a current value uses `menuitemradio` — that is what "one of these alternatives" means,
+and it is the role `aria-checked` is defined for. Selection is a **trailing check, never a fill**: a
+fill would make the selected row and the hovered row the same colour, so running the pointer down the
+list would look like the selection following it.
+
+Near a viewport edge the list is nudged back, never flipped. Flipping moves it somewhere the pointer
+is not; it should still read as belonging to the control it came from.
+
+### 12.4 Dialogs, and confirming something irreversible
+
+One card: 380px at radius 24 on layer 2, behind a mask that **blurs as well as dims** — dimming alone
+leaves the page behind legible enough to keep reading, which is the one thing a dialog exists to stop.
+It portals out of the page, because an ancestor that establishes a stacking context leaves sticky
+chrome floating above the mask and no z-index can reach past it. The page behind does not scroll while
+it is open.
+
+Closed means **unmounted**, not hidden: a mounted dialog keeps its focus trap armed and steals focus
+from the page it is not covering. Focus is trapped inside it, Escape closes it, and focus returns to
+whatever opened it.
+
+A width chosen per call site is how two dialogs asking the same kind of question end up different
+sizes. The exceptions are named classes a reviewer can find, never a size prop.
+
+**No dialog opens over a dialog.** A surface that must ask something while one is open asks in place of
+the row's own controls — which is also what a reversible destructive action does.
+
+An action that **loses** something asks differently: an explicit acknowledgement, with the confirm key
+unavailable until it is ticked, and a sentence saying what is actually lost rather than asking whether
+you are sure. The tick is the safeguard; the warning glyph is the only red on the card, and the confirm
+key is the ordinary primary. This is spent only where the consequence is loss — spending it on every
+destructive-sounding thing is how it stops being read.
+
 The rules §19 protects are unchanged by any of this: a control that can never work is **absent**; one
 that is currently unavailable is **disabled and says why**.
 
@@ -526,3 +610,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-19 | Corrected §18.12's blockquote rule before it shipped. The section as first written gave a blockquote `--ink-2`, which §18.1 forbids without exception — "no colour is applied to agent content, ever" — and which the test enforcing that rule caught on the first implementation. It takes the `--rule` left border and no ink of its own. The reasoning is the section's own: quoting is the agent's emphasis, and drawing it fainter than the words around it is this surface deciding the quote matters less than the agent did. |
 | 2026-08-20 | **Harness**: full redesign of the frontend's visual language, replacing the Quiet instrument system of 2026-08-18. The language is adopted from DeepSeek Harness (MIT licensed) and implemented in our own terms, because our surfaces are not theirs — a terminal plane, a canvas of many sessions and an operator panel have no equivalent there, and §20.9 derives those from the language rather than leaving the old look in place. Four decisions carry the rest. **The palette is flat in light and stepped in dark**: every background layer is the same white in light, with hairlines and shadow doing the separating, while dark steps by luminance because a black shadow is invisible on a dark ground — so a card declares both a hairline and a shadow and each does the work in one theme, one rule with no media branch in the component. **The accent is no longer the primary**: primary is near-black on white and near-white on black, and the accent is demoted to status — a dot, a selected tab, a focus ring — never the call to action. That removes the surface's loudest element and puts the emphasis on type and weight, and it means the lime that had been the thing you press is gone. **Two type scales sharing sizes and not leading**, tight for interface text and loose for anything read at length, because treating a 14px label and a 14px paragraph alike is what made long answers hard to read; four weights and no others, since a non-variable face snaps an intermediate weight unpredictably. **The agent's work is drawn as typed cards** rather than one generic row with a blob in it: a command and its output take a terminal card, a file edit a diff, structured data a tree, each with a 24px header carrying the kernel's own words. Specified but not yet buildable in full, and said so rather than claimed: AG-UI carries a body as text and does not say what shape it is, so until the core carries that, a card is chosen only by what can safely be detected and falls back to the terminal card — §9 forbids claiming a structure that was inferred wrongly. Also: hairlines are 1px everywhere with interactive capsules taking half their height as radius and containers a fixed step; hover, active and selected become alpha tints rather than solid greys, so the same hover reads the same over a card and over the page; the app bar and status band are retired into the rail and session header, which were saying the same things twice; the interface webfont is dropped for the system stack while the mono face stays, since code and terminal output cannot be left to platform variance. Three things are deliberately **not** adopted. Focus stays ours — the source has no focus treatment worth taking, relying almost entirely on a `:focus-within` border change, which is kept on top of our ring rather than instead of it. Theme switching stays ours, declared on `:root` with the three-state contract that survives with scripting disabled, rather than the source's inline script and body attributes. And every behavioural rule §19 protects is untouched, along with §18's equivalence rule, absence-is-not-zero, no colour on agent content, refusals naming what is missing, and the session-state meanings — a restyle that changed any of those would not be a restyle. |
 | 2026-08-20 | Rewrote the document to the design language adopted from deepseek-harness (MIT licensed), per #317. This replaces the prescriptive content of the Quiet instrument system and of the partial Harness revision written earlier the same day; both are superseded rather than amended, and their changelog entries stand as the record of what they were. The language itself: **three token tiers** — static ramps that do not change between themes, aliases carrying roles, and specific tokens naming one surface each — with a component reading past the alias tier treated as a defect, because that is how a surface ends up unable to change theme. **Tokens are declared on `body` and dark is an attribute on `body`, never `:root`**, which is load-bearing rather than stylistic: the scrollbar sheet resolves against the element the tokens sit on, and an `html`-scoped rule cannot see them. An inline script before first paint resolves the preference, so the wrong theme is never shown and corrected. **Brand primary is a neutral and blue is not the primary** — blue means running, current, send, and an interface whose main action is the same colour as its status cannot distinguish them. **Typography is a composite ramp**: one name carries weight, size and leading together so a step cannot be half-applied, with a `-strong` companion only from the base step downward, since the three largest steps are already emphatic and a heavier version of them is a size rather than an emphasis. Four weights and no intermediate, because a non-variable face snaps one unpredictably. **Depth is per theme in one rule**: a floating surface declares both a shadow and a hairline, and each does the work in the theme where the other cannot — no component needs a media query. **Spacing, radius and z-index get no theme tokens**, only literal pixels per sheet from fixed sets, which is this language's own idiom: a spacing scale invites a component to take the step above when the one it needs is missing. Also recorded: scrollbars drawn only while pointed at; syntax colours adopted whole rather than reassembled from the ramps; icons inlined as components painting with `currentColor`, no library; a three-column frame with a stated concession chain in which details closes first, the sidebar never concedes and the centre absorbs the rest — which is §1's rule that the surface owns the leftover width, restated in geometry. The conversation surface keeps its 748px axis and tells the two roles apart by shape rather than ink, which is what lets §1's fidelity rule hold: no colour is applied to what the agent wrote. An action the API does not project is omitted entirely rather than drawn disabled — a disabled ghost for something that will never work is the absence rule broken in a costume. **§1's four binding consequences are untouched**, as are accessibility, the session-state table, and the surface sections for the two arrangements, operations and the signed-out state: those carry behaviour rather than style, and an earlier draft of this rewrite deleted them and then referred to a table it had removed. They are restored and renumbered. Nothing in the changelog was edited. |
+| 2026-08-20 | Expanded §12 Controls from the button alone to the whole control set the dsh adoption introduced, written after the controls were built rather than before — which is the wrong order, and is recorded here as such. Added §12.1 badges and state: the pill's span-until-interactive rule and why (a clickable span is unreachable by keyboard; an always-button announces every static label as pressable), selection as an inset ring so moving it along a row does not shift the row, and the state dot as reinforcement that is never the signal. Established that *running* is not a colour but a chase, because it is a claim about right now and a still dot cannot say whether it is still true, and that a finished state draws no dot at all — every state the dot has asserts something a finished session does not, and green would claim it finished well. Added §12.2 fields: the border on the wrapper rather than the input, which is what lets a glyph sit inside it and why a field with an icon and one without focus identically, and the explicit exclusion of the composer, which grows and would make every search box growable if it shared this. Added §12.3 the dropdown, now one control for choosing a value and choosing an action, where before they were two and only one had a keyboard route: arrow/Home/End with wrapping, focus landing on the selected row, `aria-disabled` rather than `disabled` so an unavailable row keeps its place in the keyboard order (the reason for listing it is that the reason can be read), `menuitemradio` for a menu carrying a current value, selection as a trailing check because a fill would make the selected and hovered rows the same colour, and edge handling that nudges rather than flips so the list still reads as belonging to its control. Added §12.4 dialogs: one card, a mask that blurs as well as dims, portalling out of the page because a stacking context leaves sticky chrome above the mask, closed meaning unmounted because a mounted trap steals focus, and the acknowledgement pattern for an action that loses something — the tick is the safeguard rather than the colour, spent only where the consequence is loss. Recorded that there is no destructive button variant and why: a red key is one a person can click as fast as any other, so it was never the safeguard it looked like. |
