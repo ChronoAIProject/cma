@@ -145,8 +145,75 @@ describe('disclosure, not truncation', () => {
 
     await user.click(screen.getByRole('button'));
 
-    const body = screen.getByRole('button').getAttribute('aria-controls');
-    expect(document.getElementById(body ?? '')?.textContent).toBe(enormous);
+    // Read off the body itself rather than the region around it: §18.2 now
+    // gives each body its own labelled scrollport, so the region also holds a
+    // gutter label. What the rule guarantees — that nothing is dropped — is a
+    // property of the body.
+    const region = screen.getByRole('button').getAttribute('aria-controls');
+    const body = document.getElementById(region ?? '')?.querySelector('.toolcall__output');
+    expect(body?.textContent).toBe(enormous);
+  });
+
+  it('gives each body its own window', async () => {
+    const user = userEvent.setup();
+    // One window shared between them meant a long argument payload pushed the
+    // result out of view, so the reader scrolled past what they already knew
+    // to reach the thing they opened the row for.
+    render(
+      <ToolCall
+        call={{
+          kind: 'tool',
+          id: 't1',
+          toolKind: 'shell',
+          status: 'ok',
+          arguments: { text: 'a'.repeat(400), truncated: false },
+          result: { text: 'the answer', truncated: false },
+          seq: 2,
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button'));
+    expect(document.querySelectorAll('.toolcall__output')).toHaveLength(2);
+  });
+
+  it('draws nothing for a body that did not arrive', async () => {
+    const user = userEvent.setup();
+    // §18.5: an absence is a fact, not an empty labelled region.
+    render(
+      <ToolCall
+        call={{
+          kind: 'tool',
+          id: 't1',
+          toolKind: 'shell',
+          status: 'ok',
+          result: { text: 'only this', truncated: false },
+          seq: 2,
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button'));
+    const labels = [...document.querySelectorAll('.toolcall__bodylabel')].map((n) => n.textContent);
+    expect(labels).toEqual(['result']);
+  });
+
+  it('says which body was cut, not just that something was', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCall
+        call={{
+          kind: 'tool',
+          id: 't1',
+          toolKind: 'shell',
+          status: 'ok',
+          arguments: { text: 'asked', truncated: true },
+          result: { text: 'got', truncated: false },
+          seq: 2,
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button'));
+    const labels = [...document.querySelectorAll('.toolcall__bodylabel')].map((n) => n.textContent);
+    expect(labels).toEqual(['arguments (truncated)', 'result']);
   });
 
   it('bounds it by scrolling rather than by cutting it', () => {
