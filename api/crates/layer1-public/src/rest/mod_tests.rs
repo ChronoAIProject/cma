@@ -208,17 +208,55 @@ async fn every_failure_renders_the_same_document_shape() {
 }
 
 #[test]
-fn a_named_kernel_is_refused_with_somewhere_to_put_it() {
-    // Declared on the struct so it can be refused in words. serde's generic
-    // sentence lists the accepted field names, which answers "what is wrong"
-    // and not "then how do I get claude_code?" — the only reason anybody sent
-    // it.
-    let body = serde_json::from_str::<CreateSessionRequest>(r#"{"kernel":"claude_code"}"#)
-        .expect("it parses, so the handler can refuse it properly");
-    assert_eq!(body.kernel.as_deref(), Some("claude_code"));
+fn a_named_kernel_is_refused_and_told_where_to_put_it() {
+    // Guards the branch, not the parse. The test this replaces asserted that
+    // `kernel` deserialises — the opposite of refused — so deleting the whole
+    // refusal left 135 tests green and #298 reopened in silence. Verified by
+    // deleting it: nothing failed.
+    let request: CreateSessionRequest =
+        serde_json::from_str(r#"{"cols":120,"rows":32,"kernel":"claude_code"}"#)
+            .expect("a declared field parses; the refusal is the handler's job");
 
-    let refusal = CoreError::InvalidRequest(String::new()).code();
-    assert_eq!(refusal, "invalid_request");
+    let refusal = request
+        .into_parts()
+        .expect_err("a named kernel must not reach the core");
+    assert_eq!(refusal.code(), "invalid_request");
+
+    // §3's bar is a refusal in words a caller can act on, which means naming
+    // the remedy and not only the mistake.
+    let said = refusal.to_string();
+    for expected in [
+        "kernel",
+        "environment profile",
+        "environment_profile",
+        "agent.kernel",
+    ] {
+        assert!(
+            said.contains(expected),
+            "the refusal must mention {expected}: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_request_without_a_kernel_passes_through_checked() {
+    // The other half. A gate that refuses everything is not a gate, and the
+    // geometry has to survive the trip.
+    let parts = serde_json::from_str::<CreateSessionRequest>(
+        r#"{"cols":120,"rows":32,"environment_profile":"envp_1"}"#,
+    )
+    .expect("the declared fields are accepted")
+    .into_parts()
+    .expect("nothing here is unhonourable");
+    assert_eq!(parts.environment_profile.as_deref(), Some("envp_1"));
+    assert!(parts.geometry.is_some());
+
+    // Half a geometry is not a size, so it is dropped rather than guessed at.
+    let half = serde_json::from_str::<CreateSessionRequest>(r#"{"cols":120}"#)
+        .expect("cols alone parses")
+        .into_parts()
+        .expect("and is not itself an error");
+    assert!(half.geometry.is_none());
 }
 
 #[test]
