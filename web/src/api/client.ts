@@ -49,7 +49,11 @@ const LIFECYCLES: readonly SessionLifecycle[] = [
   'terminated',
 ];
 
-const KERNELS: readonly Kernel[] = ['codex', 'claude-code'];
+// Deliberately no allowlist of kernel identifiers. This build does not decide
+// which runtimes a deployment offers, and a session naming one it has not
+// heard of is still that owner's session: it is drawn under its own
+// identifier (kernels.ts), never refused. Refusing it here failed the entire
+// list read, so one session on an unfamiliar runtime hid every other.
 
 /** Shape the control plane sends for a session. */
 interface SessionPayload {
@@ -81,8 +85,8 @@ export function toSession(raw: unknown): Session {
   if (typeof p.status !== 'string' || !LIFECYCLES.includes(p.status as SessionLifecycle)) {
     throw new ApiError(0, `session ${p.id} has an unrecognised status`);
   }
-  if (typeof p.kernel !== 'string' || !KERNELS.includes(p.kernel as Kernel)) {
-    throw new ApiError(0, `session ${p.id} names an unrecognised kernel`);
+  if (typeof p.kernel !== 'string' || p.kernel === '') {
+    throw new ApiError(0, `session ${p.id} names no kernel`);
   }
   // The wire carries RFC 3339; the tab strip counts age in milliseconds. An
   // unparseable date falls back to now rather than rendering "NaN ago".
