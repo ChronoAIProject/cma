@@ -1,3 +1,4 @@
+import { frameKey } from '../sdk/wire';
 import { toEvent, type AguiEvent } from './events';
 
 /**
@@ -56,7 +57,7 @@ const DEFAULT_MAX_BACKOFF = 15_000;
  */
 export class AguiConnection {
   #cursor = 0;
-  #seen = new Set<number>();
+  #seen = new Set<string>();
   #closed = false;
   #stopStream: (() => void) | undefined;
   /** Ends the current wait, so closing does not have to wait for a drop. */
@@ -194,10 +195,25 @@ export class AguiConnection {
       onEvent(event);
       return;
     }
-    if (this.#seen.has(event.seq)) {
+    /*
+     * One durable event legitimately projects to several frames — a committed
+     * message becomes START, then CONTENT, then END — and every one carries
+     * the sequence of the event it came from, because that sequence is the
+     * cursor a reconnect resumes on. Keyed by sequence alone, the first was
+     * delivered and its siblings dropped as duplicates: every agent message
+     * rendered empty, and no tool call had any detail.
+     *
+     * Keyed on the kind as it arrived on the wire, not as this build
+     * normalised it: everything unfamiliar normalises to UNKNOWN, so two
+     * different unfamiliar kinds at one sequence would collide right where
+     * the client can least afford to lose something it does not understand.
+     */
+    const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    const delivered = frameKey(event.seq, wireKind);
+    if (this.#seen.has(delivered)) {
       return;
     }
-    this.#seen.add(event.seq);
+    this.#seen.add(delivered);
     if (event.seq > this.#cursor) {
       this.#cursor = event.seq;
     }
