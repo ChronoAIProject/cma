@@ -48,13 +48,24 @@ const BUFFER: usize = 256;
 /// this is a bound on a failure rather than on the ordinary case.
 const DECLARATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// How long to wait for the bridge to answer a request of ours.
+/// How long to wait for the bridge to answer a question of ours.
 ///
-/// Generous, because a prompt turn is one of these and a turn takes as long as
-/// the model takes. Bounded all the same: without it, a bridge that stops
-/// answering leaves a session waiting for something that is not coming, with
-/// nothing said about why.
-const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1800);
+/// Short, because every call that uses it is a question with a quick answer:
+/// initialising, naming a conversation, setting a mode. It was thirty minutes
+/// — a bound sized for a prompt, which no longer travels this path — and that
+/// is how a pod whose agent never started held a session at `Attaching` for
+/// half an hour with nothing said. A handshake that has not answered in this
+/// long is not slow; it is not coming.
+const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long a turn may take before it is declared lost.
+///
+/// Generous, because a turn takes as long as the model takes, and a person
+/// watching an agent think must not have it cut off underneath them. Bounded
+/// all the same: a prompt had no deadline at all, so an agent that stopped
+/// answering left the turn `running` forever — indistinguishable, from the
+/// outside, from one still working.
+const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// The socket half this client writes to.
 type Sink = SplitSink<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Message>;
@@ -181,6 +192,17 @@ impl Bridge {
                     }
                 }
             }
+            /*
+             * Every call still waiting on this link is answered by dropping
+             * its sender, which wakes the waiter at once with an error.
+             *
+             * Without this, a link that closed left its oneshots alive
+             * forever: the handshake, a mode change, and above all a prompt
+             * would await an answer that could no longer come, and the turn
+             * sat "running" until somebody gave up. A dead link is an answer,
+             * and it has to be delivered as one.
+             */
+            reader.pending.lock().await.clear();
             tracing::info!("conversation link ended");
         });
 
@@ -324,18 +346,44 @@ impl Bridge {
                 match self.begin("session/prompt", params) {
                     Ok(waiting) => {
                         tokio::spawn(async move {
-                            let ended = match waiting.await {
-                                Ok(frame) => turn_outcome(frame),
-                                // The bridge went away mid-turn. Reported as a
-                                // cancellation rather than as an ending: the
-                                // turn did not finish, and the core closes it
-                                // with the reason the conversation stopped for.
-                                Err(_) => PromptResponse::new(crate::TurnStopReason::Cancelled),
+                            let answered = tokio::time::timeout(TURN_DEADLINE, waiting).await;
+                            let outcome = match answered {
+                                // Nothing at all, for an hour. Said rather
+                                // than left running: a turn nobody will ever
+                                // answer looks exactly like a turn in
+                                // progress, and only one of them is worth
+                                // waiting for.
+                                Err(_) => Outcome::Failed {
+                                    message: "the agent did not answer this turn".to_string(),
+                                    capability: None,
+                                },
+                                Ok(Ok(frame)) => turn_outcome(frame),
+                                // The bridge went away mid-turn. This is a
+                                // failure, not an ending: the agent did not
+                                // answer, and reporting it as a completed turn
+                                // is what made a dead bridge look like an
+                                // agent with nothing to say.
+                                Ok(Err(_)) => Outcome::Failed {
+                                    message: "the agent stopped answering before the turn finished"
+                                        .to_string(),
+                                    capability: None,
+                                },
                             };
-                            let _ = updates.send(ConversationUpdate::TurnEnded(ended)).await;
+                            let _ = updates.send(outcome.into_update()).await;
                         });
                     }
-                    Err(e) => tracing::warn!(error = %e, "could not send a prompt"),
+                    // A prompt that could not even be sent is a failed turn,
+                    // not a silent no-op: the caller is waiting on an answer
+                    // that is never coming.
+                    Err(e) => {
+                        tracing::warn!(error = %e, "could not send a prompt");
+                        let _ = updates
+                            .send(ConversationUpdate::Failed {
+                                message: format!("the prompt could not be sent to the agent: {e}"),
+                                capability: None,
+                            })
+                            .await;
+                    }
                 }
             }
             ConversationInput::PermissionAnswer { id, decision } => {
@@ -450,6 +498,34 @@ impl Bridge {
     }
 }
 
+/// How a turn came out: finished, or stopped by something going wrong.
+///
+/// Kept apart from `PromptResponse` because the protocol has no word for
+/// "the agent could not answer at all", and folding that into a stop reason
+/// is what made every such turn read as an ordinary, empty completion.
+enum Outcome {
+    Ended(PromptResponse),
+    Failed {
+        message: String,
+        capability: Option<String>,
+    },
+}
+
+impl Outcome {
+    fn into_update(self) -> ConversationUpdate {
+        match self {
+            Outcome::Ended(ended) => ConversationUpdate::TurnEnded(ended),
+            Outcome::Failed {
+                message,
+                capability,
+            } => ConversationUpdate::Failed {
+                message,
+                capability,
+            },
+        }
+    }
+}
+
 /// Read how a turn ended out of the bridge's answer.
 ///
 /// The answer is the whole JSON-RPC frame — `inbound` hands the receiver what
@@ -467,24 +543,45 @@ impl Bridge {
 ///   point of the field;
 /// * a result that does not — recorded loudly and ended, because a turn that
 ///   is over must be closed either way or the session sits `running` forever.
-fn turn_outcome(frame: serde_json::Value) -> PromptResponse {
+fn turn_outcome(frame: serde_json::Value) -> Outcome {
     if let Some(error) = frame.get("error") {
+        // The agent's own words for what went wrong — which is where "could
+        // not reach the model", an upstream 401, and a refused tool all
+        // arrive. Carried through rather than flattened to a stop reason,
+        // because the message is the only part a person can act on.
         tracing::warn!(%error, "the bridge refused a prompt");
-        return PromptResponse::new(crate::TurnStopReason::Refusal);
+        let message = error
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("the agent refused the prompt without saying why")
+            .to_string();
+        return Outcome::Failed {
+            message,
+            capability: error
+                .get("data")
+                .and_then(|d| d.get("capability"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        };
     }
     let Some(result) = frame.get("result") else {
         tracing::warn!(answer = %frame, "a prompt was answered with neither a result nor an error");
-        return PromptResponse::new(crate::TurnStopReason::EndTurn);
+        return Outcome::Failed {
+            message: "the agent answered with neither a result nor an error".to_string(),
+            capability: None,
+        };
     };
     match serde_json::from_value::<PromptResponse>(result.clone()) {
-        Ok(ended) => ended,
+        Ok(ended) => Outcome::Ended(ended),
         Err(e) => {
+            // A newer protocol naming a new way for a turn to finish must not
+            // make a healthy session look broken, so this stays an ending.
             tracing::warn!(
                 error = %e,
                 answer = %result,
                 "a turn ended in a way this build cannot read; treating it as finished"
             );
-            PromptResponse::new(crate::TurnStopReason::EndTurn)
+            Outcome::Ended(PromptResponse::new(crate::TurnStopReason::EndTurn))
         }
     }
 }
