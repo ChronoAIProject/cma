@@ -124,18 +124,6 @@ button {
  * weight axis does in one.
  */
 @font-face {
-  font-family: 'Figtree';
-  src: url('../assets/fonts/Figtree-Variable.woff2') format('woff2-variations');
-  font-weight: 300 900;
-  font-style: normal;
-  /*
-   * Text is shown in the fallback immediately and swapped when the face
-   * arrives. Nothing is ever invisible while waiting for a font.
-   */
-  font-display: swap;
-}
-
-@font-face {
   font-family: 'JetBrains Mono';
   src: url('../assets/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
   font-weight: 100 800;

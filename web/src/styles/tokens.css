@@ -69,7 +69,15 @@
   --edge-selected: #0f1115;
 
   /* Type — §4. Both faces are self-hosted; nothing is fetched from a third party. */
-  --font-ui: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  /*
+   * The system stack — §20.3. No interface webfont: the face a platform
+   * already renders best is the one that costs nothing to load and never
+   * arrives late. The mono face stays downloaded, because code and terminal
+   * output cannot be left to whatever a platform calls monospace.
+   */
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   --text-label: 11px; /* mono, uppercase, tracked */
