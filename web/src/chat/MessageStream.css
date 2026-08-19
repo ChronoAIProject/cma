@@ -189,9 +189,17 @@
   border-radius: 1px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
+.turn__caret {
+  animation: turn-blink 1060ms step-end infinite;
+}
+
+/*
+ * A caret that never stops is exactly what a reduced-motion request is about,
+ * so it stops — and stays visible, because it marks where the text is.
+ */
+@media (prefers-reduced-motion: reduce) {
   .turn__caret {
-    animation: turn-blink 1060ms step-end infinite;
+    animation: none;
   }
 }
 

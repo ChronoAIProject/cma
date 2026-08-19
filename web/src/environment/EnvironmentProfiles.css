@@ -174,9 +174,13 @@ textarea.field__input {
   line-height: var(--leading-ui);
 }
 
-@media (prefers-reduced-motion: no-preference) {
+.picker__row {
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
   .picker__row {
-    transition: background var(--motion-colour) ease;
+    transition: none;
   }
 }
 
