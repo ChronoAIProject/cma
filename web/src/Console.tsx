@@ -32,6 +32,9 @@ import { canOperate } from './operator/access';
 import { createRestOperatorStore } from './operator/rest';
 import type { OperatorStore } from './operator/types';
 import './Console.css';
+import { DetailsPanel } from './chat/DetailsPanel';
+import { sectionsOf } from './chat/ToolCall';
+import type { ToolCallEntry } from './chat/conversation';
 
 /**
  * The authenticated surface. Same page, now driven live.
@@ -143,6 +146,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * not a layout choice to carry across visits.
    */
   const [detailsOpen, setDetailsOpen] = useState(false);
+  /**
+   * The tool call the details column is showing, when it is showing one.
+   *
+   * Held here rather than in the conversation surface because the column
+   * belongs to the page: the surface reports what was asked for, and the page
+   * decides what that column draws. `conversationModel` is shape-only by its
+   * own contract, so it holds none of this either.
+   */
+  const [inspecting, setInspecting] = useState<ToolCallEntry | null>(null);
   /*
    * Which session is parked on an answerable approval — §18.3: it says so in
    * the rail, the header and at the composer. Only the conversation surface
@@ -192,6 +204,12 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   /** Select a session, in whichever arrangement is showing. */
   const select = useCallback((id: string) => {
     setActiveId(id);
+    /*
+     * Whatever the details column was inspecting belonged to the session
+     * being left. Carrying it across would leave a panel describing a call
+     * from a conversation that is no longer on screen.
+     */
+    setInspecting(null);
     setFocusHistory((prev) =>
       prev[0] === id ? prev : [id, ...prev.filter((seen) => seen !== id)],
     );
@@ -444,7 +462,21 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         </Sidebar>
       }
       details={
-        active === null ? null : (
+        /*
+         * One column, two occupants. A tool call takes it over while one is
+         * being inspected — they answer different questions about the same
+         * session, and two columns would leave the second one empty most of
+         * the time.
+         */
+        inspecting !== null ? (
+          <DetailsPanel
+            title={inspecting.target ?? inspecting.toolKind}
+            sections={sectionsOf(inspecting)}
+            onClose={() => {
+              setInspecting(null);
+            }}
+          />
+        ) : active === null ? null : (
           <SessionDrawer
             session={active}
             ending={endings[active.id]}
@@ -598,6 +630,11 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 capabilities={active.capabilities}
                 onWaitingChange={(waiting) => {
                   setWaitingId(waiting ? active.id : null);
+                }}
+                inspectingId={inspecting?.id}
+                onInspect={(call) => {
+                  setInspecting(call);
+                  setDetailsOpen(true);
                 }}
               />
             ) : driver === null ? (

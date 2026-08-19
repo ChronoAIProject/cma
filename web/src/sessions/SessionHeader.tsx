@@ -53,7 +53,7 @@ export function SessionHeader({
 }: SessionHeaderProps) {
   if (session === null) {
     return (
-      <div className="band band--head sessionheader">
+      <div className="sessionheader">
         <span className="sessionheader__crumb">No session open</span>
       </div>
     );
@@ -70,7 +70,7 @@ export function SessionHeader({
   const other = switchFor(session, kernels);
 
   return (
-    <div className="band band--head sessionheader">
+    <div className="sessionheader">
       <span className="sessionheader__crumb" title={session.kernel}>
         {tabLabel(session.createdAt)}
       </span>
