@@ -119,6 +119,11 @@ impl Bridge {
         // conversation-only kernel has, so without this such a session could
         // never confirm a switch and every one of them would rotate (#289).
         switches: Option<(super::SwitchWaiters, String)>,
+        // Whether this session spends its owner's own account with the model
+        // vendor. It decides whether the agent has to be signed in before a
+        // conversation can be opened at all — an unauthenticated kernel
+        // refuses `session/new` outright.
+        own_credential: bool,
     ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -210,7 +215,9 @@ impl Bridge {
         // They answer different questions — one is a control plane taking back
         // over a live runtime, the other a runtime taking over a session — and
         // when both are present the first is the more recent truth.
-        bridge.handshake(rejoin, resuming, cwd, mode).await?;
+        bridge
+            .handshake(rejoin, resuming, cwd, mode, own_credential)
+            .await?;
         let conversation_id = bridge.session.lock().await.clone();
 
         let writer = Arc::clone(&bridge);
@@ -251,10 +258,12 @@ impl Bridge {
         resuming: Option<String>,
         cwd: String,
         mode: Option<String>,
+        own_credential: bool,
     ) -> Result<(), AdapterError> {
-        self.call(
-            "initialize",
-            serde_json::json!({
+        let hello = self
+            .call(
+                "initialize",
+                serde_json::json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "clientCapabilities": {
                     "fs": { "readTextFile": false, "writeTextFile": false },
@@ -267,9 +276,25 @@ impl Bridge {
                     // why an own-account session had no way to sign in.
                     "elicitation": { "url": {} },
                 },
-            }),
-        )
-        .await?;
+                }),
+            )
+            .await?;
+
+        /*
+         * A session on its owner's own account signs in before anything else.
+         *
+         * Found by running it: the conversation reached the bridge and died on
+         * `session/new` with "Authentication required". An unauthenticated
+         * kernel has no account to open a conversation against, so the sign-in
+         * cannot wait until somebody sends a first message — there is nothing
+         * to send it to.
+         *
+         * Skipped when the pod is already holding a conversation, which is a
+         * runtime that signed in earlier and is being taken back over.
+         */
+        if own_credential && rejoining.is_none() {
+            self.authenticate_owner(&hello).await?;
+        }
 
         let session = match (rejoining, resuming) {
             // A conversation this bridge is still holding. Nothing is asked of
@@ -426,6 +451,51 @@ impl Bridge {
                 }
             }
         }
+    }
+
+    /// Sign the agent in to its owner's own account, and wait for it.
+    ///
+    /// The method is chosen from what the bridge advertised rather than named
+    /// here: which sign-ins a kernel offers is the kernel's business, and a
+    /// client that hardcoded one would break the first time that changed. A
+    /// bridge offering none is refused by name — §9 asks for an absence to be
+    /// declared, and a session that cannot sign in cannot run on the account it
+    /// was created for.
+    ///
+    /// This blocks until the sign-in finishes, which is the point: the address
+    /// and the code have already reached a surface by then, carried up by the
+    /// elicitation the bridge sends while it waits.
+    async fn authenticate_owner(&self, hello: &serde_json::Value) -> Result<(), AdapterError> {
+        let methods = hello
+            .get("authMethods")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let chosen = methods
+            .iter()
+            .filter_map(|m| m.get("id").and_then(serde_json::Value::as_str))
+            // A device code is the only kind completable from here: this pod
+            // has no browser, and a method that opened one would hang.
+            .find(|id| id.contains("device"))
+            .ok_or_else(|| {
+                AdapterError::Unsupported(
+                    "this runtime offers no sign-in that can be completed away from the machine \
+                     it runs on, so it cannot use its owner's own account"
+                        .to_string(),
+                )
+            })?
+            .to_string();
+
+        tracing::info!(method = %chosen, "signing in to the owner's own account");
+        self.call("authenticate", serde_json::json!({ "methodId": chosen }))
+            .await
+            .map_err(|e| {
+                // Named rather than swallowed. A refused or expired sign-in is
+                // the likeliest way this fails, and the person who has to act
+                // on it is the one reading the session.
+                AdapterError::Rejected(format!("the sign-in did not complete: {e}"))
+            })?;
+        Ok(())
     }
 
     /// Ask the bridge something and wait for its answer.
