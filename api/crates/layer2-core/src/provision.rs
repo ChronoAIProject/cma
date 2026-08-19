@@ -19,6 +19,12 @@ use layer3_adapter::{
 };
 use tokio::sync::{broadcast, Mutex};
 
+/// How many updates may queue between a kernel and the folder.
+///
+/// The folder writes to the durable log, so it is slower than a kernel that is
+/// streaming; this is the slack that keeps a fast turn from blocking on it.
+pub(crate) const CONVERSATION_BUFFER: usize = 64;
+
 use crate::capabilities::SessionCapabilities;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
@@ -222,18 +228,21 @@ impl SessionService {
             })?),
             true => None,
         };
+        let (updates_tx, updates_rx) = tokio::sync::mpsc::channel(CONVERSATION_BUFFER);
         let conversation = match conversing {
-            true => Some(
-                adapter
-                    .open_conversation(&handle, &options)
-                    .await
-                    .map_err(|e| {
-                        // A kernel that advertised a conversation and cannot open one
-                        // will not start being able to. Refused permanently so the
-                        // owner is told now rather than after the backoff.
-                        StartFailure::permanent(format!("could not open the conversation: {e}"))
-                    })?,
-            ),
+            true => {
+                Some(
+                    adapter
+                        .open_conversation(&handle, &options, updates_tx)
+                        .await
+                        .map_err(|e| {
+                            // A kernel that advertised a conversation and cannot open one
+                            // will not start being able to. Refused permanently so the
+                            // owner is told now rather than after the backoff.
+                            StartFailure::permanent(format!("could not open the conversation: {e}"))
+                        })?,
+                )
+            }
             false => None,
         };
 
@@ -325,7 +334,8 @@ impl SessionService {
         if let Some(output) = terminal_output {
             spawn_relay(id.clone(), output, screen, live);
         }
-        if let Some(channel) = conversation {
+        if conversation.is_some() {
+            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates_rx);
             // Recorded before anything is said on it. What this is for is a
             // control plane that has not started yet: the one replacing this
             // process reads the log to learn what the runtime calls the
@@ -337,7 +347,6 @@ impl SessionService {
                     crate::log::append(entry, EventKind::ConversationOpened { conversation_id });
                 }
             }
-            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
         }
 
         // Handed over before the agent can need it, so the first turn is

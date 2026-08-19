@@ -229,6 +229,7 @@ impl SessionService {
             ),
             true => None,
         };
+        let mut folding = None;
         let conversation = match conversing {
             true => {
                 // What the runtime calls the conversation already running in
@@ -244,9 +245,12 @@ impl SessionService {
                         "this session's conversation was never named; the runtime will be asked for a new one"
                     );
                 }
+                let (updates_tx, updates_rx) =
+                    tokio::sync::mpsc::channel(crate::provision::CONVERSATION_BUFFER);
+                folding = Some(updates_rx);
                 Some(
                     adapter
-                        .open_conversation(&handle, &options)
+                        .open_conversation(&handle, &options, updates_tx)
                         .await
                         .map_err(unreachable)?,
                 )
@@ -312,8 +316,8 @@ impl SessionService {
         if let Some(channel) = terminal {
             spawn_relay(id.clone(), channel.output, screen, live);
         }
-        if let Some(channel) = conversation {
-            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
+        if let Some(updates) = folding {
+            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates);
         }
 
         // The sandbox kept running, but the credential it was given belonged to
