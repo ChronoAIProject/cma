@@ -402,6 +402,33 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             },
             false => Projected::nothing(),
         },
+        /*
+         * The agent is waiting for its owner to sign in to their own account.
+         *
+         * A state delta rather than a new event kind, matching how a gap and a
+         * plane change already travel, so a client needs no new vocabulary to
+         * read it. It is state rather than conversation: nobody said this, and
+         * putting it in the message stream would mix a thing the reader must
+         * act on into the record of what the agent produced.
+         *
+         * What travels is an address and a short-lived code. The credential
+         * the sign-in produces is written by the agent inside its own sandbox
+         * and never reaches this service, which is the whole basis on which an
+         * own-account session is offered at all.
+         */
+        EventKind::SignInRequired { url, code, message } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "replace", "path": "/signIn", "value": {
+                        "url": url,
+                        "code": code,
+                        "message": message,
+                    }},
+                ]}),
+            )],
+            ending: None,
+        },
         // Part of the conversation was dropped rather than recorded. Shown as
         // a boundary rather than hidden, in the same spirit as the log itself:
         // a client that skips silently leaves its reader to notice.
