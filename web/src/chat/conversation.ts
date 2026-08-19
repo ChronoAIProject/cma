@@ -67,7 +67,16 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
       };
 
     case 'RUN_FINISHED': {
-      const pending = event.outcome?.type === 'interrupt' ? event.outcome.interrupts[0] : undefined;
+      /*
+       * The approval this run stopped on, with the moment it stopped.
+       *
+       * The frame's own timestamp, not a clock read here: §18.1's equivalence
+       * rule means a turn replayed from history must produce what a turn
+       * watched arriving produced, and `Date.now()` on reload would produce
+       * the time of the reload.
+       */
+      const asked = event.outcome?.type === 'interrupt' ? event.outcome.interrupts[0] : undefined;
+      const pending = asked === undefined ? undefined : { ...asked, askedAt: event.timestamp };
       return {
         ...state,
         turnInFlight: false,
