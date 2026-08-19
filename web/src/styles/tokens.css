@@ -70,8 +70,15 @@
  *
  * The mapping is the one #317 specifies, so a surface being migrated is
  * substituting names rather than choosing values.
+ *
+ * **Declared on `body`, not `:root`, and that is load-bearing.** A custom
+ * property's value is substituted in the scope it is *declared* in, not the
+ * scope it is used from — so `--ground: var(--dsw-alias-bg-base)` written on
+ * `:root` resolves against `:root`, where the palette is not declared, and
+ * every one of these names computes to nothing at all. The page then renders
+ * on browser defaults: no ground, no ink, no rules, no focus ring.
  */
-:root {
+body {
   --ground: var(--dsw-alias-bg-base);
   --surface: var(--dsw-alias-bg-layer-1);
   --raised: var(--dsw-alias-bg-layer-2);
@@ -180,6 +187,19 @@
   --canvas-node-w: 420px;
   --canvas-node-h: 280px;
 
+  /*
+   * Two of the vendored syntax tokens, re-declared where they can resolve.
+   *
+   * `shiki.css` writes them on `:root` in terms of aliases the palette
+   * declares on `body`, so upstream they compute to nothing — the same scope
+   * trap the shim above fell into. The vendored sheet is kept verbatim by
+   * design, so the correction goes here, which is exactly what its header
+   * says to do: changes belong upstream, or in a sheet of ours that overrides
+   * it.
+   */
+  --shiki-foreground: var(--dsw-alias-label-primary);
+  --shiki-background: var(--dsw-alias-markdown-code-block);
+
   --focus-ring:
     0 0 0 2px var(--dsw-alias-bg-base), 0 0 0 4px var(--dsw-alias-state-business-primary);
   --focus-prompt: inset 2px 0 0 var(--dsw-alias-state-business-primary);
@@ -195,7 +215,7 @@
  * phone until the shell moves.
  */
 @media (max-width: 29.999rem) {
-  :root {
+  body {
     --hit: 44px;
     --control-h-sm: 44px;
     --control-h: 44px;
