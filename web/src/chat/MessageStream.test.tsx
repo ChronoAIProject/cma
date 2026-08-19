@@ -635,5 +635,49 @@ describe('what a reader can take away', () => {
   it('draws no label where the agent named no language', () => {
     const { container } = render(<AgentContent text={'```\nplain\n```'} />);
     expect(container.querySelector('.codeblock__lang')?.textContent).toBe('');
+describe('what the agent wrote reaches the reader as written', () => {
+  /*
+   * §18.1's Fidelity rule: "Lists, headings and emphasis take the scale §4
+   * defines." Emphasis was required from the day §18 was written and never
+   * rendered, so `**do not**` arrived as four asterisks around a word — an
+   * agent emphasising something is an agent saying it matters, and printing
+   * its punctuation is the surface refusing to hear that.
+   */
+  const drawn = (markdown: string) => {
+    const { container } = render(<AgentContent text={markdown} />);
+    return container;
+  };
+
+  it('renders strong and emphatic runs rather than their punctuation', () => {
+    const c = drawn('Do **not** delete _anything_ yet');
+    expect(c.querySelector('strong')?.textContent).toBe('not');
+    expect(c.querySelector('em')?.textContent).toBe('anything');
+    expect(c.textContent).toBe('Do not delete anything yet');
+  });
+
+  it('leaves the inside of inline code alone', () => {
+    // `a ** b` is an expression, not emphasis. A pass that ran the other way
+    // round would quietly rewrite what the agent wrote.
+    const c = drawn('Use `a ** b` for that');
+    expect(c.querySelector('code')?.textContent).toBe('a ** b');
+    expect(c.querySelector('strong')).toBeNull();
+  });
+
+  it('does not italicise the middle of a snake_case name', () => {
+    // Agents write these constantly, and turning their middles italic corrupts
+    // an identifier the reader may be about to copy.
+    const c = drawn('Set environment_profile_id on the request');
+    expect(c.querySelector('em')).toBeNull();
+    expect(c.textContent).toBe('Set environment_profile_id on the request');
+  });
+
+  it('gives a long answer a real outline', () => {
+    // §18.1 says headings take §4's scale; they were emitting <p>, so a screen
+    // reader could not move between the sections of an agent's plan.
+    const c = drawn('# Plan\n\n## First step');
+    expect(c.querySelector('h2')?.textContent).toBe('Plan');
+    expect(c.querySelector('h3')?.textContent).toBe('First step');
+    // The page owns h1; an agent starting at `#` must not compete for it.
+    expect(c.querySelector('h1')).toBeNull();
   });
 });
