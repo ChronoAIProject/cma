@@ -13,6 +13,14 @@ import { Mark, gapFor } from './Mark';
  */
 
 const FONTS = resolve(process.cwd(), 'src/assets/fonts');
+const STYLES = resolve(process.cwd(), 'src/styles');
+
+/** Every stylesheet, so a face moving between sheets cannot escape these. */
+function styleSheets(): string[] {
+  return readdirSync(STYLES, { recursive: true, encoding: 'utf8' })
+    .filter((entry) => entry.endsWith('.css'))
+    .map((entry) => readFileSync(join(STYLES, entry), 'utf8'));
+}
 
 describe('the mark', () => {
   it('is four squares and no glyph', () => {
@@ -68,43 +76,64 @@ describe('the platform faces', () => {
 
   it('requests no font from a third party', () => {
     // §4: a font request to someone else's host is a request that can be
-    // logged, blocked, or slow.
-    const css = readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8');
-    for (const match of css.matchAll(/url\((['"])(.*?)\1\)/g)) {
-      expect(match[2]).toMatch(/^\.\.\/assets\/fonts\//);
+    // logged, blocked, or slow. Checked across every sheet, because the rule
+    // is about the product and not about whichever file the face sits in.
+    for (const css of styleSheets()) {
+      for (const match of css.matchAll(/url\((['"])(.*?)\1\)/g)) {
+        expect(match[2]).toMatch(/^(\.\.\/assets\/fonts\/|data:)/);
+      }
+      expect(css).not.toMatch(/@import/);
     }
-    expect(css).not.toMatch(/@import/);
   });
 
   it('swaps rather than blocking, and names a system fallback', () => {
-    const css = readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8');
-    const faces = [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1] ?? '');
+    const faces = styleSheets().flatMap((css) =>
+      [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1] ?? ''),
+    );
     expect(faces).toHaveLength(1);
     for (const face of faces) {
       expect(face).toContain('font-display: swap');
     }
 
-    const tokens = readFileSync(resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8');
+    const tokens = readFileSync(join(STYLES, 'tokens.css'), 'utf8');
     const stackOf = (name: string) =>
-      (new RegExp(`${name}:\\s*([^;]+);`).exec(tokens)?.[1] ?? '').trim();
+      (new RegExp(`${name}:\\s*([^;]+);`).exec(tokens)?.[1] ?? '').replace(/\s+/g, ' ').trim();
 
-    // The mono face is downloaded, so it leads its stack and a system fallback
-    // follows: text must be readable before it arrives.
-    const mono = stackOf('--font-mono');
-    expect(mono.startsWith("'JetBrains Mono'")).toBe(true);
+    /*
+     * The vendored face is named in the code stack but does not lead it: a
+     * machine that already has SF Mono renders in it and never fetches ours,
+     * which is a download avoided rather than a fallback. What matters is
+     * that the face is reachable at all, and that every name before it is one
+     * a platform ships.
+     */
+    /*
+     * The family and the file come from the declaration itself rather than
+     * from the filename: what a stack has to name is what `@font-face` calls
+     * the face, and the two agreeing is exactly what would otherwise drift.
+     */
+    const declared = /font-family:\s*'([^']+)'/.exec(faces[0] ?? '')?.[1] ?? '';
+    const file = /url\('\.\.\/assets\/fonts\/([^']+)'\)/.exec(faces[0] ?? '')?.[1] ?? '';
+    expect(declared).not.toBe('');
+    expect(readdirSync(FONTS)).toContain(file);
+
+    const mono = stackOf('--ds-font-family-code');
+    expect(mono).toContain(`'${declared}'`);
     expect(mono.split(',').length).toBeGreaterThan(1);
+
+    /*
+     * No bare `monospace` tail. On Windows that keyword resolves to a CJK
+     * serif, which is the one thing a terminal cannot use — column widths are
+     * the entire reason this stack exists.
+     */
+    expect(mono.split(',').map((face) => face.trim())).not.toContain('monospace');
 
     // The interface stack downloads nothing — §20.3. It must therefore name no
     // face this repository would have to ship, and start with a platform's
     // own, which is what makes it correct on the first paint rather than the
     // second.
-    const ui = stackOf('--font-ui');
+    const ui = stackOf('--dsw-font-family');
     expect(ui).toMatch(/^-apple-system/);
-    expect(ui).not.toContain('JetBrains Mono');
-    for (const face of readdirSync(FONTS).filter((f) => f.endsWith('.woff2'))) {
-      const name = face.replace(/-Variable\.woff2$/, '');
-      expect(ui).not.toContain(name);
-    }
+    expect(ui).not.toContain(declared);
   });
 
   it('licenses the face it ships under the OFL', () => {
