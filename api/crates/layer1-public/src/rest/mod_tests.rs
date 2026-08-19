@@ -108,6 +108,82 @@ fn a_missing_ability_is_unprocessable_rather_than_missing() {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+#[test]
+fn a_create_body_refuses_a_field_this_interface_cannot_honour() {
+    // The failure this closes: `{"kernel":"claude_code"}` was accepted,
+    // discarded, and answered with a 201 for a session on a different runtime.
+    // `GET /api/v1/kernels` enumerates the runtimes, so sending one here is the
+    // obvious next move for anybody integrating.
+    let refused = serde_json::from_str::<CreateSessionRequest>(
+        r#"{"cols":120,"rows":32,"kernel":"claude_code"}"#,
+    );
+    let message = refused
+        .expect_err("an unhonourable field must not parse")
+        .to_string();
+    assert!(
+        message.contains("kernel"),
+        "the refusal has to name the field: {message}"
+    );
+    // serde lists what was expected, which is the part that tells a caller
+    // where to put what they were trying to say.
+    assert!(
+        message.contains("environment_profile"),
+        "and say what it would have accepted: {message}"
+    );
+}
+
+#[test]
+fn a_bad_body_keeps_the_status_that_says_what_is_wrong() {
+    // The three cases carry real information and must not be flattened into
+    // one: a wrong `Content-Type` is 415, syntactically broken JSON is 400, and
+    // a body that parsed but cannot be honoured is 422. Answering all three
+    // with 422 sends somebody whose header is wrong to stare at their JSON.
+    for (slug, status) in [
+        ("invalid-request", StatusCode::UNPROCESSABLE_ENTITY),
+        ("malformed-json", StatusCode::BAD_REQUEST),
+        ("unsupported-media-type", StatusCode::UNSUPPORTED_MEDIA_TYPE),
+    ] {
+        let body = problem_document(status, slug, "something was wrong", "x");
+        assert_eq!(body["status"], status.as_u16());
+        assert_eq!(body["type"], format!("{PROBLEM_BASE}/{slug}"));
+    }
+}
+
+#[test]
+fn every_failure_renders_the_same_document_shape() {
+    // The point of sharing the renderer. A caller writing one parser for this
+    // API's failures must not meet a second shape because the wrong half of
+    // their request was at fault.
+    let doc = problem_document(
+        StatusCode::BAD_REQUEST,
+        "malformed-json",
+        "bad",
+        "malformed_json",
+    );
+    for field in ["type", "title", "status", "detail", "code"] {
+        assert!(
+            doc.get(field).is_some(),
+            "{field} is part of the shape: {doc}"
+        );
+    }
+    assert_eq!(doc["title"], "malformed json");
+}
+
+#[test]
+fn a_well_formed_create_body_still_parses() {
+    // The other half. A gate that refuses everything is not a gate.
+    let body = serde_json::from_str::<CreateSessionRequest>(
+        r#"{"cols":120,"rows":32,"environment_profile":"envp_1"}"#,
+    )
+    .expect("the declared fields are still accepted");
+    assert_eq!(body.cols, Some(120));
+    assert_eq!(body.environment_profile.as_deref(), Some("envp_1"));
+
+    // And every field is optional, which is what an unqualified session is.
+    let bare = serde_json::from_str::<CreateSessionRequest>("{}").expect("a bare create is valid");
+    assert!(bare.cols.is_none() && bare.environment_profile.is_none());
+}
+
 #[tokio::test]
 async fn a_refusal_names_the_missing_ability_as_a_field() {
     // §3 requires a refusal to name what is missing "in words a caller can act
