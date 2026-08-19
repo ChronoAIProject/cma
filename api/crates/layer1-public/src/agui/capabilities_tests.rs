@@ -25,7 +25,9 @@ async fn every_event_the_projection_emits_is_declared() {
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_END",
         "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
         "TOOL_CALL_END",
+        "TOOL_CALL_RESULT",
         "STATE_DELTA",
     ] {
         assert_eq!(
@@ -43,13 +45,7 @@ async fn what_is_not_emitted_is_declared_false_rather_than_omitted() {
     // needs the second.
     let doc = document().await;
     let events = doc["events"].as_object().expect("an events map");
-    for absent in [
-        "TOOL_CALL_ARGS",
-        "TOOL_CALL_RESULT",
-        "THINKING_START",
-        "THINKING_END",
-        "STATE_SNAPSHOT",
-    ] {
+    for absent in ["THINKING_START", "THINKING_END", "STATE_SNAPSHOT"] {
         assert_eq!(
             events.get(absent).and_then(serde_json::Value::as_bool),
             Some(false),

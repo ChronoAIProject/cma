@@ -21,6 +21,16 @@ pub struct Event {
     pub seq: u64,
     /// Event discriminator.
     pub kind: EventKind,
+    /// When this event was appended to the durable log, RFC 3339 in UTC.
+    ///
+    /// Minted by the log when the event is written, not by whoever noticed
+    /// it: the moment a client should be shown is the moment it became
+    /// history, and that is the same for every path that writes. Empty for an
+    /// event read from a control plane that predates this field — a rolling
+    /// deployment tolerates it and a client renders no time rather than an
+    /// invented one.
+    #[serde(default)]
+    pub appended_at: String,
 }
 
 /// An event decoded from durable storage before it is projected to callers.
@@ -35,6 +45,9 @@ pub struct StoredEvent {
     pub session_id: SessionId,
     /// Monotonic sequence as it appears in storage.
     pub seq: u64,
+    /// When this event was appended, as it was stored. Empty when a writer
+    /// predating the field produced the document.
+    pub appended_at: String,
     /// A kind understood by this build, or the future value it cannot project.
     pub kind: StoredEventKind,
 }
@@ -47,6 +60,7 @@ impl StoredEvent {
                 session_id: self.session_id,
                 seq: self.seq,
                 kind,
+                appended_at: self.appended_at,
             }),
             StoredEventKind::Unknown { .. } => None,
         }
@@ -58,6 +72,7 @@ impl From<Event> for StoredEvent {
         Self {
             session_id: event.session_id,
             seq: event.seq,
+            appended_at: event.appended_at,
             kind: StoredEventKind::Known(event.kind),
         }
     }
@@ -160,6 +175,18 @@ pub enum EventKind {
         /// What the agent said, as it committed it.
         content: String,
     },
+    /// The owner sent a message to the agent.
+    ///
+    /// Durable for the same reason the agent's committed message is: the
+    /// conversation a client replays must show both sides, and the owner's
+    /// turn is the one the surface labels with the time it was sent. Recorded
+    /// here rather than reconstructed from the runtime's transcript, so the
+    /// word this service keeps for it stays its own and no kernel's vocabulary
+    /// has to be understood to know what the owner said.
+    OwnerMessage {
+        /// What the owner sent, verbatim.
+        content: String,
+    },
     /// The agent began using a tool.
     ToolCallStarted {
         /// Correlates with every later update to the same call.
@@ -172,6 +199,13 @@ pub enum EventKind {
         /// it: the set differs between runtimes and grows without warning, and
         /// a session must not fail because a kernel invented a tool category.
         kind: String,
+        /// What it was asked to do, when this session records tool bodies.
+        ///
+        /// Absent both when the session was not granted the recording and when
+        /// the runtime offered none, and the two are deliberately not told
+        /// apart here: a client renders what it is given, never an estimate.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arguments: Option<ToolBody>,
     },
     /// A tool call moved on.
     ToolCallUpdated {
@@ -179,6 +213,12 @@ pub enum EventKind {
         call_id: String,
         /// Where it has got to, in the runtime's own words.
         status: String,
+        /// What it produced, when this session records tool bodies.
+        ///
+        /// Never `ToolCallContent`: a terminal identifier is a terminal fact
+        /// and has no place in the conversation core.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<ToolBody>,
     },
     /// What this session has used, as its runtime reports it.
     ///
@@ -192,6 +232,35 @@ pub enum EventKind {
         output_tokens: u64,
         /// How much of the model's context the conversation currently fills.
         context_used: u64,
+    },
+    /// The session's permission mode changed under its owner.
+    ///
+    /// Durable rather than only shown live, because a mode is how much the
+    /// agent may do unattended, and a session whose mode changed is acting
+    /// under a different amount of trust — the record must say so. The name is
+    /// the kernel's own and is carried opaquely, exactly like a tool's kind.
+    ModeChanged {
+        /// The new mode, in the kernel's own word.
+        mode: String,
+    },
+    /// The agent set a plan for the work it is doing.
+    ///
+    /// A revision replaces the previous one whole — the agent sends the
+    /// complete list each time — so a client draws the latest rather than
+    /// accumulating. Per-revision volume, not per token, which is why it is
+    /// durable where a message delta is not.
+    PlanSet {
+        /// The steps, in order, each in the kernel's own words.
+        entries: Vec<PlanStep>,
+    },
+    /// The kernel reported the settings a session may change.
+    ///
+    /// Durable so a client can render a selection rather than a free-text box,
+    /// from the kernel's own names and kinds — never a set this service
+    /// invented.
+    ConfigOptionsSet {
+        /// The settable options, each in the kernel's own words.
+        options: Vec<ConfigOption>,
     },
     /// Part of the conversation was lost rather than recorded.
     ///
@@ -242,6 +311,50 @@ pub enum EventKind {
     },
 }
 
+/// What a tool call was asked to do, or what it produced.
+///
+/// A bounded, redacted copy of a runtime's own words. Bounded because a tool's
+/// arguments or output can be enormous and the durable log is not a file store;
+/// redacted because a tool's output can contain a value the session was handed,
+/// and the core knows which values those are and replaces them before they are
+/// written. The bound is stated rather than silently applied — §18.2 forbids
+/// dropping the tail of a thing without saying so.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolBody {
+    /// The body, as text.
+    pub text: String,
+    /// Whether the body was cut to fit the cap.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// One step of an agent's plan, in the kernel's own words.
+///
+/// Nothing is mapped onto a vocabulary this service invented: the kernel names
+/// the step and its state, and a client renders both verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    /// What the step is, as the agent described it.
+    pub title: String,
+    /// Where it has got to, in the kernel's own word.
+    pub status: String,
+}
+
+/// One setting the kernel says is settable, in its own words.
+///
+/// The kernel names the setting and the kind of value it takes; a client
+/// renders a selection from these rather than a free-text box, exactly as it
+/// does for the answers an approval offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigOption {
+    /// The kernel's identifier for the setting.
+    pub id: String,
+    /// What it is called, as the kernel named it.
+    pub name: String,
+    /// What kind of value it takes, in the kernel's own word.
+    pub kind: String,
+}
+
 /// Every discriminator this build owns, exactly as serde spells it.
 ///
 /// Must name every variant of [`EventKind`]. A variant missing from here would
@@ -255,9 +368,13 @@ const KNOWN_TAGS: &[&str] = &[
     "turn_completed",
     "conversation_opened",
     "message_committed",
+    "owner_message",
     "tool_call_started",
     "tool_call_updated",
     "usage_reported",
+    "mode_changed",
+    "plan_set",
+    "config_options_set",
     "conversation_gap",
     "terminal_attached",
     "terminal_detached",
@@ -306,6 +423,12 @@ pub enum LiveFrame {
     /// watch it think a second time. The turn's own boundaries already say
     /// when the thinking happened.
     ThoughtDelta(String),
+    /// The actions the owner may invoke right now.
+    ///
+    /// Liveness, not history: this describes the session as it is at this
+    /// moment, and a list replayed from the log would offer actions that no
+    /// longer exist. A client that missed it sees none rather than a stale one.
+    AvailableCommands(Vec<AvailableCommand>),
     /// The runtime process ended.
     Exited {
         /// Process exit code, when one was reported.
@@ -313,6 +436,18 @@ pub enum LiveFrame {
         /// Why the session stopped.
         reason: StopReason,
     },
+}
+
+/// One action the owner may invoke, as the kernel offers it.
+///
+/// Carried opaquely: the kernel names the action and what it does, and a
+/// client renders both verbatim, never mapped onto a set this service invented.
+#[derive(Debug, Clone)]
+pub struct AvailableCommand {
+    /// What the command is, as the kernel named it.
+    pub name: String,
+    /// What it does, as the kernel described it.
+    pub description: String,
 }
 
 #[cfg(test)]
@@ -370,19 +505,40 @@ mod tests {
             EventKind::MessageCommitted {
                 content: "hello".into(),
             },
+            EventKind::OwnerMessage {
+                content: "hello back".into(),
+            },
             EventKind::ToolCallStarted {
                 call_id: "call-1".into(),
                 title: "read a file".into(),
                 kind: "read".into(),
+                arguments: None,
             },
             EventKind::ToolCallUpdated {
                 call_id: "call-1".into(),
                 status: "completed".into(),
+                result: None,
             },
             EventKind::UsageReported {
                 input_tokens: 1234,
                 output_tokens: 56,
                 context_used: 1290,
+            },
+            EventKind::ModeChanged {
+                mode: "autonomous".into(),
+            },
+            EventKind::PlanSet {
+                entries: vec![PlanStep {
+                    title: "read the file".into(),
+                    status: "pending".into(),
+                }],
+            },
+            EventKind::ConfigOptionsSet {
+                options: vec![ConfigOption {
+                    id: "thought".into(),
+                    name: "Thinking level".into(),
+                    kind: "select".into(),
+                }],
             },
             EventKind::ConversationGap { frames: 7 },
             EventKind::TerminalAttached,
@@ -418,9 +574,13 @@ mod tests {
                 | EventKind::TurnCompleted
                 | EventKind::ConversationOpened { .. }
                 | EventKind::MessageCommitted { .. }
+                | EventKind::OwnerMessage { .. }
                 | EventKind::ToolCallStarted { .. }
                 | EventKind::ToolCallUpdated { .. }
                 | EventKind::UsageReported { .. }
+                | EventKind::ModeChanged { .. }
+                | EventKind::PlanSet { .. }
+                | EventKind::ConfigOptionsSet { .. }
                 | EventKind::ConversationGap { .. }
                 | EventKind::TerminalAttached
                 | EventKind::TerminalDetached

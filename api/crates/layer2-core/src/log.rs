@@ -50,6 +50,17 @@ impl SessionService {
         if events.is_empty() {
             return Ok(());
         }
+        // Minted once, here, rather than where each event was noticed: the
+        // moment a client is shown is the moment the event became history, and
+        // this is the one place every durable write passes through. An event
+        // already carrying a time keeps it, so a future writer recording a
+        // truer one is not overwritten.
+        let appended_at = crate::clock::now_rfc3339();
+        for event in &mut events {
+            if event.appended_at.is_empty() {
+                event.appended_at = appended_at.clone();
+            }
+        }
         for attempt in 1..=APPEND_ATTEMPTS {
             match self.store.append_events(&events).await {
                 Ok(()) => return Ok(()),
@@ -186,6 +197,7 @@ pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
         session_id: entry.session.id.clone(),
         seq,
         kind,
+        appended_at: String::new(),
     });
 }
 

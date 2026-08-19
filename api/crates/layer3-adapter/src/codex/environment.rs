@@ -83,6 +83,12 @@ impl super::CodexAdapter {
                 },
             ),
             (
+                // The set the supervisor may be switched between, named at
+                // boot. A switch names one of these and is refused otherwise.
+                "CHRONO_RUNTIME_COMMANDS".to_string(),
+                format!("codex,{}", deployment.bridge_command),
+            ),
+            (
                 // How the terminal application is told to continue a
                 // conversation. The bridge is told by name over the protocol
                 // instead, so it needs no verb — and giving it one would put a

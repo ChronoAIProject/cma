@@ -9,6 +9,8 @@
  */
 
 .console__body {
+  /* The positioned ancestor the details drawer overlays below 75rem (§16). */
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
@@ -37,21 +39,38 @@
  * and the surface beneath it can hold a dozen live terminals. Nothing that
  * reports a failure may destroy work that did not fail.
  *
- * A band rather than a line of prose, so a failure never changes the height of
- * the column it appears in by more than the one measurement the page already
- * uses. It reports the most recent attempt, and every action clears it as it
- * starts, so a stale failure never sits above a console that has recovered.
+ * A dismissible .notice--fail card (§12) rather than a band: it carries what
+ * failed, what was not changed, and the API's code in identifier style. It
+ * reports the most recent attempt, and every action clears it as it starts,
+ * so a stale failure never sits above a console that has recovered.
  */
 .console__notice {
-  height: var(--band-foot);
-  color: var(--fail);
-  border-bottom: 1px solid var(--fail);
+  align-items: center;
+  margin: var(--space-3) var(--space-4) 0;
 }
 
-.console__noticetext {
-  overflow: hidden;
-  color: var(--fail);
-  text-overflow: ellipsis;
+.console__noticebody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.console__noticebody p {
+  margin: 0;
+}
+
+/* The API's own code, drawn as an identifier so nobody reads it as prose. */
+.console__noticecode {
+  flex: none;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+}
+
+.console__noticedismiss {
+  flex: none;
 }
 
 .console__empty {
@@ -59,7 +78,7 @@
   margin: auto;
   padding: var(--space-6);
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--text-meta);
   color: var(--ink-3);
   text-align: center;
 }
@@ -86,7 +105,7 @@
   }
 
   .console__drawer .rail {
-    box-shadow: var(--press-card-rest);
+    box-shadow: var(--lift-plate);
   }
 
   /*

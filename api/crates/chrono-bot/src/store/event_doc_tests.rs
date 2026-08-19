@@ -14,6 +14,7 @@ fn event(seq: u64, kind: EventKind) -> Event {
         session_id: SessionId("s-1".into()),
         seq,
         kind,
+        appended_at: String::new(),
     }
 }
 
@@ -67,14 +68,19 @@ fn every_current_variant_survives_the_round_trip() {
         EventKind::MessageCommitted {
             content: "hello".into(),
         },
+        EventKind::OwnerMessage {
+            content: "hello back".into(),
+        },
         EventKind::ToolCallStarted {
             call_id: "call-1".into(),
             title: "read a file".into(),
             kind: "read".into(),
+            arguments: None,
         },
         EventKind::ToolCallUpdated {
             call_id: "call-1".into(),
             status: "completed".into(),
+            result: None,
         },
         EventKind::UsageReported {
             input_tokens: 1234,
@@ -196,6 +202,27 @@ fn an_event_written_before_a_field_existed_still_reads() {
         }
         other => panic!("expected a status change, got {other:?}"),
     }
+}
+
+#[test]
+fn the_append_time_round_trips() {
+    let mut original = event(3, EventKind::SessionCreated);
+    original.appended_at = "2026-08-19T04:00:00Z".into();
+    let stored = from_document(to_document(&original).expect("writes")).expect("reads");
+    assert_eq!(stored.appended_at, "2026-08-19T04:00:00Z");
+}
+
+#[test]
+fn an_event_without_an_append_time_reads_back_empty() {
+    // An event written before `appended_at` existed: ordinary history with no
+    // time, not damage. §5 makes reading it back a hard requirement.
+    let read = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 4_i64,
+        "kind": { "type": "session_created" },
+    })
+    .expect("a document without appended_at is ordinary history");
+    assert!(read.appended_at.is_empty());
 }
 
 #[test]

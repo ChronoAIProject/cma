@@ -5,9 +5,10 @@ import './TopBar.css';
 /**
  * The app bar — docs/Web_Style.md §6.
  *
- * One bar, 56px, on every page, so the window's top edge never moves as
- * somebody switches view. It carries the mark, the view switch, the command
- * field and the account control, in that order, and nothing else.
+ * One bar, 60px, on every page, so the window's top edge never moves as
+ * somebody switches view. It carries, in order: the mark and wordmark, the
+ * view switch, the command trigger, the live count, and the account control —
+ * and nothing else.
  *
  * It is not navigation and must never become it.
  */
@@ -16,16 +17,28 @@ interface TopBarProps {
   /** The view switch. Absent on a page that has no views to switch between. */
   readonly views?: ReactNode;
   /**
-   * Below 30rem — §16. The bar drops to 48px and gives the switch and the
-   * command field to the drawer, keeping the mark and the account control so
-   * the window's top edge still reads as the same product.
+   * Opens the command bar plate (§7). The trigger is a real control and is
+   * never drawn disabled — §6 calls a permanently dead field in the middle of
+   * the bar the loudest "unfinished" signal the product had — so a page with
+   * no command bar to open draws no trigger rather than a dead one.
+   */
+  readonly onCommand?: () => void;
+  /**
+   * How many sessions are live right now. Data for the bar's count; absent
+   * when the page has no sessions to count, and the slot renders nothing.
+   */
+  readonly live?: number;
+  /**
+   * Below 30rem — §16. The bar drops to 52px and gives the switch and the
+   * command trigger to the drawer, keeping the mark and the account control
+   * so the window's top edge still reads as the same product.
    */
   readonly compact?: boolean;
   /** The account control, at the trailing edge. */
   readonly children?: ReactNode;
 }
 
-export function TopBar({ views, compact = false, children }: TopBarProps) {
+export function TopBar({ views, onCommand, live, compact = false, children }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar__brand">
@@ -36,29 +49,26 @@ export function TopBar({ views, compact = false, children }: TopBarProps) {
       {views}
 
       {/*
-       * The command field, per §6.
-       *
-       * Disabled, and saying so, because what it DOES is not specified
-       * anywhere: Web_Style.md names the field, calls the command bar a plate
-       * and hands it to the drawer below 30rem, but gives it no key binding,
-       * no contents, no results model and no empty state. §1 forbids
-       * introducing an interaction rule in web/ that the document does not
-       * carry, so the field is drawn in its place and refuses rather than
-       * accepting text it would silently drop. §7: controls are disabled,
-       * never removed, and every disabled control states why.
+       * The command trigger, per §6: a field-shaped button reading its own
+       * purpose, with the key that opens it beside the words. A button rather
+       * than an input because it opens a plate — nothing is typed here.
        */}
-      {compact ? (
+      {compact || onCommand === undefined ? (
         <span className="band__spacer" />
       ) : (
         <div className="topbar__command">
-          <input
-            className="field__control topbar__commandfield"
-            type="text"
-            disabled
-            aria-label="Command"
-            placeholder="Command — not yet available"
-          />
+          <button type="button" className="topbar__trigger" onClick={onCommand}>
+            <span className="topbar__triggerlabel">Find a session, or type a command</span>
+            <kbd className="topbar__triggerkey">⌘K</kbd>
+          </button>
         </div>
+      )}
+
+      {live === undefined ? null : (
+        <span className="tag topbar__live">
+          <span className="status__dot tone-bg-live" aria-hidden="true" />
+          {live} live
+        </span>
       )}
 
       <div className="topbar__actions">{children}</div>

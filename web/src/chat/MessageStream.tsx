@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
-import { BouncingText } from '../sessions/BouncingText';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
-import type { Entry } from './conversation';
-import { fullTimestampOrNone } from '../sessions/sessionTime';
+import type { AvailableCommand, ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
+import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 
 /**
  * The turn-by-turn record of the conversation — `Web_Style.md` §18.1.
  *
- * Turns, not bubbles: a band of content separated from the one before it by a
- * rule, labelled with who is speaking, and inked so the agent's words are the
- * ones being read.
+ * A reading column, 760px, centred. The two roles are told apart by shape as
+ * well as ink: the agent's turn is full width and unboxed under its eyebrow,
+ * at the reading size, because the agent's words are the ones being read and
+ * they get the whole column; the owner's turn is a right-aligned block on
+ * the inset, because it is short, it is already known, and a shape means the
+ * eye finds where a request starts without reading a label.
  *
  * **Nothing about a message changes when it commits.** A message that
  * restyled itself on commit would tell a reader the earlier state was
@@ -27,6 +29,8 @@ import './MessageStream.css';
 
 interface MessageStreamProps {
   readonly entries: readonly Entry[];
+  /** The kernel's name, for the agent turns' eyebrow — §18.1. */
+  readonly kernel: string;
   /** Drawn under the last entry while a turn is in flight. */
   readonly turnInFlight?: boolean;
   /**
@@ -46,6 +50,19 @@ interface MessageStreamProps {
    * empty band would suggest a kernel was thinking silently.
    */
   readonly reasoning?: { readonly text: string };
+  /**
+   * The agent's plan, when it set one — drawn as a stage rather than as prose.
+   *
+   * A full revision, so the list shown is the whole current plan and never an
+   * accumulation of older ones.
+   */
+  readonly plan?: readonly PlanStep[];
+  /** The session's permission mode, when the kernel changed it. */
+  readonly mode?: string;
+  /** The settings the kernel says are settable, when it reported them. */
+  readonly configOptions?: readonly ConfigOption[];
+  /** The actions the owner may invoke right now — liveness, not history. */
+  readonly availableCommands?: readonly AvailableCommand[];
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
 }
@@ -55,10 +72,15 @@ const PINNED_WITHIN_PX = 48;
 
 export function MessageStream({
   entries,
+  kernel,
   turnInFlight = false,
   live,
   reasoning,
   footer,
+  plan,
+  mode,
+  configOptions,
+  availableCommands,
 }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -113,35 +135,71 @@ export function MessageStream({
           setSeenAt(entries.length);
         }}
       >
-        {entries.map((entry) => (
-          <StreamEntry
-            entry={entry}
-            key={`${entry.kind}:${entry.id}`}
-            turnInFlight={turnInFlight}
-          />
-        ))}
-        {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
-        {live === undefined ? null : (
-          /*
-           * The in-flight message. Same band, same ink, same everything as a
-           * committed one — §18.1 forbids a message restyling itself when it
-           * settles, and this is the same rule read forwards. The caret is the
-           * one difference, and it belongs to this and to nothing else.
-           */
-          <article className="turn" data-role="assistant">
-            <span className="turn__who">Agent</span>
-            <div className="turn__body">
-              <AgentContent text={live.text} />
-              <b className="turn__caret" aria-hidden="true" />
-            </div>
-          </article>
-        )}
-        {waiting ? (
-          <p className="stream__waiting">
-            <BouncingText text="Working" />
-          </p>
-        ) : null}
-        {footer}
+        <div className="stream__column">
+          {entries.map((entry) => (
+            <StreamEntry
+              entry={entry}
+              kernel={kernel}
+              key={`${entry.kind}:${entry.id}`}
+              turnInFlight={turnInFlight}
+            />
+          ))}
+          {plan === undefined || plan.length === 0 ? null : (
+            <ol className="stage">
+              {plan.map((step, index) => (
+                <li key={index} className="stage__step">
+                  <span className="stage__title">{step.title}</span>
+                  <span className="stage__status">{step.status}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          {mode === undefined ? null : <div className="stage__mode">Mode: {mode}</div>}
+          {configOptions === undefined || configOptions.length === 0 ? null : (
+            <ul className="stage">
+              {configOptions.map((option) => (
+                <li key={option.id} className="stage__step">
+                  <span className="stage__title">{option.name}</span>
+                  <span className="stage__status">{option.kind}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {availableCommands === undefined || availableCommands.length === 0 ? null : (
+            <ul className="stage">
+              {availableCommands.map((command) => (
+                <li key={command.name} className="stage__step">
+                  <span className="stage__title">{command.name}</span>
+                  <span className="stage__status">{command.description}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
+          {live === undefined ? null : (
+            /*
+             * The in-flight message. Same shape, same ink, same everything as
+             * a committed one — §18.1 forbids a message restyling itself when
+             * it settles, and this is the same rule read forwards. The caret
+             * is the one difference, and it belongs to this and nothing else.
+             */
+            <article className="turn" data-role="assistant">
+              <Eyebrow kernel={kernel} />
+              <div className="turn__body">
+                <AgentContent text={live.text} />
+                <b className="turn__caret" aria-hidden="true" />
+              </div>
+            </article>
+          )}
+          {waiting ? (
+            /* §18.1: the §8 pulse with a word, claiming no progress. */
+            <p className="stream__waiting">
+              <span className="stream__waitdot pulse" aria-hidden="true" />
+              Working
+            </p>
+          ) : null}
+          {footer}
+        </div>
       </div>
 
       {/*
@@ -152,7 +210,7 @@ export function MessageStream({
       {behind > 0 ? (
         <button
           type="button"
-          className="button button--sm press--quiet stream__behind"
+          className="button button--sm stream__behind"
           onClick={() => {
             setPinned(true);
           }}
@@ -164,12 +222,50 @@ export function MessageStream({
   );
 }
 
-function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: boolean }) {
+/**
+ * The agent turn's eyebrow — §18.1: a live dot, then the product and the
+ * kernel in mono, uppercase by style rather than by text.
+ */
+function Eyebrow({ kernel }: { readonly kernel: string }) {
+  return (
+    <span className="turn__eyebrow">
+      <span className="turn__dot" aria-hidden="true" />
+      chronobot · {kernel}
+    </span>
+  );
+}
+
+/**
+ * The owner turn's eyebrow — §18.1: `You · HH:MM`, the time read from the
+ * durable log. A turn whose time the record does not carry shows none rather
+ * than an estimated one, on the section's equivalence rule.
+ */
+function youLabel(entry: MessageEntry): string {
+  if (entry.at === undefined) {
+    return 'You';
+  }
+  const parsed = Date.parse(entry.at);
+  return Number.isNaN(parsed) ? 'You' : `You · ${timeOfDay(parsed)}`;
+}
+
+function StreamEntry({
+  entry,
+  kernel,
+  turnInFlight,
+}: {
+  entry: Entry;
+  kernel: string;
+  turnInFlight: boolean;
+}) {
   switch (entry.kind) {
     case 'message':
       return (
         <article className="turn" data-role={entry.role}>
-          <span className="turn__who">{entry.role === 'user' ? 'You' : 'Agent'}</span>
+          {entry.role === 'user' ? (
+            <span className="turn__eyebrow turn__eyebrow--you">{youLabel(entry)}</span>
+          ) : (
+            <Eyebrow kernel={kernel} />
+          )}
           <div className="turn__body">
             <AgentContent text={entry.text} />
             {/*
@@ -237,7 +333,7 @@ function StreamEntry({ entry, turnInFlight }: { entry: Entry; turnInFlight: bool
        */
       return (
         <div className="turn turn--unknown">
-          <span className="turn__who">{entry.eventKind}</span>
+          <span className="turn__eyebrow">{entry.eventKind}</span>
           <span className="turn__body">
             This build does not know how to draw this yet. It was not lost.
           </span>

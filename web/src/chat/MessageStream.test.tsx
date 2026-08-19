@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { MessageStream } from './MessageStream';
 import { AgentContent, blocksOf } from './AgentContent';
@@ -38,11 +39,13 @@ describe('the equivalence rule', () => {
     const live = await conversationFrom('plain-turn');
     const replayed = await conversationFrom('plain-turn', { dropAfter: 2 });
 
-    const watching = render(<MessageStream entries={live.conversation.entries} />);
+    const watching = render(<MessageStream kernel="codex" entries={live.conversation.entries} />);
     const watchedHtml = watching.container.innerHTML;
     watching.unmount();
 
-    const reading = render(<MessageStream entries={replayed.conversation.entries} />);
+    const reading = render(
+      <MessageStream kernel="codex" entries={replayed.conversation.entries} />,
+    );
     expect(reading.container.innerHTML).toBe(watchedHtml);
   });
 
@@ -63,7 +66,7 @@ describe('the equivalence rule', () => {
 });
 
 describe('a turn', () => {
-  it('is a band with a label, not a bubble', () => {
+  it('tells the two roles apart by shape and by eyebrow', () => {
     const state = fold([
       toEvent({ type: 'RUN_STARTED', seq: 1 }),
       toEvent({ type: 'TEXT_MESSAGE_START', seq: 2, messageId: 'm1', role: 'user' }),
@@ -71,13 +74,15 @@ describe('a turn', () => {
       toEvent({ type: 'TEXT_MESSAGE_START', seq: 4, messageId: 'm2', role: 'assistant' }),
       toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 5, messageId: 'm2', delta: 'done' }),
     ]);
-    const { container } = render(<MessageStream entries={state.entries} />);
+    const { container } = render(<MessageStream kernel="codex" entries={state.entries} />);
 
     expect(container.querySelectorAll('.turn')).toHaveLength(2);
     expect(container.querySelector('[data-role="user"]')).not.toBeNull();
     expect(container.querySelector('[data-role="assistant"]')).not.toBeNull();
+    // §18.1: the owner's slot says You; the agent's eyebrow carries the
+    // product and the kernel. No avatars, no bubble on the agent's side.
     expect(screen.getByText('You')).toBeInTheDocument();
-    expect(screen.getByText('Agent')).toBeInTheDocument();
+    expect(screen.getByText(/chronobot · codex/)).toBeInTheDocument();
   });
 
   it('changes nothing about a message when it commits, except the caret', () => {
@@ -93,11 +98,11 @@ describe('a turn', () => {
       toEvent({ type: 'TEXT_MESSAGE_END', seq: 4, messageId: 'm1' }),
     );
 
-    const live = render(<MessageStream entries={arriving.entries} turnInFlight />);
+    const live = render(<MessageStream kernel="codex" entries={arriving.entries} turnInFlight />);
     const liveHtml = live.container.innerHTML;
     live.unmount();
 
-    const done = render(<MessageStream entries={settled.entries} turnInFlight />);
+    const done = render(<MessageStream kernel="codex" entries={settled.entries} turnInFlight />);
     const doneHtml = done.container.innerHTML;
 
     // The only difference is the caret.
@@ -110,7 +115,7 @@ describe('a turn', () => {
     // §18.6: not a status chip. An owner who can see the boundary recognises a
     // gap rather than puzzling over one.
     const { conversation } = await conversationFrom('rotates');
-    render(<MessageStream entries={conversation.entries} />);
+    render(<MessageStream kernel="codex" entries={conversation.entries} />);
 
     expect(screen.getByRole('separator')).toBeInTheDocument();
     expect(screen.getByText(/carried forward from/i)).toBeInTheDocument();
@@ -119,7 +124,7 @@ describe('a turn', () => {
 
   it('shows an event kind it does not know rather than hiding it', async () => {
     const { conversation } = await conversationFrom('unknown-kind');
-    render(<MessageStream entries={conversation.entries} />);
+    render(<MessageStream kernel="codex" entries={conversation.entries} />);
     expect(screen.getByText('THINKING_START')).toBeInTheDocument();
     expect(screen.getByText(/was not lost/i)).toBeInTheDocument();
   });
@@ -199,6 +204,7 @@ describe('the plane-change boundary', () => {
     // misled by the interface rather than by the platform.
     render(
       <MessageStream
+        kernel="codex"
         entries={[
           {
             kind: 'gap',
@@ -220,7 +226,10 @@ describe('the plane-change boundary', () => {
     // A stretch the runtime had to drop is the same kind of fact and is drawn
     // the same way, minus a destination there is none of.
     render(
-      <MessageStream entries={[{ kind: 'gap', id: 'gap-4', rotatedAt: undefined, seq: 4 }]} />,
+      <MessageStream
+        kernel="codex"
+        entries={[{ kind: 'gap', id: 'gap-4', rotatedAt: undefined, seq: 4 }]}
+      />,
     );
 
     const boundary = screen.getByRole('separator');
@@ -240,7 +249,7 @@ describe('a run that failed, §18.9', () => {
       toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 2, messageId: 'm1', delta: 'reading a file' }),
       toEvent({ type: 'RUN_ERROR', seq: 3, message: 'the model endpoint refused' }),
     ]);
-    render(<MessageStream entries={state.entries} />);
+    render(<MessageStream kernel="codex" entries={state.entries} />);
 
     expect(screen.getByText('the model endpoint refused')).toBeTruthy();
     expect(
@@ -252,20 +261,22 @@ describe('a run that failed, §18.9', () => {
   it('says the word as well as wearing the ink', () => {
     // §2: colour is never the only carrier. A reader who cannot distinguish
     // the ink must still be able to read what happened.
-    render(<MessageStream entries={failure({}).entries} />);
+    render(<MessageStream kernel="codex" entries={failure({}).entries} />);
 
     expect(screen.getByText('Run failed')).toBeTruthy();
   });
 
   it('names the ability when the failure was a refusal', () => {
-    render(<MessageStream entries={failure({ capability: 'conversation' }).entries} />);
+    render(
+      <MessageStream kernel="codex" entries={failure({ capability: 'conversation' }).entries} />,
+    );
 
     const named = screen.getByText(/This session cannot/);
     expect(named.textContent).toContain('conversation');
   });
 
   it('names nothing when there was nothing to name', () => {
-    render(<MessageStream entries={failure({}).entries} />);
+    render(<MessageStream kernel="codex" entries={failure({}).entries} />);
 
     expect(screen.queryByText(/This session cannot/)).toBeNull();
   });
@@ -277,7 +288,7 @@ describe('a run that failed, §18.9', () => {
       message: 'moving this session to the other plane',
       'chrono:returns': true,
     });
-    render(<MessageStream entries={state.entries} />);
+    render(<MessageStream kernel="codex" entries={state.entries} />);
 
     expect(screen.queryByText('Run failed')).toBeNull();
   });
@@ -288,13 +299,13 @@ describe('a turn in flight, §18.1', () => {
     // A turn that has started and produced nothing is otherwise
     // indistinguishable from a dead stream, and a turn takes as long as the
     // agent takes.
-    render(<MessageStream entries={[]} turnInFlight />);
+    render(<MessageStream kernel="codex" entries={[]} turnInFlight />);
 
     expect(screen.getByText('Working')).toBeTruthy();
   });
 
   it('stops saying it the moment there is something to read', () => {
-    render(<MessageStream entries={[]} turnInFlight live={{ text: 'Hel' }} />);
+    render(<MessageStream kernel="codex" entries={[]} turnInFlight live={{ text: 'Hel' }} />);
 
     expect(screen.queryByText('Working')).toBeNull();
     expect(screen.getByText('Hel')).toBeTruthy();
@@ -306,7 +317,12 @@ describe('a turn in flight, §18.1', () => {
       toEvent({ type: 'TEXT_MESSAGE_CONTENT', seq: 1, messageId: 'm1', delta: 'do the thing' }),
     ]);
     const { container } = render(
-      <MessageStream entries={state.entries} turnInFlight live={{ text: 'on it' }} />,
+      <MessageStream
+        kernel="codex"
+        entries={state.entries}
+        turnInFlight
+        live={{ text: 'on it' }}
+      />,
     );
 
     const turns = [...container.querySelectorAll('.turn')];
@@ -321,7 +337,12 @@ describe('a turn in flight, §18.1', () => {
       toEvent({ type: 'RUN_FINISHED', seq: 2 }),
     ]);
     const { container } = render(
-      <MessageStream entries={settled.entries} turnInFlight live={{ text: 'still going' }} />,
+      <MessageStream
+        kernel="codex"
+        entries={settled.entries}
+        turnInFlight
+        live={{ text: 'still going' }}
+      />,
     );
 
     const carets = [...container.querySelectorAll('.turn__caret')];
@@ -330,27 +351,38 @@ describe('a turn in flight, §18.1', () => {
   });
 
   it('draws nothing extra when a turn is not in flight', () => {
-    render(<MessageStream entries={[]} />);
+    render(<MessageStream kernel="codex" entries={[]} />);
 
     expect(screen.queryByText('Working')).toBeNull();
   });
 });
 
 describe('what the agent is working through, §18.8', () => {
-  it('shows the reasoning, and says it is not kept', () => {
-    // A reader who saw this and reloaded to find it gone would otherwise
-    // report data loss, so the surface says so rather than only the document.
-    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'checking src/' }} />);
+  it('collapses the reasoning to one key that says it is not kept', async () => {
+    // §18.8: collapsed by default — the previous revision's always-open band
+    // put the least durable content at the same weight as the conversation.
+    // The words that make it safe to lose stay on the key either way.
+    const user = userEvent.setup();
+    render(
+      <MessageStream
+        kernel="codex"
+        entries={[]}
+        turnInFlight
+        reasoning={{ text: 'checking src/' }}
+      />,
+    );
 
-    expect(screen.getByText('checking src/')).toBeTruthy();
-    expect(screen.getByText(/gone when the turn ends/)).toBeTruthy();
+    const key = screen.getByRole('button', { name: /not kept after this turn/i });
+    expect(screen.queryByText('checking src/')).toBeNull();
+    await user.click(key);
+    expect(screen.getByText('checking src/')).toBeInTheDocument();
   });
 
   it('draws nothing at all when there is no reasoning', () => {
     // Not an empty band. §18.4's rule: a thing that can never appear is not
     // one that is currently unavailable, and an empty box would suggest the
     // agent was thinking silently.
-    const { container } = render(<MessageStream entries={[]} turnInFlight />);
+    const { container } = render(<MessageStream kernel="codex" entries={[]} turnInFlight />);
 
     expect(container.querySelector('.thinking')).toBeNull();
   });
@@ -358,7 +390,9 @@ describe('what the agent is working through, §18.8', () => {
   it('carries no colour', () => {
     // §2: the semantic inks describe session and system state and describe
     // nothing the agent thought.
-    const { container } = render(<MessageStream entries={[]} reasoning={{ text: 'hmm' }} />);
+    const { container } = render(
+      <MessageStream kernel="codex" entries={[]} reasoning={{ text: 'hmm' }} />,
+    );
     const classes = [...container.querySelectorAll('.thinking, .thinking *')]
       .flatMap((node) => [...node.classList])
       .join(' ');
@@ -367,8 +401,47 @@ describe('what the agent is working through, §18.8', () => {
   });
 
   it('replaces the waiting wave once reasoning starts arriving', () => {
-    render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'hmm' }} />);
+    render(<MessageStream kernel="codex" entries={[]} turnInFlight reasoning={{ text: 'hmm' }} />);
 
     expect(screen.queryByText('Working')).toBeNull();
+  });
+});
+
+describe('the owner turn label, §18.1', () => {
+  it('carries the time the owner sent it', () => {
+    // 04:00 UTC is 12:00 in Singapore, the fixed zone §12 uses — so the label
+    // means the same moment whoever is looking.
+    render(
+      <MessageStream
+        kernel="codex"
+        entries={[
+          {
+            kind: 'message',
+            id: 'm1',
+            role: 'user',
+            text: 'build me a scraper',
+            committed: true,
+            seq: 1,
+            at: '2026-08-19T04:00:00Z',
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/You · 12:00/)).toBeInTheDocument();
+  });
+
+  it('shows no time when the log carries none', () => {
+    // A control plane predating timestamps wrote no time; absence is shown as
+    // absence, never as an estimated moment.
+    render(
+      <MessageStream
+        kernel="codex"
+        entries={[{ kind: 'message', id: 'm1', role: 'user', text: 'hi', committed: true, seq: 1 }]}
+      />,
+    );
+
+    expect(screen.getByText('You')).toBeInTheDocument();
+    expect(screen.queryByText(/You ·/)).toBeNull();
   });
 });

@@ -31,10 +31,33 @@ export interface PlaneState {
    * owners to ignore real ones.
    */
   readonly failed: boolean;
+  /**
+   * Whether the session is parked on an answerable approval — §11 and §18.3.
+   *
+   * The wording of a refusal belongs to the reason it exists, not to the
+   * state's name: a session waiting on an answer says it is waiting for its
+   * owner, in the rail, the header and at the composer, rather than claiming
+   * to be stopped while an approval it can answer sits above.
+   */
+  readonly waiting: boolean;
 }
 
-export function planeStateFor(session: Session): PlaneState {
+export function planeStateFor(session: Session, hasPendingApproval = false): PlaneState {
   const can = abilitiesFor(session);
+
+  if (isWaitingForAnswer(session, hasPendingApproval)) {
+    /*
+     * The live defect this section exists to fix: `idle` used to answer for
+     * this case, so the composer said "This session is stopped. Revive it to
+     * carry on." while an answerable approval sat directly above it.
+     */
+    return {
+      interactive: false,
+      reason: 'The agent stopped here on purpose — it is waiting for your answer above.',
+      failed: false,
+      waiting: true,
+    };
+  }
 
   if (session.lifecycle === 'rotating') {
     /*
@@ -49,6 +72,7 @@ export function planeStateFor(session: Session): PlaneState {
       reason:
         'This session is being moved to another runtime. It cannot take input until it lands.',
       failed: false,
+      waiting: false,
     };
   }
 
@@ -62,6 +86,7 @@ export function planeStateFor(session: Session): PlaneState {
      * cannot currently see is not a session that is dead.
      */
     failed: session.lifecycle === 'terminated' && session.stopReason === 'error',
+    waiting: false,
   };
 }
 

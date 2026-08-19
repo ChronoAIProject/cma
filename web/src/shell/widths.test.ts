@@ -65,13 +65,19 @@ describe('§16 at 390px', () => {
     // alone would satisfy the token and none of the buttons, because a control
     // takes its height from --control-h.
     const block = compact();
-    for (const token of ['--hit', '--control-h', '--control-h-sm', '--control-h-block']) {
+    for (const token of [
+      '--hit',
+      '--control-h',
+      '--control-h-sm',
+      '--control-h-md',
+      '--control-h-lg',
+    ]) {
       expect(block, token).toContain(`${token}: 44px`);
     }
   });
 
-  it('drops the app bar to 48px', () => {
-    expect(compact()).toContain('--bar-height: 48px');
+  it('drops the app bar to 52px', () => {
+    expect(compact()).toContain('--bar-height: 52px');
   });
 
   it('leaves the bands exactly where they were', () => {
@@ -83,7 +89,7 @@ describe('§16 at 390px', () => {
     expect(block).not.toContain('--band-foot');
 
     const css = tokens();
-    expect(css).toContain('--band-head: 52px');
+    expect(css).toContain('--band-head: 56px');
     expect(css).toContain('--band-foot: 40px');
     // And no media query anywhere redefines them.
     expect(css.match(/--band-(head|foot):/g)).toHaveLength(2);

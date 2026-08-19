@@ -173,6 +173,7 @@ impl SessionService {
                     detail: None,
                     capability: None,
                 },
+                appended_at: String::new(),
             }],
         )
         .await
@@ -290,6 +291,7 @@ impl SessionService {
                     detail: None,
                     capability: None,
                 },
+                appended_at: String::new(),
             }],
         )
         .await

@@ -87,6 +87,9 @@ pub struct AgentBody {
     /// Whose model access it spends.
     #[serde(default)]
     pub credential: Option<CredentialMode>,
+    /// Whether a session's tool bodies are recorded in its durable log.
+    #[serde(default)]
+    pub record_tool_bodies: Option<bool>,
     /// Skill identifiers to load.
     #[serde(default)]
     pub skills: Vec<String>,
@@ -119,6 +122,7 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 model: body.agent.model,
                 reasoning_effort: body.agent.reasoning_effort.unwrap_or_default(),
                 permission: body.agent.permission.unwrap_or_default(),
+                record_tool_bodies: body.agent.record_tool_bodies.unwrap_or_default(),
                 credential: body.agent.credential.unwrap_or_default(),
                 skills: body.agent.skills.into_iter().map(SkillId::new).collect(),
             },

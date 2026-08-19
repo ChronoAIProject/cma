@@ -197,8 +197,12 @@ export function IntroTerminal() {
       */}
       <p className="sr-only">{ACCESSIBLE_TRANSCRIPT.join(' ')}</p>
 
-      {/* The statement — §15. */}
+      {/* The statement — §15: an availability tag, then the headline. */}
       <div className="intro__statement">
+        <span className="tag intro__tag">
+          <span className="status__dot tone-bg-live" aria-hidden="true" />
+          Ready to run
+        </span>
         <h1 id="intro-heading" className="intro__headline">
           Nothing to install.
         </h1>
@@ -214,7 +218,7 @@ export function IntroTerminal() {
         {value.trim().length > 0 ? (
           <button
             type="button"
-            className="button button--accent button--lg press--accent"
+            className="button button--primary button--xl"
             disabled={capturing}
             onClick={() => {
               submit();
@@ -237,6 +241,12 @@ export function IntroTerminal() {
           inputRef.current?.focus();
         }}
       >
+        {/* §15: the panel's 40px chrome strip. */}
+        <div className="intro__chrome" aria-hidden="true">
+          <span className="band__label">chronobot</span>
+          <span className="band__spacer" />
+          <span className="band__value">guest</span>
+        </div>
         <pre className="intro__out" aria-hidden="true">
           {visible.map((line, lineIndex) => {
             const typed = line.typed === true;
