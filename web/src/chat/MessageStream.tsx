@@ -83,6 +83,9 @@ export function MessageStream({
   availableCommands,
 }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const columnRef = useRef<HTMLDivElement>(null);
+  /* Read inside the growth observer, which outlives any one render. */
+  const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
   /** How much had arrived the last time somebody was looking at the bottom. */
   const [seenAt, setSeenAt] = useState(entries.length);
@@ -104,14 +107,50 @@ export function MessageStream({
    */
   const waiting = turnInFlight && live === undefined && reasoning === undefined;
 
+  /*
+   * Follow the column while it grows, for as long as somebody is following.
+   *
+   * Observed rather than listed. This depended on `entries`, and the message
+   * being typed is deliberately not an entry (§18.1) — a streaming delta
+   * lands in `live` and returns a conversation holding the *same* entries
+   * array, so the effect never ran and the view stopped following at exactly
+   * the moment text started arriving. Reasoning, the approval card and an
+   * opened thinking band were invisible to it for the same reason.
+   *
+   * A dependency list would have to name every one of those and would rot the
+   * next time the surface grows something. Growth is the actual condition, so
+   * growth is what is watched.
+   */
   useEffect(() => {
-    // The effect does the one thing effects are for: telling an external
-    // system — the scroll position — what React already decided.
+    const surface = surfaceRef.current;
+    const column = columnRef.current;
+    if (surface === null || column === null || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const follow = () => {
+      // Read at the moment it fires: `pinned` is state, and a stale closure
+      // would keep dragging somebody back who has scrolled away.
+      if (pinnedRef.current) {
+        surface.scrollTop = surface.scrollHeight;
+      }
+    };
+    follow();
+    const observer = new ResizeObserver(follow);
+    observer.observe(column);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  // Pinning again jumps to the newest turn at once, rather than waiting for
+  // the next thing to arrive.
+  useEffect(() => {
+    pinnedRef.current = pinned;
     const surface = surfaceRef.current;
     if (surface !== null && pinned) {
       surface.scrollTop = surface.scrollHeight;
     }
-  }, [entries, pinned]);
+  }, [pinned]);
 
   return (
     <div className="stream">
@@ -135,7 +174,7 @@ export function MessageStream({
           setSeenAt(entries.length);
         }}
       >
-        <div className="stream__column">
+        <div className="stream__column" ref={columnRef}>
           {entries.map((entry) => (
             <StreamEntry
               entry={entry}
