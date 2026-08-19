@@ -53,15 +53,23 @@ describe('the band grid', () => {
     expect(rule(components, '.band--foot')).toContain('height: var(--band-foot)');
     expect(rule(components, '.band')).not.toMatch(/padding(-block|-top|-bottom)?:/);
 
-    for (const [name, selector] of [
-      ['sessions/SessionRail.css', '.rail__head'],
-      ['sessions/SessionHeader.css', '.sessionheader'],
-      ['sessions/SessionDrawer.css', '.drawer__head'],
-    ] as const) {
+    for (const [name, selector] of [['sessions/SessionDrawer.css', '.drawer__head']] as const) {
       expect(rule(sheet(name), selector), selector).not.toMatch(
         /padding(-block|-top|-bottom)?:|height:/,
       );
     }
+  });
+
+  it('lets the centre column header set its own proportions', () => {
+    /*
+     * The one deliberate exception, and the reason it stopped being one: §9
+     * gave the sidebar its own column, so this header no longer has to line
+     * up with a list beside it. It belongs to the column beneath it and pads
+     * itself accordingly.
+     */
+    expect(rule(sheet('sessions/SessionHeader.css'), '.sessionheader')).toContain(
+      'padding: 12px 28px 0 20px',
+    );
   });
 
   it('takes its width from the column it sits in', () => {
@@ -101,17 +109,16 @@ describe('the band grid', () => {
     expect(container.querySelector('.band--foot')).toBeNull();
   });
 
-  it('carries the band subject at the one size §5 excepts', () => {
+  it('says which session the column is showing, without claiming to be it', () => {
+    /*
+     * A crumb, not a heading. The surface beneath is the content, and a
+     * heading here would put this row in the page's outline as the thing
+     * somebody came to read.
+     */
     const { container } = render(<SessionHeader session={SESSION} />);
-    expect(container.querySelector('.band__subject')).not.toBeNull();
-    expect(rule(sheet('styles/components.css'), '.band__subject')).toContain(
-      'font-size: var(--text-subject)',
-    );
-    // Everything else in a band is mono at the label size — one size per band.
-    for (const selector of ['.band__label', '.band__value']) {
-      expect(rule(sheet('styles/components.css'), selector)).toContain(
-        'font-size: var(--text-label)',
-      );
-    }
+    const crumb = container.querySelector('.sessionheader__crumb');
+    expect(crumb).not.toBeNull();
+    expect(crumb?.tagName).toBe('SPAN');
+    expect(container.querySelector('h1, h2, h3')).toBeNull();
   });
 });
