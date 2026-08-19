@@ -109,6 +109,7 @@ describe('the paths match what the service emits', () => {
     '/mode',
     '/plan',
     '/planeChanges/-',
+    '/signIn',
     '/usage/contextUsed',
     '/usage/inputTokens',
     '/usage/outputTokens',

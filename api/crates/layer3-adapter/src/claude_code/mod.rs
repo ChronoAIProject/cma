@@ -83,13 +83,26 @@ impl KernelAdapter for ClaudeCodeAdapter {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        // Refused rather than ignored. Nothing in the runtime authenticates the
-        // agent against the owner's own vendor account, so a session that asked
-        // for it and was accepted would run on the delegated credential — the
-        // owner's bill and the owner's entitlements — while believing otherwise.
+        // Refused permanently, not pending. The word "yet" stood here while
+        // the codex adapter carried the same refusal, and that one has since
+        // been lifted — so leaving it would read as a feature on its way,
+        // which this is not.
+        //
+        // This kernel's vendor states that credentials from a personal
+        // subscription may not be used from another product or service, and
+        // enforces it on their side. A session doing that would be spending an
+        // account in a way its owner had been invited to believe was fine
+        // right up until the account was disabled. §9: declare the absence
+        // rather than let somebody discover it.
+        //
+        // What this kernel can compliantly spend is a key or token issued for
+        // programmatic use, which is a different setting and not this one.
         if spec.options.own_credential {
             return Err(AdapterError::Unsupported(
-                "this kernel does not support the owner's own credential yet".to_string(),
+                "this kernel cannot run on a personal subscription: its vendor does not permit \
+                 those credentials outside their own tools. An API key or gateway token is the \
+                 supported way to spend your own account here"
+                    .to_string(),
             ));
         }
 
