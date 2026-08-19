@@ -1,17 +1,23 @@
 import type { ITheme } from '@xterm/xterm';
 
 /**
- * The 16-slot ANSI palette, derived from the tokens in docs/Web_Style.md §2 and
+ * The 16-slot ANSI palette, derived from the design tokens per §2 and
  * authoritative per §9. Do not invent terminal colours here.
  *
  * These are literals rather than CSS custom properties because xterm renders to
  * canvas and cannot resolve `var()`. They are kept in lockstep with
- * src/styles/tokens.css by the palette test, which fails if the two diverge.
+ * src/styles/design-platform.css by the palette test, which resolves each
+ * alias through to its static value and fails if the two diverge.
  *
  * The product has one accent, so cyan and magenta are no longer a pair carrying
  * product meaning: they are ANSI slots, chosen for legibility on the surface
  * they sit on. The slots that DO carry product meaning — green, yellow, red,
  * bright black — are the semantic tokens, and the test pins them.
+ *
+ * The greyscale ends invert between the two themes rather than being shared.
+ * A terminal's black slot means "the ink end of the ramp", not the colour
+ * black: rendered literally on a white ground it writes paper onto paper, and
+ * the text is gone.
  */
 
 interface Palette {
@@ -23,28 +29,29 @@ interface Palette {
 }
 
 const DARK: Palette = {
-  background: '#15171B',
+  background: '#232324',
   foreground: '#F9FAFB',
   cursor: '#679EFE',
-  // --accent at 25% alpha, per the terminal component rules.
+  // The business primary at 25% alpha, per the terminal component rules.
   selection: 'rgba(103, 158, 254, 0.25)',
   ansi: {
-    black: '#131512',
+    // One step below the ground, so the ink end still reads as behind it.
+    black: '#151517',
     red: '#F25A5A',
     green: '#22C55E',
     yellow: '#F59E0B',
     blue: '#679EFE',
     magenta: '#C08BE0',
     cyan: '#5FD3C4',
-    white: '#F1F2EE',
-    brightBlack: '#81858C',
+    white: '#CFD3D6',
+    brightBlack: '#ADB2B8',
     brightRed: '#FF8A8A',
     brightGreen: '#4ADE80',
     brightYellow: '#FBBF24',
     brightBlue: '#93B8FE',
     brightMagenta: '#D7B0EE',
     brightCyan: '#93E6DB',
-    brightWhite: '#FFFFFF',
+    brightWhite: '#F9FAFB',
   },
 };
 
@@ -54,7 +61,7 @@ const LIGHT: Palette = {
   cursor: '#4176E6',
   selection: 'rgba(65, 118, 230, 0.25)',
   ansi: {
-    black: '#F1F3F5',
+    black: '#0F1115',
     red: '#EC1313',
     green: '#22C55E',
     yellow: '#F59E0B',
@@ -88,16 +95,15 @@ export function terminalTheme(name: ThemeName): ITheme {
 }
 
 /**
- * Resolve the theme the same way the stylesheet does: an explicit data-theme
- * wins over the system preference in either direction.
+ * Resolve the theme the same way the palette does — by reading the mark the
+ * palette itself selects on.
+ *
+ * That mark is already resolved: whoever set it turned "system" into an answer
+ * first. Asking the media query here as well would give a different answer to
+ * the same question the moment somebody chose light on a dark machine, and the
+ * terminal is the one surface where that would be visible as a mismatch rather
+ * than as a theme.
  */
 export function activeThemeName(): ThemeName {
-  const explicit = document.documentElement.getAttribute('data-theme');
-  if (explicit === 'dark' || explicit === 'light') {
-    return explicit;
-  }
-  if (typeof window.matchMedia === 'function') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  }
-  return 'light';
+  return document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light';
 }
