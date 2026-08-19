@@ -63,25 +63,41 @@ export async function request(
 }
 
 /**
+ * The service's code for "this session was never granted that".
+ *
+ * Read from the code rather than inferred from the status: 422 is also what a
+ * malformed request gets, and those two are the exact pair `CLAUDE.md` §3
+ * insists a caller must be able to tell apart — one is worth fixing and
+ * retrying, the other never succeeds however many times it is sent.
+ */
+const CAPABILITY_UNSUPPORTED = 'capability_unsupported';
+
+/**
  * Turn a failed response into the most specific error it justifies.
  *
- * The service reports failures as a problem document. A refusal names the
- * ability that is missing, and that name is the difference between a surface
- * saying "this session cannot hold a conversation" and one saying "something
- * went wrong" — so it is read out rather than folded into the message.
+ * The service reports failures as an RFC 9457 problem document carrying
+ * `detail` and `code`, and — for a refusal — the name of the ability that is
+ * missing. That name is the difference between a surface saying "this session
+ * cannot hold a conversation" and one saying "something went wrong", so it is
+ * read out rather than left inside the sentence.
  */
 async function failureOf(response: Response): Promise<ApiError> {
   let detail = `request failed with ${response.status}`;
+  let code: string | undefined;
   let capability: string | undefined;
   try {
     const body = (await response.json()) as {
       detail?: unknown;
       title?: unknown;
+      code?: unknown;
       capability?: unknown;
     };
     const text = body?.detail ?? body?.title;
     if (typeof text === 'string' && text !== '') {
       detail = text;
+    }
+    if (typeof body?.code === 'string') {
+      code = body.code;
     }
     if (typeof body?.capability === 'string' && body.capability !== '') {
       capability = body.capability;
@@ -90,7 +106,7 @@ async function failureOf(response: Response): Promise<ApiError> {
     // A body that is not a problem document tells us nothing the status line
     // did not already, and failing to parse it is not itself worth reporting.
   }
-  return capability === undefined
-    ? new ApiError(response.status, detail)
-    : new CapabilityRefused(response.status, detail, capability);
+  return code === CAPABILITY_UNSUPPORTED
+    ? new CapabilityRefused(response.status, detail, capability)
+    : new ApiError(response.status, detail);
 }
