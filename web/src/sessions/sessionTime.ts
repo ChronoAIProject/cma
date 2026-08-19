@@ -50,6 +50,11 @@ export function fullTimestamp(createdAt: number): string {
   return `${FULL.format(createdAt)} ${DISPLAY_ZONE_LABEL}`;
 }
 
+/** The time of day, `HH:MM`, in the display zone — a turn's label. */
+export function timeOfDay(at: number): string {
+  return TIME.format(at);
+}
+
 /** Whether two instants fall on the same day in the display zone. */
 export function isSameDayInZone(a: number, b: number): boolean {
   return DATE.format(a) === DATE.format(b) && yearIn(a) === yearIn(b);

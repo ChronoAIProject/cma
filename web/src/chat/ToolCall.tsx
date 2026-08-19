@@ -43,10 +43,38 @@ function toneOf(status: string | undefined): 'running' | 'failed' | 'done' {
   return FAILED.has(status.toLowerCase()) ? 'failed' : 'done';
 }
 
+/**
+ * The time a finished call took, formatted for the row — §18.2.
+ *
+ * Only when both instants are in the record: a running call has no finish, and
+ * a finished call whose start or finish the log does not carry shows no
+ * duration rather than one estimated.
+ */
+function durationOf(call: ToolCallEntry): string | undefined {
+  if (call.startedAt === undefined || call.finishedAt === undefined) {
+    return undefined;
+  }
+  const ms = Date.parse(call.finishedAt) - Date.parse(call.startedAt);
+  if (!Number.isFinite(ms) || ms < 0) {
+    return undefined;
+  }
+  if (ms < 1000) {
+    return '<1s';
+  }
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 export function ToolCall({ call }: ToolCallProps) {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   const tone = toneOf(call.status);
+  const duration = durationOf(call);
   const hasDetail = call.output !== undefined && call.output !== '';
 
   return (
@@ -76,6 +104,8 @@ export function ToolCall({ call }: ToolCallProps) {
 
         <span className="toolcall__kind">{call.toolKind}</span>
         {call.target === undefined ? null : <span className="toolcall__target">{call.target}</span>}
+
+        {duration === undefined ? null : <span className="toolcall__duration">{duration}</span>}
 
         {/*
          * The status word, drawn for a failed or a running call. A finished
