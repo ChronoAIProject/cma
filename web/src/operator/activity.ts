@@ -1,3 +1,5 @@
+import type { StateDotState } from '../ui/StateDot';
+
 import type { ActivityEntry } from './types';
 
 /**
@@ -9,7 +11,6 @@ import type { ActivityEntry } from './types';
  */
 
 /** How a value looked in the record, and how much it stands out. */
-export type Tone = 'live' | 'wait' | 'fail' | 'ended';
 
 /**
  * How much attention an outcome deserves.
@@ -18,19 +19,21 @@ export type Tone = 'live' | 'wait' | 'fail' | 'ended';
  * worth noticing. A request that was simply unusable is the caller's mistake
  * and is not an incident, so it stays quiet.
  */
-export function outcomeTone(outcome: string): Tone {
+export function outcomeState(outcome: string): StateDotState | undefined {
   switch (outcome) {
     case 'succeeded':
-      return 'live';
+      return 'done';
+    // The system refused it — a decision, drawn as one.
     case 'denied':
-      return 'fail';
+      return 'error';
+    // It broke, which is recoverable and reads differently from refused.
     case 'failed':
-      return 'wait';
+      return 'warning';
     default:
       // Including `rejected`, and including anything a newer control plane has
       // started recording: an unfamiliar word is drawn plainly rather than
       // guessed at.
-      return 'ended';
+      return undefined;
   }
 }
 

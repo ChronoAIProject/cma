@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Session } from './types';
-import { toneFor } from './types';
+import { stateDotFor, toneFor } from './types';
+import { StateDot } from '../ui/StateDot';
 import type { Stage } from './progress';
 import { lastActivity } from './lastActivity';
 import { fullTimestamp, sortSessions, tabLabel, type SortOrder } from './sessionTime';
@@ -158,7 +159,9 @@ export function SessionRail({
         <ul className="rail__summary" aria-label={`${String(sessions.length)} sessions`}>
           {counted.map(({ tone, count }) => (
             <li className="rail__summaryitem" key={tone}>
-              <span className={`rail__dot tone-bg-${tone}`} aria-hidden="true" />
+              {stateDotFor(tone) === undefined ? null : (
+                <StateDot state={stateDotFor(tone)!} placement="rail__dot" />
+              )}
               {/*
                * The number is drawn and the tone repeated in words, because a
                * summary carried by colour alone is not a summary (§10).
@@ -242,10 +245,12 @@ export function SessionRail({
                   onSelect(session.id);
                 }}
               >
-                <span
-                  className={`row-item__dot tone-bg-${toneFor(session.lifecycle)}`}
-                  aria-hidden="true"
-                />
+                {stateDotFor(toneFor(session.lifecycle)) === undefined ? null : (
+                  <StateDot
+                    state={stateDotFor(toneFor(session.lifecycle))!}
+                    placement="row-item__dot"
+                  />
+                )}
                 <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
                 <span className="row-item__meta">{session.kernel}</span>
                 {/*

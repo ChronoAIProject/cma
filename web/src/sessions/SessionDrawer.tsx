@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Session, SessionCreator, SessionService } from './types';
-import { Chip } from '../ui/Chip';
+import { Pill } from '../ui/Pill';
 import { abilitiesFor } from './availability';
 import { labelFor } from './types';
 import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
@@ -274,7 +274,7 @@ function Reach({ services }: { readonly services?: readonly SessionService[] }) 
            * existing treatment and for the same stated reason: a person
            * deciding what a session may touch should see the whole answer.
            */}
-          {service.mandated ? <Chip inline>always</Chip> : null}
+          {service.mandated ? <Pill>always</Pill> : null}
         </li>
       ))}
     </ul>

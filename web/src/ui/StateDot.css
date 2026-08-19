@@ -1,0 +1,96 @@
+/*
+ * The state dot — `docs/Web_Style.md` §7.
+ *
+ * The halo and the core are the same colour at different opacities, which is
+ * what makes one token per state enough: both layers ride `currentColor`, and
+ * the state only ever sets that.
+ */
+
+.statedot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+
+.statedot::before {
+  position: absolute;
+  inset: 0;
+  background: currentcolor;
+  border-radius: 50%;
+  opacity: 0.1;
+  content: '';
+}
+
+.statedot::after {
+  position: absolute;
+  inset: 20%;
+  background: currentcolor;
+  border-radius: 50%;
+  content: '';
+}
+
+.statedot[data-state='done'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.statedot[data-state='warning'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.statedot[data-state='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/*
+ * The running state. Its blue is the 450 step, which has no alias of its own —
+ * `state-business-primary` is the 500 — so it is pinned to the static scale
+ * here rather than approximated with the nearest alias.
+ */
+.statedot__chase {
+  flex: none;
+  color: var(--dsw-static-deepseek-450);
+}
+
+.statedot__cell {
+  fill: currentcolor;
+  opacity: 0.15;
+  animation: statedot-chase 1s infinite;
+}
+
+/*
+ * Flat holds rather than tweening: each cell sits at a brightness step and
+ * jumps to the next. Interpolating between them reads as a pulse, which is a
+ * different thing from a chase.
+ */
+@keyframes statedot-chase {
+  0%,
+  12.4% {
+    opacity: 1;
+  }
+
+  12.5%,
+  24.9% {
+    opacity: 0.6;
+  }
+
+  25%,
+  37.4% {
+    opacity: 0.35;
+  }
+
+  37.5%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+/*
+ * A person who has asked for less motion gets the dot's brightest state and
+ * no animation — still legible as "running", and honest about it.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .statedot__cell {
+    opacity: 0.6;
+    animation: none;
+  }
+}
