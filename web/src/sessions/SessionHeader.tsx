@@ -4,26 +4,27 @@ import { labelFor, stateDotFor, toneFor } from './types';
 import { Pill } from '../ui/Pill';
 import { StateDot } from '../ui/StateDot';
 import { tabLabel } from './sessionTime';
+import { planeOf, switchFor, unavailableBecause } from './planeSwitch';
+import { PLANES } from './kernels';
+import type { KernelOffer, SessionPlane } from './types';
 import './SessionHeader.css';
 
 /**
- * The head band of the column the session is drawn in — docs/Web_Style.md §5
- * and §12.
+ * The centre column's own header — `docs/Web_Style.md` §11.
  *
- * 52px, like every other column header, so its rule lands on the rail's to the
- * pixel and the page reads as one surface rather than two panels beside each
- * other.
+ * Not chrome. It belongs to the column beneath it and scrolls nothing: the
+ * crumb says which session is showing, the tabs say which plane, and the
+ * trailing cluster holds what acts on it.
  *
- * It carries the band's subject — the session time, at `lg`, the single
- * exception §5 allows to one type size per band — the facts that identify
- * which session the surface beneath is showing, and the session's lifecycle
- * controls.
+ * The controls are here rather than in the details column because §12 puts
+ * them "at the head of the surface they act on, visible without opening
+ * anything". In a panel they were reachable only by opening reference
+ * material, so ending a session meant first opening something nobody wanted
+ * to read.
  *
- * The controls are here rather than in the details sheet because §12 puts them
- * "at the head of the terminal they act on, visible without opening
- * anything". In the sheet they were reachable only by opening a panel that is
- * otherwise reference material, so ending a session meant first opening
- * something nobody wanted to read.
+ * **The tab strip is drawn only when there is more than one plane to choose.**
+ * A strip with a single tab is a control that cannot do anything, and §7 says
+ * what can never work is absent rather than disabled.
  */
 
 interface SessionHeaderProps {
@@ -37,39 +38,44 @@ interface SessionHeaderProps {
   readonly waiting?: boolean;
   /** The lifecycle controls that act on it. */
   readonly actions?: ReactNode;
-  /**
-   * The control that opens the session list, when the list is a drawer.
-   *
-   * §16 takes the rail out of the layout below 60rem, which leaves nothing in
-   * the layout to open it with. It goes at the head of the column the drawer
-   * covers, which is where somebody looks for the list.
-   */
-  readonly listHandle?: ReactNode;
+  /** What each kernel offers, for deciding whether there are two planes. */
+  readonly kernels?: readonly KernelOffer[];
+  /** Absent where this client cannot move a session between planes. */
+  readonly onChangePlane?: (to: SessionPlane) => void;
 }
 
 export function SessionHeader({
   session,
   waiting = false,
   actions,
-  listHandle,
+  kernels = [],
+  onChangePlane,
 }: SessionHeaderProps) {
   if (session === null) {
     return (
       <div className="band band--head sessionheader">
-        {listHandle}
-        <span className="band__label">Session</span>
-        <span className="band__value">None open</span>
+        <span className="sessionheader__crumb">No session open</span>
       </div>
     );
   }
 
   const dot = stateDotFor(toneFor(session.lifecycle));
+  const here = planeOf(session);
+  /*
+   * Both planes, or neither strip. `switchFor` answers whether the kernel
+   * advertises the other one — which is a fact about the kernel and not about
+   * the session's state, so a strip drawn from it does not appear and vanish
+   * as a session starts and stops.
+   */
+  const other = switchFor(session, kernels);
 
   return (
     <div className="band band--head sessionheader">
-      {listHandle}
-      <span className="band__subject">{tabLabel(session.createdAt)}</span>
-      {/* §12: the status pill — the state as a dot and a word. */}
+      <span className="sessionheader__crumb" title={session.kernel}>
+        {tabLabel(session.createdAt)}
+      </span>
+
+      {/* The state as a dot and a word — colour is never the only signal. */}
       {waiting ? (
         <Pill>
           <StateDot state="warning" />
@@ -81,11 +87,46 @@ export function SessionHeader({
           {labelFor(session.lifecycle)}
         </Pill>
       )}
-      {/* The kernel and the plane, in mono, because both are identifiers. */}
-      <span className="band__label">{session.kernel}</span>
-      {session.plane === undefined ? null : <span className="band__label">{session.plane}</span>}
+
+      {other === undefined || onChangePlane === undefined ? null : (
+        <div className="sessionheader__tabs" role="tablist" aria-label="Plane">
+          {[
+            { id: here, label: labelForPlane(here), current: true },
+            { id: other.to, label: other.label, current: false },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              className="sessionheader__tab"
+              aria-selected={tab.current}
+              /*
+               * The tab that is already showing is never disabled: pressing
+               * it is a no-op, and disabling the current tab is how a strip
+               * ends up with nothing selectable on it.
+               */
+              aria-disabled={!tab.current && !other.available}
+              title={tab.current || other.available ? undefined : unavailableBecause(session)}
+              onClick={() => {
+                if (tab.current || !other.available) {
+                  return;
+                }
+                onChangePlane(other.to);
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       <span className="band__spacer" />
       {actions}
     </div>
   );
+}
+
+/** What a plane is called, from the one list that names them. */
+function labelForPlane(plane: SessionPlane): string {
+  return PLANES.find((entry) => entry.id === plane)?.label ?? plane;
 }
