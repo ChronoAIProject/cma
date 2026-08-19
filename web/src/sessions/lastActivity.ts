@@ -22,7 +22,16 @@ import { stageLabel } from './progress';
  * interface begins projecting turn-level activity, this is the one place that
  * has to change.
  */
-export function lastActivity(session: Session, stage?: Stage): string {
+export function lastActivity(session: Session, stage?: Stage, waiting = false): string {
+  /*
+   * §11 and §18.3: a session parked on an answerable approval is `idle` to
+   * the lifecycle and the most alive a session gets to its owner. The line
+   * says it is waiting for them, never that it stopped.
+   */
+  if (waiting && session.lifecycle === 'idle') {
+    return 'Waiting for your answer';
+  }
+
   switch (session.lifecycle) {
     case 'provisioning':
       return stage === undefined ? 'Waiting for a sandbox' : stageLabel(stage);
