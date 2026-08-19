@@ -12,7 +12,6 @@ import { SessionActions } from './sessions/SessionActions';
 import { SessionHeader } from './sessions/SessionHeader';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { ConversationSurface } from './chat/ConversationSurface';
-import { toCapabilities } from './agui';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
 import { selectLiveWindow, unattachedNote } from './canvas/layout';
@@ -741,7 +740,15 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                */
               <ConversationSurface
                 session={active}
-                capabilities={toCapabilities(active)}
+                /*
+                 * The session's own granted set, parsed once at the boundary
+                 * by `toSession`. Re-deriving it here handed `toCapabilities`
+                 * an already-parsed Session — which carries no `conforms_to`
+                 * — so every capability came back false: no interrupt key, no
+                 * steering tag, usage permanently "not reported", and the
+                 * concurrency policy silently falling back to `reject`.
+                 */
+                capabilities={active.capabilities}
                 onWaitingChange={(waiting) => {
                   setWaitingId(waiting ? active.id : null);
                 }}
