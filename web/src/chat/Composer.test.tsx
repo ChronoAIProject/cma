@@ -16,7 +16,7 @@ function capabilities(overrides: Partial<SessionCapabilities> = {}): SessionCapa
 }
 
 function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {}) {
-  const onSend = vi.fn();
+  const onSend = vi.fn().mockResolvedValue(true);
   const onInterrupt = vi.fn();
   const result = render(
     <Composer
@@ -168,5 +168,56 @@ describe('a session that cannot take input', () => {
     renderComposer({ refusedReason: 'This session has ended.' });
     expect(screen.queryByRole('button', { name: /send/i })).toBeNull();
     expect(screen.queryByLabelText('Message')).toBeNull();
+  });
+});
+
+describe('a refused turn keeps what was written', () => {
+  /*
+   * The failure this guards is the expensive one: on a long run the message
+   * that gets refused is the carefully worded correction, and clearing the
+   * field means retyping it from memory.
+   */
+  it('leaves the draft alone when the service did not take it', async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn().mockResolvedValue(false);
+    renderComposer({ onSend });
+
+    await user.type(screen.getByRole('textbox'), 'the careful correction');
+    await user.keyboard('{Enter}');
+
+    expect(onSend).toHaveBeenCalledWith('the careful correction');
+    expect(screen.getByRole('textbox')).toHaveValue('the careful correction');
+  });
+
+  it('leaves the draft alone when the send threw', async () => {
+    const user = userEvent.setup();
+    renderComposer({ onSend: vi.fn().mockRejectedValue(new Error('the network went')) });
+
+    await user.type(screen.getByRole('textbox'), 'still here');
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('textbox')).toHaveValue('still here');
+  });
+
+  it('clears the draft once the turn is accepted', async () => {
+    // The other half: keeping it after a successful send would put the last
+    // message back into the next one.
+    const user = userEvent.setup();
+    renderComposer({ onSend: vi.fn().mockResolvedValue(true) });
+
+    await user.type(screen.getByRole('textbox'), 'taken');
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('textbox')).toHaveValue('');
+  });
+
+  it('sends nothing when there is nothing but whitespace', async () => {
+    const user = userEvent.setup();
+    const { onSend } = renderComposer();
+
+    await user.type(screen.getByRole('textbox'), '   ');
+    await user.keyboard('{Enter}');
+
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
