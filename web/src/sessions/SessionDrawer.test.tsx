@@ -37,13 +37,17 @@ function renderActions(lifecycle: SessionLifecycle, extra: Partial<Session> = {}
   );
 }
 
-function renderDrawer(lifecycle: SessionLifecycle, extra: Partial<Session> = {}) {
+function renderDrawer(
+  lifecycle: SessionLifecycle,
+  extra: Partial<Session> = {},
+  handlers: { onDelete?: () => void; onStop?: () => void } = {},
+) {
   return render(
     <SessionDrawer
       session={session(lifecycle, extra)}
       onClose={vi.fn()}
-      onStop={vi.fn()}
-      onDelete={vi.fn()}
+      onStop={handlers.onStop ?? vi.fn()}
+      onDelete={handlers.onDelete ?? vi.fn()}
     />,
   );
 }
@@ -186,14 +190,40 @@ describe('the header does not clip what it opens', () => {
 });
 
 describe('the details drawer', () => {
-  it('confirms a delete inline, in place of the foot keys', async () => {
-    // §7: destructive actions confirm inline, never in a second dialog.
+  it('gates a delete behind an acknowledgement rather than a second press', async () => {
+    /*
+     * §7. The safeguard is the tick, not a colour: a red key is one a person
+     * can click as fast as any other, and what is being protected here is a
+     * session's whole history.
+     */
     const user = userEvent.setup();
-    renderDrawer('running');
+    const onDelete = vi.fn();
+    renderDrawer('running', {}, { onDelete });
     await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
-    expect(screen.getByText(/delete this session and its history\?/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^end session$/i })).toBeNull();
+    const confirm = screen.getByRole('button', { name: /delete permanently/i });
+    expect(confirm).toBeDisabled();
+
+    await user.click(screen.getByRole('checkbox'));
+    expect(confirm).toBeEnabled();
+
+    await user.click(confirm);
+    expect(onDelete).toHaveBeenCalledOnce();
+  });
+
+  it('forgets the acknowledgement when the question is dismissed', async () => {
+    // Otherwise the dialog reopens already ticked, which is the one state
+    // this control exists to prevent.
+    const user = userEvent.setup();
+    renderDrawer('running');
+
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    expect(screen.getByRole('button', { name: /delete permanently/i })).toBeDisabled();
   });
 
   it('carries End and Delete at its foot, and no other lifecycle control', () => {
