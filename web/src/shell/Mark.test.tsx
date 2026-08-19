@@ -54,13 +54,14 @@ describe('the mark', () => {
 });
 
 describe('the platform faces', () => {
-  it('vendors both faces with their licences, and nothing else', () => {
+  it('vendors the one face it downloads, with its licence and nothing else', () => {
     // Exact equality, deliberately: §4 retires a face by removing it, and a
-    // retired face lingering beside the vendored pair would ship dead bytes.
+    // retired face lingering here would ship dead bytes. §20.3 retired the
+    // interface face for the system stack, so only the mono face is vendored
+    // — code and terminal output cannot be left to whatever a platform calls
+    // monospace, and everything else can.
     expect(readdirSync(FONTS).sort()).toEqual([
-      'Figtree-Variable.woff2',
       'JetBrainsMono-Variable.woff2',
-      'OFL-Figtree.txt',
       'OFL-JetBrainsMono.txt',
     ]);
   });
@@ -78,31 +79,36 @@ describe('the platform faces', () => {
   it('swaps rather than blocking, and names a system fallback', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8');
     const faces = [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1] ?? '');
-    expect(faces).toHaveLength(2);
+    expect(faces).toHaveLength(1);
     for (const face of faces) {
       expect(face).toContain('font-display: swap');
     }
 
-    // Text must be readable before the faces arrive, so each stack carries a
-    // system fallback after the vendored name.
     const tokens = readFileSync(resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8');
-    const stacks: Record<string, string> = {
-      '--font-ui': "'Figtree'",
-      '--font-mono': "'JetBrains Mono'",
-    };
-    for (const [name, face] of Object.entries(stacks)) {
-      const stack = new RegExp(`${name}:\\s*([^;]+);`).exec(tokens)?.[1] ?? '';
-      // The vendored face leads and a system fallback follows it.
-      expect(stack.trim().startsWith(face)).toBe(true);
-      expect(stack.split(',').length).toBeGreaterThan(1);
+    const stackOf = (name: string) =>
+      (new RegExp(`${name}:\\s*([^;]+);`).exec(tokens)?.[1] ?? '').trim();
+
+    // The mono face is downloaded, so it leads its stack and a system fallback
+    // follows: text must be readable before it arrives.
+    const mono = stackOf('--font-mono');
+    expect(mono.startsWith("'JetBrains Mono'")).toBe(true);
+    expect(mono.split(',').length).toBeGreaterThan(1);
+
+    // The interface stack downloads nothing — §20.3. It must therefore name no
+    // face this repository would have to ship, and start with a platform's
+    // own, which is what makes it correct on the first paint rather than the
+    // second.
+    const ui = stackOf('--font-ui');
+    expect(ui).toMatch(/^-apple-system/);
+    expect(ui).not.toContain('JetBrains Mono');
+    for (const face of readdirSync(FONTS).filter((f) => f.endsWith('.woff2'))) {
+      const name = face.replace(/-Variable\.woff2$/, '');
+      expect(ui).not.toContain(name);
     }
   });
 
-  it('licenses both faces under the OFL', () => {
-    const figtree = readFileSync(join(FONTS, 'OFL-Figtree.txt'), 'utf8');
-    expect(figtree).toContain('SIL OPEN FONT LICENSE Version 1.1');
-    expect(figtree).toContain('Figtree Project Authors');
-
+  it('licenses the face it ships under the OFL', () => {
+    // A vendored face travels with its licence or it should not travel.
     const mono = readFileSync(join(FONTS, 'OFL-JetBrainsMono.txt'), 'utf8');
     expect(mono).toContain('SIL OPEN FONT LICENSE Version 1.1');
     expect(mono).toContain('JetBrains Mono Project Authors');
