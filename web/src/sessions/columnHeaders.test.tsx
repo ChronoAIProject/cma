@@ -34,7 +34,7 @@ function rule(css: string, selector: string): string {
   return new RegExp(`(^|\\})\\s*${escaped}\\s*\\{([^}]*)\\}`, 'm').exec(css)?.[2] ?? '';
 }
 
-describe('the band grid', () => {
+describe('the column headers', () => {
   it('leaves the band vocabulary behind entirely', () => {
     /*
      * The bands existed so column headers landed on one rule across a page
@@ -47,14 +47,14 @@ describe('the band grid', () => {
     expect(header.container.firstElementChild).not.toHaveClass('band');
   });
 
-  it('sets band heights rather than accumulating them', () => {
-    // §5: a band's height is SET on the band. Padding is what lets two aligned
-    // columns drift apart when one gains a longer label, so no band rule may
-    // add padding on the block axis.
-    const components = sheet('styles/components.css');
-    expect(rule(components, '.band--head')).toContain('height: var(--band-head)');
-    expect(rule(components, '.band--foot')).toContain('height: var(--band-foot)');
-    expect(rule(components, '.band')).not.toMatch(/padding(-block|-top|-bottom)?:/);
+  it('has no band vocabulary left to share', () => {
+    /*
+     * The bands existed so headers across a page landed on one rule under one
+     * app bar. §9 deleted the bar and gave every column its own proportions,
+     * and this is the last of it: a shared class nothing renders is a rule
+     * the next person will reach for and find does nothing.
+     */
+    expect(sheet('styles/components.css')).not.toMatch(/^\.band/m);
   });
 
   it('lets the centre column header set its own proportions', () => {
