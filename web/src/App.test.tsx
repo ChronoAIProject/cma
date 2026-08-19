@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { UserEvent } from '@testing-library/user-event';
 import { App } from './App';
 import { MAX_LIVE_NODES } from './canvas/layout';
 import { AuthContextProvider } from './auth/context';
@@ -172,6 +173,12 @@ async function renderApp(provider: AuthProvider) {
   return result;
 }
 
+/** Choose an arrangement from the rail's view-options card. */
+async function arrange(user: UserEvent, name: 'List' | 'Canvas') {
+  await user.click(screen.getByRole('button', { name: 'View options' }));
+  await user.click(await screen.findByRole('menuitemradio', { name }));
+}
+
 /**
  * The console is code-split so the landing page does not carry xterm, which
  * means it arrives a dynamic import later than everything else.
@@ -337,7 +344,7 @@ describe('App', () => {
       expect(screen.getAllByRole('tab')).toHaveLength(1);
     });
 
-    await user.click(screen.getByRole('button', { name: 'Canvas' }));
+    await arrange(user, 'Canvas');
 
     // The session is a framed node now, and it is still the same session: the
     // rail still lists it and the details drawer still describes it when
@@ -350,11 +357,16 @@ describe('App', () => {
 
   it('opens in the arrangement this browser last chose', async () => {
     window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
 
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    expect(screen.getByRole('button', { name: 'Canvas' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'View options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Canvas' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 
   it('keeps showing a session that ended on its own', async () => {
@@ -379,11 +391,16 @@ describe('App', () => {
     // have written it. Falling through to the list is what keeps the console
     // from rendering a mode that does not exist.
     window.localStorage.setItem('chrono-bot:view-mode', 'split-screen');
+    const user = userEvent.setup();
 
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'View options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'List' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 
   it('reconnects one session without redialling the rest of the canvas', async () => {

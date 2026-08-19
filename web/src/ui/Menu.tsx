@@ -64,6 +64,14 @@ interface MenuProps {
   readonly anchor: ReactNode;
   readonly items: readonly MenuEntry[];
   readonly selectedId?: string;
+  /**
+   * Selected rows, where the menu holds several independent groups.
+   *
+   * A view-options menu is three questions on one card — what to show, in
+   * what order, arranged how — and each has its own current answer. One
+   * `selectedId` could only mark one of them.
+   */
+  readonly selectedIds?: readonly string[];
   readonly onSelect: (id: string) => void;
   readonly onClose: () => void;
   readonly align?: MenuAlign;
@@ -89,6 +97,7 @@ export function Menu({
   anchor,
   items,
   selectedId,
+  selectedIds,
   onSelect,
   onClose,
   align = 'start',
@@ -248,8 +257,8 @@ export function Menu({
         <MenuRow
           key={entry.id}
           entry={entry}
-          selectedId={selectedId}
-          choosing={selectedId !== undefined}
+          selected={entry.id === selectedId || selectedIds?.includes(entry.id) === true}
+          choosing={selectedId !== undefined || selectedIds !== undefined}
           onSelect={onSelect}
         />
       ))}
@@ -271,12 +280,12 @@ function rowsIn(list: HTMLElement | null): HTMLButtonElement[] {
 
 function MenuRow({
   entry,
-  selectedId,
+  selected,
   choosing,
   onSelect,
 }: {
   readonly entry: MenuEntry;
-  readonly selectedId: string | undefined;
+  readonly selected: boolean;
   /** Whether this menu is picking a value rather than running an action. */
   readonly choosing: boolean;
   readonly onSelect: (id: string) => void;
@@ -295,7 +304,6 @@ function MenuRow({
     return null;
   }
 
-  const selected = entry.id === selectedId;
   const unavailable = entry.disabled === true;
   return (
     <button
