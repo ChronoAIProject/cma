@@ -3,7 +3,7 @@ import { AgentContent } from './AgentContent';
 import { CopyKey } from './CopyKey';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
-import type { ConfigOption, Entry, MessageEntry, PlanStep } from './conversation';
+import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from './conversation';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 
@@ -30,6 +30,15 @@ import './MessageStream.css';
 
 interface MessageStreamProps {
   readonly entries: readonly Entry[];
+  /**
+   * Open a tool call in the details column.
+   *
+   * Absent where there is no column — a row is then a summary and says so by
+   * not being pressable, rather than by opening onto nothing.
+   */
+  readonly onInspect?: (call: ToolCallEntry) => void;
+  /** The call the column is showing, when it is showing one. */
+  readonly inspectingId?: string;
   /** The kernel's name, for the agent turns' eyebrow — §18.1. */
   readonly kernel: string;
   /** Drawn under the last entry while a turn is in flight. */
@@ -89,6 +98,8 @@ const PINNED_WITHIN_PX = 48;
 
 export function MessageStream({
   entries,
+  onInspect,
+  inspectingId,
   kernel,
   turnInFlight = false,
   linkLive = true,
@@ -217,6 +228,8 @@ export function MessageStream({
               key={`${entry.kind}:${entry.id}`}
               turnInFlight={turnInFlight}
               linkLive={linkLive}
+              onInspect={onInspect}
+              inspectingId={inspectingId}
             />
           ))}
           {plan === undefined || plan.length === 0 ? null : (
@@ -340,12 +353,16 @@ function StreamEntry({
   kernel,
   turnInFlight,
   linkLive,
+  onInspect,
+  inspectingId,
 }: {
   entry: Entry;
   kernel: string;
   turnInFlight: boolean;
   /** §18.13: the caret claims the agent is typing, so it stops when we cannot hear it. */
   linkLive: boolean;
+  onInspect?: ((call: ToolCallEntry) => void) | undefined;
+  inspectingId?: string | undefined;
 }) {
   switch (entry.kind) {
     case 'message':
@@ -462,7 +479,7 @@ function StreamEntry({
        */
       return (
         <div className="turn turn--tool">
-          <ToolCall call={entry} />
+          <ToolCall call={entry} onInspect={onInspect} inspecting={entry.id === inspectingId} />
         </div>
       );
 

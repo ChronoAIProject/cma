@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
-import { ToolCall } from './ToolCall';
+import { describe, expect, it, vi } from 'vitest';
+import { ToolCall, sectionsOf } from './ToolCall';
 import { MessageStream } from './MessageStream';
 import { fold } from './conversation';
 import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
@@ -61,14 +60,37 @@ describe('the collapsed row', () => {
     expect(screen.getByText('workspace_search_v2')).toBeInTheDocument();
   });
 
-  it('is collapsed by default', () => {
+  it('shows no detail of its own, whatever the call carries', () => {
+    // The row is a summary. What the call carries opens in the details
+    // column, where there is room for it.
     const { container } = render(
+      <ToolCall
+        call={{ kind: 'tool', id: 't1', toolKind: 'shell', status: 'ok', output: 'x', seq: 2 }}
+        onInspect={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('pre')).toBeNull();
+    expect(screen.getByRole('button')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('is not pressable where there is no column to open', () => {
+    // Opening onto nothing is worse than saying there is nothing to open.
+    render(
       <ToolCall
         call={{ kind: 'tool', id: 't1', toolKind: 'shell', status: 'ok', output: 'x', seq: 2 }}
       />,
     );
-    expect(container.querySelector('.toolcall__output')).toBeNull();
-    expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button')).toBeDisabled();
+  });
+
+  it('is not pressable where the call carries nothing to show', () => {
+    render(
+      <ToolCall
+        call={{ kind: 'tool', id: 't1', toolKind: 'shell', status: 'ok', seq: 2 }}
+        onInspect={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button')).toBeDisabled();
   });
 });
 
@@ -130,103 +152,89 @@ describe('telling calls apart without reading them', () => {
   });
 });
 
-describe('disclosure, not truncation', () => {
-  it('drops nothing from a call output', async () => {
+describe('what a call has to show', () => {
+  it('drops nothing from a call output', () => {
     // §18.2: enormous output is agent-emitted content and §1's fidelity rule
-    // applies, so it is not silently shortened — it is bounded by the
-    // disclosure, which is a frame decision and permitted.
-    const user = userEvent.setup();
+    // applies, so it is not silently shortened. Bounding it in a column is a
+    // frame decision and permitted; dropping the tail of it is not.
     const enormous = Array.from({ length: 400 }, (_, i) => `line ${String(i)}`).join('\n');
-    render(
-      <ToolCall
-        call={{ kind: 'tool', id: 't1', toolKind: 'shell', status: 'ok', output: enormous, seq: 2 }}
-      />,
-    );
-
-    await user.click(screen.getByRole('button'));
-
-    // Read off the body itself rather than the region around it: §18.2 now
-    // gives each body its own labelled scrollport, so the region also holds a
-    // gutter label. What the rule guarantees — that nothing is dropped — is a
-    // property of the body.
-    const region = screen.getByRole('button').getAttribute('aria-controls');
-    const body = document.getElementById(region ?? '')?.querySelector('.toolcall__output');
-    expect(body?.textContent).toBe(enormous);
+    const sections = sectionsOf({
+      kind: 'tool',
+      id: 't1',
+      toolKind: 'shell',
+      status: 'ok',
+      output: enormous,
+      seq: 2,
+    });
+    expect(sections.map((section) => section.body)).toEqual([enormous]);
   });
 
-  it('gives each body its own window', async () => {
-    const user = userEvent.setup();
-    // One window shared between them meant a long argument payload pushed the
-    // result out of view, so the reader scrolled past what they already knew
-    // to reach the thing they opened the row for.
-    render(
-      <ToolCall
-        call={{
-          kind: 'tool',
-          id: 't1',
-          toolKind: 'shell',
-          status: 'ok',
-          arguments: { text: 'a'.repeat(400), truncated: false },
-          result: { text: 'the answer', truncated: false },
-          seq: 2,
-        }}
-      />,
-    );
-    await user.click(screen.getByRole('button'));
-    expect(document.querySelectorAll('.toolcall__output')).toHaveLength(2);
+  it('keeps the bodies apart, in the order they happened', () => {
+    // What a call was asked to do comes before what it produced, because that
+    // is the order a reader reconstructs them in. One region for both meant a
+    // long argument payload buried the result.
+    const sections = sectionsOf({
+      kind: 'tool',
+      id: 't1',
+      toolKind: 'shell',
+      status: 'ok',
+      arguments: { text: 'a'.repeat(400), truncated: false },
+      result: { text: 'the answer', truncated: false },
+      seq: 2,
+    });
+    expect(sections.map((section) => section.label)).toEqual(['Arguments', 'Result']);
   });
 
-  it('draws nothing for a body that did not arrive', async () => {
-    const user = userEvent.setup();
+  it('contributes nothing for a body that did not arrive', () => {
     // §18.5: an absence is a fact, not an empty labelled region.
-    render(
-      <ToolCall
-        call={{
-          kind: 'tool',
-          id: 't1',
-          toolKind: 'shell',
-          status: 'ok',
-          result: { text: 'only this', truncated: false },
-          seq: 2,
-        }}
-      />,
-    );
-    await user.click(screen.getByRole('button'));
-    const labels = [...document.querySelectorAll('.toolcall__bodylabel')].map((n) => n.textContent);
-    expect(labels).toEqual(['result']);
+    const sections = sectionsOf({
+      kind: 'tool',
+      id: 't1',
+      toolKind: 'shell',
+      status: 'ok',
+      result: { text: 'only this', truncated: false },
+      seq: 2,
+    });
+    expect(sections.map((section) => section.label)).toEqual(['Result']);
   });
 
-  it('says which body was cut, not just that something was', async () => {
-    const user = userEvent.setup();
-    render(
-      <ToolCall
-        call={{
-          kind: 'tool',
-          id: 't1',
-          toolKind: 'shell',
-          status: 'ok',
-          arguments: { text: 'asked', truncated: true },
-          result: { text: 'got', truncated: false },
-          seq: 2,
-        }}
-      />,
-    );
-    await user.click(screen.getByRole('button'));
-    const labels = [...document.querySelectorAll('.toolcall__bodylabel')].map((n) => n.textContent);
-    expect(labels).toEqual(['arguments (truncated)', 'result']);
+  it('says which body was cut, not just that something was', () => {
+    const sections = sectionsOf({
+      kind: 'tool',
+      id: 't1',
+      toolKind: 'shell',
+      status: 'ok',
+      arguments: { text: 'asked', truncated: true },
+      result: { text: 'got', truncated: false },
+      seq: 2,
+    });
+    expect(sections.map((section) => [section.label, section.truncated === true])).toEqual([
+      ['Arguments', true],
+      ['Result', false],
+    ]);
   });
 
-  it('bounds it by scrolling rather than by cutting it', () => {
+  it('marks the result of a failed call as the thing that went wrong', () => {
+    const sections = sectionsOf({
+      kind: 'tool',
+      id: 't1',
+      toolKind: 'shell',
+      status: 'error',
+      result: { text: 'no such file', truncated: false },
+      seq: 2,
+    });
+    expect(sections[0]?.failed).toBe(true);
+  });
+});
+
+describe('the row itself', () => {
+  it('leaves no inline body behind in its stylesheet', () => {
+    // The rules went with the markup. A stylesheet that still described the
+    // old disclosure would be a description of something nothing renders.
     const css = readFileSync(resolve(process.cwd(), 'src/chat/ToolCall.css'), 'utf8');
-    const output = /\.toolcall__output\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(output).toContain('overflow: auto');
-    expect(output).not.toContain('text-overflow');
-    expect(output).not.toContain('-webkit-line-clamp');
-  });
-
-  it('offers no disclosure when there is nothing behind it', () => {
-    render(<ToolCall call={{ kind: 'tool', id: 't1', toolKind: 'shell', status: 'ok', seq: 2 }} />);
-    expect(screen.getByRole('button')).toBeDisabled();
+    expect(css).not.toContain('.toolcall__output');
+    expect(css).not.toContain('.toolcall__bodies');
+    expect(css).not.toContain('.toolcall__bodylabel');
   });
 
   it('carries the time a finished call took', () => {
