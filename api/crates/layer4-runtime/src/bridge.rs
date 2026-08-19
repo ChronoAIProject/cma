@@ -116,7 +116,13 @@ pub struct Bridge {
     /// What it said while nobody was listening.
     pending: Arc<Mutex<Pending>>,
     /// Set once the bridge process has ended, whichever way it went.
-    ended: Arc<tokio::sync::Notify>,
+    ///
+    /// A watch rather than a `Notify`: `notify_waiters` stores no permit, so a
+    /// bridge that died before anything awaited it notified nobody and the
+    /// exit was lost. A bridge that fails at startup is exactly that case, and
+    /// it is the one where somebody is waiting for an answer that is never
+    /// coming — so it is the case that must not be missed.
+    ended: tokio::sync::watch::Sender<bool>,
 }
 
 impl Bridge {
@@ -153,12 +159,12 @@ impl Bridge {
         let (input, input_rx) = mpsc::channel(INPUT_BUFFER);
         let (output, _) = tokio::sync::broadcast::channel(INPUT_BUFFER);
         let pending = Arc::new(Mutex::new(Pending::default()));
-        let ended = Arc::new(tokio::sync::Notify::new());
+        let (ended, _) = tokio::sync::watch::channel(false);
 
         spawn_writer(stdin, input_rx);
         spawn_reader(stdout, output.clone(), Arc::clone(&pending));
         spawn_diagnostics(stderr);
-        spawn_reaper(child, Arc::clone(&ended));
+        spawn_reaper(child, ended.clone());
 
         tracing::info!(%command, "conversation bridge started");
         Ok(Self {
@@ -188,9 +194,25 @@ impl Bridge {
         self.pending.lock().await.drain()
     }
 
-    /// Resolves when the bridge process has ended.
+    /// Whether the bridge process has already ended.
+    ///
+    /// Asked before a cached bridge is handed out again: a process that died
+    /// is not one a second attachment can talk to, and returning it produced
+    /// a conversation that accepted prompts and answered none.
+    pub fn is_ended(&self) -> bool {
+        *self.ended.subscribe().borrow()
+    }
+
+    /// Resolves when the bridge process has ended, including when it already
+    /// had before this was called.
     pub async fn ended(&self) {
-        self.ended.notified().await;
+        let mut seen = self.ended.subscribe();
+        if *seen.borrow() {
+            return;
+        }
+        // Only fails when the sender is gone, which is the bridge being
+        // dropped — itself an ending.
+        let _ = seen.changed().await;
     }
 }
 
@@ -255,7 +277,7 @@ fn spawn_diagnostics(stderr: tokio::process::ChildStderr) {
 ///
 /// A bridge that exits mid-conversation is the runtime being lost, and has to
 /// surface as that rather than as a stream that quietly stops.
-fn spawn_reaper(mut child: tokio::process::Child, ended: Arc<tokio::sync::Notify>) {
+fn spawn_reaper(mut child: tokio::process::Child, ended: tokio::sync::watch::Sender<bool>) {
     tokio::spawn(async move {
         match child.wait().await {
             Ok(status) => {
@@ -263,7 +285,9 @@ fn spawn_reaper(mut child: tokio::process::Child, ended: Arc<tokio::sync::Notify
             }
             Err(e) => tracing::warn!(error = %e, "conversation bridge could not be waited on"),
         }
-        ended.notify_waiters();
+        // Held rather than announced: a bridge that exits before anything
+        // asks must still answer the question when it is finally asked.
+        let _ = ended.send(true);
     });
 }
 
