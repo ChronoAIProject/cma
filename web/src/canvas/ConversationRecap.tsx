@@ -78,7 +78,11 @@ export function ConversationRecap({
       ) : null}
 
       {/* No composer here, by design: the reply gets a reading column. */}
-      <button type="button" className="button button--sm recap__open" onClick={onOpenToReply}>
+      <button
+        type="button"
+        className="button button--ghost button--sm recap__open"
+        onClick={onOpenToReply}
+      >
         Open to reply
       </button>
     </div>

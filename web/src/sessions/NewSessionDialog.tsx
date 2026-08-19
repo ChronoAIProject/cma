@@ -185,7 +185,7 @@ export function NewSessionDialog({
             <span className="control-reason">The agent cannot serve this plane</span>
           )}
           <Button onClick={onCancel}>Cancel</Button>
-          <Button tone="accent" disabled={saving || refusal !== undefined} onClick={start}>
+          <Button variant="primary" disabled={saving || refusal !== undefined} onClick={start}>
             {saving ? 'Starting' : 'Start session'}
           </Button>
         </>

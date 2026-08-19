@@ -114,7 +114,7 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
           <Button
             key={answer.decision}
             size="md"
-            tone={answer.affirmative === true ? 'accent' : 'quiet'}
+            variant={answer.affirmative === true ? 'primary' : 'ghost'}
             disabled={busy}
             onClick={() => {
               onAnswer(answer.decision);
