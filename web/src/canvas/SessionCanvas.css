@@ -201,10 +201,14 @@
  * scrolling a node into view when focus reaches it — is direct manipulation or
  * the browser's own focus handling, so there is nothing else to suppress.
  */
-@media (prefers-reduced-motion: no-preference) {
+.node {
+  transition:
+    border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
   .node {
-    transition:
-      border-color var(--motion-press) ease,
-      box-shadow var(--motion-press) ease;
+    transition: none;
   }
 }

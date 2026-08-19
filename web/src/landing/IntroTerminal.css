@@ -168,9 +168,17 @@
   background: var(--accent);
 }
 
-@media (prefers-reduced-motion: no-preference) {
+.intro__caret {
+  animation: intro-blink 1060ms step-end infinite;
+}
+
+/*
+ * A caret that never stops is exactly what a reduced-motion request is about,
+ * so it stops — and stays visible, because it marks where the text is.
+ */
+@media (prefers-reduced-motion: reduce) {
   .intro__caret {
-    animation: intro-blink 1060ms step-end infinite;
+    animation: none;
   }
 }
 
@@ -253,11 +261,15 @@
   border-color: var(--rule-2);
 }
 
-@media (prefers-reduced-motion: no-preference) {
+.intro__skip {
+  transition:
+    color var(--ds-transition-duration) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
   .intro__skip {
-    transition:
-      color var(--motion-colour) ease,
-      border-color var(--motion-colour) ease;
+    transition: none;
   }
 }
 
@@ -276,9 +288,13 @@
   color: var(--accent);
 }
 
-@media (prefers-reduced-motion: no-preference) {
+.intro__blink {
+  animation: intro-blink 1060ms step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
   .intro__blink {
-    animation: intro-blink 1060ms step-end infinite;
+    animation: none;
   }
 }
 
