@@ -121,9 +121,6 @@
   --font-ui: var(--dsw-font-family);
   --font-mono: var(--ds-font-family-code);
 
-  --motion-colour: var(--ds-transition-duration);
-  --motion-press: var(--ds-transition-duration-fast);
-
   /*
    * Geometry the old sheets still read. These retire with their surfaces:
    * §2 gives radius and spacing no tokens at all, so a migrated sheet writes
