@@ -1,12 +1,13 @@
 import { Button } from '../ui/Button';
-import { Chip } from '../ui/Chip';
+import { Pill } from '../ui/Pill';
+import { StateDot } from '../ui/StateDot';
 import { fullTimestampOrNone } from '../sessions/sessionTime';
 import type { Capability } from '../auth/types';
 import {
   actionsIn,
   filtered,
   newestFirst,
-  outcomeTone,
+  outcomeState,
   readableAction,
   type ActivityFilter,
 } from './activity';
@@ -115,9 +116,12 @@ export function ActivityView({ entries, names, people, filter, onFilter }: Activ
             primary={
               <>
                 {readableAction(entry.action)}
-                <Chip tone={outcomeTone(entry.outcome)} inline>
+                <Pill>
+                  {outcomeState(entry.outcome) === undefined ? null : (
+                    <StateDot state={outcomeState(entry.outcome)!} />
+                  )}
                   {entry.outcome}
-                </Chip>
+                </Pill>
               </>
             }
             meta={
@@ -187,9 +191,10 @@ export function NamespaceView({ inventory }: { readonly inventory: RuntimeInvent
                     <>
                       {provider.kernel}
                       {runtime.unaccounted ? (
-                        <Chip tone="wait" inline>
+                        <Pill>
+                          <StateDot state="warning" />
                           unaccounted
-                        </Chip>
+                        </Pill>
                       ) : null}
                     </>
                   }
@@ -211,9 +216,10 @@ export function NamespaceView({ inventory }: { readonly inventory: RuntimeInvent
               primary={
                 <>
                   {provider.kernel}
-                  <Chip tone="wait" inline>
+                  <Pill>
+                    <StateDot state="warning" />
                     unknown
-                  </Chip>
+                  </Pill>
                 </>
               }
               meta={<span>{provider.reason ?? 'This provider could not be asked.'}</span>}
@@ -262,7 +268,7 @@ export function SessionsView({
             primary={
               <>
                 <PersonName label={owner} />
-                <Chip inline>{session.status}</Chip>
+                <Pill>{session.status}</Pill>
               </>
             }
             meta={
@@ -279,7 +285,7 @@ export function SessionsView({
                 <>
                   <span className="operator__confirm">End this session?</span>
                   <Button
-                    tone="danger"
+                    variant="primary"
                     disabled={busy}
                     onClick={() => {
                       onTerminate(session.id);

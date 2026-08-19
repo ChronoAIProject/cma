@@ -148,7 +148,7 @@ export function SessionActions({
        * where this surface spends the one primary key §7 allows it.
        */}
       {can.canRevive ? (
-        <Button tone="accent" disabled={busy} onClick={onRevive} aria-describedby={describedBy}>
+        <Button variant="primary" disabled={busy} onClick={onRevive} aria-describedby={describedBy}>
           Revive
         </Button>
       ) : (
