@@ -321,6 +321,21 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             )],
             ending: None,
         },
+        // The settings the kernel says are settable, as a state patch so a
+        // client can render a selection rather than a free-text box.
+        EventKind::ConfigOptionsSet { options } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "replace", "path": "/configOptions", "value": options
+                        .iter()
+                        .map(|o| serde_json::json!({ "id": o.id, "name": o.name, "kind": o.kind }))
+                        .collect::<Vec<_>>()
+                    },
+                ]}),
+            )],
+            ending: None,
+        },
         // The run ends to ask. Not a mid-stream prompt: a client that closed
         // the tab finds this still pending and answerable, which only works
         // because the asking is durable rather than held on a connection.
