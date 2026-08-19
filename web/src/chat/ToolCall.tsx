@@ -70,6 +70,17 @@ function durationOf(call: ToolCallEntry): string | undefined {
   return `${minutes}m ${seconds}s`;
 }
 
+/**
+ * The bodies the log can carry, in the order it holds them.
+ *
+ * What a call was asked to do comes before what it produced, because that is
+ * the order they happened in and the order a reader reconstructs them in.
+ */
+const BODIES = [
+  { key: 'arguments', label: 'arguments' },
+  { key: 'result', label: 'result' },
+] as const;
+
 export function ToolCall({ call }: ToolCallProps) {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
@@ -127,15 +138,42 @@ export function ToolCall({ call }: ToolCallProps) {
        * dropping the tail of it is not. It scrolls inside itself.
        */}
       {open && hasDetail ? (
-        <pre className="toolcall__output" id={bodyId}>
-          {call.arguments === undefined
-            ? null
-            : `arguments${call.arguments.truncated ? ' (truncated)' : ''}:\n${call.arguments.text}\n`}
-          {call.result === undefined
-            ? null
-            : `result${call.result.truncated ? ' (truncated)' : ''}:\n${call.result.text}\n`}
-          {call.output ?? ''}
-        </pre>
+        /*
+         * Each body the log carried is its own region — §18.2.
+         *
+         * They used to share one `<pre>` and one scroll position, so a long
+         * argument payload pushed the result out of view and the reader had to
+         * scroll past what they already knew to reach the thing they opened
+         * the row for. That is the scrollback this section exists to replace.
+         *
+         * A body that did not arrive draws nothing rather than an empty
+         * labelled region: §18.5's rule that an absence is a fact and not a
+         * zero. Truncation is reported per body, because the log bounds them
+         * separately.
+         */
+        <div className="toolcall__bodies" id={bodyId}>
+          {BODIES.map(({ key, label }) => {
+            const body = call[key];
+            if (body === undefined) {
+              return null;
+            }
+            return (
+              <section className="toolcall__body" key={key}>
+                <p className="toolcall__bodylabel">
+                  {label}
+                  {body.truncated ? ' (truncated)' : ''}
+                </p>
+                <pre className="toolcall__output">{body.text}</pre>
+              </section>
+            );
+          })}
+          {call.output === undefined || call.output === '' ? null : (
+            <section className="toolcall__body">
+              <p className="toolcall__bodylabel">output</p>
+              <pre className="toolcall__output">{call.output}</pre>
+            </section>
+          )}
+        </div>
       ) : null}
     </div>
   );
