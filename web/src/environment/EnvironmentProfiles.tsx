@@ -192,7 +192,7 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
               Cancel
             </Button>
             <Button
-              tone="accent"
+              variant="primary"
               disabled={saving}
               onClick={() => {
                 void save();
@@ -227,7 +227,7 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
       onClose={onClose}
       footer={
         <Button
-          tone="accent"
+          variant="primary"
           onClick={() => {
             setDraft(emptyDraft());
             setError(undefined);
@@ -289,7 +289,7 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
                   </Button>
                   <Button
                     size="sm"
-                    tone="danger"
+                    variant="primary"
                     onClick={() => {
                       setConfirmingRemoval(profile.id);
                     }}

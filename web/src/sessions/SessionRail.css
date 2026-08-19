@@ -130,3 +130,19 @@
   font-size: var(--text-label);
   color: var(--ink-3);
 }
+
+/*
+ * The rail's one full-width action — `docs/Web_Style.md` §7.
+ *
+ * The width and the taller step belong to this row rather than to the button:
+ * §7 gives the capsule two heights and no third, and a surface that needs its
+ * own proportions says so where it needs them rather than adding a size
+ * everything else can then reach for.
+ */
+.rail__newsession {
+  width: 100%;
+  height: 38px;
+  margin: 0 2px 8px;
+  font-weight: 500;
+  border-radius: 12px;
+}

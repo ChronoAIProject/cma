@@ -263,7 +263,7 @@ export function Composer({
           ) : null}
 
           <Button
-            tone="accent"
+            variant="primary"
             disabled={!canSend}
             onClick={() => {
               void send();

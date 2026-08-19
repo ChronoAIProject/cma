@@ -218,7 +218,7 @@ export function IntroTerminal() {
         {value.trim().length > 0 ? (
           <button
             type="button"
-            className="button button--primary button--xl"
+            className="button button--primary button--md intro__cta"
             disabled={capturing}
             onClick={() => {
               submit();

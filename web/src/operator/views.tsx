@@ -279,7 +279,7 @@ export function SessionsView({
                 <>
                   <span className="operator__confirm">End this session?</span>
                   <Button
-                    tone="danger"
+                    variant="primary"
                     disabled={busy}
                     onClick={() => {
                       onTerminate(session.id);

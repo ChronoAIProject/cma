@@ -1,0 +1,100 @@
+/*
+ * The button capsule — `docs/Web_Style.md` §7.
+ *
+ * Geometry is literal pixels rather than tokens, which is the token layer's
+ * own rule: a spacing scale invites a control to take the step above when the
+ * one it needs is missing, and these numbers are the control rather than a
+ * point on a scale.
+ */
+
+.button {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 18px;
+  cursor: pointer;
+}
+
+/*
+ * Disabled is dimmed rather than recoloured, so a primary button that cannot
+ * be pressed is still recognisably the primary button — somebody looking for
+ * it finds it, and finds out why from the row's own reason line.
+ */
+.button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.button--md {
+  height: 36px;
+}
+
+.button--sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 14px;
+}
+
+.button--primary {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-fill);
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
+}
+
+.button--ghost:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.button--ghost:active:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* The answer that is not the primary one beside it. */
+.button--outline {
+  background: transparent;
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+.button--outline:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* A control sitting on chrome rather than on a page. */
+.button--toolbar {
+  background: var(--dsw-alias-button-tool-bar-fill);
+}
+
+.button--toolbar:hover:not(:disabled) {
+  background: var(--dsw-alias-button-tool-bar-hover);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * The glyph slot is a fixed 16px box rather than whatever the icon draws
+ * itself at, so a row of buttons has its labels on one baseline no matter
+ * which glyphs they carry.
+ */
+.button__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}

@@ -106,7 +106,7 @@ export function InlineConfirm({
       <Button size="sm" onClick={onCancel}>
         Keep it
       </Button>
-      <Button size="sm" tone="danger" disabled={busy} onClick={onConfirm}>
+      <Button size="sm" variant="primary" disabled={busy} onClick={onConfirm}>
         {confirmLabel}
       </Button>
     </div>
