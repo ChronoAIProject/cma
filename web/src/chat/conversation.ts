@@ -152,6 +152,13 @@ export interface Conversation {
    */
   readonly plan?: readonly PlanStep[];
   /**
+   * The settings the kernel says are settable, when it reported them.
+   *
+   * Drawn as a selection rather than a free-text box, from the kernel's own
+   * names and kinds.
+   */
+  readonly configOptions?: readonly ConfigOption[];
+  /**
    * What the agent is saying right now, before it has committed to it.
    *
    * **Deliberately not an entry.** §18.1 requires a turn drawn from history
@@ -190,6 +197,13 @@ export interface Usage {
 export interface PlanStep {
   readonly title: string;
   readonly status: string;
+}
+
+/** One setting the kernel says is settable, in its own words. */
+export interface ConfigOption {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: string;
 }
 
 export const EMPTY: Conversation = { entries: [], turnInFlight: false };
@@ -463,6 +477,20 @@ function applyPatches(
           const title = typeof value.title === 'string' ? value.title : '';
           const status = typeof value.status === 'string' ? value.status : '';
           return title === '' ? [] : [{ title, status }];
+        }),
+      };
+    } else if (patch.path === '/configOptions' && Array.isArray(patch.value)) {
+      next = {
+        ...next,
+        configOptions: patch.value.flatMap((entry): ConfigOption[] => {
+          if (typeof entry !== 'object' || entry === null) {
+            return [];
+          }
+          const value = entry as Record<string, unknown>;
+          const id = typeof value.id === 'string' ? value.id : '';
+          const name = typeof value.name === 'string' ? value.name : '';
+          const kind = typeof value.kind === 'string' ? value.kind : '';
+          return id === '' ? [] : [{ id, name, kind }];
         }),
       };
     } else if (patch.path.startsWith('/planeChanges')) {
