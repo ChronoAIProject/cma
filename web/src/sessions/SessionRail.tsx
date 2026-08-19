@@ -151,6 +151,19 @@ export function SessionRail({
         />
       </div>
 
+      {/*
+        Above the list, not after it. The list grows to fill the column, so a
+        message that followed it landed at the bottom of the sidebar — as far
+        from the header it belongs under as the layout allows.
+      */}
+      {sessions.length === 0 ? (
+        <p className="rail__empty">No sessions yet.</p>
+      ) : ordered.length === 0 ? (
+        // An empty list says what would have been there: the filter narrowed
+        // to nothing, and the sessions still exist.
+        <p className="rail__empty">Nothing matches this filter.</p>
+      ) : null}
+
       <ul className="rail__list" role="tablist" aria-label="Sessions" aria-orientation="vertical">
         {ordered.map((session) => {
           const active = session.id === activeId;
@@ -220,14 +233,6 @@ export function SessionRail({
           );
         })}
       </ul>
-
-      {sessions.length === 0 ? (
-        <p className="rail__empty">No sessions yet.</p>
-      ) : ordered.length === 0 ? (
-        // An empty list says what would have been there: the filter narrowed
-        // to nothing, and the sessions still exist.
-        <p className="rail__empty">Nothing matches this filter.</p>
-      ) : null}
     </div>
   );
 }
