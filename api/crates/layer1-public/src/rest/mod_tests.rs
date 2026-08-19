@@ -108,6 +108,172 @@ fn a_missing_ability_is_unprocessable_rather_than_missing() {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// What a client actually receives for a body this interface could not take.
+///
+/// Drives axum's real extractor rather than serde directly. The bug behind all
+/// of this was end to end — a 201 on the wrong runtime — and a test that stops
+/// at `serde_json::from_str` would pass even if the rejection rendered as a
+/// 500.
+async fn body_rejection(content_type: &str, body: &'static str) -> (StatusCode, serde_json::Value) {
+    use axum::extract::FromRequest;
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/v1/sessions")
+        .header("content-type", content_type)
+        .body(axum::body::Body::from(body))
+        .expect("request builds");
+    let rejection = Json::<CreateSessionRequest>::from_request(request, &())
+        .await
+        .expect_err("this body must be rejected");
+    let response = BodyProblem(rejection).into_response();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("problem documents are small");
+    (
+        status,
+        serde_json::from_slice(&bytes).expect("a problem document is json"),
+    )
+}
+
+#[tokio::test]
+async fn an_unknown_field_is_refused_and_named() {
+    // The shape of request that produced #298: accepted, discarded, and
+    // answered 201 for a session that was not what was asked for.
+    let (status, body) = body_rejection(
+        "application/json",
+        r#"{"cols":120,"rows":32,"nonsense":"claude_code"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "invalid_request");
+    let detail = body["detail"].as_str().expect("detail is a string");
+    assert!(
+        detail.contains("nonsense"),
+        "it must name the field: {detail}"
+    );
+    assert!(
+        detail.contains("environment_profile"),
+        "and say what it would have taken: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn a_misspelled_profile_no_longer_starts_the_wrong_session() {
+    // The silent case nobody would have reported. `environmentProfile` is the
+    // camelCase spelling this project's own SDK and its AG-UI interface both
+    // use, and it used to start a session on the deployment's default profile
+    // instead of the named one — a working session, quietly not the one asked
+    // for.
+    let (status, body) = body_rejection(
+        "application/json",
+        r#"{"cols":120,"rows":32,"environmentProfile":"envp_1"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["detail"]
+        .as_str()
+        .expect("detail is a string")
+        .contains("environmentProfile"));
+}
+
+#[tokio::test]
+async fn a_bad_body_keeps_the_status_that_says_what_is_wrong() {
+    // Three conditions, three statuses, because each sends the reader
+    // somewhere different. Answering all of them 422 would send somebody whose
+    // header is wrong to go and stare at their JSON.
+    let (status, body) = body_rejection("application/json", r#"{"cols":"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "malformed json is 400");
+    assert_eq!(body["code"], "malformed_json");
+
+    let (status, body) = body_rejection("text/plain", r#"{"cols":120}"#).await;
+    assert_eq!(
+        status,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "a wrong content type is 415"
+    );
+    assert_eq!(body["code"], "unsupported_media_type");
+}
+
+#[tokio::test]
+async fn every_failure_renders_the_same_document_shape() {
+    // A caller writing one parser for this API's failures must not meet a
+    // second shape because the wrong half of their request was at fault.
+    let (_, from_body) = body_rejection("application/json", r#"{"nope":1}"#).await;
+    let (_, from_core) = rendered(CoreError::SessionTerminated).await;
+    for field in ["type", "title", "status", "detail", "code"] {
+        assert!(from_body.get(field).is_some(), "body problem lacks {field}");
+        assert!(from_core.get(field).is_some(), "core problem lacks {field}");
+    }
+}
+
+#[test]
+fn a_named_kernel_is_refused_and_told_where_to_put_it() {
+    // Guards the branch, not the parse. The test this replaces asserted that
+    // `kernel` deserialises — the opposite of refused — so deleting the whole
+    // refusal left 135 tests green and #298 reopened in silence. Verified by
+    // deleting it: nothing failed.
+    let request: CreateSessionRequest =
+        serde_json::from_str(r#"{"cols":120,"rows":32,"kernel":"claude_code"}"#)
+            .expect("a declared field parses; the refusal is the handler's job");
+
+    let refusal = request
+        .into_parts()
+        .expect_err("a named kernel must not reach the core");
+    assert_eq!(refusal.code(), "invalid_request");
+
+    // §3's bar is a refusal in words a caller can act on, which means naming
+    // the remedy and not only the mistake.
+    let said = refusal.to_string();
+    for expected in [
+        "kernel",
+        "environment profile",
+        "environment_profile",
+        "agent.kernel",
+    ] {
+        assert!(
+            said.contains(expected),
+            "the refusal must mention {expected}: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_request_without_a_kernel_passes_through_checked() {
+    // The other half. A gate that refuses everything is not a gate, and the
+    // geometry has to survive the trip.
+    let parts = serde_json::from_str::<CreateSessionRequest>(
+        r#"{"cols":120,"rows":32,"environment_profile":"envp_1"}"#,
+    )
+    .expect("the declared fields are accepted")
+    .into_parts()
+    .expect("nothing here is unhonourable");
+    assert_eq!(parts.environment_profile.as_deref(), Some("envp_1"));
+    assert!(parts.geometry.is_some());
+
+    // Half a geometry is not a size, so it is dropped rather than guessed at.
+    let half = serde_json::from_str::<CreateSessionRequest>(r#"{"cols":120}"#)
+        .expect("cols alone parses")
+        .into_parts()
+        .expect("and is not itself an error");
+    assert!(half.geometry.is_none());
+}
+
+#[test]
+fn a_well_formed_create_body_still_parses() {
+    // The other half. A gate that refuses everything is not a gate.
+    let body = serde_json::from_str::<CreateSessionRequest>(
+        r#"{"cols":120,"rows":32,"environment_profile":"envp_1"}"#,
+    )
+    .expect("the declared fields are still accepted");
+    assert_eq!(body.cols, Some(120));
+    assert_eq!(body.environment_profile.as_deref(), Some("envp_1"));
+
+    // And every field is optional, which is what an unqualified session is.
+    let bare = serde_json::from_str::<CreateSessionRequest>("{}").expect("a bare create is valid");
+    assert!(bare.cols.is_none() && bare.environment_profile.is_none());
+}
+
 #[tokio::test]
 async fn a_refusal_names_the_missing_ability_as_a_field() {
     // §3 requires a refusal to name what is missing "in words a caller can act
