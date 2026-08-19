@@ -114,6 +114,11 @@ impl Bridge {
         cwd: String,
         mode: Option<String>,
         rejoin: Option<String>,
+        // Where this link's answers to a plane switch are delivered, and the
+        // runtime they are about. A conversation link is the only link a
+        // conversation-only kernel has, so without this such a session could
+        // never confirm a switch and every one of them would rotate (#289).
+        switches: Option<(super::SwitchWaiters, String)>,
     ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -169,6 +174,16 @@ impl Bridge {
                         }
                         _ => {}
                     },
+                    Ok(Message::Text(text)) => {
+                        // A runtime's answer to a plane switch, and nothing
+                        // else: the conversation itself travels framed on its
+                        // own lane.
+                        if let (Some(accepted), Some((waiters, runtime))) =
+                            (super::link::switch_answer(&text), switches.as_ref())
+                        {
+                            waiters.settle(runtime, accepted).await;
+                        }
+                    }
                     Ok(Message::Close(_)) => break,
                     Ok(_) => {}
                     Err(e) => {
