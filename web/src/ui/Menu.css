@@ -46,16 +46,6 @@
   z-index: 1100;
 }
 
-.menu--top {
-  top: auto;
-  bottom: calc(100% + 4px);
-}
-
-.menu--end {
-  right: 0;
-  left: auto;
-}
-
 .menu__item {
   display: flex;
   gap: 8px;

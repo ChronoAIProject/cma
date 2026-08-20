@@ -17,6 +17,16 @@ import './Menu.css';
  *
  * Selection is a trailing check rather than a fill, so a selected row and a
  * hovered row are different things rather than the same colour twice.
+ *
+ * **The list always goes on the body, positioned from the anchor's box.** It
+ * used to be a choice, defaulting to rendering in place, and every caller that
+ * took the default was placed wrongly: a picker inside a dialog was cut off by
+ * the dialog's scrollport, and the session list's own options menu opened 53px
+ * to the left of the window. A trigger cannot know what encloses it or how
+ * near an edge it sits, so the in-place default asked each caller a question
+ * none of them could answer. On the body, `placeMenu` reads the anchor and the
+ * viewport and nudges the list back inside, which is right in every case the
+ * in-place path was right in and in the cases it was not.
  */
 
 /** A row somebody can choose. */
@@ -76,18 +86,19 @@ interface MenuProps {
   readonly onClose: () => void;
   readonly align?: MenuAlign;
   readonly side?: MenuSide;
-  /**
-   * Render the list on the body, positioned from the anchor's rectangle.
-   *
-   * For a trigger inside anything that clips its overflow — a scrolling list,
-   * a band with a fixed height — where an in-place list is cropped rather
-   * than overlapping.
-   */
-  readonly portal?: boolean;
   /** Tighter rows, for a menu that is mostly a list of values. */
   readonly dense?: boolean;
   /** Extra class for placement only. */
   readonly placement?: string;
+  /**
+   * Hold the list to at least the anchor's width.
+   *
+   * For a trigger that is a row rather than a glyph, where a narrower list
+   * reads as belonging to something else and a wider one overhangs it. The
+   * list is on the body and fixed, so it cannot take this from the anchor in
+   * CSS — the width has to be measured with the position.
+   */
+  readonly matchAnchorWidth?: boolean;
   /** The list's accessible name. */
   readonly label?: string;
 }
@@ -102,9 +113,9 @@ export function Menu({
   onClose,
   align = 'start',
   side = 'bottom',
-  portal = false,
   dense = false,
   placement,
+  matchAnchorWidth = false,
   label,
 }: MenuProps) {
   const rootRef = useRef<HTMLSpanElement>(null);
@@ -120,7 +131,7 @@ export function Menu({
    * thing a layout effect exists for.
    */
   useLayoutEffect(() => {
-    if (!open || !portal) {
+    if (!open) {
       return;
     }
     const place = () => {
@@ -138,6 +149,9 @@ export function Menu({
       );
       list.style.left = `${String(at.left)}px`;
       list.style.top = `${String(at.top)}px`;
+      if (matchAnchorWidth) {
+        list.style.minWidth = `${String(Math.round(rect.width))}px`;
+      }
       // Placed, so it can be seen. Until now it was laid out but hidden, so
       // the measurement above had a real box to read.
       list.style.visibility = 'visible';
@@ -154,7 +168,7 @@ export function Menu({
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
-  }, [open, portal, side, align]);
+  }, [open, side, align, matchAnchorWidth]);
 
   useEffect(() => {
     if (!open) {
@@ -200,6 +214,29 @@ export function Menu({
     (chosen ?? rows[0])?.focus();
   }, [open, selectedId]);
 
+  /*
+   * And returns to the trigger when the list closes, if it was still inside
+   * it. Without this, closing leaves focus on a row that has been removed from
+   * the document and the next Tab starts again at the top of the page —
+   * furthest from where the person was working.
+   *
+   * Only when focus was in the list: a menu closed because somebody clicked
+   * elsewhere must not pull them back.
+   */
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    const closing = wasOpen.current && !open;
+    wasOpen.current = open;
+    if (!closing) {
+      return;
+    }
+    const active = document.activeElement;
+    const inList = active !== null && listRef.current?.contains(active) === true;
+    if (inList || active === document.body) {
+      rootRef.current?.querySelector('button')?.focus();
+    }
+  }, [open]);
+
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const rows = rowsIn(listRef.current);
     if (rows.length === 0) {
@@ -231,16 +268,8 @@ export function Menu({
   const list = !open ? null : (
     <div
       ref={listRef}
-      className={[
-        'menu',
-        dense ? 'menu--dense' : '',
-        portal ? 'menu--portal' : '',
-        !portal && side === 'top' ? 'menu--top' : '',
-        !portal && align === 'end' ? 'menu--end' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      style={portal ? MEASURING : undefined}
+      className={['menu', dense ? 'menu--dense' : '', 'menu--portal'].filter(Boolean).join(' ')}
+      style={MEASURING}
       role="menu"
       aria-label={label}
       onKeyDown={onListKeyDown}
@@ -268,7 +297,7 @@ export function Menu({
   return (
     <span ref={rootRef} className={['menu-root', placement ?? ''].filter(Boolean).join(' ')}>
       {anchor}
-      {portal && list !== null ? createPortal(list, document.body) : list}
+      {list === null ? null : createPortal(list, document.body)}
     </span>
   );
 }
