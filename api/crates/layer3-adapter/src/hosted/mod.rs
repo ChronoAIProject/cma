@@ -70,6 +70,23 @@ impl From<SandboxError> for AdapterError {
             SandboxError::Rejected { status: 501, .. } => AdapterError::Unsupported(
                 "this runtime declares no support for what was asked".to_string(),
             ),
+            /*
+             * The provider saying a sandbox is not there is the clearest
+             * statement of loss there is, and it arrived as a rejection —
+             * which now means "something answered and refused". Read that way
+             * a deleted sandbox would never be replaced, so the statuses that
+             * mean absence are separated from the ones that mean refusal.
+             *
+             * 404 and 410 are the provider's answer about this sandbox. 5xx is
+             * the provider failing to answer about anything, which says
+             * nothing about the sandbox either way — and treating "the
+             * provider is briefly broken" as "the sandbox is gone" would
+             * replace a healthy runtime, so it stays out of loss.
+             */
+            SandboxError::Rejected {
+                status: status @ (404 | 410),
+                detail,
+            } => AdapterError::Unavailable(format!("this sandbox is gone ({status}: {detail})")),
             SandboxError::Rejected { status, detail } => {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }

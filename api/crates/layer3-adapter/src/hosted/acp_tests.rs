@@ -460,6 +460,90 @@ async fn a_conversation_the_bridge_still_holds_is_adopted_rather_than_loaded() {
 }
 
 #[tokio::test]
+async fn a_bridge_that_was_already_greeted_is_taken_over_rather_than_abandoned() {
+    /*
+     * #416, reproduced. `initialize` is once per bridge, not once per
+     * connection, and a bot pod outlives the control plane that started it.
+     * So a control plane taking back over a live runtime meets a kernel its
+     * predecessor already greeted, and the kernel says so.
+     *
+     * In production that refusal was read as the sandbox being gone, and a
+     * fresh one was provisioned over the top of a runtime that was still
+     * working — the session came back empty beside the pod still holding its
+     * conversation, on every rollout.
+     *
+     * The refusal only exists because something was there to send it, so the
+     * handshake carries on. The mode still follows, which is what proves the
+     * takeover completed rather than merely not erroring.
+     */
+    let (url, served) = bridging(None, Some("initialize"), Some(2)).await;
+    let stream = connect(&url).await;
+    open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        Some("conv-already-running".into()),
+        None,
+        false,
+    )
+    .await
+    .expect("a bridge that refuses a second greeting is still a live bridge");
+    let done = served.await.expect("the fixture finished");
+    assert_eq!(
+        done.asked,
+        vec!["initialize", "session/set_mode"],
+        "the greeting was refused and the takeover continued anyway"
+    );
+}
+
+#[tokio::test]
+async fn a_bridge_that_answers_nothing_is_not_mistaken_for_one_that_refused() {
+    /*
+     * The other half, and the one that keeps genuine loss recoverable.
+     *
+     * A refusal is tolerated because a frame came back. Silence must not be:
+     * a runtime that has gone away answers nothing, and reading that as "it
+     * refused, carry on" would leave a session pointed at a sandbox that no
+     * longer exists and never replace it.
+     *
+     * The link is closed under the waiting call, which is what a vanished
+     * runtime looks like from here.
+     */
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let declared = declaration(None);
+    tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declared))
+            .await
+            .expect("the declaration is sent");
+        // Take the greeting and then vanish, answering nothing.
+        let _ = ws.next().await;
+        drop(ws);
+    });
+    let stream = connect(&url).await;
+    let failed = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        Some("conv-already-running".into()),
+        None,
+        false,
+    )
+    .await
+    .expect_err("silence is not a refusal");
+    assert!(
+        failed.is_runtime_loss(),
+        "a runtime that answered nothing must stay recoverable as loss, got {failed:?}"
+    );
+}
+
+#[tokio::test]
 async fn rejoining_wins_over_what_the_pod_says_it_was_handed() {
     // Both can be present: a pod that took a conversation over, whose control
     // plane then restarted. The record is the more recent truth, and it names

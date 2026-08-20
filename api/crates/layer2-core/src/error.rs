@@ -41,8 +41,22 @@ pub enum CoreError {
     InvalidGeometry(#[from] InvalidGeometry),
 
     /// The runtime backing this session is not reachable.
+    ///
+    /// Nothing answered. This is the only failure that means a session's
+    /// runtime is gone, and it is what licenses replacing one.
     #[error("runtime unavailable: {0}")]
     RuntimeUnavailable(String),
+
+    /// The runtime answered, and would not do what was asked.
+    ///
+    /// Deliberately not `RuntimeUnavailable`. A reply proves something is
+    /// there to have sent it, so replacing the sandbox would destroy a working
+    /// runtime — which is exactly what happened on every rollout until this
+    /// was told apart: a bridge refused a second greeting, the refusal was
+    /// read as absence, and a live session was rebuilt empty beside the pod
+    /// still holding its conversation.
+    #[error("runtime refused: {0}")]
+    RuntimeRefused(String),
 
     /// The operation is not valid in the session's current state.
     #[error("invalid state for operation")]
@@ -105,6 +119,7 @@ impl CoreError {
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
+            Self::RuntimeRefused(_) => "runtime_refused",
             Self::InvalidState => "invalid_state",
             Self::CapabilityUnsupported(_) => "capability_unsupported",
             Self::InvalidRequest(_) => "invalid_request",
