@@ -68,6 +68,13 @@ interface ProfileMenuProps {
   readonly onOperations?: () => void;
   /** Whether the operator panel is the surface currently showing. */
   readonly operationsActive?: boolean;
+  /**
+   * Whether the sidebar it sits in is closed.
+   *
+   * Taken rather than read off the sidebar's own class: a sheet that styles by
+   * another component's modifier is coupled to a name it does not own.
+   */
+  readonly collapsed?: boolean;
 }
 
 /**
@@ -123,6 +130,7 @@ export function ProfileMenu({
   onManageEnvironments,
   onOperations,
   operationsActive = false,
+  collapsed = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
@@ -235,7 +243,7 @@ export function ProfileMenu({
       side="top"
       align="start"
       label="Account"
-      placement="profile"
+      placement={`profile${collapsed ? ' profile--collapsed' : ''}`}
       matchAnchorWidth
       items={items}
       onSelect={choose}
