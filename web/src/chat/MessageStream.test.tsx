@@ -5,7 +5,8 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { resizeObserved } from '../test/setup';
 import { MessageStream } from './MessageStream';
-import { AgentContent, blocksOf } from './AgentContent';
+import { AgentContent } from './AgentContent';
+import { blocksOf } from './blocks';
 import { summaryOf } from './Thinking';
 import { EMPTY, fold, reduce, type Conversation, type Entry } from './conversation';
 import { AguiConnection, MockSession, toEvent, transcriptNamed, type AguiEvent } from '../agui';
@@ -173,11 +174,23 @@ describe('agent-emitted content', () => {
     // highlighting, not a tint per role, not a semantic colour on a word the
     // agent happened to write." §2 reserves those tokens for session and
     // system state, and they describe nothing an agent said.
+    /*
+     * `inherit` and `currentcolor` are exempt, and the exemption is the point
+     * rather than a loophole: they are how a rule *refuses* a colour. Without
+     * it this check forbade the one declaration that keeps a link out of the
+     * browser's blue — and a link rendered blue is precisely the exception
+     * this rule exists to prevent, arriving because the rule forbade its own
+     * enforcement.
+     */
     const css = readCss();
     const agentRules = [...css.matchAll(/\.agent[^{]*\{([^}]*)\}/g)].map((match) => match[1] ?? '');
     expect(agentRules.length).toBeGreaterThan(0);
     for (const rule of agentRules) {
-      expect(rule).not.toMatch(/(^|\s)color:/);
+      for (const declaration of rule.matchAll(/(?:^|\s)color:\s*([^;]+);/g)) {
+        expect(['inherit', 'currentcolor'], `agent content sets ${declaration[1] ?? ''}`).toContain(
+          (declaration[1] ?? '').trim().toLowerCase(),
+        );
+      }
       expect(rule).not.toContain('--live');
       expect(rule).not.toContain('--wait');
       expect(rule).not.toContain('--fail');
@@ -884,5 +897,75 @@ describe('the reasoning summary', () => {
   it('says nothing rather than something wrong when there is nothing yet', () => {
     expect(summaryOf('')).toBe('');
     expect(summaryOf('\n  \n')).toBe('');
+  });
+});
+
+describe('what a real parser reads that regexes did not', () => {
+  const drawn = (markdown: string) => render(<AgentContent text={markdown} />).container;
+
+  it('draws an image as an image, not as a link with a stray bang', () => {
+    /*
+     * The hand-rolled inline pass matched `[alt](url)` inside `![alt](url)`,
+     * so every screenshot an agent posted arrived as a link with an
+     * exclamation mark in front of it.
+     */
+    const c = drawn('Here it is: ![the failing run](https://example.com/a.png)');
+    const image = c.querySelector('img.agent__image');
+    expect(image).toHaveAttribute('src', 'https://example.com/a.png');
+    expect(image).toHaveAttribute('alt', 'the failing run');
+    expect(c.textContent).not.toContain('!');
+  });
+
+  it('keeps a task list a task list', () => {
+    // Agents write these constantly. The boxes are the whole point of the
+    // notation, and the old renderer dropped them to literal brackets.
+    const c = drawn('- [x] built\n- [ ] shipped');
+    const boxes = [...c.querySelectorAll('input[type="checkbox"]')];
+    expect(boxes).toHaveLength(2);
+    expect((boxes[0] as HTMLInputElement).checked).toBe(true);
+    expect((boxes[1] as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('draws a strikethrough the agent meant', () => {
+    const c = drawn('~~the first approach~~ did not work');
+    expect(c.querySelector('del')?.textContent).toBe('the first approach');
+  });
+
+  it('leaves a snake_case identifier alone', () => {
+    /*
+     * The property the old renderer went out of its way to hold and this one
+     * gets from the specification: `_` inside a word is not emphasis. An
+     * identifier with an italic middle is one somebody is about to copy
+     * wrong.
+     */
+    const c = drawn('call granted_services_for(session) next');
+    expect(c.querySelector('em')).toBeNull();
+    expect(c.textContent).toContain('granted_services_for');
+  });
+
+  it('draws a link in the prose ink, never in the browser blue', () => {
+    /*
+     * §18.1 forbids colour on agent content without exception. Without an
+     * explicit `color: inherit` the browser's own blue wins — that exception
+     * arriving by habit rather than by decision, and invisible to every test
+     * that reads text rather than computed style.
+     */
+    const css = readCss();
+    expect(/\.agent__link\s*\{([^}]*)\}/.exec(css)?.[1] ?? '').toContain('color: inherit');
+  });
+
+  it('refuses to open a scheme a reader cannot act on', () => {
+    // §9: this is the least trusted text on the surface. The words survive;
+    // only the navigation is withheld.
+    const c = drawn('[click me](javascript:alert(1))');
+    expect(c.querySelector('a')).toBeNull();
+    expect(c.textContent).toContain('click me');
+  });
+
+  it('keeps a quoted list a list', () => {
+    // A quote holds blocks. Flattening it to one paragraph would be this
+    // surface deciding what the agent quoted.
+    const c = drawn('> - first\n> - second');
+    expect(c.querySelectorAll('blockquote li')).toHaveLength(2);
   });
 });
