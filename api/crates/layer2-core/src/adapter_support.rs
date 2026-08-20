@@ -76,6 +76,13 @@ pub(crate) struct FakeAdapter {
     /// The credential no longer travels as terminal input, so the only place
     /// its delivery is observable is the adapter that was asked to deliver it.
     pub(crate) credentials: Mutex<Vec<String>>,
+    /// When set, the kernel asks its owner to sign in from inside the open.
+    ///
+    /// Which is what a real one does on an own-account profile, and is the
+    /// only update that arrives before the session has a live entry — the
+    /// case #351 was about. Raised before the channel is returned, so the
+    /// core meets it at the moment it genuinely has nowhere to put it.
+    pub(crate) sign_in_on_open: bool,
     /// What this runtime says it can do.
     ///
     /// Defaults to the shape of the only kernel that exists today — a terminal
@@ -110,6 +117,7 @@ impl Default for FakeAdapter {
             conversation: Mutex::default(),
             rejoined: Mutex::default(),
             credentials: Mutex::default(),
+            sign_in_on_open: false,
             capabilities: layer3_adapter::KernelCapabilities {
                 conversation: false,
                 terminal: true,
@@ -239,6 +247,28 @@ impl KernelAdapter for FakeAdapter {
             .lock()
             .await
             .push(options.resume_conversation.clone());
+        if self.sign_in_on_open {
+            // Before the channel is returned, because that is when a real
+            // kernel raises it — and the core has not inserted the session's
+            // entry yet, which is the whole of #351.
+            updates
+                .send(layer3_adapter::ConversationUpdate::SignInRequired {
+                    url: "https://auth.example.test/device".to_string(),
+                    code: Some("WDJB-MJHT".to_string()),
+                    message: Some("Sign in to continue".to_string()),
+                })
+                .await
+                .expect("the core is listening before it opens");
+            /*
+             * And then waits, which is the half that matters. A real kernel
+             * sits here for as long as its owner takes, so the core folds the
+             * request while this call is still outstanding — before it has an
+             * entry to append against. Returning straight away instead let the
+             * entry exist by the time the folder got to it, which is a session
+             * that signs in instantly and tests nothing.
+             */
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         let (channel, held) = crate::conversation_support::FakeConversation::open(updates);
         *self.conversation.lock().await = Some(held);
         Ok(channel)
