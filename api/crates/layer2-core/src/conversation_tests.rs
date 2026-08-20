@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use crate::authz::Caller;
-use crate::conversation_support::{asking, chunk, conversation, conversing, said, until_logged};
+use crate::conversation_support::{
+    asking, chunk, conversation, conversing, offering, said, until_logged,
+};
 use crate::event::EventKind;
 use crate::ids::SessionId;
 use crate::service::SessionService;
@@ -637,6 +639,107 @@ async fn a_sign_in_carries_the_code_its_owner_has_to_enter() {
         ))
         .await,
         "the code and the kernel's own wording must survive into the record"
+    );
+}
+
+#[tokio::test]
+async fn the_commands_a_kernel_offers_are_recorded_rather_than_only_broadcast() {
+    // The list used to ride the live lane alone, on the reasoning that a
+    // replayed list could offer commands that no longer exist. The kernel
+    // announces it as the conversation opens, which is before anybody is
+    // subscribed, so what actually happened is that it reached nobody at all —
+    // and the protocol has no request to ask for it again.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
+                    "review",
+                    "Review the working tree",
+                )])),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::AvailableCommandsSet { commands }
+                if commands.len() == 1
+                    && commands[0].name == "review"
+                    && commands[0].description == "Review the working tree"
+        ))
+        .await,
+        "a command list nothing recorded is a command list nobody can ever be shown"
+    );
+}
+
+#[tokio::test]
+async fn the_commands_a_kernel_offers_survive_arriving_before_the_entry_exists() {
+    /*
+     * The real timing, pinned directly. `entries` holds only sessions with a
+     * running runtime, and this announcement is made as the conversation
+     * opens — so arriving with no entry is the ordinary case for it, not a
+     * fault. Before the fallback it returned early and the list was gone.
+     */
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.entries.write().await.remove(&id);
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
+                    "compact",
+                    "Summarise the conversation so far",
+                )])),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::AvailableCommandsSet { commands }
+                if commands.iter().any(|c| c.name == "compact")
+        ))
+        .await,
+        "the announcement precedes the entry, so dropping it there drops it always"
+    );
+}
+
+#[tokio::test]
+async fn a_kernel_that_offers_nothing_records_that_rather_than_staying_silent() {
+    // "This kernel has no commands" and "nothing has been said yet" are
+    // different facts. Recording only a non-empty list would leave a client
+    // unable to tell them apart, and leave a previous list standing.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[])),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::AvailableCommandsSet { commands } if commands.is_empty()
+        ))
+        .await,
+        "an empty offering is an answer and has to be recorded as one"
     );
 }
 
