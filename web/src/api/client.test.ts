@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, listKernels, toSession } from './client';
+import { ApiError, followSession, listKernels, toSession } from './client';
 
 /**
  * The wire is a trust boundary. These cover what the control plane actually
@@ -216,5 +216,111 @@ describe('listKernels', () => {
     answer({ kernels: 'codex' });
 
     await expect(listKernels()).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+/**
+ * The sign-in frame — #355.
+ *
+ * A kernel spending its owner's own vendor account stops inside the
+ * conversation open to ask them to sign in, so this frame always arrives while
+ * the session is still provisioning. That is the one state whose surface is
+ * drawn from this stream rather than from the conversation, which is why the
+ * stream has to carry it at all.
+ *
+ * Driven as the frame the control plane actually serialises, not as a prop: it
+ * was already arriving and being dropped, and only the wire shape shows that.
+ */
+describe('followSession and the sign-in frame', () => {
+  class Stream {
+    static readonly CLOSED = 2;
+    static last: Stream | null = null;
+    readyState = 1;
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(readonly url: string) {
+      Stream.last = this;
+    }
+    deliver(event: unknown): void {
+      this.onmessage?.({ data: JSON.stringify({ seq: 7, event }) } as MessageEvent);
+    }
+    close(): void {
+      this.readyState = Stream.CLOSED;
+    }
+  }
+
+  function following() {
+    vi.stubGlobal('EventSource', Stream);
+    const signIns: unknown[] = [];
+    const stop = followSession(
+      'sesn_abc',
+      () => {},
+      () => {},
+      undefined,
+      (signIn) => signIns.push(signIn),
+    );
+    const stream = Stream.last;
+    if (stream === null) {
+      throw new Error('the stream was never opened');
+    }
+    return { stream, signIns, stop };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Stream.last = null;
+  });
+
+  it('reports the address and the code its owner has to enter', () => {
+    const { stream, signIns, stop } = following();
+
+    stream.deliver({
+      type: 'sign_in_required',
+      url: 'https://auth.example.test/device',
+      code: 'WDJB-MJHT',
+      message: 'Sign in to continue',
+    });
+    stop();
+
+    expect(signIns).toEqual([
+      {
+        url: 'https://auth.example.test/device',
+        code: 'WDJB-MJHT',
+        message: 'Sign in to continue',
+      },
+    ]);
+  });
+
+  it('reports a request that carries no code, since the address is the whole of it', () => {
+    // Not every device flow shows a code on the asking end, and refusing the
+    // request for want of one would leave the session waiting on nothing.
+    const { stream, signIns, stop } = following();
+
+    stream.deliver({ type: 'sign_in_required', url: 'https://auth.example.test/device' });
+    stop();
+
+    expect(signIns).toEqual([
+      { url: 'https://auth.example.test/device', code: undefined, message: undefined },
+    ]);
+  });
+
+  it('ignores a request with no address, which nobody could act on', () => {
+    const { stream, signIns, stop } = following();
+
+    stream.deliver({ type: 'sign_in_required', code: 'WDJB-MJHT' });
+    stream.deliver({ type: 'sign_in_required', url: '', code: 'WDJB-MJHT' });
+    stop();
+
+    expect(signIns).toEqual([]);
+  });
+
+  it('leaves every other frame alone', () => {
+    const { stream, signIns, stop } = following();
+
+    stream.deliver({ type: 'progress', stage: 'attaching' });
+    stream.deliver({ type: 'status_changed', status: 'ready' });
+    stop();
+
+    expect(signIns).toEqual([]);
   });
 });
