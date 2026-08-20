@@ -218,6 +218,17 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   const select = useCallback((id: string) => {
     setActiveId(id);
     /*
+     * Choosing a session is asking to look at it, so it leaves whatever else
+     * was showing. Without this, picking one from the rail while Operations
+     * was open changed which session was active and kept the operator panel
+     * on screen — the only way back was to press Operations again.
+     *
+     * Here rather than at each call site: the command bar already did this
+     * and the rail did not, which is the same intent written twice and only
+     * half carried.
+     */
+    setView('sessions');
+    /*
      * Whatever the details column was inspecting belonged to the session
      * being left. Carrying it across would leave a panel describing a call
      * from a conversation that is no longer on screen.
@@ -443,6 +454,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   return (
     <AppFrame
       detailsOpen={active !== null && detailsOpen}
+      sidebarCollapsed={railCollapsed}
       sidebar={
         <Sidebar
           collapsed={railCollapsed}
@@ -714,7 +726,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 setCommandOpen(false);
               }}
               onSelectSession={(id) => {
-                setView('sessions');
                 select(id);
               }}
               onArrange={(next) => {
