@@ -35,7 +35,7 @@ export interface SessionAbilities {
   readonly reason?: string;
 }
 
-export function abilitiesFor(session: Session): SessionAbilities {
+export function abilitiesFor(session: Session, signingIn = false): SessionAbilities {
   switch (session.lifecycle) {
     case 'provisioning':
       // The sandbox is not there yet, so there is nothing to type into and
@@ -48,7 +48,15 @@ export function abilitiesFor(session: Session): SessionAbilities {
         canRevive: false,
         canDelete: true,
         listed: true,
-        reason: 'This session is still starting.',
+        /*
+         * A session waiting on its owner's sign-in is `provisioning` too, and
+         * telling them it is starting sends them to wait for something that
+         * is waiting for them. The abilities are identical either way — there
+         * is still nothing to type into — so only the sentence changes.
+         */
+        reason: signingIn
+          ? 'This session is waiting for you to sign in.'
+          : 'This session is still starting.',
       };
     case 'ready':
     case 'running':

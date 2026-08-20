@@ -62,6 +62,14 @@ interface SessionRailProps {
   readonly stages?: Readonly<Record<string, Stage>>;
   /** The session parked on an answerable approval, when one is — §18.3. */
   readonly waitingId?: string | null;
+  /**
+   * Sessions waiting on their owner's sign-in, by id.
+   *
+   * `provisioning` on its own cannot tell "a runtime is being built" from
+   * "somebody has to sign in somewhere else", and the row said the second was
+   * the first — sending them to wait for a thing that was waiting for them.
+   */
+  readonly signingIn?: Readonly<Record<string, unknown>>;
 }
 
 export function SessionRail({
@@ -76,6 +84,7 @@ export function SessionRail({
   onAction,
   stages = {},
   waitingId = null,
+  signingIn = {},
 }: SessionRailProps) {
   const [filter, setFilter] = useState<RailFilter>('all');
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -168,7 +177,12 @@ export function SessionRail({
         {ordered.map((session) => {
           const active = session.id === activeId;
           const dot = stateDotFor(toneFor(session.lifecycle));
-          const activity = lastActivity(session, stages[session.id], session.id === waitingId);
+          const activity = lastActivity(
+            session,
+            stages[session.id],
+            session.id === waitingId,
+            session.id in signingIn,
+          );
           const actions = actionsFor?.(session) ?? [];
 
           return (
