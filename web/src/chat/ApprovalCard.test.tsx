@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCard } from './ApprovalCard';
@@ -240,5 +240,90 @@ describe('in the stream', () => {
     expect(session.sent[0]?.body).toMatchObject({
       resume: [{ interruptId: 'apr_7Q2', payload: { decision: 'abort' } }],
     });
+  });
+});
+
+/*
+ * Answering, before the log catches up — #373.
+ *
+ * The card is cleared by the durable event, which is a whole lap of the stream
+ * after the request returns. Until it does, what the reader sees is this
+ * card's own doing, and it used to be nothing: the buttons greyed, ungreyed
+ * when the request resolved, and the card sat unchanged. That reads as a click
+ * that did not register, on the one interaction where somebody is definitely
+ * watching.
+ */
+describe('answering', () => {
+  it('shows the answer at once, without waiting for the service', async () => {
+    const user = userEvent.setup();
+    // Never settles: the point is what is drawn before it does.
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => new Promise(() => {})} />);
+
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
+
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
+    expect(screen.getByText(/sending your answer/i)).toBeInTheDocument();
+  });
+
+  it('withdraws the answers not given', async () => {
+    // Not disabled: they are not unavailable, they are no longer the question,
+    // and a row of greyed alternatives beside the answer invites another press.
+    const user = userEvent.setup();
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => new Promise(() => {})} />);
+
+    await user.click(screen.getByRole('button', { name: 'Deny' }));
+
+    expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop the turn' })).toBeNull();
+  });
+
+  it('sends once however many times it is pressed', async () => {
+    /*
+     * The window this closes was real: `busy` went false when the request
+     * resolved, while the card stayed up until the event arrived — so the
+     * answers were live again on a question that had already been answered.
+     */
+    const user = userEvent.setup();
+    const onAnswer = vi.fn(() => Promise.resolve(true));
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={onAnswer} />);
+
+    const allow = screen.getByRole('button', { name: 'Allow' });
+    await user.click(allow);
+    await user.click(allow);
+    await user.click(allow);
+
+    expect(onAnswer).toHaveBeenCalledOnce();
+  });
+
+  it('puts the question back when the service refuses it', async () => {
+    // Otherwise the reader is left looking at a decision nothing received.
+    const user = userEvent.setup();
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => Promise.resolve(false)} />);
+
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Stop the turn' })).toBeInTheDocument();
+    expect(screen.queryByText(/sending your answer/i)).toBeNull();
+  });
+
+  it('does not carry an answer onto the next question', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => new Promise(() => {})} />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
+
+    rerender(
+      <ApprovalCard
+        interrupt={{ ...THREE_ANSWERS, id: 'apr_8Z3', message: 'Something else?' }}
+        onAnswer={() => new Promise(() => {})}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
   });
 });
