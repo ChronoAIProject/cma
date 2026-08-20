@@ -64,6 +64,13 @@ interface SessionRailProps {
    * the first — sending them to wait for a thing that was waiting for them.
    */
   readonly signingIn?: Readonly<Record<string, unknown>>;
+  /**
+   * Whether the list is still being read.
+   *
+   * Without it the rail said "No sessions yet." before it had an answer, which
+   * is not a slower version of the truth — it is a different claim.
+   */
+  readonly loading?: boolean;
 }
 
 export function SessionRail({
@@ -79,6 +86,7 @@ export function SessionRail({
   stages = {},
   waitingId = null,
   signingIn = {},
+  loading = false,
 }: SessionRailProps) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [actionsFor_, setActionsFor] = useState<string | null>(null);
@@ -167,130 +175,145 @@ export function SessionRail({
         message that followed it landed at the bottom of the sidebar — as far
         from the header it belongs under as the layout allows.
       */}
-      {sessions.length === 0 ? <p className="rail__empty">No sessions yet.</p> : null}
+      {/*
+       * §14a: the shape of what is coming, rather than a sentence in an empty
+       * column — and never "No sessions yet." while it is still being read,
+       * because that is an answer and there is not one yet.
+       */}
+      {loading ? (
+        <div className="rail__waiting" aria-busy="true" aria-label="Reading your sessions">
+          <span className="rail__ghost" />
+          <span className="rail__ghost" />
+          <span className="rail__ghost" />
+        </div>
+      ) : null}
 
-      <div className="rail__groups">
-        {GROUPS.map((group) => {
-          const inGroup = grouped[group.id];
-          const shut = collapsed.has(group.id);
-          return (
-            <section className="rail__group" key={group.id}>
-              {/*
-               * The count is on the header, so a closed group still says how
-               * much is inside it — and an empty group draws its header with a
-               * zero rather than vanishing. A group that disappears is one
-               * somebody looks for, and the zero is the answer to "where did
-               * it go".
-               */}
-              <button
-                type="button"
-                className="rail__grouphead"
-                aria-expanded={!shut}
-                /*
-                 * Named rather than left to the label and the count sitting
-                 * beside each other: the accessible name is their text
-                 * concatenated, which read as "Paused1".
-                 */
-                aria-label={`${group.label}, ${String(inGroup.length)} ${
-                  inGroup.length === 1 ? 'session' : 'sessions'
-                }`}
-                onClick={() => {
-                  toggleGroup(group.id);
-                }}
-              >
-                <IconChevronDownOutline14
-                  className={`rail__groupmark${shut ? ' rail__groupmark--shut' : ''}`}
-                />
-                <span className="rail__groupname">{group.label}</span>
-                <span className="rail__groupcount">{inGroup.length}</span>
-              </button>
+      {!loading && sessions.length === 0 ? <p className="rail__empty">No sessions yet.</p> : null}
 
-              {shut ? null : (
-                <ul
-                  className="rail__list"
-                  role="tablist"
-                  aria-label={group.label}
-                  aria-orientation="vertical"
+      {loading ? null : (
+        <div className="rail__groups">
+          {GROUPS.map((group) => {
+            const inGroup = grouped[group.id];
+            const shut = collapsed.has(group.id);
+            return (
+              <section className="rail__group" key={group.id}>
+                {/*
+                 * The count is on the header, so a closed group still says how
+                 * much is inside it — and an empty group draws its header with a
+                 * zero rather than vanishing. A group that disappears is one
+                 * somebody looks for, and the zero is the answer to "where did
+                 * it go".
+                 */}
+                <button
+                  type="button"
+                  className="rail__grouphead"
+                  aria-expanded={!shut}
+                  /*
+                   * Named rather than left to the label and the count sitting
+                   * beside each other: the accessible name is their text
+                   * concatenated, which read as "Paused1".
+                   */
+                  aria-label={`${group.label}, ${String(inGroup.length)} ${
+                    inGroup.length === 1 ? 'session' : 'sessions'
+                  }`}
+                  onClick={() => {
+                    toggleGroup(group.id);
+                  }}
                 >
-                  {inGroup.map((session) => {
-                    const active = session.id === activeId;
-                    const dot = stateDotFor(toneFor(session.lifecycle));
-                    const activity = lastActivity(
-                      session,
-                      stages[session.id],
-                      session.id === waitingId,
-                      session.id in signingIn,
-                    );
-                    const actions = actionsFor?.(session) ?? [];
+                  <IconChevronDownOutline14
+                    className={`rail__groupmark${shut ? ' rail__groupmark--shut' : ''}`}
+                  />
+                  <span className="rail__groupname">{group.label}</span>
+                  <span className="rail__groupcount">{inGroup.length}</span>
+                </button>
 
-                    return (
-                      <li className="rail__row" key={session.id}>
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          className="row-item"
-                          title={fullTimestamp(session.createdAt)}
-                          onClick={() => {
-                            onSelect(session.id);
-                          }}
-                        >
-                          {/*
+                {shut ? null : (
+                  <ul
+                    className="rail__list"
+                    role="tablist"
+                    aria-label={group.label}
+                    aria-orientation="vertical"
+                  >
+                    {inGroup.map((session) => {
+                      const active = session.id === activeId;
+                      const dot = stateDotFor(toneFor(session.lifecycle));
+                      const activity = lastActivity(
+                        session,
+                        stages[session.id],
+                        session.id === waitingId,
+                        session.id in signingIn,
+                      );
+                      const actions = actionsFor?.(session) ?? [];
+
+                      return (
+                        <li className="rail__row" key={session.id}>
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            className="row-item"
+                            title={fullTimestamp(session.createdAt)}
+                            onClick={() => {
+                              onSelect(session.id);
+                            }}
+                          >
+                            {/*
                   The slot is held whether or not there is a dot in it, so an
                   ended session's title starts where every other one does.
                 */}
-                          <span className="row-item__dot">
-                            {dot === undefined ? null : <StateDot state={dot} />}
-                          </span>
-                          <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
-                          {/*
-                           * What makes a list of times into a list of work. It never
-                           * wraps: a row that grows with its longest sentence makes the
-                           * list a different height every time it reloads.
-                           */}
-                          <span className="row-item__activity">{activity}</span>
-                        </button>
+                            <span className="row-item__dot">
+                              {dot === undefined ? null : <StateDot state={dot} />}
+                            </span>
+                            <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
+                            {/*
+                             * What makes a list of times into a list of work. It never
+                             * wraps: a row that grows with its longest sentence makes the
+                             * list a different height every time it reloads.
+                             */}
+                            <span className="row-item__activity">{activity}</span>
+                          </button>
 
-                        {actions.length === 0 ? null : (
-                          <Menu
-                            open={actionsFor_ === session.id}
-                            label={`Actions for ${tabLabel(session.createdAt)}`}
-                            align="end"
-                            items={actions}
-                            onSelect={(id) => {
-                              setActionsFor(null);
-                              onAction?.(session, id);
-                            }}
-                            onClose={() => {
-                              setActionsFor(null);
-                            }}
-                            anchor={
-                              <button
-                                type="button"
-                                className="row-item__more"
-                                aria-haspopup="menu"
-                                aria-expanded={actionsFor_ === session.id}
-                                aria-label={`Actions for the session started ${tabLabel(session.createdAt)}`}
-                                onClick={() => {
-                                  setActionsFor((open) =>
-                                    open === session.id ? null : session.id,
-                                  );
-                                }}
-                              >
-                                <IconEllipsisOutline16 />
-                              </button>
-                            }
-                          />
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
-          );
-        })}
-      </div>
+                          {actions.length === 0 ? null : (
+                            <Menu
+                              open={actionsFor_ === session.id}
+                              label={`Actions for ${tabLabel(session.createdAt)}`}
+                              align="end"
+                              items={actions}
+                              onSelect={(id) => {
+                                setActionsFor(null);
+                                onAction?.(session, id);
+                              }}
+                              onClose={() => {
+                                setActionsFor(null);
+                              }}
+                              anchor={
+                                <button
+                                  type="button"
+                                  className="row-item__more"
+                                  aria-haspopup="menu"
+                                  aria-expanded={actionsFor_ === session.id}
+                                  aria-label={`Actions for the session started ${tabLabel(session.createdAt)}`}
+                                  onClick={() => {
+                                    setActionsFor((open) =>
+                                      open === session.id ? null : session.id,
+                                    );
+                                  }}
+                                >
+                                  <IconEllipsisOutline16 />
+                                </button>
+                              }
+                            />
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
