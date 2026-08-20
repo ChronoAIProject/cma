@@ -197,14 +197,32 @@ pub struct SessionSpec {
     /// at all.
     #[serde(default)]
     pub environment_profile: Option<EnvironmentProfileId>,
-    /// A credential the owner has delegated to the runtime, if any.
+    /// The caller's own credential, for asking the platform **as them**.
+    ///
+    /// Used to answer questions that depend on who is asking — which services
+    /// they have connected, which skills they can see — and to mint the
+    /// session's own key, which is done on their authority.
+    ///
+    /// **Never handed to the runtime.** It used to be: an interface put the
+    /// caller's own access token here and provisioning, finding the field
+    /// already filled, skipped minting entirely and gave the agent its owner's
+    /// whole identity. Every interactively created session ran that way, while
+    /// the machinery that mints a session-scoped key ran only for sessions the
+    /// controller recovered — the one path a person never takes.
     ///
     /// The core stores and forwards this without interpreting it. It is never
-    /// serialized back out, never logged, and never rendered by an interface:
-    /// it exists so the runtime can act on the owner's behalf, not so anything
-    /// here can read it.
+    /// serialized back out, never logged, and never rendered by an interface.
     #[serde(skip)]
-    pub subject_credential: Option<String>,
+    pub caller_credential: Option<String>,
+    /// The session's own credential, minted for it alone.
+    ///
+    /// Filled by the core during provisioning and never by a caller — an
+    /// interface that set this would be choosing what the agent may spend,
+    /// which is the decision the mint exists to make. Scoped to what the
+    /// session was granted, so a compromised agent reaches those services and
+    /// nothing else its owner can.
+    #[serde(skip)]
+    pub runtime_credential: Option<String>,
     /// The plane the caller asked for, when they asked for one.
     ///
     /// The exception to the rule above, and it is narrow: everything in

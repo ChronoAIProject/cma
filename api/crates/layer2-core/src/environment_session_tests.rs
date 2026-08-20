@@ -462,7 +462,7 @@ mod granted_services {
                 &owner,
                 SessionSpec {
                     environment_profile: Some(profile.id.clone()),
-                    subject_credential: Some("a-real-credential-value".into()),
+                    caller_credential: Some("a-real-credential-value".into()),
                     ..crate::test_support::spec()
                 },
             )
