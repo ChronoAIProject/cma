@@ -483,6 +483,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               onManageEnvironments={() => {
                 setManagingProfiles(true);
               }}
+              collapsed={railCollapsed}
               operationsActive={view === 'operations'}
               onOperations={
                 canOperate(user.capabilities)
