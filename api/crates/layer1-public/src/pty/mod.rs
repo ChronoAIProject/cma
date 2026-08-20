@@ -266,6 +266,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::SessionTerminated => "session_terminated",
         CoreError::InvalidGeometry(_) => "invalid_geometry",
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
+        CoreError::RuntimeRefused(_) => "runtime_refused",
         CoreError::InvalidState => "invalid_state",
         CoreError::CapabilityUnsupported(_) => "capability_unsupported",
         // This interface attaches to a session that already exists, so a
