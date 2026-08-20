@@ -5,8 +5,6 @@ import { abilitiesFor } from './availability';
 import { labelFor } from './types';
 import { fullTimestamp, fullTimestampOrNone } from './sessionTime';
 import './SessionDrawer.css';
-import { Button } from '../ui/Button';
-import { RiskConfirmation } from '../ui/RiskConfirmation';
 import { IconCloseOutline16 } from '../ui/icons';
 
 /**
@@ -31,21 +29,10 @@ interface SessionDrawerProps {
   readonly onClose: () => void;
   /** Why the session ended, when it ended badly. */
   readonly ending?: string;
-  readonly busy?: boolean;
-  readonly onStop: () => void;
-  readonly onDelete: () => void;
 }
 
-export function SessionDrawer({
-  session,
-  onClose,
-  ending,
-  busy = false,
-  onStop,
-  onDelete,
-}: SessionDrawerProps) {
+export function SessionDrawer({ session, onClose, ending }: SessionDrawerProps) {
   const can = abilitiesFor(session);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -78,17 +65,24 @@ export function SessionDrawer({
 
   return (
     <aside className="drawer" aria-label="Session details">
-      <div className="drawer__head">
-        <h2 className="drawer__title">Details</h2>
-        <button
-          type="button"
-          className="drawer__close"
-          aria-label="Close session details"
-          onClick={onClose}
-        >
-          <IconCloseOutline16 size={14} />
-        </button>
-      </div>
+      {/*
+       * No title. The panel is named to assistive technology by the `aside`'s
+       * own label, and a heading reading "Details" over a list of details told
+       * a sighted reader what they were already looking at — spending the top
+       * of a 360px column on it, so the first fact sat a row lower than it
+       * needed to.
+       *
+       * The close key floats over the corner rather than sitting in a band of
+       * its own, for the same reason: a band exists to hold a title.
+       */}
+      <button
+        type="button"
+        className="drawer__close"
+        aria-label="Close session details"
+        onClick={onClose}
+      >
+        <IconCloseOutline16 size={14} />
+      </button>
 
       <div className="drawer__body">
         <dl className="drawer__list">
@@ -184,45 +178,14 @@ export function SessionDrawer({
       </div>
 
       {/*
-       * The foot — §12: Pause session and Delete, away from everything
-       * reversible.
+       * No foot. Every lifecycle act is one key in the session header now, and
+       * splitting them across two surfaces is how somebody comes looking for
+       * an action where it used to be. Delete moved with the rest, keeping the
+       * acknowledgement §12.4 spends on the one action that loses something.
        *
-       * Delete is the one action here that loses something. It is confirmed
-       * behind an explicit tick rather than by a second press on a red key:
-       * a colour is something a person can click as fast as any other, and
-       * what is being protected is a session's whole history.
+       * This panel is reference material, and reference material that also
+       * acts is a panel people are afraid to open.
        */}
-      <div className="drawer__foot">
-        {can.reason === undefined ? null : <span className="control-reason">{can.reason}</span>}
-        <Button disabled={busy || !can.canStop} onClick={onStop}>
-          Pause session
-        </Button>
-        <Button
-          variant="primary"
-          disabled={busy || !can.canDelete}
-          onClick={() => {
-            setConfirmingDelete(true);
-          }}
-        >
-          Delete
-        </Button>
-      </div>
-
-      <RiskConfirmation
-        open={confirmingDelete}
-        title="Delete this session?"
-        description="This deletes the session and everything it recorded — its transcript, its terminal output, and its history. Nothing here can be recovered afterwards."
-        acknowledgeLabel="I understand this cannot be undone."
-        confirmLabel="Delete permanently"
-        busy={busy}
-        onCancel={() => {
-          setConfirmingDelete(false);
-        }}
-        onConfirm={() => {
-          setConfirmingDelete(false);
-          onDelete();
-        }}
-      />
     </aside>
   );
 }

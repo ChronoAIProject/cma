@@ -1,8 +1,11 @@
 import { useId, useState } from 'react';
 import type { KernelOffer, Session } from './types';
 import { abilitiesFor } from './availability';
-import { switchFor, unavailableBecause } from './planeSwitch';
+import { planeOf, switchFor, unavailableBecause } from './planeSwitch';
 import { Modal } from '../ui/Modal';
+import { RiskConfirmation } from '../ui/RiskConfirmation';
+import { effectiveAppearance, storedAppearance } from '../theme/appearance';
+import { resolveTheme, storeThemeId, storedThemeId, themesFor } from '../terminal/themes';
 import { Button } from '../ui/Button';
 import './SessionActions.css';
 import { Menu } from '../ui/Menu';
@@ -34,6 +37,18 @@ interface SessionActionsProps {
   readonly onReconnect: () => void;
   readonly onRevive: () => void;
   readonly onStop: () => void;
+  /**
+   * Delete the session and everything it recorded.
+   *
+   * Here rather than in the drawer, because the lifecycle is now one menu and
+   * splitting it across two surfaces is how somebody looks for an action where
+   * it used to be. It keeps its acknowledgement: §12.4 spends the tick on the
+   * one action that loses something, and moving it must not be how that is
+   * quietly dropped.
+   */
+  readonly onDelete: () => void;
+  /** Told when the terminal palette changes, so the surface can be rebuilt. */
+  readonly onTerminalThemeChange?: (id: string) => void;
   /** Opens and closes the details drawer. */
   readonly onDetails: () => void;
   readonly detailsOpen?: boolean;
@@ -65,6 +80,8 @@ export function SessionActions({
   onReconnect,
   onRevive,
   onStop,
+  onDelete,
+  onTerminalThemeChange,
   onDetails,
   detailsOpen = false,
   kernels = [],
@@ -72,7 +89,18 @@ export function SessionActions({
   busy = false,
 }: SessionActionsProps) {
   const [confirmingSwitch, setConfirmingSwitch] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [lifecycleOpen, setLifecycleOpen] = useState(false);
+  /*
+   * The terminal palette. It sat in the account menu, where it applied to a
+   * plane most sessions are not on — an account setting for a surface its
+   * owner may never open. It belongs to the session that draws one.
+   */
+  const [terminalThemeId, setTerminalThemeId] = useState<string | null>(() => storedThemeId());
+  const surface = effectiveAppearance(storedAppearance());
+  const theme = resolveTheme(surface, terminalThemeId);
+  const onTerminal = planeOf(session) === 'terminal';
   const reasonId = useId();
   const can = abilitiesFor(session, signingIn);
   // Absent rather than disabled where the kernel does not advertise the other
@@ -99,6 +127,26 @@ export function SessionActions({
    */
   const describedBy = can.reason === undefined ? undefined : reasonId;
 
+  /*
+   * One lifecycle row. Disabled with its reason beside the label rather than
+   * removed (§7): the set keeps its shape as a session moves through its life,
+   * so somebody who paused one yesterday finds Resume where Pause was rather
+   * than hunting a menu that has rearranged itself.
+   */
+  const row = (id: string, label: string, allowed: boolean) => ({
+    id,
+    label:
+      allowed || can.reason === undefined ? (
+        label
+      ) : (
+        <span className="actions__whynot">
+          {label}
+          <span className="actions__reason">{can.reason}</span>
+        </span>
+      ),
+    disabled: busy || !allowed,
+  });
+
   return (
     <div className="actions">
       {can.reason === undefined ? null : (
@@ -108,22 +156,51 @@ export function SessionActions({
       )}
 
       {/*
-       * Resume is the primary action wherever it is offered (§11), which is
-       * where this surface spends the one primary key §7 allows it.
+       * One key for what can be done to the session, rather than whichever
+       * single action happened to apply. `Reconnect` and `Resume` were the
+       * same slot showing different words, so which one a person saw depended
+       * on a state they had not been told about — and `Reconnect` re-dials a
+       * live session's transport while `Resume` gives a paused one a sandbox
+       * back. Two different acts wearing one position.
+       *
+       * Every row that this state does not allow is drawn disabled with its
+       * reason (§7) rather than removed, so the set does not change shape as a
+       * session moves through its life.
        */}
-      {can.canRevive ? (
-        <Button variant="primary" disabled={busy} onClick={onRevive} aria-describedby={describedBy}>
-          Resume
-        </Button>
-      ) : (
-        <Button
-          disabled={busy || !can.canReconnect}
-          onClick={onReconnect}
-          aria-describedby={describedBy}
-        >
-          Reconnect
-        </Button>
-      )}
+      <Menu
+        open={lifecycleOpen}
+        label="Manage lifecycle"
+        align="end"
+        items={[
+          row('resume', 'Resume', can.canRevive),
+          row('reconnect', 'Reconnect', can.canReconnect),
+          row('stop', 'Pause session', can.canStop),
+          { type: 'separator', id: 'before-delete' },
+          { ...row('delete', 'Delete', can.canDelete), danger: true },
+        ]}
+        onSelect={(id) => {
+          setLifecycleOpen(false);
+          if (id === 'resume') return onRevive();
+          if (id === 'reconnect') return onReconnect();
+          if (id === 'stop') return onStop();
+          setConfirmingDelete(true);
+        }}
+        onClose={() => {
+          setLifecycleOpen(false);
+        }}
+        anchor={
+          <Button
+            aria-haspopup="menu"
+            aria-expanded={lifecycleOpen}
+            aria-describedby={describedBy}
+            onClick={() => {
+              setLifecycleOpen((open) => !open);
+            }}
+          >
+            Manage lifecycle
+          </Button>
+        }
+      />
 
       <Button onClick={onDetails} aria-expanded={detailsOpen}>
         Details
@@ -160,19 +237,12 @@ export function SessionActions({
                   disabled: busy || !move.available,
                 },
               ]),
-          {
-            id: 'stop',
-            label:
-              can.reason === undefined ? (
-                'Pause session'
-              ) : (
-                <span className="actions__whynot">
-                  Pause session
-                  <span className="actions__reason">{can.reason}</span>
-                </span>
-              ),
-            disabled: busy || !can.canStop,
-          },
+          /*
+           * Only on a terminal session. §7: a control that can never do
+           * anything here is absent rather than drawn — a conversation has no
+           * palette to change.
+           */
+          ...(onTerminal ? [{ id: 'palette', label: `Terminal theme: ${theme.label}` }] : []),
         ]}
         onSelect={(id) => {
           setMenuOpen(false);
@@ -180,7 +250,21 @@ export function SessionActions({
             setConfirmingSwitch(true);
             return;
           }
-          onStop();
+          if (id === 'palette') {
+            // Only palettes suiting the current appearance are offered, so a
+            // dark theme can never be placed on a light page.
+            const options = themesFor(surface);
+            const next =
+              options[(options.findIndex((t) => t.id === theme.id) + 1) % options.length];
+            if (next !== undefined) {
+              setTerminalThemeId(next.id);
+              storeThemeId(next.id);
+              // Read when a terminal is constructed, so the change lands on
+              // the next one rather than repainting a live screen underneath
+              // somebody mid-command.
+              onTerminalThemeChange?.(next.id);
+            }
+          }
         }}
         onClose={() => {
           setMenuOpen(false);
@@ -198,6 +282,22 @@ export function SessionActions({
             ···
           </Button>
         }
+      />
+
+      <RiskConfirmation
+        open={confirmingDelete}
+        title="Delete this session?"
+        description="This deletes the session and everything it recorded — its transcript, its terminal output, and its history. Nothing here can be recovered afterwards."
+        acknowledgeLabel="I understand this cannot be undone."
+        confirmLabel="Delete permanently"
+        busy={busy}
+        onCancel={() => {
+          setConfirmingDelete(false);
+        }}
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          onDelete();
+        }}
       />
 
       {/*
