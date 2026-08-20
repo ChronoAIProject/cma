@@ -204,10 +204,36 @@ impl SessionService {
                     .await
                 {
                     Ok(packs) => packs,
-                    Err(why) => {
+                    /*
+                     * Whether this is fatal depends on whether anybody asked.
+                     *
+                     * At creation there is a caller on the line, the fetch is
+                     * made as them, and a session that cannot have what it was
+                     * described as having should not be started — §3, refused
+                     * by name before anything is provisioned.
+                     *
+                     * A rotation or a recovery has no caller and no credential
+                     * of theirs to ask with, so the fetch falls back to this
+                     * service's own identity, which sees only public skills.
+                     * Refusing there does not protect anybody: it destroys a
+                     * session somebody is working in, to avoid it missing a
+                     * file. It cost three live sessions the first time this
+                     * shipped, and losing the work is far worse than losing a
+                     * skill.
+                     */
+                    Err(why) if spec.caller_credential.is_some() => {
                         return Err(StartFailure::permanent(format!(
                             "this session's skills could not be prepared: {why}"
                         )))
+                    }
+                    Err(why) => {
+                        tracing::warn!(
+                            session_id = %id,
+                            %why,
+                            "carrying this session forward without refetching its skills; \
+                             it keeps everything else it had"
+                        );
+                        Vec::new()
                     }
                 }
             }
