@@ -62,7 +62,7 @@
   align-items: center;
 }
 
-.profilerow .picker {
+.profilerow__picker {
   flex: 1;
   min-width: 0;
 }
