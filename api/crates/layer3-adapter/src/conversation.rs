@@ -17,10 +17,10 @@ use tokio::sync::mpsc;
 /// on the way through: the core has a stop reason of its own about whole
 /// sessions, and these five are about a single turn.
 pub use agent_client_protocol_schema::v1::{
-    ContentBlock, ContentChunk, PermissionOption, PermissionOptionId, PermissionOptionKind,
-    PromptResponse, RequestPermissionRequest, SessionId as ConversationId, SessionUpdate,
-    StopReason as TurnStopReason, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind, UsageUpdate,
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, PermissionOption,
+    PermissionOptionId, PermissionOptionKind, PromptResponse, RequestPermissionRequest,
+    SessionId as ConversationId, SessionUpdate, StopReason as TurnStopReason, ToolCall, ToolCallId,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 pub use agent_client_protocol_schema::v1::{MessageId, Usage as TurnUsage};
 
