@@ -220,6 +220,24 @@ export function MessageStream({
         }}
       >
         <div className="stream__column" ref={columnRef}>
+          {/*
+           * A session that has said nothing is not a broken one, and a blank
+           * column does not say so. It said nothing at all: the surface came
+           * up empty and the only clue that it was ready was that the composer
+           * had stopped refusing.
+           *
+           * Drawn only where there is genuinely nothing — the moment a turn
+           * exists this is gone, and it never sits above a conversation.
+           */}
+          {entries.length === 0 && plan === undefined ? (
+            <div className="stream__opening">
+              <p className="stream__openingtitle">Ready when you are.</p>
+              <p className="stream__openinghint">
+                Say what you want done, and this session will get to work. Press{' '}
+                <kbd className="stream__key">/</kbd> for what it can do.
+              </p>
+            </div>
+          ) : null}
           {entries.map((entry) => (
             <StreamEntry
               entry={entry}
