@@ -7,6 +7,7 @@ use crate::{RuntimeOptions, TermSize};
 fn spec_with(permission: RuntimePermission, effort: Option<&str>) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
