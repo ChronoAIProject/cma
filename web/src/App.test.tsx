@@ -208,7 +208,9 @@ async function arrange(user: UserEvent, name: 'List' | 'Canvas') {
  * finished arriving. A longer bound still fails if it never comes.
  */
 async function waitForConsole() {
-  return waitFor(() => screen.getByRole('tablist', { name: /sessions/i }), { timeout: 10_000 });
+  // The rail groups by state, so there is a list per group rather than one
+  // named "Sessions". Active is the one that is always open.
+  return waitFor(() => screen.getByRole('tablist', { name: 'Active' }), { timeout: 10_000 });
 }
 
 /**
@@ -535,14 +537,14 @@ describe('App', () => {
     // same shape as a 409, an expired token or a network blip. End lives in
     // the header's overflow menu now (§7).
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /end session/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Pause session' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toBeInTheDocument();
     // A dismissible card at the head of the column, not a sentence in place
     // of the surface (§12). It names what was not changed and the API's code.
     expect(alert).toHaveClass('notice--fail');
-    expect(alert.textContent).toContain('Ending the session failed.');
+    expect(alert.textContent).toContain('Pausing the session failed.');
     expect(alert.textContent).toContain('The session keeps running.');
     expect(alert.textContent).toContain('HTTP 404');
     expect(within(alert).getByRole('button', { name: /dismiss/i })).toBeInTheDocument();
@@ -570,7 +572,7 @@ describe('App', () => {
     await waitForConsole();
 
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /end session/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Pause session' }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /^reconnect$/i }));
