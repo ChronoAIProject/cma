@@ -84,15 +84,28 @@ export function NewSessionDialog({
 }: NewSessionDialogProps) {
   /*
    * Starts on the profile this owner chose, and on the deployment's own
-   * defaults where they have not chosen one — which is a described session
-   * rather than a bare one, so both are real starting points.
+   * defaults where they have not chosen one — both described starting points,
+   * so neither is a bare session.
    *
-   * Read once. Re-deriving it as the list arrives would move the selection
-   * under somebody who had already changed it.
+   * Seeded when the dialog opens rather than once when it mounts. This is
+   * mounted with the console, long before the profile list has been read, so
+   * an initialiser saw an empty list every time and the preference never
+   * applied — which is the whole of what the preference is for.
+   *
+   * Adjusted during render rather than in an effect, so the dialog is never
+   * drawn once on the wrong profile and then corrected.
    */
-  const [profile, setProfile] = useState<string>(
-    () => profiles.find((candidate) => candidate.preferred)?.id ?? '',
-  );
+  const preferred = profiles.find((candidate) => candidate.preferred)?.id ?? '';
+  const [profile, setProfile] = useState<string>(preferred);
+  const [opened, setOpened] = useState(open);
+  if (opened !== open) {
+    setOpened(open);
+    if (open) {
+      // Opening is when the choice starts, so it starts from the preference —
+      // and a choice made in a previous opening does not survive into this one.
+      setProfile(preferred);
+    }
+  }
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
   const [catalogue, setCatalogue] = useState<ServiceCatalogue | undefined>(undefined);
   /*
