@@ -121,7 +121,16 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
         match auth.refresh(&subject, &refresh_token).await {
             Ok(access_token) => {
                 if sessions_run_on_own_keys {
-                    tracing::debug!(%subject, "renewed this owner's token; sessions keep their own");
+                    // Said out loud rather than at debug. This is the branch
+                    // that stops an owner's whole identity reaching their
+                    // sessions, and a silent branch cannot be confirmed to
+                    // have run — the only other evidence is the absence of a
+                    // line, which is indistinguishable from the sweep never
+                    // having fired.
+                    tracing::info!(
+                        %subject,
+                        "renewed this owner's token; their sessions keep their own credentials"
+                    );
                     continue;
                 }
                 let pushed = service
