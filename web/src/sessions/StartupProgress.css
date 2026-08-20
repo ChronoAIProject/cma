@@ -5,14 +5,24 @@
  * than introducing a second one.
  */
 
+/*
+ * Centred in the column it fills, rather than pinned under the header.
+ *
+ * It sat 57px down a 900px surface with 780px of nothing beneath it — the one
+ * thing on screen, in the corner of the space it had. A surface waiting for
+ * something puts what it is waiting for where the eye already is.
+ */
 .startup {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  gap: 12px;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-6);
-  font-family: var(--font-mono);
-  color: var(--ink-2);
+  justify-content: center;
+  min-height: 0;
+  padding: 24px;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
 }
 
 .startup__message {
