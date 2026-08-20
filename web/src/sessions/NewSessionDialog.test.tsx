@@ -65,8 +65,10 @@ function renderDialog(options: DialogOptions = {}) {
 /** Open the authoring branch, which is where every field below lives. */
 async function author(user: ReturnType<typeof userEvent.setup>) {
   await chooseOption(user, /environment profile/i, /new profile/i);
-  // §7: the plane choice is two labelled cards in a radiogroup, not a select.
-  await screen.findByRole('radiogroup', { name: /^plane$/i });
+  // The name is the first field of the authoring form, so its presence is what
+  // says the form is open. The plane is no longer asked: a session is a
+  // conversation, and the terminal is somewhere its owner moves it to later.
+  await screen.findByLabelText(/^name$/i);
 }
 
 describe('starting from what already exists', () => {
@@ -130,7 +132,6 @@ describe('starting from what already exists', () => {
     renderDialog({ profiles: [profile('envp_1', 'Talos Controller')] });
 
     expect(screen.queryByRole('button', { name: /^agent$/i })).toBeNull();
-    expect(screen.queryByRole('radiogroup', { name: /^plane$/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /thinking effort/i })).toBeNull();
   });
 });
@@ -145,7 +146,6 @@ describe('authoring a scoped profile in place', () => {
 
     await author(user);
     await user.type(screen.getByLabelText(/^name$/i), 'GitHub reviewer');
-    await user.click(screen.getByRole('radio', { name: /conversation/i }));
     await user.click(await screen.findByRole('checkbox', { name: /GitHub/ }));
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
@@ -162,38 +162,42 @@ describe('authoring a scoped profile in place', () => {
     await expect(store.list()).resolves.toEqual([created]);
   });
 
-  it('refuses a plane the chosen runtime cannot serve, by name, before anything is created', async () => {
+  it('refuses a runtime that cannot hold a conversation, by name, before anything is created', async () => {
+    /*
+     * The plane is no longer chosen, so this is no longer a refusal somebody
+     * walked into — it is a fact about the runtime they picked, and it has to
+     * be said before the form is filled in rather than after it is submitted.
+     */
     const user = userEvent.setup();
-    const { onStart, store } = renderDialog();
+    const { onStart, store } = renderDialog({
+      kernels: [
+        { id: 'codex', modes: ['conversation'] },
+        { id: 'claude-code', modes: ['terminal'] },
+      ],
+    });
     const create = vi.spyOn(store, 'create');
 
     await author(user);
     await user.type(screen.getByLabelText(/^name$/i), 'Screen work');
-    // A new profile starts on the conversation plane, which Claude Code
-    // serves, so the terminal has to be asked for to provoke the refusal.
-    await user.click(screen.getByRole('radio', { name: /terminal/i }));
     await chooseOption(user, /^agent$/i, 'Claude Code');
 
-    // Claude Code does not serve a terminal.
-    expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “terminal”/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “conversation”/i);
     expect(screen.getByRole('button', { name: /start session/i })).toBeDisabled();
     expect(create).not.toHaveBeenCalled();
     expect(onStart).not.toHaveBeenCalled();
   });
 
-  it('shows a plane the runtime cannot serve as refused rather than hiding it', async () => {
-    // §7: controls are disabled, never removed. A plane that silently vanished
-    // would read as a plane this product does not have.
+  it('asks nothing about the plane, because a session is a conversation', async () => {
+    // Moving between planes is a rotation with a cost, not a setting, so it is
+    // a deliberate act on a running session rather than a question asked of
+    // somebody who has not started one yet.
     const user = userEvent.setup();
     renderDialog();
 
     await author(user);
-    await chooseOption(user, /^agent$/i, 'Claude Code');
 
-    const terminal = screen.getByRole('radio', { name: /terminal/i });
-    expect(terminal).toBeDisabled();
-    expect(terminal.textContent).toContain('Not on Claude Code');
-    expect(screen.getByRole('radio', { name: /conversation/i })).toBeEnabled();
+    expect(screen.queryByRole('radiogroup', { name: /^plane$/i })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /terminal/i })).toBeNull();
   });
 
   it('will not author a profile when the deployment’s runtimes are unknown', async () => {
