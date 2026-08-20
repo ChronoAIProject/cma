@@ -49,24 +49,6 @@ describe('the sidebar', () => {
     expect(screen.getByText(/2 not attached/)).toBeInTheDocument();
   });
 
-  it('offers operations only where the caller can operate', () => {
-    // Presentation, never protection — the API refuses on its own — but a
-    // control nobody can use should not be drawn.
-    renderSidebar();
-    expect(screen.queryByRole('button', { name: 'Operations' })).toBeNull();
-
-    renderSidebar({ onOperations: vi.fn() });
-    expect(screen.getByRole('button', { name: 'Operations' })).toBeInTheDocument();
-  });
-
-  it('says when operations is the view showing', () => {
-    renderSidebar({ onOperations: vi.fn(), operationsActive: true });
-    expect(screen.getByRole('button', { name: 'Operations' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-  });
-
   it('starts a session from the mark as well as from the key', async () => {
     // The mark is a shortcut, and it carries no hover chrome: a fill on a
     // wordmark reads as the product's name being a control.
@@ -94,11 +76,13 @@ describe('the collapsed rail', () => {
      * what keeps "show me the other sessions" reachable at any width, so
      * every control survives the collapse — only their labels do not.
      */
-    renderSidebar({ collapsed: true, onOperations: vi.fn() });
+    renderSidebar({ collapsed: true });
 
     expect(screen.getByRole('button', { name: 'Show the session list' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /find a session/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Operations' })).toBeInTheDocument();
+    // The account control survives too, and its tests live with it: it used to
+    // be replaced by a static glyph here, leaving no way to sign out.
+    expect(screen.getByRole('button', { name: 'Account' })).toBeInTheDocument();
   });
 
   it('drops the build and the status line, which have no room to be read', () => {
