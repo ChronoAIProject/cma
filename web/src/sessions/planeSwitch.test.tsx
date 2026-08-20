@@ -48,6 +48,7 @@ function renderActions(
       onReconnect={vi.fn()}
       onRevive={vi.fn()}
       onStop={vi.fn()}
+      onDelete={vi.fn()}
       onDetails={vi.fn()}
     />,
   );
@@ -189,10 +190,31 @@ describe('the affordance in the session header', () => {
         onReconnect={vi.fn()}
         onRevive={vi.fn()}
         onStop={vi.fn()}
+        onDelete={vi.fn()}
         onDetails={vi.fn()}
       />,
     );
     await userEvent.setup().click(screen.getByRole('button', { name: /more actions/i }));
     expect(screen.queryByRole('menuitem', { name: /conversation/i })).toBeNull();
+  });
+});
+
+describe('the terminal palette', () => {
+  it('is offered on a terminal session, in its own overflow menu', async () => {
+    const user = userEvent.setup();
+    renderActions(session('running', 'terminal'));
+
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    expect(screen.getByRole('menuitem', { name: /terminal theme/i })).toBeInTheDocument();
+  });
+
+  it('is absent on a conversation, which has no palette to change', async () => {
+    // §7: a control that can never do anything here is absent rather than
+    // drawn — not disabled, because it is not unavailable, it is irrelevant.
+    const user = userEvent.setup();
+    renderActions(session('running', 'conversation'));
+
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    expect(screen.queryByRole('menuitem', { name: /terminal theme/i })).toBeNull();
   });
 });
