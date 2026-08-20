@@ -29,19 +29,36 @@ class FakeEventSource {
   static readonly CLOSED = 2;
   /** What the next session reports reaching. Not every start succeeds. */
   static outcome = 'ready';
+  /**
+   * A sign-in the next session stops to ask for, if any.
+   *
+   * Set, the stream reports the request and the session stays provisioning —
+   * which is what actually happens, because the kernel raises this from inside
+   * the conversation open and waits there. Announcing an outcome as well would
+   * model a session that signs itself in.
+   */
+  static signIn: { url: string; code?: string; message?: string } | null = null;
   readyState = 1;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
 
   constructor(readonly url: string) {
     streams.push(this);
-    // Announce the outcome on the next tick, as a real runtime would.
-    queueMicrotask(() => this.announce(FakeEventSource.outcome));
+    // Announce on the next tick, as a real runtime would.
+    queueMicrotask(() => {
+      if (FakeEventSource.signIn !== null) {
+        this.send({ type: 'sign_in_required', ...FakeEventSource.signIn });
+        return;
+      }
+      this.announce(FakeEventSource.outcome);
+    });
   }
   announce(status: string): void {
-    this.onmessage?.({
-      data: JSON.stringify({ seq: 2, event: { type: 'status_changed', status } }),
-    } as MessageEvent);
+    this.send({ type: 'status_changed', status });
+  }
+  /** One frame, in the shape the control plane serialises. */
+  send(event: unknown): void {
+    this.onmessage?.({ data: JSON.stringify({ seq: 2, event }) } as MessageEvent);
   }
   close(): void {
     this.readyState = FakeEventSource.CLOSED;
@@ -123,6 +140,7 @@ beforeEach(() => {
   streams.length = 0;
   listing = [];
   FakeEventSource.outcome = 'ready';
+  FakeEventSource.signIn = null;
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
@@ -384,6 +402,60 @@ describe('App', () => {
     });
     expect(screen.getByRole('group', { name: /^Session .* on codex$/ })).toBeInTheDocument();
     expect(screen.queryByText('Attaching…')).toBeNull();
+  });
+
+  it('shows the sign-in a session is waiting on, instead of a starting message', async () => {
+    /*
+     * #355. A kernel spending its owner's own account stops inside the
+     * conversation open to ask them to sign in, so the session is still
+     * `provisioning` — and that lifecycle drew a spinner reading "this can
+     * take a minute", indefinitely, for something that is not taking time and
+     * will never finish on its own. The request was arriving on the stream the
+     * whole time and being dropped.
+     */
+    FakeEventSource.signIn = {
+      url: 'https://auth.example.test/device',
+      code: 'WDJB-MJHT',
+      message: 'Sign in to continue',
+    };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Sign in to continue' })).toBeInTheDocument();
+    });
+    expect(screen.getByText('WDJB-MJHT')).toBeInTheDocument();
+    // The starting message is not merely redundant here, it is wrong: it tells
+    // somebody to wait for the thing they are being asked to do.
+    expect(screen.queryByText(/Starting a sandbox for this session/)).toBeNull();
+  });
+
+  it('clears the sign-in once the session moves on', async () => {
+    // A completed sign-in leaves a code that has already expired. Showing it
+    // afterwards asks somebody to enter something that cannot work.
+    FakeEventSource.signIn = { url: 'https://auth.example.test/device', code: 'WDJB-MJHT' };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+
+    await waitFor(() => {
+      expect(screen.getByText('WDJB-MJHT')).toBeInTheDocument();
+    });
+
+    const stream = streams[streams.length - 1];
+    if (stream === undefined) {
+      throw new Error('the progress stream was never opened');
+    }
+    await act(async () => {
+      stream.announce('ready');
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('WDJB-MJHT')).toBeNull();
+    });
   });
 
   it('ignores a stored arrangement this build does not have', async () => {
