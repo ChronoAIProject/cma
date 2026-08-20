@@ -47,49 +47,6 @@
   border-radius: 12px;
 }
 
-/*
- * The plane strip. Drawn only when there are two, so it is never a control
- * that cannot do anything.
- */
-.sessionheader__tabs {
-  display: flex;
-  gap: 36px;
-  align-items: flex-end;
-  padding-left: 8px;
-}
-
-.sessionheader__tab {
-  padding: 0 0 11px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 16px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 2px;
-  cursor: pointer;
-}
-
-.sessionheader__tab[aria-selected='true'] {
-  color: var(--dsw-alias-state-business-primary);
-  border-bottom-color: var(--dsw-alias-state-business-primary);
-}
-
-/*
- * A plane that cannot be moved to right now is dimmed and says why on hover,
- * rather than vanishing: what can never work is absent, and this can.
- */
-.sessionheader__tab[aria-disabled='true'] {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.sessionheader__tab:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
 /* Pushes the action cluster to the trailing edge. */
 .sessionheader__spacer {
   flex: 1;
