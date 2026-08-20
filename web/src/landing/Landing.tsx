@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { MAX_TURN_LENGTH, capturePendingTurn } from '../auth/pendingTurn';
 import { useAuth } from '../auth/context';
 import { Button } from '../ui/Button';
-import markUrl from '../assets/brand/cma-mark-animated.svg';
+import markMarkup from '../assets/brand/cma-mark-animated.svg?raw';
 import './Landing.css';
 
 /**
@@ -68,13 +68,23 @@ export function Landing() {
     <main className="landing">
       <div className="landing__stack">
         {/*
+         * Inlined rather than loaded through <img>, and that is not a
+         * preference. The mark carries its own `prefers-reduced-motion` block,
+         * and inside an <img> that block does not take effect: measured in
+         * Chrome, the base rules stay frozen and the mark renders as its arc
+         * alone — no base, no lenses, no bridge. Inline, the same stylesheet
+         * resolves correctly, which was measured the same way.
+         *
+         * The markup is this repository's own build-time asset, never input.
+         *
          * Decorative: the wordmark beside it already says CMA, and a second
          * announcement of the same two letters is noise on a screen reader.
-         * Dimensions are on the element so the stack does not reflow when the
-         * asset lands — the mark is most of the page, so that reflow is the
-         * whole layout moving.
          */}
-        <img className="landing__mark" src={markUrl} alt="" width={512} height={512} />
+        <span
+          className="landing__mark"
+          aria-hidden="true"
+          dangerouslySetInnerHTML={{ __html: markMarkup }}
+        />
 
         <h1 className="landing__word">CMA</h1>
         <p className="landing__expand">ChronoAI Managed Agent</p>
