@@ -272,9 +272,14 @@ export function ConversationSurface({
             <ApprovalCard
               interrupt={pending}
               busy={busy}
-              onAnswer={(decision) => {
-                void attempt(() => client.resolveApproval(pending.id, decision, runId()));
-              }}
+              /*
+               * The outcome goes back to the card, which is showing the answer
+               * already. A refusal has to put the question back, or the reader
+               * is left looking at a decision the service never took.
+               */
+              onAnswer={(decision) =>
+                attempt(() => client.resolveApproval(pending.id, decision, runId()))
+              }
             />
           )}
           <Usage granted={capabilities.usage} usage={conversation.usage} />
