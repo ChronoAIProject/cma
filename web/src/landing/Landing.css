@@ -49,10 +49,25 @@
  * origin trims to y 20–80: the padding goes, no part of the mark does.
  */
 .landing__mark {
+  display: block;
   width: clamp(200px, 52vmin, 560px);
-  height: auto;
   aspect-ratio: 100 / 60;
-  object-fit: cover;
+  overflow: hidden;
+}
+
+/*
+ * The square artwork, shifted up and clipped by the box above.
+ *
+ * `-20%` resolves against the wrapper's width, and the wrapper's width is the
+ * mark's width, so it is exactly twenty units of a hundred-unit viewBox at
+ * every size — the same crop `object-fit: cover` gave, without needing the
+ * mark to be an image to get it.
+ */
+.landing__mark svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: -20%;
 }
 
 /*
