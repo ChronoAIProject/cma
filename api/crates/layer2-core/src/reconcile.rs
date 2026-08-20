@@ -359,7 +359,8 @@ impl SessionService {
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),
             // Nobody is here to delegate one; the renewal loop supplies it.
-            subject_credential: None,
+            caller_credential: None,
+            runtime_credential: None,
             requested_mode: None,
         };
         let service = Arc::clone(self);

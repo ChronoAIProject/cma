@@ -284,6 +284,25 @@ impl From<Session> for SessionView {
     }
 }
 
+/// Render sessions for a caller: their names, and what each may reach.
+///
+/// One function for all three handlers that answer with sessions. It exists
+/// because `From<Session>` deliberately leaves `reach` empty for `reached` to
+/// fill — and an empty reach is a real answer on this interface, meaning the
+/// session reaches nothing. A handler that returned before filling it told the
+/// client something false, which is exactly what creation did.
+async fn viewed(
+    environments: &EnvironmentProfileService,
+    users: &UserDirectory,
+    caller: &Caller,
+    credential: Option<&str>,
+    sessions: Vec<Session>,
+) -> Vec<SessionView> {
+    let mut views = named(users, caller, sessions.clone()).await;
+    reached(environments, caller, credential, &sessions, &mut views).await;
+    views
+}
+
 /// Describe what each session may reach, as far as this caller can be told.
 ///
 /// One catalogue lookup for the whole page rather than one per row, for the
@@ -671,6 +690,8 @@ pub fn router(state: SessionsState) -> Router {
 
 async fn create(
     State(service): State<Arc<SessionService>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
+    State(users): State<Arc<UserDirectory>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     // Optional on purpose: a deployment with no delegation configured still
     // creates sessions, they simply cannot call out as the owner.
@@ -684,6 +705,7 @@ async fn create(
 ) -> Result<(StatusCode, Json<SessionView>), RequestFailure> {
     let Json(body) = body.map_err(BodyProblem)?;
     let parts = body.into_parts()?;
+    let credential_value = credential.as_ref().map(|axum::Extension(c)| c.0.clone());
     let session = service
         .create_session(
             &caller,
@@ -697,14 +719,37 @@ async fn create(
                 // also what a rotation rebuilds a session from, where these
                 // are the values the session was started with.
                 options: Default::default(),
-                subject_credential: credential.map(|axum::Extension(c)| c.0),
+                // The caller's own token, for asking the platform as them. It is
+                // never what the session runs on: the core mints that.
+                caller_credential: credential.map(|axum::Extension(c)| c.0),
+                runtime_credential: None,
                 // This interface takes no plane, so the profile or the
                 // deployment decides — which is what it has always done.
                 requested_mode: None,
             },
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(session.into())))
+    /*
+     * Filled here, not left as the placeholder it starts as.
+     *
+     * `From<Session>` seeds `reach: Vec::new()` for `reached` to fill, and
+     * this handler used to return before that happened. An empty list is a
+     * real answer on this interface — it means the session reaches nothing —
+     * so a client showed a freshly created session as reaching no services
+     * until something refetched it. The two ends disagreed about what `[]`
+     * meant, and both were reading their own contract correctly.
+     */
+    let sessions = vec![session];
+    let fallback: SessionView = sessions[0].clone().into();
+    let mut views = viewed(
+        &environments,
+        &users,
+        &caller,
+        credential_value.as_deref(),
+        sessions,
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(views.pop().unwrap_or(fallback))))
 }
 
 async fn list(

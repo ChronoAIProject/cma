@@ -223,7 +223,9 @@ async fn main() {
     let environments = EnvironmentProfileService::new(
         profile_store,
         baseline,
-        catalog,
+        catalog
+            .clone()
+            .map(|c| c as Arc<dyn layer2_core::SkillCatalog>),
         service_picker,
         config.default_agent.clone(),
     );
@@ -231,8 +233,16 @@ async fn main() {
         adapters,
         screen_factory,
         store,
-        context,
-        Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+        layer2_core::SessionPorts {
+            context,
+            credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+            // The same registry the profile editor picks from, asked for
+            // contents rather than for names. A deployment without one still
+            // starts sessions; they carry whatever their image does.
+            skills: catalog
+                .clone()
+                .map(|c| c as Arc<dyn layer2_core::SkillSource>),
+        },
         Arc::clone(&environments),
         layer2_core::Deployment {
             // The runtime image reference is the runtime version. Deriving it
