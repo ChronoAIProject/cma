@@ -24,6 +24,7 @@
 import { createClient, type CreateSession } from '../sdk';
 import type { KernelOffer, Session, SessionLifecycle, SessionPlane } from '../sdk';
 import { isStage, type Stage } from '../sessions/progress';
+import type { SignIn } from '../chat/conversationModel';
 
 export { ApiError, CapabilityRefused, toSession } from '../sdk';
 
@@ -155,6 +156,7 @@ export function followSession(
   onStatus: (lifecycle: SessionLifecycle, detail?: string) => void,
   onError: (message: string) => void,
   onStage?: (stage: Stage) => void,
+  onSignIn?: (signIn: SignIn) => void,
 ): () => void {
   const source = new EventSource(`/api/v1/sessions/${encodeURIComponent(id)}/events`, {
     withCredentials: true,
@@ -162,7 +164,15 @@ export function followSession(
 
   source.onmessage = (message: MessageEvent) => {
     let payload: {
-      event?: { type?: string; status?: string; detail?: string; stage?: string };
+      event?: {
+        type?: string;
+        status?: string;
+        detail?: string;
+        stage?: string;
+        url?: string;
+        code?: string;
+        message?: string;
+      };
     };
     try {
       payload = JSON.parse(String(message.data)) as typeof payload;
@@ -176,6 +186,27 @@ export function followSession(
     const stage = payload.event?.stage;
     if (isStage(stage)) {
       onStage?.(stage);
+    }
+
+    /*
+     * The agent has stopped to ask its owner to sign in. Raised from inside
+     * the conversation open, so it always arrives while the session is still
+     * provisioning — which is the only reason this stream carries it at all,
+     * since that is the one state whose surface is drawn from here rather
+     * than from the conversation.
+     *
+     * The address is the whole of the request; a kernel that gave no code is
+     * still actionable, so only the address is required.
+     */
+    if (payload.event?.type === 'sign_in_required') {
+      const url = payload.event.url;
+      if (typeof url === 'string' && url !== '') {
+        onSignIn?.({
+          url,
+          code: payload.event.code,
+          message: payload.event.message,
+        });
+      }
     }
 
     const status = payload.event?.status;
