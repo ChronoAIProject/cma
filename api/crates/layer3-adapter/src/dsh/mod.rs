@@ -61,7 +61,12 @@ impl DshAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: DshSandboxSpec) -> Self {
         Self {
-            hosted: HostedKernel::new(client, spec.deployment.shape.clone(), "dsh"),
+            hosted: HostedKernel::new(
+                client,
+                spec.deployment.shape.clone(),
+                "dsh",
+                spec.deployment.skills_root.clone(),
+            ),
             spec,
         }
     }

@@ -116,6 +116,17 @@ pub struct RuntimeSpec {
     /// So that a provider shared between control planes can be told apart, and
     /// no control plane reclaims a runtime it did not create.
     pub created_by: Option<String>,
+    /// Skills to put on the pod's disk before its agent starts.
+    ///
+    /// Carried as bytes rather than as names. A name is only useful to
+    /// something that can resolve it, and the pod deliberately cannot: it
+    /// holds no registry credential and knows no registry. The control plane
+    /// resolves and this delivers, which is the same division the conversation
+    /// carry already uses.
+    ///
+    /// Where they land is composed here, from the kernel's own root — the
+    /// pod is told paths and writes them, and never learns what a skill is.
+    pub skills: Vec<SkillPackage>,
     /// What the runtime should already carry when the agent starts.
     pub environment: RuntimeEnvironment,
     /// What this session's credential may reach, by name.
@@ -232,4 +243,18 @@ pub struct TerminalChannel {
     pub output: mpsc::Receiver<Vec<u8>>,
     /// Input destined for the runtime.
     pub input: mpsc::Sender<TerminalInput>,
+}
+
+/// One skill, as bytes ready to be written.
+///
+/// The paths are relative to the skill's own directory, exactly as the
+/// registry names them — `SKILL.md`, `references/api-reference.md` — so the
+/// kernel's root is prefixed at delivery and nothing here depends on which
+/// kernel is being served.
+#[derive(Debug, Clone)]
+pub struct SkillPackage {
+    /// The directory this skill occupies, which is the name the agent invokes.
+    pub name: String,
+    /// Each file, relative to that directory.
+    pub files: Vec<(String, Vec<u8>)>,
 }

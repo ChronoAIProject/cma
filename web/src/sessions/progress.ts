@@ -12,6 +12,7 @@ export const STAGES = [
   'accepted',
   'runtime_requested',
   'runtime_created',
+  'skills_installed',
   'attaching',
   'ready',
 ] as const;
@@ -23,6 +24,7 @@ const LABELS: Record<Stage, string> = {
   accepted: 'Request received',
   runtime_requested: 'Asking for a sandbox',
   runtime_created: 'Sandbox created',
+  skills_installed: 'Installing skills',
   attaching: 'Connecting to the terminal',
   ready: 'Ready',
 };

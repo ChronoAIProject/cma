@@ -31,8 +31,11 @@ pub(crate) fn service_with_context(
         adapters,
         factory,
         store,
-        Some(context),
-        None,
+        crate::service::SessionPorts {
+            context: Some(context),
+            credentials: None,
+            skills: None,
+        },
         no_environments(),
         owned(),
     );
@@ -58,8 +61,11 @@ pub(crate) fn service_on_version(
         adapters,
         factory,
         store,
-        None,
-        None,
+        crate::service::SessionPorts {
+            context: None,
+            credentials: None,
+            skills: None,
+        },
         no_environments(),
         Deployment {
             runtime_version: Some(version.to_string()),
@@ -85,8 +91,11 @@ pub(crate) fn service_with_credentials(
         adapters,
         factory,
         store,
-        None,
-        Some(Arc::new(FixedCredential(credential.to_string()))),
+        crate::service::SessionPorts {
+            context: None,
+            credentials: Some(Arc::new(FixedCredential(credential.to_string()))),
+            skills: None,
+        },
         no_environments(),
         owned(),
     );
@@ -125,8 +134,11 @@ pub(crate) fn service_as(
         adapters,
         factory,
         store,
-        None,
-        None,
+        crate::service::SessionPorts {
+            context: None,
+            credentials: None,
+            skills: None,
+        },
         no_environments(),
         deployment,
     );

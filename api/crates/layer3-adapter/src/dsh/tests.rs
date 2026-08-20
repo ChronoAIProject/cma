@@ -20,6 +20,7 @@ fn adapter(base: &str) -> DshAdapter {
 fn conversation() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),

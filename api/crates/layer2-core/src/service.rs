@@ -149,6 +149,8 @@ pub struct SessionService {
     pub(crate) context: Option<Arc<dyn ContextStore>>,
     /// Where to get an owner's credential when the owner is not here to give one.
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
+    /// Where this session's skills are fetched from, when anything can.
+    pub(crate) skills: Option<Arc<dyn crate::store::SkillSource>>,
     /// Sessions whose runtime has said it cannot be carried onto a newer one.
     ///
     /// Held in memory rather than recorded, deliberately: it is a fact about a
@@ -194,6 +196,22 @@ pub struct SessionService {
     pub(crate) retry_backoff_ms: std::sync::atomic::AtomicU64,
 }
 
+/// What a session service reaches outside itself, beyond its own store.
+///
+/// Grouped rather than passed one by one: each is optional, each is a place
+/// this crate deliberately does not know the shape of, and a positional list
+/// of three `Option<Arc<dyn …>>` is one where two can be swapped without the
+/// compiler noticing.
+#[derive(Default)]
+pub struct SessionPorts {
+    /// Where a session's conversation is stored between runtimes.
+    pub context: Option<Arc<dyn ContextStore>>,
+    /// Where a session's own credential is minted.
+    pub credentials: Option<Arc<dyn CredentialSource>>,
+    /// Where a session's skills are fetched from.
+    pub skills: Option<Arc<dyn crate::store::SkillSource>>,
+}
+
 impl SessionService {
     /// Build a service over a set of runtime implementations.
     ///
@@ -203,13 +221,18 @@ impl SessionService {
         adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
         screen_factory: ScreenFactory,
         store: Arc<dyn SessionStore>,
-        context: Option<Arc<dyn ContextStore>>,
-        credentials: Option<Arc<dyn CredentialSource>>,
+        ports: SessionPorts,
         environments: Arc<EnvironmentProfileService>,
         deployment: Deployment,
     ) -> Arc<Self> {
+        let SessionPorts {
+            context,
+            credentials,
+            skills,
+        } = ports;
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            skills,
             sequences: Arc::new(crate::sequence::Sequences::default()),
             starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
