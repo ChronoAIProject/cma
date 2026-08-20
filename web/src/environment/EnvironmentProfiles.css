@@ -181,3 +181,15 @@ textarea.field__input {
 .editor__section:first-of-type {
   border-top: none;
 }
+
+/*
+ * The row that sessions start from, said on the row.
+ *
+ * A list where one key reads "Stop using by default" and the rest read "Use by
+ * default" makes somebody compare four buttons to answer a question the list
+ * can state outright.
+ */
+.profiles__default {
+  margin-left: 8px;
+  vertical-align: middle;
+}
