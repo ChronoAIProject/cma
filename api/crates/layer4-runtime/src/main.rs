@@ -15,7 +15,12 @@ mod upstream;
 
 use std::net::SocketAddr;
 
-use axum::{extract::State, response::IntoResponse, routing::get, Router};
+use axum::{
+    extract::State,
+    response::IntoResponse,
+    routing::{get, post},
+    Router,
+};
 use tokio::sync::Mutex;
 
 use crate::bridge::Bridge;
@@ -332,6 +337,11 @@ async fn main() {
             "/runtime/conversation",
             get(conversation_snapshot).post(conversation_restore),
         )
+        // Files a kernel needs before it reads anything. Taken here rather
+        // than through the environment because what they carry does not fit
+        // there: one skill alone is larger than a single environment string
+        // may be, and the pod would fail to start with nothing naming why.
+        .route("/runtime/prelude", post(prelude_write))
         .with_state(state);
 
     tracing::info!(%bind, %command, "runtime supervisor listening");
@@ -508,6 +518,44 @@ fn spawn_credential_proxy(
     fault
 }
 
+/// Take files a kernel needs and put them on disk.
+///
+/// Refused once the agent has started: it reads what it was given at startup,
+/// so a write landing afterwards is a file the session was promised and is not
+/// using. Saying so is better than writing it and letting somebody believe it
+/// took effect.
+///
+/// The supervisor reads none of this. It is told paths and bodies and writes
+/// them, exactly as it is told what to run and where a conversation lives —
+/// a kernel that changes what it needs must not be able to break the pod.
+async fn prelude_write(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    if state.registry.is_running().await || state.conversation.lock().await.is_some() {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+    let files = match prelude::unpack(&body) {
+        Ok(files) => files,
+        Err(why) => return (axum::http::StatusCode::UNPROCESSABLE_ENTITY, why).into_response(),
+    };
+    let home = std::path::PathBuf::from(
+        std::env::var("HOME").unwrap_or_else(|_| "/home/chrono".to_string()),
+    );
+    match prelude::write_all(&home, &files) {
+        Ok(written) => (axum::http::StatusCode::OK, format!("{written}")).into_response(),
+        Err(e) => {
+            // Loud: the session was told it would have these.
+            tracing::error!(error = %e, "cannot write the prelude");
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
+}
+
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     let live = state.registry.len().await;
     // Whether a credential is held, never which one: an operator needs to know
@@ -516,6 +564,12 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         "status": "ready",
         "runtimes": live,
         "credential": state.credential.is_set().await,
+        // Declared so a control plane can tell an image that takes a prelude
+        // from one that does not. §6 makes the runtime image a separate
+        // deliberate bump, so the two versions genuinely coexist, and a POST
+        // to a router without the route answers 404 — which the adapter reads
+        // as a sandbox that is gone and replaces a healthy one.
+        "prelude": true,
     }))
 }
 

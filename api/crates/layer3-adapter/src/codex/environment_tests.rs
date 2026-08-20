@@ -17,6 +17,7 @@ use crate::{AdapterError, KernelAdapter, RuntimeSpec, TermSize};
 fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment,
@@ -63,6 +64,7 @@ async fn permission_intent_reaches_this_kernel_through_the_file_it_reads() {
         let a = adapter("http://127.0.0.1:1");
         let spec = RuntimeSpec {
             restore_from: None,
+            skills: Vec::new(),
             reaches: Vec::new(),
             created_by: None,
             environment: Default::default(),
@@ -107,6 +109,7 @@ async fn a_session_model_overrides_the_deployment_default() {
     let a = adapter("http://127.0.0.1:1");
     let spec = RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
@@ -140,6 +143,7 @@ async fn an_own_account_session_is_given_no_upstream_of_ours() {
     let a = adapter("http://127.0.0.1:1");
     let spec = RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
@@ -174,6 +178,7 @@ async fn the_delegated_credential_provisions_exactly_as_before() {
     let err = a
         .provision(&RuntimeSpec {
             restore_from: None,
+            skills: Vec::new(),
             reaches: Vec::new(),
             created_by: None,
             environment: Default::default(),
@@ -196,6 +201,7 @@ fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
     let a = adapter("http://127.0.0.1:1");
     let env = a.environment_for(&RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
@@ -298,7 +304,7 @@ async fn what_the_image_already_carries_provisions_as_before() {
         CodexSandboxSpec {
             deployment: crate::hosted::Deployment {
                 provided_packages: vec!["nyxid".into()],
-                provided_skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+                skills_root: ".codex/skills".into(),
                 ..CodexSandboxSpec::default().deployment
             },
             ..CodexSandboxSpec::default()

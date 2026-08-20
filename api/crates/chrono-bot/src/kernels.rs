@@ -110,11 +110,12 @@ fn deploy(config: &Config, deployment: &mut Deployment) {
         ("memory".to_string(), config.sandbox_memory.clone()),
     ]);
     deployment.platform_base_url = config.platform_base_url.clone();
-    // What the image is built with, which is the same list this deployment
-    // promises every session. Stated to the adapter so a profile asking for
-    // anything else is refused at provision rather than started without it.
+    // What the image is built with. Skills are deliberately absent from this:
+    // they used to be assigned the very list they were checked against, so a
+    // skill could never be found missing — and none was ever installed. They
+    // are delivered now, so where each kernel reads them is that kernel's own
+    // business and is set in its own directory.
     deployment.provided_packages = config.baseline_packages.clone();
-    deployment.provided_skills = config.baseline_skills.clone();
 }
 
 #[cfg(test)]

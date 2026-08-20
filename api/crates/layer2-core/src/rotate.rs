@@ -422,7 +422,8 @@ impl SessionService {
             geometry: Some(geometry),
             options: moved.session.options.clone(),
             environment_profile: moved.session.environment_profile.clone(),
-            subject_credential: None,
+            caller_credential: None,
+            runtime_credential: None,
             requested_mode: None,
         };
         let service = Arc::clone(self);
