@@ -8,6 +8,34 @@ metadata:
     app.kubernetes.io/part-of: chrono-bot
 spec:
   replicas: 1
+  # Never two control planes at once, even for a moment.
+  #
+  # The default RollingUpdate brings the replacement to Ready before the
+  # outgoing pod is sent SIGTERM, and /ready answers as soon as the process
+  # binds. The new process then runs its boot reconcile immediately, which for
+  # every live conversation session opens a second link to the same bot pod.
+  # The runtime's bridge is a broadcast that holds frames only when nobody is
+  # subscribed, so with two links every frame is delivered to both — and the
+  # outgoing process keeps folding until it exits, which the event stream's own
+  # keepalive delays to the end of the grace period.
+  #
+  # Both would then append the same agent message under their own sequence
+  # allocators. The uniqueness constraint is on (session, seq), not on content,
+  # so both persist and the owner's conversation permanently shows the reply
+  # twice.
+  #
+  # Recreate costs a short window where the API is unreachable, and that is the
+  # cheaper side of the trade: §5's whole design is that a control plane holds
+  # no state that matters, the bot pods keep running, the bridge holds frames
+  # while nothing is attached, and a client resumes on its cursor. Nothing a
+  # session owns is lost by the gap. A duplicated log is permanent.
+  #
+  # This makes the deployment safe; it does not make the control plane
+  # horizontally scalable, which §1 says it should be. That needs cross-process
+  # exclusion on a runtime attachment, which nothing here provides — see the
+  # issue this comment was written alongside.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: chrono-bot-api
@@ -17,6 +45,15 @@ spec:
         app.kubernetes.io/name: chrono-bot-api
         app.kubernetes.io/part-of: chrono-bot
     spec:
+      # Bounded so a rollout is not held open by the event stream's keepalive.
+      #
+      # Graceful shutdown waits on open connections, and a subscribed client's
+      # stream does not close on its own, so the default 30s was spent in full
+      # on every deploy. Nothing is lost by cutting it shorter: an unwritten
+      # frame is held by the runtime's bridge while nothing is attached and
+      # delivered to the next process that attaches, which is the same path a
+      # lost control plane already relies on.
+      terminationGracePeriodSeconds: 20
       # The sandbox key is delivered by the platform's secret provider, which
       # identifies the workload by its service account. Running as "default"
       # would present the wrong principal and the mount would be refused
@@ -44,7 +81,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-api:8b1719d
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-api:5698857
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
