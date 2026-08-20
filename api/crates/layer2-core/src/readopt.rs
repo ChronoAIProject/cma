@@ -83,7 +83,8 @@ impl SessionService {
             environment_profile: starting.session.environment_profile.clone(),
             // The owner is not on the line to delegate one; the renewal loop
             // hands the session a fresh credential once it is running.
-            subject_credential: None,
+            caller_credential: None,
+            runtime_credential: None,
             requested_mode: None,
         };
 
