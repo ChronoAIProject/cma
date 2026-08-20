@@ -77,24 +77,24 @@ describe('idle and recovering', () => {
     expect(isWaitingForAnswer(session('running'), true)).toBe(false);
   });
 
-  it('says the agent is waiting, never that the session stopped', () => {
+  it('says the agent is waiting, never that the session was paused', () => {
     // The live defect §11's wording change fixes: a session parked on
     // `requires_action` is `idle`, and the composer used to say "This session
-    // is stopped. Revive it to carry on." while an answerable approval sat
+    // is paused. Resume it to carry on." while an answerable approval sat
     // directly above it.
     const parked = planeStateFor(session('idle'), true);
     expect(parked.waiting).toBe(true);
     expect(parked.interactive).toBe(false);
     expect(parked.reason).toMatch(/waiting for your answer/i);
-    // It never claims the session is stopped, and never offers a revive.
-    expect(parked.reason).not.toMatch(/session is stopped/i);
-    expect(parked.reason).not.toMatch(/revive/i);
+    // It never claims the session is set aside, and never offers to resume it.
+    expect(parked.reason).not.toMatch(/session is paused/i);
+    expect(parked.reason).not.toMatch(/resume/i);
     expect(parked.failed).toBe(false);
 
     // A genuinely idle session is unchanged.
     const idle = planeStateFor(session('idle'), false);
     expect(idle.waiting).toBe(false);
-    expect(idle.reason).toMatch(/stopped/i);
+    expect(idle.reason).toMatch(/paused/i);
   });
 });
 
