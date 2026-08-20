@@ -227,12 +227,18 @@ async function sidebarCollapses(page) {
  * capability is not offered it, and that is not a failure.
  */
 async function selectingLeavesOperations(page) {
+  // Operations lives in the account menu, so it is opened the way a person
+  // opens it rather than by finding a button that no longer sits on the page.
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
   const opened = await page.evaluate(() => {
-    const button = [...document.querySelectorAll('button')].find((candidate) =>
+    const row = [...document.querySelectorAll('[role^="menuitem"]')].find((candidate) =>
       /operations/i.test(candidate.textContent ?? ''),
     );
-    button?.click();
-    return button !== undefined;
+    row?.click();
+    return row !== undefined;
   });
   if (!opened) {
     return ['operations: the view switch was not offered to a caller who may operate'];
@@ -251,6 +257,128 @@ async function selectingLeavesOperations(page) {
   return stuck ? ['operations: choosing a session left the operator panel on screen'] : [];
 }
 
+/**
+ * Every menu the product opens lands inside the window.
+ *
+ * Three separate bugs were one bug: a list cut off by a dialog's scrollport, a
+ * list 53px past the left edge, a list off the bottom. Each was found by
+ * looking at that one surface. This asks the question once, of every trigger
+ * there is, so the fourth one is found by the check rather than by somebody
+ * using it.
+ */
+async function everyMenuLands(page) {
+  const triggers = await page.evaluate(() =>
+    [...document.querySelectorAll('[aria-haspopup="menu"]')].map(
+      (trigger, index) => trigger.getAttribute('aria-label') ?? `menu ${String(index)}`,
+    ),
+  );
+  const problems = [];
+  for (const [index, name] of triggers.entries()) {
+    const opened = await page.evaluate((at) => {
+      const trigger = [...document.querySelectorAll('[aria-haspopup="menu"]')][at];
+      trigger?.click();
+      return trigger !== undefined;
+    }, index);
+    if (!opened) {
+      continue;
+    }
+    await settle(400);
+    const seen = await page.evaluate((clippedBySource) => {
+      const clippedBy = eval(`(${clippedBySource})`);
+      const menus = [...document.querySelectorAll('.menu')];
+      const menu = menus[menus.length - 1];
+      if (menu === undefined) {
+        return null;
+      }
+      const box = menu.getBoundingClientRect();
+      return {
+        left: Math.round(box.left),
+        top: Math.round(box.top),
+        right: Math.round(box.right),
+        bottom: Math.round(box.bottom),
+        w: Math.round(box.width),
+        h: Math.round(box.height),
+        clipped: clippedBy(menu),
+        offscreen:
+          box.left < 0 ||
+          box.top < 0 ||
+          box.right > window.innerWidth ||
+          box.bottom > window.innerHeight,
+      };
+    }, CLIPPED_BY);
+    if (seen !== null) {
+      if (seen.offscreen) {
+        problems.push(
+          `menu "${name}" lands at ${String(seen.left)},${String(seen.top)} ` +
+            `(${String(seen.w)}x${String(seen.h)}) outside the window`,
+        );
+      }
+      if (seen.clipped !== null) {
+        problems.push(`menu "${name}" is clipped by .${String(seen.clipped.by)}`);
+      }
+    }
+    await page.keyboard.press('Escape');
+    await settle(250);
+  }
+  return problems;
+}
+
+/**
+ * The account menu names who is signed in, and no row wraps.
+ *
+ * The trigger was a 32px avatar whose only text was a screen-reader label, so
+ * which account was in use could only be discovered by opening the menu — on a
+ * service that spends the owner's own vendor subscription, that is the fact
+ * most worth being able to check at a glance.
+ */
+async function accountMenuReads(page) {
+  const problems = [];
+  const trigger = await page.evaluate(() => {
+    const element = document.querySelector('.profile__trigger');
+    return element === null ? null : element.innerText;
+  });
+  if (trigger === null) {
+    return ['account: no trigger in the sidebar foot'];
+  }
+  if (!trigger.includes('Ada Lovelace')) {
+    problems.push('account: the trigger does not name who is signed in');
+  }
+  if (!trigger.includes('ada@example.test')) {
+    problems.push('account: the trigger does not show the account');
+  }
+
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
+  const rows = await page.evaluate(() => {
+    const menus = [...document.querySelectorAll('.menu')];
+    const menu = menus[menus.length - 1];
+    if (menu === undefined) {
+      return null;
+    }
+    return [...menu.querySelectorAll('[role^="menuitem"]')].map((row) => ({
+      text: row.textContent?.trim().slice(0, 40),
+      wraps: row.scrollWidth > row.clientWidth + 1,
+      icon: row.querySelector('svg') !== null,
+    }));
+  });
+  if (rows === null) {
+    return [...problems, 'account: the trigger opens no menu'];
+  }
+  for (const row of rows) {
+    if (row.wraps) {
+      problems.push(`account: the row "${String(row.text)}" does not fit on one line`);
+    }
+    if (!row.icon) {
+      problems.push(`account: the row "${String(row.text)}" has no glyph`);
+    }
+  }
+  await page.keyboard.press('Escape');
+  await settle(250);
+  return problems;
+}
+
 async function main() {
   const { page, close } = await open({ port: PORT });
   try {
@@ -262,6 +390,8 @@ async function main() {
       ...(await pickerReachable(page)),
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
+      ...(await everyMenuLands(page)),
+      ...(await accountMenuReads(page)),
     ];
 
     if (problems.length > 0) {
@@ -272,7 +402,10 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    console.log('signed-in surfaces: the picker, the sidebar toggle and the view switch all act');
+    console.log(
+      'signed-in surfaces: the picker, the sidebar toggle and the view switch all act, ' +
+        'and every menu lands inside the window',
+    );
   } finally {
     await close();
   }

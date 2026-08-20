@@ -1,13 +1,7 @@
 import type { ReactNode } from 'react';
 import { Mark } from './Mark';
 import { BUILD } from './build';
-import {
-  IconNewChatOutline16,
-  IconPanelLeftOutline16,
-  IconSearchOutline16,
-  IconSettingsOutline16,
-  IconDataOutline16,
-} from '../ui/icons';
+import { IconNewChatOutline16, IconPanelLeftOutline16, IconSearchOutline16 } from '../ui/icons';
 import './Sidebar.css';
 
 /**
@@ -40,10 +34,7 @@ interface SidebarProps {
    * what it is about.
    */
   readonly status?: ReactNode;
-  /** Drawn only where the caller holds an operator capability. */
-  readonly onOperations?: () => void;
   /** Whether operations is the view currently showing. */
-  readonly operationsActive?: boolean;
   /** The account control. */
   readonly account: ReactNode;
 }
@@ -55,8 +46,6 @@ export function Sidebar({
   onSearch,
   children,
   status,
-  onOperations,
-  operationsActive = false,
   account,
 }: SidebarProps) {
   return (
@@ -117,27 +106,19 @@ export function Sidebar({
 
       {collapsed || status === undefined ? null : <p className="sidebar__status">{status}</p>}
 
+      {/*
+       * Operations moved into the account menu. It is one of §1's two views
+       * and was the app bar's switch until §9 retired the bar; a row of its
+       * own here made the foot a two-item navigation strip beside an account
+       * control that omitted the one place an operator goes.
+       *
+       * The account control is rendered collapsed or not. It used to be
+       * replaced by a static settings glyph when the sidebar was closed, which
+       * left no way to sign out — invisible while the toggle did nothing, and
+       * reachable the moment it worked.
+       */}
       <div className="sidebar__foot">
-        {onOperations === undefined ? null : (
-          <button
-            type="button"
-            className="sidebar__footrow"
-            aria-label="Operations"
-            /*
-             * Pressed rather than a second row to go back: it is one place
-             * that is either showing or not, and a separate "Sessions" row
-             * would imply the sidebar itself was somewhere else.
-             */
-            aria-pressed={operationsActive}
-            onClick={onOperations}
-          >
-            <IconDataOutline16 />
-            {collapsed ? null : <span>Operations</span>}
-          </button>
-        )}
-        <div className="sidebar__account" aria-label="Settings">
-          {collapsed ? <IconSettingsOutline16 /> : account}
-        </div>
+        <div className="sidebar__account">{account}</div>
       </div>
     </div>
   );
