@@ -40,6 +40,12 @@ export interface EnvironmentProfile {
   readonly mandatory: MandatoryEntries;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /**
+   * Whether this owner's sessions start from this profile unless told
+   * otherwise. At most one of theirs carries it; none is a real answer and
+   * means the deployment's own defaults.
+   */
+  readonly preferred: boolean;
 }
 
 /**
@@ -180,6 +186,15 @@ export interface EnvironmentProfileStore {
   update(id: string, draft: ProfileDraft): Promise<EnvironmentProfile>;
   /** Remove a profile. */
   remove(id: string): Promise<void>;
+  /**
+   * Choose which profile this user's sessions start from, or none.
+   *
+   * Returns the whole list, because setting it changes two records — the one
+   * taking it and the one giving it up — and a caller must not have to guess
+   * which other rows moved. `null` clears it, which returns them to the
+   * deployment's own defaults and is a choice rather than an omission.
+   */
+  prefer(id: string | null): Promise<readonly EnvironmentProfile[]>;
   /** Skills this user may select, and what the platform mandates. */
   catalogue(): Promise<SkillCatalogue>;
   /** Services this user may allow a session to reach, and which are fixed. */
