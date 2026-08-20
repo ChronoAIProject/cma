@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-api:53b1930
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-api:57878fc
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
