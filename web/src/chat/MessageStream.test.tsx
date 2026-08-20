@@ -33,6 +33,22 @@ async function conversationFrom(name: string, options: { dropAfter?: number } = 
   return { events: seen, conversation: fold(seen) };
 }
 
+describe('the opening card and what an empty column means', () => {
+  it('waits for the log before saying a session has said nothing', () => {
+    // An empty column means "this session has said nothing" only once the log
+    // has been read. Before that it means "nothing has arrived yet", and
+    // announcing readiness over somebody's history — in the moment they are
+    // waiting to see it — tells them their work is gone.
+    render(<MessageStream entries={[]} linkLive={false} />);
+    expect(screen.queryByText(/ready when you are/i)).toBeNull();
+  });
+
+  it('says so once the log has been read and there is genuinely nothing', () => {
+    render(<MessageStream entries={[]} linkLive />);
+    expect(screen.getByText(/ready when you are/i)).toBeInTheDocument();
+  });
+});
+
 describe('the equivalence rule', () => {
   it('produces identical markup replayed and watched', async () => {
     // §18.1, and the assertion this component exists to hold: "the surface must
