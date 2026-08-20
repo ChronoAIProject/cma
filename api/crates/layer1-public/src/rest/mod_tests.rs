@@ -431,6 +431,52 @@ mod reach {
         )
     }
 
+    /// A directory that knows nobody, which is all these need.
+    struct NoDirectory;
+
+    #[async_trait::async_trait]
+    impl layer2_core::UserDirectoryStore for NoDirectory {
+        async fn record_sign_in(
+            &self,
+            _user: &layer2_core::RegisteredUser,
+        ) -> Result<(), layer2_core::StoreError> {
+            Ok(())
+        }
+        async fn recent(
+            &self,
+            _query: &layer2_core::DirectoryQuery,
+        ) -> Result<Vec<layer2_core::RegisteredUser>, layer2_core::StoreError> {
+            Ok(Vec::new())
+        }
+        async fn by_subjects(
+            &self,
+            _subjects: &[layer2_core::SubjectId],
+        ) -> Result<Vec<layer2_core::RegisteredUser>, layer2_core::StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// The step a handler must not skip when answering with a session.
+    ///
+    /// `From<Session>` seeds `reach` empty for `reached` to fill, and an empty
+    /// reach is a real answer here — it means the session reaches nothing. So
+    /// a handler that answered before filling it said something false about
+    /// every session it had just created, and both ends were reading their own
+    /// contract correctly. `viewed` is the one path that cannot skip it.
+    #[tokio::test]
+    async fn rendering_a_session_reports_what_it_was_granted() {
+        let views = super::viewed(
+            &environments(Catalogue::default()),
+            &layer2_core::UserDirectory::new(Arc::new(NoDirectory)),
+            &caller(),
+            None,
+            vec![session_with(Some(vec![ServiceId::new("chrono-llm")]))],
+        )
+        .await;
+        assert_eq!(views[0].reach.len(), 1, "the granted service is reported");
+        assert_eq!(views[0].reach[0].id, "chrono-llm");
+    }
+
     async fn rendered(session: Session, catalogue: Catalogue) -> serde_json::Value {
         let sessions = vec![session];
         let mut views: Vec<SessionView> = sessions.iter().cloned().map(SessionView::from).collect();
