@@ -96,7 +96,7 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         canRevive: true,
         canDelete: true,
         listed: true,
-        reason: 'This session is stopped. Revive it to carry on.',
+        reason: 'This session is paused. Resume it to carry on.',
       };
     case 'terminated':
       return {

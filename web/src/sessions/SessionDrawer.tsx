@@ -21,7 +21,7 @@ import { IconCloseOutline16 } from '../ui/icons';
  *
  * Below 75rem it overlays the surface rather than narrowing it (§16).
  *
- * At its foot, away from everything reversible, sit **End session** and
+ * At its foot, away from everything reversible, sit **Pause session** and
  * **Delete** — the two acts that release or destroy, kept out of the header
  * so reaching for Details never lands on one.
  */
@@ -184,7 +184,7 @@ export function SessionDrawer({
       </div>
 
       {/*
-       * The foot — §12: End session and Delete, away from everything
+       * The foot — §12: Pause session and Delete, away from everything
        * reversible.
        *
        * Delete is the one action here that loses something. It is confirmed
@@ -195,7 +195,7 @@ export function SessionDrawer({
       <div className="drawer__foot">
         {can.reason === undefined ? null : <span className="control-reason">{can.reason}</span>}
         <Button disabled={busy || !can.canStop} onClick={onStop}>
-          End session
+          Pause session
         </Button>
         <Button
           variant="primary"

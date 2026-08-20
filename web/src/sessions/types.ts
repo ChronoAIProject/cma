@@ -79,7 +79,7 @@ export function labelFor(lifecycle: SessionLifecycle): string {
     case 'rotating':
       return 'updating';
     case 'idle':
-      return 'idle';
+      return 'paused';
     case 'terminated':
       return 'ended';
     default: {
