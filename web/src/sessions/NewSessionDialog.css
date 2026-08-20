@@ -50,3 +50,19 @@
   font-size: var(--text-note);
   line-height: var(--leading-ui);
 }
+
+/*
+ * The picker and the key that opens the authoring form, on one row. The picker
+ * takes the width and the key takes what it needs: the profile is the choice
+ * being made and authoring one is the way out of it, so they are not peers.
+ */
+.profilerow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.profilerow .picker {
+  flex: 1;
+  min-width: 0;
+}
