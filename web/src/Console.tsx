@@ -675,6 +675,19 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                * is a deliberate act with a cost, and it is #128.
                */
               <ConversationSurface
+                /*
+                 * Keyed on the session, which `ConversationSurface` requires
+                 * of its callers: it folds events into state it holds for as
+                 * long as it is mounted and never clears them, so a reused
+                 * component folds the next session's turns on top of the last
+                 * one's. `SessionCanvas` keys its nodes for the same reason;
+                 * this arrangement did not, and the two sessions ran together.
+                 *
+                 * Only this surface. Keying the column would remount the
+                 * terminal with it, clearing its scrollback and redialling its
+                 * socket on every switch.
+                 */
+                key={active.id}
                 session={active}
                 /*
                  * The session's own granted set, parsed once at the boundary
