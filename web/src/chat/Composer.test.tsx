@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { resizeObserved } from '../test/setup';
 import { Composer } from './Composer';
 import { toCapabilities, type ConcurrentInput, type SessionCapabilities } from '../agui';
 
@@ -246,6 +247,52 @@ describe('the field grows with what is written in it', () => {
     await user.type(field, 'a line');
 
     expect(field.style.height).toBe('140px');
+  });
+
+  it('re-measures when the column around it settles, without the text changing', async () => {
+    /*
+     * The defect this exists for. Measuring on `text` alone measured once, at
+     * mount, before the column had settled — `scrollHeight` then reported the
+     * space *available* rather than the space needed, and an empty field
+     * opened at its fourteen-line cap. Nothing ever corrected it, because the
+     * text never changed.
+     *
+     * So this changes no text at all: it reports a resize, which is what the
+     * first settle, a window resize and the details column opening all look
+     * like from here.
+     */
+    renderComposer();
+    const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+    /*
+     * The mount's own measurement holds the re-entry guard until its
+     * animation frame runs, and the guard is the whole reason writing a
+     * height does not trigger another observation. Flushed rather than worked
+     * around: a resize arriving inside that window is correctly ignored.
+     */
+    const settle = async () => {
+      await act(async () => {
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => {
+            resolve(undefined);
+          });
+        });
+      });
+    };
+    await settle();
+
+    measured(field, 336);
+    await act(async () => {
+      resizeObserved();
+    });
+    expect(field.style.height).toBe('336px');
+    await settle();
+
+    measured(field, 28);
+    await act(async () => {
+      resizeObserved();
+    });
+    expect(field.style.height).toBe('28px');
   });
 
   it('shrinks again when the draft is cut down', async () => {
