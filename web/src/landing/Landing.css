@@ -1,5 +1,5 @@
 /*
- * The signed-out surface — `docs/Web_Style.md` §15.
+ * The signed-out surface — `docs/Web_Style.md` §20.
  *
  * Written in the alias tier. The sheet this replaced was still entirely in the
  * retired vocabulary — `--accent`, `--ink`, `--rule`, `--space-*` — reaching
@@ -42,32 +42,38 @@
  * The clamp floor is 200px because below roughly that the two lenses stop
  * resolving as lenses and the mark reads as a smudge.
  *
- * Cropped rather than letterboxed. The artwork occupies y 23–77 of a square
- * viewBox, so a third of the file is empty and drawing it whole spends a third
- * of the mark's height on nothing — which is what "not as big as it should be"
- * turned out to mean when it was measured. A 100:60 box centred on the same
- * origin trims to y 20–80: the padding goes, no part of the mark does.
+ * Cropped rather than letterboxed, and the crop is measured rather than
+ * estimated. The painted artwork spans y 14.08–76.5 of a square viewBox: the
+ * arc's geometric apex is 19.58, and it carries an 11-unit stroke, so half of
+ * that stroke sits above the apex. An earlier crop was written against the
+ * *fill* bounds — getBBox and getBoundingClientRect both exclude stroke — and
+ * showed y 20–80, which sheared six units off an eleven-unit stroke and left
+ * the crown of the arc a flat horizontal line.
+ *
+ * The band below is y 11–80. It clears the artwork by about three units top
+ * and bottom, and its centre (45.5) sits within a quarter unit of the
+ * artwork's own (45.29), so the mark is centred on itself rather than on a
+ * viewBox whose padding is not symmetric.
  */
 .landing__mark {
   display: block;
   width: clamp(200px, 52vmin, 560px);
-  aspect-ratio: 100 / 60;
+  aspect-ratio: 100 / 69;
   overflow: hidden;
 }
 
 /*
  * The square artwork, shifted up and clipped by the box above.
  *
- * `-20%` resolves against the wrapper's width, and the wrapper's width is the
- * mark's width, so it is exactly twenty units of a hundred-unit viewBox at
- * every size — the same crop `object-fit: cover` gave, without needing the
- * mark to be an image to get it.
+ * `-11%` resolves against the wrapper's width, and the wrapper's width is the
+ * mark's width, so it is exactly eleven units of a hundred-unit viewBox at
+ * every size.
  */
 .landing__mark svg {
   display: block;
   width: 100%;
   height: auto;
-  margin-top: -20%;
+  margin-top: -11%;
 }
 
 /*
