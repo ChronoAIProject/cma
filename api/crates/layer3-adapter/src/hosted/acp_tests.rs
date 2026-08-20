@@ -581,7 +581,7 @@ fn a_turn_reports_the_reason_the_kernel_gave() {
     // into a stop reason, which could only ever fail, so every turn was
     // reported as `end_turn`: a refusal, a context limit and a cancellation
     // all looked like an agent that had finished normally.
-    let super::Outcome::Ended(ended) = super::turn_outcome(serde_json::json!({
+    let super::Outcome::Ended(ended) = crate::hosted::turn::turn_outcome(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 4,
         "result": { "stopReason": "max_tokens" },
@@ -605,11 +605,13 @@ fn a_refused_prompt_is_not_reported_as_a_finished_turn() {
     // The agent's own words are carried through, because that message is the
     // only part a person can act on — it is where "could not reach the model"
     // and an upstream 401 actually arrive.
-    let super::Outcome::Failed { message, .. } = super::turn_outcome(serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 4,
-        "error": { "code": -32000, "message": "connection refused talking to chrono-llm" },
-    })) else {
+    let super::Outcome::Failed { message, .. } =
+        crate::hosted::turn::turn_outcome(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "error": { "code": -32000, "message": "connection refused talking to chrono-llm" },
+        }))
+    else {
         panic!("a refusal is a failure, not a finished turn");
     };
 
@@ -618,11 +620,13 @@ fn a_refused_prompt_is_not_reported_as_a_finished_turn() {
 
 #[test]
 fn a_refusal_naming_a_capability_carries_the_name() {
-    let super::Outcome::Failed { capability, .. } = super::turn_outcome(serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 4,
-        "error": { "code": -32021, "message": "no", "data": { "capability": "steer" } },
-    })) else {
+    let super::Outcome::Failed { capability, .. } =
+        crate::hosted::turn::turn_outcome(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "error": { "code": -32021, "message": "no", "data": { "capability": "steer" } },
+        }))
+    else {
         panic!("a refusal is a failure");
     };
 
@@ -634,7 +638,7 @@ fn an_answer_this_build_cannot_read_still_closes_the_turn() {
     // A turn left open sits `running` forever and is indistinguishable from an
     // agent taking its time. Ending it is right even when the reason is not
     // legible; what must not happen is silence.
-    let super::Outcome::Ended(ended) = super::turn_outcome(serde_json::json!({
+    let super::Outcome::Ended(ended) = crate::hosted::turn::turn_outcome(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 4,
         "result": { "stopReason": "something-added-later" },
@@ -647,7 +651,7 @@ fn an_answer_this_build_cannot_read_still_closes_the_turn() {
     // An answer that is neither a result nor an error is not an ending: the
     // agent said nothing usable, and reporting that as a finished turn is how
     // an empty turn came to mean two different things.
-    let empty = super::turn_outcome(serde_json::json!({ "jsonrpc": "2.0", "id": 4 }));
+    let empty = crate::hosted::turn::turn_outcome(serde_json::json!({ "jsonrpc": "2.0", "id": 4 }));
     assert!(matches!(empty, super::Outcome::Failed { .. }));
 }
 
