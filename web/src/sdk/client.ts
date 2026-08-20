@@ -25,7 +25,7 @@ import type { KernelOffer, Session, SessionPlane } from './types';
  * the session list would answer from memory across a rotation and be wrong in
  * exactly the situation that matters.
  */
-export class ChronoBot {
+export class Cma {
   readonly #config: ResolvedConfig;
 
   constructor(config: ClientConfig = {}) {
@@ -87,9 +87,9 @@ export class ChronoBot {
  * Build a client.
  *
  * A function as well as a class because most consumers never need the type,
- * and `createClient({ baseUrl })` reads as configuration where `new ChronoBot`
+ * and `createClient({ baseUrl })` reads as configuration where `new Cma`
  * reads as construction.
  */
-export function createClient(config: ClientConfig = {}): ChronoBot {
-  return new ChronoBot(config);
+export function createClient(config: ClientConfig = {}): Cma {
+  return new Cma(config);
 }
