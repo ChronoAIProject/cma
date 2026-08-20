@@ -253,6 +253,30 @@
 }
 
 /*
+ * §14a: rows arriving fade, and nothing moves position. A row that slides in
+ * pushes everything under it, and a list that reflows while somebody is
+ * reading it is worse than one that simply appears.
+ */
+@keyframes row-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.rail__row {
+  animation: row-arrive var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail__row {
+    animation: none;
+  }
+}
+
+/*
  * The header is the control. A separate chevron button would be a second
  * target for one action, and the row is already the size of one.
  */
@@ -317,4 +341,71 @@
 .rail__groupcount {
   flex: none;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * §14a: what a list looks like while it is being read.
+ *
+ * Rows where rows will be, rather than a sentence alone in an empty column —
+ * and never "No sessions yet.", which is an answer this surface does not have
+ * until the read returns.
+ *
+ * The sweep is the reasoning row's, on the same reasoning: it says the surface
+ * is live without claiming to know how far along anything is, which is what a
+ * filling bar would claim and nothing here could honour.
+ */
+.rail__waiting {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+/*
+ * A hairline rather than a fill. §2: in light every background layer is the
+ * same white as the page, so a row distinguished only by `bg-layer-2` has no
+ * visible container there — the rule this sheet would otherwise have broken is
+ * the one written down after a pill was found drawing white on white.
+ */
+.rail__ghost {
+  position: relative;
+  height: 32px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.rail__ghost::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--dsw-alias-interactive-bg-hover),
+    transparent
+  );
+  content: '';
+  animation: rail-sweep 2.6s var(--ds-ease-in-out) infinite;
+}
+
+@keyframes rail-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/*
+ * It stops entirely rather than slowing: an animation that never ends is
+ * exactly what a reduced-motion request is about. The rows stay, because they
+ * are what says the list is being read.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .rail__ghost::after {
+    animation: none;
+  }
 }
