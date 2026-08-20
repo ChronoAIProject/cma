@@ -195,10 +195,13 @@ export interface Conversation {
    */
   readonly configOptions?: readonly ConfigOption[];
   /**
-   * The actions the owner may invoke right now — liveness, not history.
+   * The actions the owner may invoke, as the kernel last announced them.
    *
-   * Absent on reload, deliberately: a stale list replayed from the log would
-   * offer actions that no longer exist, and none is better than dead ones.
+   * This once said the list was absent on reload by design. It no longer is:
+   * the kernel announces it as the conversation opens, before any client has
+   * subscribed, so live-only meant it reached nobody at all. It is recorded
+   * and replayed onto this same field, and a list one announcement old is
+   * worth more than the empty one that was the alternative.
    */
   readonly availableCommands?: readonly AvailableCommand[];
   /**
