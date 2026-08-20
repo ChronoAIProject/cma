@@ -83,12 +83,12 @@ describe('a turn', () => {
     /*
      * §18.1: the owner's turns are bubbles and the agent's run the full
      * measure, which is what tells them apart. The agent's eyebrow is gone —
-     * it repeated "chronobot · codex" above every turn, a label nobody reads
+     * it repeated "CMA · codex" above every turn, a label nobody reads
      * twice that cost a line of the reading column each time. Which kernel is
      * answering is a fact about the session, and the session header says it.
      */
     expect(screen.getByText('You')).toBeInTheDocument();
-    expect(screen.queryByText(/chronobot ·/)).toBeNull();
+    expect(screen.queryByText(/CMA ·/)).toBeNull();
   });
 
   it('changes nothing about a message when it commits, except the caret', () => {
