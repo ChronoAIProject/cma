@@ -5,8 +5,8 @@ import { SkillPicker } from './SkillPicker';
 import { Pill } from '../ui/Pill';
 import { Picker } from '../ui/Picker';
 import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
-import { kernelLabel, modesOf, planeRefusal, PLANES } from '../sessions/kernels';
-import type { KernelOffer, SessionPlane } from '../sessions/types';
+import { kernelLabel, planeRefusal } from '../sessions/kernels';
+import type { KernelOffer } from '../sessions/types';
 import type {
   CatalogSkill,
   MandatoryEntries,
@@ -71,7 +71,6 @@ export function ProfileEditor({
   const nameId = useId();
   const packagesId = useId();
   const kernelId = useId();
-  const planeId = useId();
   const modelId = useId();
   const effortId = useId();
   const permissionId = useId();
@@ -142,30 +141,12 @@ export function ProfileEditor({
             onChange({ ...draft, agent: { ...draft.agent, kernel } });
           }}
         />
-      </div>
-
-      <div className="field">
-        <label className="field__label" htmlFor={planeId}>
-          Plane
-        </label>
         {/*
-         * On the profile because that is where the core keeps it: a session
-         * cannot be moved onto the other plane without being rotated, so two
-         * sessions started from one profile must agree about which they are.
+         * Under the agent, which is the only choice that can produce it now
+         * that the plane is not asked. A profile describes a conversation; a
+         * runtime that cannot hold one is refused by name here rather than at
+         * the moment somebody tries to start a session from it.
          */}
-        <Picker
-          id={planeId}
-          label="Plane"
-          value={draft.agent.mode}
-          options={planeOptions(kernels, draft.agent.kernel)}
-          onChange={(mode: SessionPlane) => {
-            onChange({ ...draft, agent: { ...draft.agent, mode } });
-          }}
-        />
-        <span className="field__hint">
-          A terminal is a screen someone types at; a conversation is messages, tool calls and
-          approvals. Fixed for a session's life.
-        </span>
         {refusal === undefined ? null : (
           <p className="field__error" role="alert">
             {refusal}
@@ -428,15 +409,4 @@ function kernelOptions(kernels: readonly KernelOffer[], chosen: string) {
     },
     ...offered,
   ];
-}
-
-/** The planes this runtime serves, with the rest shown refused rather than hidden (§7). */
-function planeOptions(kernels: readonly KernelOffer[], kernel: string) {
-  const modes = modesOf(kernels, kernel);
-  return PLANES.map((plane) => ({
-    value: plane.id,
-    label: plane.label,
-    unavailable:
-      modes === undefined || modes.includes(plane.id) ? undefined : `Not on ${kernelLabel(kernel)}`,
-  }));
 }
