@@ -45,7 +45,7 @@
  * cheaper than letting somebody discover it.
  */
 
-export { ChronoBot, createClient } from './client';
+export { Cma, createClient } from './client';
 export { resolveConfig, type ClientConfig, type Credential, type ResolvedConfig } from './config';
 export { ApiError, CapabilityRefused } from './errors';
 export { request, type RequestOptions } from './http';

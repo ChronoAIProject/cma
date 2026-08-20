@@ -33,7 +33,7 @@ export interface TerminalTheme {
 function own(appearance: ThemeName): TerminalTheme {
   return {
     id: `chronobot-${appearance}`,
-    label: 'ChronoBot',
+    label: 'CMA',
     appearance,
     theme: terminalTheme(appearance),
   };
