@@ -262,6 +262,22 @@ pub enum EventKind {
         /// The settable options, each in the kernel's own words.
         options: Vec<ConfigOption>,
     },
+    /// The kernel reported the actions the owner may invoke.
+    ///
+    /// Durable, for the same reason its neighbour above is: the kernel
+    /// announces this once, when the conversation opens, and the protocol has
+    /// no request to ask again. Live-only, it was sent before any client had
+    /// subscribed and was therefore never received by anybody — every session,
+    /// every time.
+    ///
+    /// A replayed list can in principle be stale. It is replaced whole on each
+    /// announcement, so it goes stale only if a kernel changes what it offers
+    /// mid-session without saying so, and a list one announcement old is worth
+    /// more than the empty list that was the alternative.
+    AvailableCommandsSet {
+        /// The invocable actions, each in the kernel's own words.
+        commands: Vec<AvailableCommand>,
+    },
     /// Part of the conversation was lost rather than recorded.
     ///
     /// Written where the loss happened, in the same spirit as a rotation's
@@ -395,6 +411,7 @@ const KNOWN_TAGS: &[&str] = &[
     "mode_changed",
     "plan_set",
     "config_options_set",
+    "available_commands_set",
     "conversation_gap",
     "terminal_attached",
     "terminal_detached",
@@ -463,7 +480,7 @@ pub enum LiveFrame {
 ///
 /// Carried opaquely: the kernel names the action and what it does, and a
 /// client renders both verbatim, never mapped onto a set this service invented.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AvailableCommand {
     /// What the command is, as the kernel named it.
     pub name: String,
@@ -561,6 +578,12 @@ mod tests {
                     kind: "select".into(),
                 }],
             },
+            EventKind::AvailableCommandsSet {
+                commands: vec![AvailableCommand {
+                    name: "review".into(),
+                    description: "Review the working tree".into(),
+                }],
+            },
             EventKind::ConversationGap { frames: 7 },
             EventKind::TerminalAttached,
             EventKind::TerminalDetached,
@@ -607,6 +630,7 @@ mod tests {
                 | EventKind::ModeChanged { .. }
                 | EventKind::PlanSet { .. }
                 | EventKind::ConfigOptionsSet { .. }
+                | EventKind::AvailableCommandsSet { .. }
                 | EventKind::ConversationGap { .. }
                 | EventKind::TerminalAttached
                 | EventKind::TerminalDetached
