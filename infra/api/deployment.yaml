@@ -81,7 +81,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-api:5698857
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-api:c4e4333
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
