@@ -8,7 +8,7 @@ import { clearPendingTurn, consumePendingTurn } from '../auth/pendingTurn';
 import type { AuthProvider } from '../auth/types';
 
 /**
- * The signed-out surface — §15.
+ * The signed-out surface — §20.
  *
  * What is worth asserting is not the mark: an <img> either has a src or the
  * build failed, and nothing here can see whether it animated. It is the two
