@@ -119,18 +119,30 @@
   border-color: var(--dsw-alias-state-business-primary);
 }
 
+/*
+ * Inset to the field's own left edge, and clear of the card's bottom corner.
+ *
+ * The row had no horizontal padding at all while the card has none either, so
+ * this sat flush against the border: the sentence started one pixel inside a
+ * 22px corner radius, drawn into the curve on two sides, and sixteen pixels
+ * out of line with the text it sits beneath. Measured, not inferred — under
+ * jsdom the row and the field report the same left edge and nothing is wrong.
+ */
 .composer__row {
   display: flex;
   gap: var(--space-2);
   align-items: center;
   min-width: 0;
+  padding: 0 16px 10px;
 }
 
 /* What the policy means for the person typing, on the surface (§18.4). */
 .composer__note {
+  min-width: 0;
   overflow: hidden;
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
