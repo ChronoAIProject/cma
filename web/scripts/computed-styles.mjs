@@ -68,6 +68,101 @@ function referenced() {
   return [...new Set([...css.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]))].sort();
 }
 
+/**
+ * Does the surface actually fill the page?
+ *
+ * `#339` was a property resolving to nothing. This is its sibling: a property
+ * that resolves fine and a box that grows anyway, because `flex: 1 1 auto`
+ * asks a parent to distribute space and a block parent does not answer. The
+ * page still passes every resolution check while occupying a quarter of the
+ * window, so resolution is not the question — occupancy is.
+ *
+ * Checked at both widths §16 specifies a behaviour for, because a surface can
+ * fill a desktop and collapse once its breakpoint restacks it.
+ */
+async function fills(page) {
+  const sizes = [
+    { label: 'desktop', width: 1440, height: 900 },
+    { label: 'phone', width: 390, height: 844 },
+  ];
+  const problems = [];
+  for (const size of sizes) {
+    await page.setViewport({ width: size.width, height: size.height });
+    const short = await page.evaluate(() => {
+      const root = document.getElementById('root');
+      const surface = root?.firstElementChild;
+      if (!surface) {
+        return { missing: true };
+      }
+      return {
+        missing: false,
+        surface: Math.round(surface.getBoundingClientRect().height),
+        viewport: window.innerHeight,
+        className: surface.className,
+      };
+    });
+    if (short.missing) {
+      problems.push(`${size.label}: nothing is mounted under #root`);
+      continue;
+    }
+    /*
+     * Not an equality: a surface may legitimately sit a little short of the
+     * viewport. A surface at half of it has collapsed, which is the failure
+     * being described, and no layout in §16 does that deliberately.
+     */
+    if (short.surface < short.viewport * 0.9) {
+      problems.push(
+        `${size.label}: .${short.className.split(' ')[0]} fills ` +
+          `${String(short.surface)}px of a ${String(short.viewport)}px viewport`,
+      );
+    }
+  }
+  await page.setViewport({ width: 1440, height: 900 });
+  return problems;
+}
+
+/**
+ * Does a focused control draw exactly one focus indicator?
+ *
+ * A surface that relocates the global ring — the terminal prompt does, and
+ * §7 permits it — has to cancel what it relocated. Cancelling the wrong
+ * property leaves both painted, and the suite cannot see it because jsdom
+ * neither focuses nor computes a shadow. The check is structural rather than
+ * a list of surfaces: anything that draws its own indicator on `:focus-within`
+ * must not contain a focused element still carrying the global one.
+ */
+async function oneIndicator(page) {
+  return page.evaluate(() => {
+    const problems = [];
+    const focusable = document.querySelectorAll(
+      'input, textarea, button, [href], [tabindex]:not([tabindex="-1"])',
+    );
+    for (const element of focusable) {
+      element.focus();
+      if (!element.matches(':focus-visible')) {
+        continue;
+      }
+      const own = getComputedStyle(element).boxShadow;
+      if (own === 'none') {
+        continue;
+      }
+      // Walk out to whichever ancestor is also drawing one right now.
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        const outer = getComputedStyle(parent).boxShadow;
+        if (outer !== 'none' && parent.matches(':focus-within')) {
+          const name = element.className || element.tagName.toLowerCase();
+          problems.push(
+            `.${String(name).split(' ')[0]} draws a focus ring inside ` +
+              `.${String(parent.className).split(' ')[0]}, which draws its own`,
+          );
+          break;
+        }
+      }
+    }
+    return problems;
+  });
+}
+
 async function main() {
   const names = referenced();
   const server = spawn('npx', ['vite', 'preview', '--port', String(PORT)], { stdio: 'ignore' });
@@ -79,6 +174,23 @@ async function main() {
 
   try {
     const page = await browser.newPage();
+
+    /*
+     * The preview server has no control plane behind it, so `/auth/session`
+     * comes back as the index HTML and the app renders its error state. That
+     * would leave every check below measuring a two-line alert rather than a
+     * surface. 401 is what a signed-out visitor actually receives in
+     * production, so answering with it renders the real landing.
+     */
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/auth/session') {
+        void request.respond({ status: 401, contentType: 'application/json', body: '{}' });
+        return;
+      }
+      void request.continue();
+    });
+
     // The preview server takes a moment; retry rather than racing it.
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -128,6 +240,9 @@ async function main() {
         problems.push('dark: the page ink is the browser default');
       }
     }
+
+    problems.push(...(await fills(page)));
+    problems.push(...(await oneIndicator(page)));
 
     if (problems.length > 0) {
       console.error(`computed styles: ${String(problems.length)} problem(s)`);
