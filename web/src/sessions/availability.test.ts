@@ -44,7 +44,7 @@ describe('what a session allows', () => {
     const can = abilitiesFor(session('idle'));
     expect(can.interactive).toBe(false);
     expect(can.canRevive).toBe(true);
-    expect(can.reason).toMatch(/revive/i);
+    expect(can.reason).toMatch(/resume/i);
   });
 
   it('keeps a stopped session in the list', () => {
