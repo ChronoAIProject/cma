@@ -49,6 +49,54 @@ pub(crate) fn service_with_context(
 ///
 /// Two of these over one store is an upgrade: the second expects a version the
 /// first's sessions are not on.
+/// The same, with a source of skills and a baseline that mandates one.
+///
+/// Separate because most tests want neither: a baseline naming a skill makes
+/// every session in that test fetch one, which is the point here and noise
+/// everywhere else.
+pub(crate) fn service_on_version_with_skills(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+    skills: Arc<dyn crate::store::SkillSource>,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let environments = crate::environment_service::EnvironmentProfileService::new(
+        Arc::new(crate::test_support::FakeProfileStore::default()),
+        crate::environment::Baseline::new(
+            [],
+            [crate::environment::SkillId::new("a-mandated-skill")],
+            [],
+        ),
+        None,
+        None,
+        crate::environment::AgentConfiguration {
+            kernel: kernel(),
+            ..Default::default()
+        },
+    );
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        crate::service::SessionPorts {
+            skills: Some(skills),
+            ..Default::default()
+        },
+        environments,
+        Deployment {
+            runtime_version: Some(version.to_string()),
+            ..owned()
+        },
+    );
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
 pub(crate) fn service_on_version(
     store: Arc<FakeStore>,
     adapter: Arc<FakeAdapter>,
