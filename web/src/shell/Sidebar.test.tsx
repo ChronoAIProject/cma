@@ -93,13 +93,19 @@ describe('the collapsed rail', () => {
     expect(screen.queryByText(/14 sessions/)).toBeNull();
   });
 
-  it('expands rather than opening a plate over a rail', async () => {
-    // The results are a list, and a list needs the column the rail gave up.
+  it('opens the command plate, closed or open', async () => {
+    /*
+     * It used to expand the sidebar instead, on the reasoning that results are
+     * a list and a list needs a column. The plate carries its own list over
+     * whatever is behind it, and a control that does something else depending
+     * on a state somewhere else is one nobody can predict — pressing search
+     * and being handed a sidebar is not a slower way to search.
+     */
     const user = userEvent.setup();
     const handlers = renderSidebar({ collapsed: true });
 
     await user.click(screen.getByRole('button', { name: /find a session/i }));
-    expect(handlers.onToggleCollapsed).toHaveBeenCalledOnce();
-    expect(handlers.onSearch).not.toHaveBeenCalled();
+    expect(handlers.onSearch).toHaveBeenCalledOnce();
+    expect(handlers.onToggleCollapsed).not.toHaveBeenCalled();
   });
 });

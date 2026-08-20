@@ -247,3 +247,11 @@ export function validate(draft: ProfileDraft): string | null {
   }
   return null;
 }
+
+/**
+ * What a deployment mandates when nothing has said.
+ *
+ * Shared rather than declared per form: two copies of "nothing" that drift
+ * apart is a form claiming a package is required and another saying it is not.
+ */
+export const NOTHING_MANDATED: MandatoryEntries = { packages: [], skills: [] };

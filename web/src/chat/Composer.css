@@ -3,14 +3,26 @@
  *
  * A card at the foot of the reading column, on the raised ground inside the
  * panel radius, resting: the field, then a row carrying what the session's
- * own policy means, interrupt while a turn is in flight, and the primary
- * send with its return hint.
+ * own policy means — and the send key beside the card rather than in it.
  */
 
+/*
+ * A row: the card takes the width it can, and the key sits at its end.
+ *
+ * Inside, the key floated over the bottom-right of a growing textarea, so a
+ * long draft pushed it down the column — the one control that commits the
+ * message moved while somebody was writing it. Outside it holds its place, and
+ * the pair keeps the reading column's width between them.
+ */
 .composer-block {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.composer-block > .composer {
+  flex: 1;
+  min-width: 0;
 }
 
 /*
@@ -30,7 +42,7 @@
 }
 
 /*
- * The field grows to six lines and then scrolls inside itself. Borderless
+ * The field grows to six lines and then scrolls itself. Borderless
  * inside the card: the card is the field's edge.
  *
  * The cap counts both paddings. `border-box` includes them, so `6lh` plus one

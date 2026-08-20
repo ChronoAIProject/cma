@@ -83,15 +83,18 @@ export function Sidebar({
       </button>
 
       {/*
-        Collapsed, searching expands the sidebar rather than opening the plate
-        over a rail: the results are a list, and a list needs the column the
-        rail just gave up.
+        Searching opens the command plate, closed or open. It used to expand
+        the sidebar when closed, on the reasoning that results are a list and a
+        list needs a column — but the plate carries its own list, over whatever
+        is behind it, and a control that does something else depending on a
+        state somewhere else is a control nobody can predict. Pressing search
+        and being given a sidebar is not a slower way to search.
       */}
       <button
         type="button"
         className="sidebar__icon sidebar__search"
         aria-label="Find a session, or type a command"
-        onClick={collapsed ? onToggleCollapsed : onSearch}
+        onClick={onSearch}
       >
         <IconSearchOutline16 />
         {collapsed ? null : (
