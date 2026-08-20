@@ -61,6 +61,13 @@ struct ProfileDoc {
     skills: Vec<String>,
     #[serde(default)]
     agent: Option<AgentDoc>,
+    /// Whether its owner's sessions start from this profile.
+    ///
+    /// Absent on every profile stored before the preference existed, which
+    /// reads back as `false` — the right answer for all of them, since nobody
+    /// had chosen one.
+    #[serde(default)]
+    preferred: bool,
     /// Platform services a session from this profile may reach.
     ///
     /// Absent on every profile stored before selections existed, which reads
@@ -134,11 +141,14 @@ fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
         }),
         created_at: p.created_at.clone(),
         updated_at: p.updated_at.clone(),
+        preferred: p.preferred,
     }
 }
 
 fn from_doc(d: ProfileDoc) -> EnvironmentProfile {
+    let preferred = d.preferred;
     EnvironmentProfile {
+        preferred,
         id: EnvironmentProfileId(d.id),
         owner: SubjectId(d.owner),
         name: d.name,
@@ -271,6 +281,7 @@ mod tests {
 
     fn profile() -> EnvironmentProfile {
         EnvironmentProfile {
+            preferred: false,
             services: Vec::new(),
             id: EnvironmentProfileId("envp_1".into()),
             owner: SubjectId("subject-a".into()),
