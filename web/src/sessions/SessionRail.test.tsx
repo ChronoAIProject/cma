@@ -39,6 +39,14 @@ const SESSIONS = [
   session('c', 'terminated', { stopReason: 'error' }),
 ];
 
+/** Open a group, since only Active starts open. */
+async function expand(user: ReturnType<typeof userEvent.setup>, group: string) {
+  const head = screen.getByRole('button', { name: new RegExp(`^${group}`, 'i') });
+  if (head.getAttribute('aria-expanded') === 'false') {
+    await user.click(head);
+  }
+}
+
 function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
   const onSelect = vi.fn();
   const onReorder = vi.fn();
@@ -63,12 +71,15 @@ afterEach(() => {
 });
 
 describe('the rail row', () => {
-  it('says what each session last did', () => {
+  it('says what each session last did', async () => {
     // §12: the last-activity line is what makes a list of times into a list of
-    // work.
+    // work. The finished one is in Terminated, which starts closed.
+    const user = userEvent.setup();
     renderRail();
     expect(screen.getByText('Running')).toBeInTheDocument();
     expect(screen.getByText('Waiting for a sandbox')).toBeInTheDocument();
+
+    await expand(user, 'Terminated');
     expect(screen.getByText('Ended after a failure')).toBeInTheDocument();
   });
 
@@ -106,11 +117,14 @@ describe('the rail row', () => {
     );
   });
 
-  it('says a session waiting on an answer is waiting, not stopped', () => {
+  it('says a session waiting on an answer is waiting, not stopped', async () => {
     // §18.3: the --wait dot and "waiting for your answer" in the rail. The
     // dot is already the wait tone for idle; the line is what changes.
+    const user = userEvent.setup();
     const idle = { ...session('waiting', 'idle'), id: 'ses_waiting' };
     const { container } = renderRail({ sessions: [idle], waitingId: 'ses_waiting' });
+    // Paused starts closed, and a session parked on an answer is `idle`.
+    await expand(user, 'Paused');
     expect(container.textContent).toContain('Waiting for your answer');
     // The idle line — "Stopped — its sandbox was released" — is not drawn.
     expect(container.textContent).not.toContain('Stopped —');
@@ -125,11 +139,14 @@ describe('the rail row', () => {
 });
 
 describe('the view options', () => {
-  it('folds filtering, ordering and arranging onto one card', async () => {
+  it('folds ordering and arranging onto one card', async () => {
     /*
-     * They were three affordances across two bands. They are three answers to
-     * "what am I looking at", and putting them on one card is what lets the
-     * header drop to a single row — which is height the list gets.
+     * They were affordances across two bands. They are answers to "what am I
+     * looking at", and putting them on one card is what lets the header drop
+     * to a single row — which is height the list gets.
+     *
+     * Filtering is not among them any more: the rail groups by state, and
+     * collapsing a group is the same gesture a filter was.
      */
     const user = userEvent.setup();
     renderRail();
@@ -137,30 +154,18 @@ describe('the view options', () => {
     await user.click(screen.getByRole('button', { name: 'View options' }));
     const card = screen.getByRole('menu', { name: 'View options' });
 
-    for (const label of [
-      /^All /,
-      /^Live /,
-      /^Stopped /,
-      /newest first/i,
-      /oldest first/i,
-      /^List$/,
-      /^Canvas$/,
-    ]) {
+    for (const label of [/newest first/i, /oldest first/i, /^List$/, /^Canvas$/]) {
       expect(within(card).getByRole('menuitemradio', { name: label })).toBeInTheDocument();
     }
   });
 
   it('marks the current answer in every group, not just one', async () => {
-    // One selection could only mark one of the three questions on the card.
+    // One selection could only mark one of the questions on the card.
     const user = userEvent.setup();
     renderRail({ order: 'oldest', arrangement: 'canvas' });
 
     await user.click(screen.getByRole('button', { name: 'View options' }));
 
-    expect(screen.getByRole('menuitemradio', { name: /^All / })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
     expect(screen.getByRole('menuitemradio', { name: /oldest first/i })).toHaveAttribute(
       'aria-checked',
       'true',
@@ -171,26 +176,21 @@ describe('the view options', () => {
     );
   });
 
-  it('narrows the list to what was chosen', async () => {
+  it('carries no filter, because the groups are the filter', async () => {
+    /*
+     * Choosing "Stopped" and collapsing everything but Paused are the same
+     * gesture done twice, and keeping both let the rail hold two states that
+     * disagreed — a group expanded inside a filter that excluded it.
+     */
     const user = userEvent.setup();
     renderRail();
 
     await user.click(screen.getByRole('button', { name: 'View options' }));
-    await user.click(screen.getByRole('menuitemradio', { name: /^Live / }));
+    const card = screen.getByRole('menu', { name: 'View options' });
 
-    expect(screen.getAllByRole('tab')).toHaveLength(1);
-  });
-
-  it('says what would have been there when a filter empties the list', async () => {
-    // An empty list that says nothing reads as a broken list. The sessions
-    // still exist; the filter narrowed to nothing.
-    const user = userEvent.setup();
-    renderRail({ sessions: [SESSIONS[1]!, SESSIONS[2]!] });
-
-    await user.click(screen.getByRole('button', { name: 'View options' }));
-    await user.click(screen.getByRole('menuitemradio', { name: /^Live / }));
-
-    expect(screen.getByText(/nothing matches this filter/i)).toBeInTheDocument();
+    expect(within(card).queryByRole('menuitemradio', { name: /^All / })).toBeNull();
+    expect(within(card).queryByRole('menuitemradio', { name: /^Live / })).toBeNull();
+    expect(within(card).queryByRole('menuitemradio', { name: /^Stopped / })).toBeNull();
   });
 
   it('says so when there is nothing at all, which is a different thing', () => {
@@ -216,7 +216,7 @@ describe('the view options', () => {
 
 describe('the row actions', () => {
   const ACTIONS = [
-    { id: 'stop', label: 'End session' },
+    { id: 'stop', label: 'Pause session' },
     { id: 'delete', label: 'Delete', danger: true, disabled: true },
   ];
 
@@ -245,7 +245,7 @@ describe('the row actions', () => {
 
     const keys = screen.getAllByRole('button', { name: /actions for the session started/i });
     await user.click(keys[0]!);
-    await user.click(await screen.findByRole('menuitem', { name: 'End session' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Pause session' }));
 
     expect(onAction).toHaveBeenCalledOnce();
     expect(onAction.mock.calls[0]?.[1]).toBe('stop');
@@ -264,5 +264,109 @@ describe('the row actions', () => {
     expect(refused).toHaveAttribute('aria-disabled', 'true');
     await user.click(refused);
     expect(onAction).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * Grouping by state — #381.
+ *
+ * The rail answers "which are running, which are set aside, which are
+ * finished" without being asked. A filter answered it by hiding the rest.
+ */
+describe('the groups', () => {
+  const MIXED = [
+    session('a', 'running'),
+    session('b', 'idle'),
+    session('c', 'terminated'),
+    session('d', 'ready'),
+  ];
+
+  it('opens Active and closes the rest', () => {
+    renderRail({ sessions: MIXED });
+
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    for (const shut of ['Paused', 'Terminated']) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${shut}`) })).toHaveAttribute(
+        'aria-expanded',
+        'false',
+      );
+    }
+    // Two active sessions are listed; the closed groups list nothing.
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+  });
+
+  it('says how many are inside a group that is closed', () => {
+    // A count on the header is the answer to "where did it go" without
+    // opening anything.
+    renderRail({ sessions: MIXED });
+
+    expect(screen.getByRole('button', { name: 'Paused, 1 session' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Terminated, 1 session' })).toBeInTheDocument();
+  });
+
+  it('draws an empty group rather than dropping it', () => {
+    // A group that disappears is one somebody looks for.
+    renderRail({ sessions: [session('a', 'running')] });
+
+    expect(screen.getByRole('button', { name: 'Paused, 0 sessions' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Terminated, 0 sessions' })).toBeInTheDocument();
+  });
+
+  it('opens and closes a group when its header is pressed', async () => {
+    const user = userEvent.setup();
+    renderRail({ sessions: MIXED });
+
+    await user.click(screen.getByRole('button', { name: 'Paused, 1 session' }));
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+
+    await user.click(screen.getByRole('button', { name: 'Paused, 1 session' }));
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+  });
+
+  it('remembers which groups were closed', () => {
+    // A preference about how a list is drawn, like the arrangement beside it.
+    const first = renderRail({ sessions: MIXED });
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    window.localStorage.setItem('chrono-bot:rail-collapsed', JSON.stringify(['active']));
+    first.unmount();
+
+    renderRail({ sessions: MIXED });
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('ignores a stored value this build does not recognise', () => {
+    // Web storage is untrusted: another script on the origin, or a build
+    // somebody has since rolled back from, may have written it.
+    window.localStorage.setItem('chrono-bot:rail-collapsed', '{"nope":true}');
+    renderRail({ sessions: MIXED });
+
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /^Paused/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('orders within a group by the one control that sets it', async () => {
+    // Sorted once across the rail, then split: three orders would be three
+    // things that can disagree with the single control that chooses them.
+    const user = userEvent.setup();
+    renderRail({ sessions: MIXED, order: 'oldest' });
+    await expand(user, 'Active');
+
+    const times = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
+    expect(times).toHaveLength(2);
   });
 });

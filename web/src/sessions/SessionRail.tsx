@@ -3,11 +3,12 @@ import type { Session } from './types';
 import { stateDotFor, toneFor } from './types';
 import { StateDot } from '../ui/StateDot';
 import { Menu, type MenuEntry } from '../ui/Menu';
-import { IconEllipsisOutline16 } from '../ui/icons';
+import { IconChevronDownOutline14, IconEllipsisOutline16 } from '../ui/icons';
 import type { Arrangement } from './arrangement';
 import type { Stage } from './progress';
 import { lastActivity } from './lastActivity';
 import { fullTimestamp, sortSessions, tabLabel, type SortOrder } from './sessionTime';
+import { GROUPS, groupSessions, loadCollapsed, storeCollapsed, type GroupId } from './groups';
 import './SessionRail.css';
 
 /**
@@ -30,13 +31,6 @@ import './SessionRail.css';
  * rail of icons, and a summary drawn here as well would be a second, quieter
  * answer to a question the rail already answers.
  */
-
-/** What the list is narrowed to. Local: a filter is about this look at it. */
-type RailFilter = 'all' | 'live' | 'stopped';
-
-function isLive(session: Session): boolean {
-  return toneFor(session.lifecycle) === 'live';
-}
 
 interface SessionRailProps {
   readonly sessions: readonly Session[];
@@ -86,25 +80,36 @@ export function SessionRail({
   waitingId = null,
   signingIn = {},
 }: SessionRailProps) {
-  const [filter, setFilter] = useState<RailFilter>('all');
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [actionsFor_, setActionsFor] = useState<string | null>(null);
+  /*
+   * Which groups are closed. Read once, then owned here: storage is where the
+   * preference survives a reload, not where it lives while the rail is open.
+   */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<GroupId>>(loadCollapsed);
 
-  const filtered =
-    filter === 'all' ? sessions : sessions.filter((s) => (filter === 'live') === isLive(s));
-  const ordered = sortSessions(filtered, order);
-  const counts: Record<RailFilter, number> = {
-    all: sessions.length,
-    live: sessions.filter(isLive).length,
-    stopped: sessions.filter((s) => !isLive(s)).length,
+  // Sorted once, across the whole rail, then split. Sorting inside each group
+  // would be three orders that can disagree with the one control that sets it.
+  const ordered = sortSessions(sessions, order);
+  const grouped = groupSessions(ordered);
+
+  const toggleGroup = (id: GroupId) => {
+    setCollapsed((was) => {
+      const next = new Set(was);
+      if (!next.delete(id)) {
+        next.add(id);
+      }
+      storeCollapsed(next);
+      return next;
+    });
   };
 
+  /*
+   * No filter. Choosing "Stopped" and collapsing everything but Paused are the
+   * same gesture done twice, and keeping both let the list hold two states
+   * that disagreed — a group expanded inside a filter that excluded it.
+   */
   const options: MenuEntry[] = [
-    { type: 'label', id: 'show', text: 'Show' },
-    { id: 'all', label: `All ${String(counts.all)}` },
-    { id: 'live', label: `Live ${String(counts.live)}` },
-    { id: 'stopped', label: `Stopped ${String(counts.stopped)}` },
-    { type: 'separator', id: 'sep-order' },
     { type: 'label', id: 'order', text: 'Order' },
     { id: 'newest', label: 'Newest first' },
     { id: 'oldest', label: 'Oldest first' },
@@ -116,10 +121,6 @@ export function SessionRail({
 
   const chooseOption = (id: string) => {
     setOptionsOpen(false);
-    if (id === 'all' || id === 'live' || id === 'stopped') {
-      setFilter(id);
-      return;
-    }
     if (id === 'newest' || id === 'oldest') {
       onReorder(id);
       return;
@@ -138,7 +139,7 @@ export function SessionRail({
           label="View options"
           align="end"
           placement="rail__optionsanchor"
-          selectedIds={[filter, order, arrangement]}
+          selectedIds={[order, arrangement]}
           items={options}
           onSelect={chooseOption}
           onClose={() => {
@@ -166,87 +167,130 @@ export function SessionRail({
         message that followed it landed at the bottom of the sidebar — as far
         from the header it belongs under as the layout allows.
       */}
-      {sessions.length === 0 ? (
-        <p className="rail__empty">No sessions yet.</p>
-      ) : ordered.length === 0 ? (
-        // An empty list says what would have been there: the filter narrowed
-        // to nothing, and the sessions still exist.
-        <p className="rail__empty">Nothing matches this filter.</p>
-      ) : null}
+      {sessions.length === 0 ? <p className="rail__empty">No sessions yet.</p> : null}
 
-      <ul className="rail__list" role="tablist" aria-label="Sessions" aria-orientation="vertical">
-        {ordered.map((session) => {
-          const active = session.id === activeId;
-          const dot = stateDotFor(toneFor(session.lifecycle));
-          const activity = lastActivity(
-            session,
-            stages[session.id],
-            session.id === waitingId,
-            session.id in signingIn,
-          );
-          const actions = actionsFor?.(session) ?? [];
-
+      <div className="rail__groups">
+        {GROUPS.map((group) => {
+          const inGroup = grouped[group.id];
+          const shut = collapsed.has(group.id);
           return (
-            <li className="rail__row" key={session.id}>
+            <section className="rail__group" key={group.id}>
+              {/*
+               * The count is on the header, so a closed group still says how
+               * much is inside it — and an empty group draws its header with a
+               * zero rather than vanishing. A group that disappears is one
+               * somebody looks for, and the zero is the answer to "where did
+               * it go".
+               */}
               <button
                 type="button"
-                role="tab"
-                aria-selected={active}
-                className="row-item"
-                title={fullTimestamp(session.createdAt)}
+                className="rail__grouphead"
+                aria-expanded={!shut}
+                /*
+                 * Named rather than left to the label and the count sitting
+                 * beside each other: the accessible name is their text
+                 * concatenated, which read as "Paused1".
+                 */
+                aria-label={`${group.label}, ${String(inGroup.length)} ${
+                  inGroup.length === 1 ? 'session' : 'sessions'
+                }`}
                 onClick={() => {
-                  onSelect(session.id);
+                  toggleGroup(group.id);
                 }}
               >
-                {/*
+                <IconChevronDownOutline14
+                  className={`rail__groupmark${shut ? ' rail__groupmark--shut' : ''}`}
+                />
+                <span className="rail__groupname">{group.label}</span>
+                <span className="rail__groupcount">{inGroup.length}</span>
+              </button>
+
+              {shut ? null : (
+                <ul
+                  className="rail__list"
+                  role="tablist"
+                  aria-label={group.label}
+                  aria-orientation="vertical"
+                >
+                  {inGroup.map((session) => {
+                    const active = session.id === activeId;
+                    const dot = stateDotFor(toneFor(session.lifecycle));
+                    const activity = lastActivity(
+                      session,
+                      stages[session.id],
+                      session.id === waitingId,
+                      session.id in signingIn,
+                    );
+                    const actions = actionsFor?.(session) ?? [];
+
+                    return (
+                      <li className="rail__row" key={session.id}>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          className="row-item"
+                          title={fullTimestamp(session.createdAt)}
+                          onClick={() => {
+                            onSelect(session.id);
+                          }}
+                        >
+                          {/*
                   The slot is held whether or not there is a dot in it, so an
                   ended session's title starts where every other one does.
                 */}
-                <span className="row-item__dot">
-                  {dot === undefined ? null : <StateDot state={dot} />}
-                </span>
-                <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
-                {/*
-                 * What makes a list of times into a list of work. It never
-                 * wraps: a row that grows with its longest sentence makes the
-                 * list a different height every time it reloads.
-                 */}
-                <span className="row-item__activity">{activity}</span>
-              </button>
+                          <span className="row-item__dot">
+                            {dot === undefined ? null : <StateDot state={dot} />}
+                          </span>
+                          <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
+                          {/*
+                           * What makes a list of times into a list of work. It never
+                           * wraps: a row that grows with its longest sentence makes the
+                           * list a different height every time it reloads.
+                           */}
+                          <span className="row-item__activity">{activity}</span>
+                        </button>
 
-              {actions.length === 0 ? null : (
-                <Menu
-                  open={actionsFor_ === session.id}
-                  label={`Actions for ${tabLabel(session.createdAt)}`}
-                  align="end"
-                  items={actions}
-                  onSelect={(id) => {
-                    setActionsFor(null);
-                    onAction?.(session, id);
-                  }}
-                  onClose={() => {
-                    setActionsFor(null);
-                  }}
-                  anchor={
-                    <button
-                      type="button"
-                      className="row-item__more"
-                      aria-haspopup="menu"
-                      aria-expanded={actionsFor_ === session.id}
-                      aria-label={`Actions for the session started ${tabLabel(session.createdAt)}`}
-                      onClick={() => {
-                        setActionsFor((open) => (open === session.id ? null : session.id));
-                      }}
-                    >
-                      <IconEllipsisOutline16 />
-                    </button>
-                  }
-                />
+                        {actions.length === 0 ? null : (
+                          <Menu
+                            open={actionsFor_ === session.id}
+                            label={`Actions for ${tabLabel(session.createdAt)}`}
+                            align="end"
+                            items={actions}
+                            onSelect={(id) => {
+                              setActionsFor(null);
+                              onAction?.(session, id);
+                            }}
+                            onClose={() => {
+                              setActionsFor(null);
+                            }}
+                            anchor={
+                              <button
+                                type="button"
+                                className="row-item__more"
+                                aria-haspopup="menu"
+                                aria-expanded={actionsFor_ === session.id}
+                                aria-label={`Actions for the session started ${tabLabel(session.createdAt)}`}
+                                onClick={() => {
+                                  setActionsFor((open) =>
+                                    open === session.id ? null : session.id,
+                                  );
+                                }}
+                              >
+                                <IconEllipsisOutline16 />
+                              </button>
+                            }
+                          />
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
-            </li>
+            </section>
           );
         })}
-      </ul>
+      </div>
     </div>
   );
 }

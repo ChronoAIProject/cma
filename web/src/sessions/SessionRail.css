@@ -28,14 +28,16 @@
  * reserved whether or not a thumb is showing: without that, a list crossing
  * the scroll threshold shifts every row sideways by the bar's width.
  */
+/*
+ * One list per group, and none of them scrolls: `.rail__groups` is the single
+ * scrollport, so a long Active group and an open Terminated one share one
+ * scrollbar rather than nesting three. The gutter moved with it.
+ */
 .rail__list {
   position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: none;
   margin: 0;
-  padding: 0 0 16px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  padding: 0 0 8px;
   list-style: none;
 }
 
@@ -227,4 +229,92 @@
 
 .row-item__activity:empty {
   display: none;
+}
+
+/* ── Groups ──────────────────────────────────────────────────────────────
+ *
+ * Active, Paused, Terminated. The list scrolls as one column rather than three,
+ * so a long Active group and an open Terminated one share a single scrollbar
+ * instead of nesting scrollports.
+ */
+.rail__groups {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.rail__group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+
+/*
+ * The header is the control. A separate chevron button would be a second
+ * target for one action, and the row is already the size of one.
+ */
+.rail__grouphead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail__grouphead {
+    transition: none;
+  }
+}
+
+.rail__grouphead:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rail__grouphead:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Points down when open and right when shut, which is the one convention for
+   a disclosure that needs no label. */
+.rail__groupmark {
+  flex: none;
+  transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.rail__groupmark--shut {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail__groupmark {
+    transition: none;
+  }
+}
+
+.rail__groupname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On the header, so a closed group still says how much is inside it. */
+.rail__groupcount {
+  flex: none;
+  font-variant-numeric: tabular-nums;
 }
