@@ -34,6 +34,14 @@ interface PickerProps<Value extends string> {
   readonly filter?: boolean;
   /** Associates the control with a label rendered outside it. */
   readonly id?: string;
+  /**
+   * A class for placing this picker in its row.
+   *
+   * Offered so a caller can size it without writing a rule for `.picker`, the
+   * primitive's own root — which is how an unrelated selection list came to
+   * hand every picker in the product an `overflow-y` it never asked for.
+   */
+  readonly placement?: string;
 }
 
 export function Picker<Value extends string>({
@@ -44,6 +52,7 @@ export function Picker<Value extends string>({
   disabled = false,
   filter = false,
   id,
+  placement,
 }: PickerProps<Value>) {
   const [open, setOpen] = useState(false);
   const chosen = options.find((option) => option.value === value);
@@ -73,7 +82,7 @@ export function Picker<Value extends string>({
       label={label}
       selectedId={value}
       items={items}
-      placement={filter ? 'picker--filter' : 'picker'}
+      placement={[filter ? 'picker--filter' : 'picker', placement].filter(Boolean).join(' ')}
       onSelect={(id_) => {
         setOpen(false);
         onChange(id_ as Value);
