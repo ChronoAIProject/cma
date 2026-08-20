@@ -370,3 +370,41 @@ describe('the groups', () => {
     expect(times).toHaveLength(2);
   });
 });
+
+/*
+ * While the list is being read — #375.
+ *
+ * "No sessions yet." is an answer. Before the read returns there is not one,
+ * and saying it anyway is not a slower version of the truth but a different
+ * claim — one that sends somebody to start a session they may already have.
+ */
+describe('while the list is being read', () => {
+  it('does not claim there are none', () => {
+    renderRail({ sessions: [], loading: true });
+
+    expect(screen.queryByText(/no sessions yet/i)).toBeNull();
+  });
+
+  it('draws the shape of what is coming', () => {
+    // Rows where rows will be, rather than a sentence in an empty column.
+    const { container } = renderRail({ sessions: [], loading: true });
+
+    expect(screen.getByLabelText('Reading your sessions')).toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelectorAll('.rail__ghost').length).toBeGreaterThan(0);
+  });
+
+  it('says there are none once it knows', () => {
+    renderRail({ sessions: [], loading: false });
+
+    expect(screen.getByText(/no sessions yet/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Reading your sessions')).toBeNull();
+  });
+
+  it('draws no groups until it has something to group', () => {
+    // Three empty groups over a list that has not arrived says the answer is
+    // "nothing", which is the claim this state exists to avoid making.
+    renderRail({ sessions: [], loading: true });
+
+    expect(screen.queryByRole('button', { name: /^Active/ })).toBeNull();
+  });
+});
