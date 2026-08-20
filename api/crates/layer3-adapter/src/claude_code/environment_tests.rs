@@ -22,6 +22,7 @@ fn adapter(base: &str) -> ClaudeCodeAdapter {
 fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment,

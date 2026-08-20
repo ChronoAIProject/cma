@@ -53,6 +53,11 @@ impl Default for CodexSandboxSpec {
                 upstream_model: "gpt-5.6-sol".into(),
                 upstream_wire_api: "responses".into(),
                 bridge_command: "codex-acp".into(),
+                // Verified against the pinned kernel by planting one and
+                // asking it: a directory and a SKILL.md is the whole
+                // mechanism, and it reports the skill at user scope. No
+                // plugin and no marketplace is involved.
+                skills_root: ".codex/skills".into(),
                 ..Deployment::default()
             },
             resume_args: "resume".into(),

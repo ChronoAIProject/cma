@@ -183,7 +183,7 @@ impl SkillCatalog for PlatformSkillCatalog {
 pub fn from_config(
     platform_base_url: &str,
     tokens: Option<Arc<dyn TokenSource>>,
-) -> Option<Arc<dyn SkillCatalog>> {
+) -> Option<Arc<PlatformSkillCatalog>> {
     if platform_base_url.trim().is_empty() {
         return None;
     }
@@ -298,5 +298,90 @@ mod tests {
         assert!(from_config("", Some(Arc::clone(&tokens))).is_none());
         assert!(from_config("https://platform.example", None).is_none());
         assert!(from_config("https://platform.example", Some(tokens)).is_some());
+    }
+}
+
+/// Where one skill's contents are fetched from.
+///
+/// `{idOrName}` is what resolves an ambivalence the core has by construction:
+/// `SkillId` is opaque, the picker fills it from the registry's guid, and the
+/// deployment's baseline names skills in words. One route takes both.
+const PACK_PATH: &str = "/api/v1/skills";
+
+/// The registry's answer for one skill: what it is, and every file in it.
+#[derive(Debug, serde::Deserialize)]
+struct PackResponse {
+    #[serde(default)]
+    data: Option<PackBody>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PackBody {
+    #[serde(default)]
+    name: String,
+    /// Path within the skill's directory, to its contents.
+    #[serde(default)]
+    files: std::collections::BTreeMap<String, String>,
+}
+
+#[async_trait::async_trait]
+impl layer2_core::SkillSource for PlatformSkillCatalog {
+    async fn packs_for(
+        &self,
+        caller_credential: Option<&str>,
+        skills: &[layer2_core::SkillId],
+    ) -> Result<Vec<layer2_core::SkillPack>, String> {
+        let bearer = self
+            .bearer(caller_credential)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut packs = Vec::with_capacity(skills.len());
+        for skill in skills {
+            let url = format!("{}{PACK_PATH}/{}/json", self.base_url, skill.0);
+            let response = self
+                .http
+                .get(&url)
+                .bearer_auth(&bearer)
+                .send()
+                .await
+                .map_err(|e| format!("{} could not be fetched: {e}", skill.0))?;
+            // Named rather than swallowed. A session that starts without a
+            // skill it was promised looks exactly like one that never asked
+            // for it, and the difference only shows when the agent cannot do
+            // what it was told it could.
+            if !response.status().is_success() {
+                return Err(format!(
+                    "{} could not be fetched: the registry answered {}",
+                    skill.0,
+                    response.status()
+                ));
+            }
+            let body: PackResponse = response
+                .json()
+                .await
+                .map_err(|e| format!("{} came back in a shape we cannot read: {e}", skill.0))?;
+            let body = body
+                .data
+                .ok_or_else(|| format!("{} came back empty", skill.0))?;
+            if body.files.is_empty() {
+                return Err(format!("{} carries no files", skill.0));
+            }
+            // The registry's own name for it, because that is what the agent
+            // invokes — the identifier may be a guid nobody types.
+            let name = match body.name.trim().is_empty() {
+                true => skill.0.clone(),
+                false => body.name.clone(),
+            };
+            packs.push(layer2_core::SkillPack {
+                name,
+                files: body
+                    .files
+                    .into_iter()
+                    .map(|(path, content)| (path, content.into_bytes()))
+                    .collect(),
+            });
+        }
+        tracing::info!(skills = packs.len(), "fetched this session's skills");
+        Ok(packs)
     }
 }

@@ -55,6 +55,95 @@ pub fn write(home: &Path) -> std::io::Result<Option<PathBuf>> {
     Ok(Some(path))
 }
 
+/// Marker naming this framing, and the version of it.
+const PACK_MARKER: &str = "chronoPrelude";
+const PACK_VERSION: u32 = 1;
+
+/// The largest pack this supervisor will take.
+///
+/// A bound rather than a guess: the two skills a session carries by default
+/// are about 400 KB together, and the cap is an order above that so a bigger
+/// selection still lands while a runaway body is refused before it is read
+/// into memory.
+pub const PACK_LIMIT: usize = 4 * 1024 * 1024;
+
+/// Files a kernel needs, carried in one body.
+///
+/// A JSON header line naming each path and its length, then the bodies
+/// concatenated in that order. Not a tar: every entry needs the same
+/// relative-path check either way, and a tar brings symlinks, hardlinks,
+/// device nodes and modes that all have to be refused — a dependency to
+/// express a header this module already knows how to write.
+///
+/// The paths are composed by whoever sends this, because where a kernel keeps
+/// its files is that kernel's business and this process hosts any of them.
+pub fn unpack(body: &[u8]) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    if body.len() > PACK_LIMIT {
+        return Err(format!("a prelude may be at most {PACK_LIMIT} bytes"));
+    }
+    let split = body
+        .iter()
+        .position(|b| *b == b'\n')
+        .ok_or_else(|| "a prelude begins with a header line".to_string())?;
+    let header: serde_json::Value = serde_json::from_slice(&body[..split])
+        .map_err(|e| format!("the prelude header is not usable: {e}"))?;
+    if header.get(PACK_MARKER).and_then(serde_json::Value::as_u64) != Some(u64::from(PACK_VERSION))
+    {
+        return Err("this is not a prelude this supervisor understands".to_string());
+    }
+    let entries = header
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "the prelude header names no files".to_string())?;
+
+    let mut at = split + 1;
+    let mut files = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let raw = entry
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "a prelude entry has no path".to_string())?;
+        let len = usize::try_from(
+            entry
+                .get("len")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format!("{raw} declares no length"))?,
+        )
+        .map_err(|_| format!("{raw} declares a length this platform cannot hold"))?;
+        // Checked before reading, so a declared length longer than the body
+        // is refused rather than panicking on the slice.
+        let end = at
+            .checked_add(len)
+            .filter(|end| *end <= body.len())
+            .ok_or_else(|| format!("{raw} declares more bytes than the prelude carries"))?;
+        let path =
+            contained(raw).ok_or_else(|| format!("{raw} is not a path inside the pod's home"))?;
+        files.push((path, body[at..end].to_vec()));
+        at = end;
+    }
+    Ok(files)
+}
+
+/// Write files a kernel needs, and say how many landed.
+///
+/// All or nothing is deliberately **not** attempted. A partial write is
+/// visible — the kernel finds some of what it was promised — and unwinding
+/// would mean deleting files this process did not create. The caller is told
+/// which entry failed and decides.
+pub fn write_all(home: &Path, files: &[(PathBuf, Vec<u8>)]) -> std::io::Result<usize> {
+    for (relative, body) in files {
+        let path = home.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, body)?;
+    }
+    // Never the contents: what a kernel is given is between the adapter that
+    // composed it and the agent that reads it.
+    tracing::info!(files = files.len(), "prelude files written");
+    Ok(files.len())
+}
+
 /// A relative path that cannot leave the directory it is joined to.
 ///
 /// The value arrives as environment set by a control plane, which is trusted —

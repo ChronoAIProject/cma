@@ -22,6 +22,7 @@ fn hosted(base: &str) -> HostedKernel {
         SandboxClient::new(base, "test-key"),
         SandboxShape::default(),
         "test-kernel",
+        ".codex/skills",
     )
 }
 
@@ -29,6 +30,7 @@ fn hosted(base: &str) -> HostedKernel {
 fn spec() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
         created_by: None,
         environment: Default::default(),
