@@ -1,6 +1,7 @@
 import type { InterruptOption } from '../agui';
 import { Button } from '../ui/Button';
-import { inline } from './AgentContent';
+import { renderInline } from './inline';
+import { parse } from './markdown';
 import type { PendingApproval } from './conversationModel';
 import { timeOfDay } from '../sessions/sessionTime';
 import './ApprovalCard.css';
@@ -58,6 +59,18 @@ function askedAtLabel(at: string): string | null {
   return Number.isNaN(parsed) ? null : timeOfDay(parsed);
 }
 
+/**
+ * The kernel's own sentence, with its inline code drawn as code.
+ *
+ * §18.3 asks for exactly that and no more: the wording is the kernel's and
+ * the only thing this surface does to it is stop rendering its backticks as
+ * punctuation. Parsed as one paragraph, because a question is one.
+ */
+function questionOf(message: string) {
+  const first = parse(message).children[0];
+  return first?.type === 'paragraph' ? renderInline(first.children) : message;
+}
+
 export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCardProps) {
   const answers =
     interrupt.options === undefined || interrupt.options.length === 0
@@ -101,7 +114,7 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
        * at `--text-title` + 1, and `AgentContent` would impose its own
        * paragraph typography over it.
        */}
-      <p className="approval__question">{inline(interrupt.message)}</p>
+      <p className="approval__question">{questionOf(interrupt.message)}</p>
 
       {/*
        * The answers the kernel offered, rendered from what arrived. A kernel
