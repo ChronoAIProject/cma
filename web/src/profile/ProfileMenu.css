@@ -1,31 +1,81 @@
 /*
- * The account control and its menu — docs/Web_Style.md §3 and §7.
+ * The account row at the foot of the sidebar — `docs/Web_Style.md` §10, §12.
  *
- * The menu is a plate: it floats over the page, takes the card impression, and
- * never moves. It is a MENU rather than a select, because every item runs
- * something — §7 keeps the two apart for exactly that reason.
+ * The menu itself is `.menu`, shared with every other dropdown, and its
+ * placement is the primitive's. Only the trigger is decided here.
+ *
+ * Rewritten in the alias tier. This file was still entirely in the retired
+ * vocabulary — `--accent`, `--inset`, `--rule-2`, `--lift-rest`, `--space-*` —
+ * reaching the sheets through the migration shim, which is how a surface ends
+ * up unable to change theme.
  */
 
+/* The Menu root, filling the foot so the trigger is the width of the column. */
 .profile {
-  position: relative;
-  flex: none;
+  display: block;
+  width: 100%;
 }
 
+/*
+ * A row, not a button-shaped avatar. Who is signed in is the fact most worth
+ * being able to check at a glance on a service that spends the owner's own
+ * vendor subscription, and it used to be legible only after opening the menu.
+ *
+ * Geometry follows the foot's other row rather than inventing a second one.
+ */
 .profile__trigger {
-  display: grid;
-  place-items: center;
-  width: var(--control-h);
-  height: var(--control-h);
-  color: var(--accent);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  background: var(--inset);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .profile__trigger {
+    transition: none;
+  }
+}
+
+/* §12's interactive tint, so the same hover reads the same over any ground. */
+.profile__trigger:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.profile__trigger:active {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* Open is a state of the row, not a shadow under it. */
 .profile__trigger[aria-expanded='true'] {
-  box-shadow: var(--lift-rest);
+  background: var(--dsw-alias-button-ghost-active-fill);
+}
+
+.profile__trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.profile__face {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
 }
 
 .profile__avatar {
@@ -35,31 +85,48 @@
 }
 
 /*
- * The plate itself is `.menu` in the component layer, shared with the dropdown.
- * Only where it opens is decided here.
+ * `min-width: 0` so the two lines may truncate. Without it a grid or flex item
+ * refuses to shrink below its content and the address pushes the row wider
+ * than the column, which is the one thing a resizable sidebar cannot allow.
  */
-.profile__menu {
-  top: calc(100% + var(--space-1));
-  right: 0;
+.profile__who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
 }
 
-.profile__handle {
-  padding: var(--space-2) var(--space-3);
-  color: var(--ink-3);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--rule);
+.profile__name {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
- * The address under the name. Quieter than the name it belongs to, because it
- * identifies the account rather than the person.
+ * The address under the name, quieter: it identifies the account rather than
+ * the person, and the name is what somebody is checking for.
  */
 .profile__email {
-  margin: 0;
-  padding: 0 var(--space-3) var(--space-2);
-  font-size: var(--text-label);
-  color: var(--ink-3);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Closed, the column is 56px and there is no room for either line. The face
+ * stays and centres itself, so the control keeps its place and its meaning.
+ */
+.sidebar--collapsed .profile__who {
+  display: none;
+}
+
+.sidebar--collapsed .profile__trigger {
+  justify-content: center;
+  padding: 6px 0;
 }
