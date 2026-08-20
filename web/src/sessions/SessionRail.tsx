@@ -137,6 +137,7 @@ export function SessionRail({
           open={optionsOpen}
           label="View options"
           align="end"
+          placement="rail__optionsanchor"
           selectedIds={[filter, order, arrangement]}
           items={options}
           onSelect={chooseOption}
@@ -218,7 +219,6 @@ export function SessionRail({
                   open={actionsFor_ === session.id}
                   label={`Actions for ${tabLabel(session.createdAt)}`}
                   align="end"
-                  portal
                   items={actions}
                   onSelect={(id) => {
                     setActionsFor(null);

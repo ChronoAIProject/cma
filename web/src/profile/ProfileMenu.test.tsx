@@ -18,8 +18,14 @@ describe('ProfileMenu', () => {
 
     await user.click(screen.getByRole('button', { name: /account menu/i }));
 
-    // A keyboard user left behind on the trigger has no signal anything opened.
-    expect(screen.getByRole('menuitem', { name: /sign out/i })).toHaveFocus();
+    /*
+     * The first row, which is what the shared menu does everywhere. This used
+     * to land on Sign out — the last item — because the hand-rolled version
+     * carried its focus ref on whichever button happened to be written last.
+     * Opening a menu onto its most destructive entry is not a decision anybody
+     * made.
+     */
+    expect(screen.getByRole('menuitem', { name: /appearance/i })).toHaveFocus();
   });
 
   it('signs out', async () => {
@@ -69,6 +75,10 @@ describe('ProfileMenu', () => {
 
     await user.tab();
     await user.keyboard('{Enter}');
+    // Focus opens on the first row, so Sign out is reached by walking to it.
+    // Arrow keys are the shared menu's, and this is the account menu proving
+    // it inherited them rather than each menu growing its own.
+    await user.keyboard('{ArrowUp}');
     await user.keyboard('{Enter}');
 
     expect(onSignOut).toHaveBeenCalledOnce();
@@ -114,15 +124,48 @@ describe('ProfileMenu', () => {
 });
 
 describe('the operator entry point', () => {
-  it('is not in the account menu at all', async () => {
-    // §14 makes Operations a page and one of §1's two views, so it is reached
-    // by the app bar's switch rather than by an account action. It was here
-    // when it was a dialog; a menu item beside it would be a second route to
-    // a view, which is how a page frame starts becoming navigation.
+  /*
+   * Operations lives here now. It was the app bar's view switch until §9
+   * retired the bar, and then a row of its own in the sidebar foot — which
+   * made the foot a two-item navigation strip beside an account control that
+   * omitted the one place an operator goes. It is still one of §1's two views
+   * and still not navigation: one entry, which names where it goes.
+   */
+  it('is offered to a caller who may operate', async () => {
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperations={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.getByRole('menuitem', { name: 'Operations' })).toBeInTheDocument();
+  });
+
+  it('is absent, never disabled, for anybody else', async () => {
+    // §12: an action that will never work is omitted rather than drawn dead.
+    // Presentation, never protection — the control plane refuses on its own.
     const user = userEvent.setup();
     render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: /account menu/i }));
     expect(screen.queryByRole('menuitem', { name: /operations/i })).toBeNull();
+  });
+
+  it('names where it goes when the panel is already showing', async () => {
+    // Rather than marking itself current: a check would make it a value among
+    // alternatives, and these rows are actions.
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperations={vi.fn()} operationsActive />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.getByRole('menuitem', { name: 'Back to sessions' })).toBeInTheDocument();
+  });
+
+  it('takes the caller there', async () => {
+    const user = userEvent.setup();
+    const onOperations = vi.fn();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperations={onOperations} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Operations' }));
+    expect(onOperations).toHaveBeenCalledOnce();
   });
 });

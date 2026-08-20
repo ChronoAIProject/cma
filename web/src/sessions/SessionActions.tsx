@@ -160,7 +160,6 @@ export function SessionActions({
         open={menuOpen}
         label="More actions"
         align="end"
-        portal
         items={[
           ...(move === undefined
             ? []

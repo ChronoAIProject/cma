@@ -473,14 +473,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           status={
             listed.length === 0 ? undefined : note === undefined ? showing : `${showing} · ${note}`
           }
-          operationsActive={view === 'operations'}
-          onOperations={
-            canOperate(user.capabilities)
-              ? () => {
-                  setView(view === 'operations' ? 'sessions' : 'operations');
-                }
-              : undefined
-          }
           account={
             <ProfileMenu
               user={user}
@@ -491,6 +483,14 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               onManageEnvironments={() => {
                 setManagingProfiles(true);
               }}
+              operationsActive={view === 'operations'}
+              onOperations={
+                canOperate(user.capabilities)
+                  ? () => {
+                      setView(view === 'operations' ? 'sessions' : 'operations');
+                    }
+                  : undefined
+              }
             />
           }
         >
