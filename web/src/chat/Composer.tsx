@@ -111,8 +111,44 @@ export function Composer({
     if (field === null) {
       return;
     }
-    field.style.height = 'auto';
-    field.style.height = `${String(field.scrollHeight)}px`;
+    /*
+     * Measured from `auto` every time, never from the height already set: a
+     * box already at its cap reports a `scrollHeight` of exactly that cap, so
+     * anything comparing the two sees agreement and leaves it there.
+     */
+    let syncing = false;
+    const sync = () => {
+      if (syncing) {
+        return;
+      }
+      syncing = true;
+      field.style.height = 'auto';
+      field.style.height = `${String(field.scrollHeight)}px`;
+      // Released after the resize this caused has been delivered, so the
+      // observer cannot drive itself.
+      requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    sync();
+    /*
+     * And again whenever the box it sits in resizes.
+     *
+     * Depending on `text` alone measured once, at mount, before the column
+     * around it had settled — `scrollHeight` came back as the space available
+     * rather than the space needed, and an empty field opened at its
+     * fourteen-line cap. Nothing corrected it, because the text never changed.
+     *
+     * Observing the field is what makes the measurement true whenever it is
+     * taken: the first settle, a window resize, the details column opening.
+     */
+    const observer = new ResizeObserver(() => {
+      sync();
+    });
+    observer.observe(field);
+    return () => {
+      observer.disconnect();
+    };
   }, [text]);
 
   /*
