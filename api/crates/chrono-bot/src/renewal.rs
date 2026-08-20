@@ -103,9 +103,27 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
     }
     tracing::debug!(subjects = due.len(), "renewing delegated credentials");
 
+    /*
+     * What a renewed owner token is for depends on what sessions run on.
+     *
+     * Where they hold keys of their own it is this service's ability to mint
+     * and revoke being kept alive, and nothing else. Pushing it into sessions
+     * would hand each of them the owner's whole identity — undoing, on a
+     * timer, the scoping their own keys exist to provide, and silently: the
+     * session keeps working, and the reach it reports stays right while the
+     * credential behind it stops matching.
+     *
+     * Their own keys are replaced on age by the reissue above, which is the
+     * rotation that belongs to a session rather than to a person.
+     */
+    let sessions_run_on_own_keys = auth.sessions_hold_own_credentials().await;
     for (subject, refresh_token) in due {
         match auth.refresh(&subject, &refresh_token).await {
             Ok(access_token) => {
+                if sessions_run_on_own_keys {
+                    tracing::debug!(%subject, "renewed this owner's token; sessions keep their own");
+                    continue;
+                }
                 let pushed = service
                     .refresh_subject_credential(&subject, access_token)
                     .await;
@@ -151,6 +169,45 @@ mod tests {
     #[test]
     fn an_already_expired_token_is_renewed() {
         assert!(tokens(Duration::from_millis(1), Some("r")).needs_refresh(RENEW_MARGIN));
+    }
+
+    /// What a renewed owner token is for, which depends on what sessions run
+    /// on — and getting it wrong undoes session scoping on a timer.
+    #[tokio::test]
+    async fn a_renewed_owner_token_is_not_pushed_where_sessions_hold_their_own_keys() {
+        /*
+         * A session's own key exists so a compromised agent reaches the
+         * services that session was granted and nothing else its owner can.
+         * Renewing the owner's token and pushing it into every live session
+         * hands each of them the whole identity back — and silently: the
+         * session keeps working and the reach it reports stays right, while
+         * the credential behind it stops matching.
+         *
+         * The renewal is still needed. It keeps this service able to mint and
+         * to revoke, which is a different job from what a session presents.
+         */
+        let with_issuer = AuthState::new(
+            AuthMode::Trusted {
+                subject: "s".into(),
+            },
+            None,
+        );
+        assert!(
+            !with_issuer.sessions_hold_own_credentials().await,
+            "no issuer configured yet, so sessions are on their owner's token"
+        );
+
+        with_issuer
+            .use_issuer(std::sync::Arc::new(crate::auth::keys::KeyIssuer::new(
+                reqwest::Client::new(),
+                "https://platform.example",
+                "chrono-bot",
+            )))
+            .await;
+        assert!(
+            with_issuer.sessions_hold_own_credentials().await,
+            "an issuer means every session has a key of its own to keep"
+        );
     }
 
     #[tokio::test]
