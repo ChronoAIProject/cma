@@ -169,3 +169,18 @@ describe('the operator entry point', () => {
     expect(onOperations).toHaveBeenCalledOnce();
   });
 });
+
+describe('the terminal palette', () => {
+  it('is not an account setting', async () => {
+    /*
+     * It sat here, applying to a plane most sessions are not on — an account
+     * setting for a surface its owner may never open. It belongs to the
+     * session that draws a terminal, in that session's own overflow menu.
+     */
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: /terminal theme/i })).toBeNull();
+  });
+});
