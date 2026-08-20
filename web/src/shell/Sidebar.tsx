@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Mark } from './Mark';
+import markUrl from '../assets/brand/cma-mark.svg';
 import { BUILD } from './build';
 import { IconNewChatOutline16, IconPanelLeftOutline16, IconSearchOutline16 } from '../ui/icons';
 import './Sidebar.css';
@@ -55,10 +55,14 @@ export function Sidebar({
           The mark is a shortcut to a new session and carries no hover chrome:
           the pointer is the only affordance it needs, and a hover fill on a
           wordmark reads as the product name being a control.
+
+          The still mark, not the animated one: this sits in chrome that is on
+          screen for the whole session, and a logo that replays its entrance
+          every navigation is the kind of motion §14a exists to refuse.
         */}
         <button type="button" className="sidebar__brand" onClick={onCreate}>
-          <Mark size={24} />
-          {collapsed ? null : <span className="sidebar__name">chronobot</span>}
+          <img className="sidebar__mark" src={markUrl} alt="" width={24} height={24} />
+          {collapsed ? null : <span className="sidebar__name">CMA</span>}
         </button>
         <button
           type="button"

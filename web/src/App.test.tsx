@@ -228,7 +228,7 @@ describe('App', () => {
   it('shows the introduction to a visitor who is not signed in', async () => {
     await renderApp(createMockAuthProvider());
 
-    expect(screen.getByLabelText(/what would you like chronobot to build/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/what would you like cma to build/i)).toBeInTheDocument();
   });
 
   it('shows the live console to a signed-in user', async () => {
@@ -297,7 +297,7 @@ describe('App', () => {
     await user.click(screen.getByRole('menuitem', { name: /sign out/i }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/what would you like chronobot to build/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/what would you like cma to build/i)).toBeInTheDocument();
     });
   });
 
