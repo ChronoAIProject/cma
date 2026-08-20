@@ -477,9 +477,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             <ProfileMenu
               user={user}
               onSignOut={onSignOut}
-              onTerminalThemeChange={() => {
-                setPaletteEpoch((n) => n + 1);
-              }}
               onManageEnvironments={() => {
                 setManagingProfiles(true);
               }}
@@ -568,6 +565,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                     onRevive={() => void reviveSessionById(active.id)}
                     onStop={() => void endSession(active.id)}
                     onDelete={() => void removeSession(active.id)}
+                    onTerminalThemeChange={() => {
+                      setPaletteEpoch((n) => n + 1);
+                    }}
                     onDetails={() => {
                       setDetailsOpen((open) => !open);
                     }}
