@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { IntroTerminal } from './landing/IntroTerminal';
+import { Landing } from './landing/Landing';
 import { useAuth } from './auth/context';
 /*
  * Mount order matters — `docs/Web_Style.md` §2. The palette sheets must be
@@ -75,7 +75,7 @@ export function App() {
          * and an empty details column would draw two panels that say nothing
          * and cannot be opened.
          */
-        <IntroTerminal />
+        <Landing />
       );
 
     default: {
