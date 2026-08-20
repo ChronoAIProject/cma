@@ -232,9 +232,15 @@
  * accent moves to the row's leading edge, where the prompt actually begins.
  * The indicator is not removed — it is relocated, and the accent caret
  * reinforces it.
+ *
+ * `box-shadow` as well as `outline`, because the global ring in `base.css` is
+ * drawn with the former: cancelling only the outline cancelled nothing that
+ * was being painted, and the field carried both the ring it had relocated and
+ * the edge it relocated it to.
  */
 .intro__input:focus-visible {
   outline: none;
+  box-shadow: none;
 }
 
 .intro__row:focus-within {
