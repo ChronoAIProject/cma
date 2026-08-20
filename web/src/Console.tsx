@@ -7,6 +7,8 @@ import type { SortOrder } from './sessions/sessionTime';
 import type { KernelOffer, Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
+import { SignInCard } from './chat/SignInCard';
+import type { SignIn } from './chat/conversationModel';
 import type { Stage } from './sessions/progress';
 import { SessionActions } from './sessions/SessionActions';
 import { SessionHeader } from './sessions/SessionHeader';
@@ -139,6 +141,14 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // The last startup step each session reported. Kept per session so switching
   // tabs shows that session's progress rather than another's.
   const [stages, setStages] = useState<Record<string, Stage>>({});
+  /*
+   * Sign-ins a session is waiting on, by id. Held here rather than in the
+   * conversation, because a kernel raises this from inside the conversation
+   * open — so the session is still provisioning and its conversation surface
+   * has not been drawn yet. This is the only state where the request exists
+   * and the surface that renders it does not.
+   */
+  const [signIns, setSignIns] = useState<Record<string, SignIn>>({});
   const [order, setOrder] = useState<SortOrder>('newest');
   /*
    * The details drawer — §12: closed by default, opened from the header's
@@ -200,6 +210,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   const [focusHistory, setFocusHistory] = useState<readonly string[]>([]);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
+  // Bound once so the surface below can be told it exists. Read straight from
+  // the map, `noUncheckedIndexedAccess` makes every use `SignIn | undefined`.
+  const pendingSignIn = active === null ? undefined : signIns[active.id];
 
   /** Select a session, in whichever arrangement is showing. */
   const select = useCallback((id: string) => {
@@ -308,12 +321,28 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         if (detail !== undefined && detail !== '') {
           setEndings((prev) => ({ ...prev, [id]: detail }));
         }
+        // Leaving `provisioning` is the sign-in having been completed, or
+        // having stopped mattering. Either way the prompt is stale, and a
+        // stale one asks somebody to enter a code that has already expired.
+        if (lifecycle !== 'provisioning') {
+          setSignIns((prev) => {
+            if (!(id in prev)) {
+              return prev;
+            }
+            const rest = { ...prev };
+            delete rest[id];
+            return rest;
+          });
+        }
       },
       (message) => {
         setNotice({ failed: message });
       },
       (stage) => {
         setStages((prev) => ({ ...prev, [id]: stage }));
+      },
+      (signIn) => {
+        setSignIns((prev) => ({ ...prev, [id]: signIn }));
       },
     );
     return stop;
@@ -605,6 +634,16 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               />
             ) : active === null ? (
               <p className="console__empty">No session open. Start one from the left.</p>
+            ) : active.lifecycle === 'provisioning' && pendingSignIn !== undefined ? (
+              /*
+               * Ahead of the progress, not beside it. The session is not
+               * starting and no amount of waiting will start it — the agent
+               * has stopped to ask for something that has to be done on
+               * another device. Leaving the "this can take a minute" message
+               * on screen would be telling somebody to wait for the thing
+               * they are being asked to do.
+               */
+              <SignInCard signIn={pendingSignIn} />
             ) : active.lifecycle === 'provisioning' ? (
               <StartupProgress
                 message="Starting a sandbox for this session. This can take a minute the first time."
