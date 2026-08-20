@@ -120,7 +120,7 @@ export function useSessionActions({
         await stopSession(id);
         applyLifecycle(id, 'idle');
       } catch (cause) {
-        report(cause, 'Ending the session failed.', 'The session keeps running.');
+        report(cause, 'Pausing the session failed.', 'The session keeps running.');
       } finally {
         setActing(false);
       }
