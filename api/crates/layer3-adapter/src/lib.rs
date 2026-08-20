@@ -92,12 +92,27 @@ pub struct KernelCapabilities {
 }
 
 /// Errors an adapter may surface.
+///
+/// **The variant is a fact about what was heard**, and callers depend on it:
+/// a session's runtime is replaced on one of these and left alone on the
+/// others, so a variant that is only approximately right costs somebody their
+/// conversation in one direction or their session in the other.
 #[derive(Debug, thiserror::Error)]
 pub enum AdapterError {
-    /// The runtime could not be provisioned or reached.
+    /// Nothing answered.
+    ///
+    /// A provider that could not be reached, a provider saying this sandbox is
+    /// not there, a socket that would not open, a deadline that passed in
+    /// silence, a link that closed under a waiting call. **This and only this
+    /// is evidence that a runtime is gone**, and everything that is evidence of
+    /// that has to arrive here.
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
-    /// The runtime rejected the request.
+    /// Something answered, and refused.
+    ///
+    /// A reply came back. Whatever it says, the thing that sent it exists and
+    /// is dispatching, so this is never on its own grounds for replacing a
+    /// sandbox.
     #[error("runtime rejected request: {0}")]
     Rejected(String),
     /// The provider cannot answer this question at all.
@@ -107,6 +122,34 @@ pub enum AdapterError {
     /// need to be able to tell the two apart.
     #[error("not supported by this runtime: {0}")]
     Unsupported(String),
+}
+
+impl AdapterError {
+    /// The same failure, said with more context, and still the same kind.
+    ///
+    /// Rewording used to change the kind. Three call sites wrapped every
+    /// failure of a follow-up call in `Rejected`, so a deadline and a closed
+    /// link — both of them silence — reached the core as though the runtime
+    /// had answered. Anything reading the variant to decide whether a sandbox
+    /// is still there was reading a fact the wrapper had invented.
+    #[must_use]
+    pub fn context(self, what: &str) -> Self {
+        match self {
+            Self::Unavailable(m) => Self::Unavailable(format!("{what}: {m}")),
+            Self::Rejected(m) => Self::Rejected(format!("{what}: {m}")),
+            Self::Unsupported(m) => Self::Unsupported(format!("{what}: {m}")),
+        }
+    }
+
+    /// Whether this is evidence that the runtime is gone.
+    ///
+    /// Only silence is. A refusal proves the opposite — something was there to
+    /// refuse — and a stated absence is a property of the image rather than of
+    /// this instance, so another sandbox from it would say the same thing.
+    #[must_use]
+    pub fn is_runtime_loss(&self) -> bool {
+        matches!(self, Self::Unavailable(_))
+    }
 }
 
 /// A kernel runtime, abstracted. Layer 2 depends on this trait and never on an
