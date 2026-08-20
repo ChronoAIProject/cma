@@ -7,7 +7,7 @@ import markMarkup from '../assets/brand/cma-mark-animated.svg?raw';
 import './Landing.css';
 
 /**
- * The signed-out surface — `docs/Web_Style.md` §15.
+ * The signed-out surface — `docs/Web_Style.md` §20.
  *
  * The mark, at the size a mark is worth showing at, and one thing to do.
  *
