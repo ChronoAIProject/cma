@@ -260,6 +260,22 @@ impl AuthState {
         *self.issuer.write().await = Some(issuer);
     }
 
+    /// Whether sessions hold credentials of their own rather than their owner's.
+    ///
+    /// True once an issuer is configured, which is what `use_issuer` says in
+    /// the other direction: absent leaves every session on its owner's own
+    /// token, the behaviour that predates scoping.
+    ///
+    /// Asked because renewing the owner's token means two different things
+    /// depending on the answer. Where sessions hold their own keys it is this
+    /// service's own ability to mint and revoke being kept alive, and pushing
+    /// it into a session would hand back the whole identity those keys exist
+    /// to replace. Where they do not, the renewed token *is* what the sessions
+    /// run on and must reach them.
+    pub async fn sessions_hold_own_credentials(&self) -> bool {
+        self.issuer.read().await.is_some()
+    }
+
     /// Sessions whose credential has been held longer than `lifetime`.
     ///
     /// Age rather than a stated expiry, because the platform does not return
@@ -348,7 +364,12 @@ impl AuthState {
                 continue;
             };
             for (id, session) in issuer.minted_here(&token).await {
-                if service.session_is_live(&session).await {
+                // Claimed, not merely running. A paused session is one its
+                // owner kept, and taking its key back leaves them to come
+                // back to a session whose credential was revoked underneath
+                // them — which is what happened to every stopped session as
+                // soon as this process restarted.
+                if service.session_claims_credential(&session).await {
                     continue;
                 }
                 // Held for a session this process is still tracking? Then it is
