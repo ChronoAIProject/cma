@@ -15,7 +15,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { open, visit } from './browser.mjs';
+import { open, settle, visit } from './browser.mjs';
 
 const PORT = 4318;
 const DIST = 'dist/assets';
@@ -196,6 +196,100 @@ async function errorSurface(page, port) {
   return problems;
 }
 
+/**
+ * Is the brand mark whole, and does it fit the box that crops it?
+ *
+ * Two defects shipped here in one day, and neither was visible to jsdom or to
+ * any of the checks above.
+ *
+ * The mark carries its own `prefers-reduced-motion` block. Loaded through an
+ * `<img>` that block does not take effect, and the base rules stay frozen —
+ * the strokes at `stroke-dashoffset: 100`, the lenses at `opacity: 0` — so a
+ * visitor who asked for less motion was shown the arc alone.
+ *
+ * The crop was then written from `getBoundingClientRect`, which reports fill
+ * bounds and excludes stroke, so it sheared six units off an eleven-unit
+ * stroke and left the crown of the arc a flat line.
+ *
+ * Both are geometry and paint, which is why they need a browser to see.
+ */
+async function brandMark(page, port) {
+  const problems = [];
+  for (const reduce of [false, true]) {
+    await page.emulateMediaFeatures([
+      { name: 'prefers-reduced-motion', value: reduce ? 'reduce' : 'no-preference' },
+    ]);
+    await visit(page, port, 'networkidle0');
+    // Long enough for the entrance to finish when it is allowed to run at all.
+    await settle(2400);
+    const seen = await page.evaluate(() => {
+      const wrapper = document.querySelector('.landing__mark');
+      if (!wrapper) {
+        return { absent: true };
+      }
+      /*
+       * Inline, not an <img>. The mark's own reduced-motion rules only take
+       * effect in the page's document — through an <img> they are inert and
+       * the mark renders as its arc alone. Nothing below can see inside an
+       * image either, so this must fail loudly rather than quietly pass.
+       */
+      const svg = wrapper.matches('svg') ? wrapper : wrapper.querySelector('svg');
+      if (!svg) {
+        return { notInline: wrapper.tagName.toLowerCase() };
+      }
+      const parts = [...svg.querySelectorAll('.cma-arc, .cma-teeth, .cma-lens, .cma-bridge')];
+      const invisible = parts
+        .filter((el) => {
+          const style = getComputedStyle(el);
+          // A stroke fully offset draws nothing, and neither does zero opacity.
+          const offset = Number.parseFloat(style.strokeDashoffset) || 0;
+          return Number(style.opacity) < 0.5 || Math.abs(offset) > 1;
+        })
+        .map((el) => el.getAttribute('class'));
+      const wrap = wrapper.getBoundingClientRect();
+      const svgBox = svg.getBoundingClientRect();
+      // The viewBox is 100 units wide, so this maps units to CSS pixels. Half
+      // the widest stroke is added back because client rects exclude it.
+      const unit = svgBox.width / 100;
+      const arc = svg.querySelector('.cma-arc').getBoundingClientRect();
+      const paintedTop = arc.top - 5.5 * unit;
+      const paintedBottom = svgBox.top + 76.5 * unit;
+      return {
+        missing: false,
+        invisible,
+        overflowTop: Math.round(wrap.top - paintedTop),
+        overflowBottom: Math.round(paintedBottom - wrap.bottom),
+        markWidth: Math.round(wrap.width),
+      };
+    });
+    const mode = reduce ? 'reduced motion' : 'normal motion';
+    if (seen.absent) {
+      problems.push(`${mode}: the landing has no brand mark`);
+      continue;
+    }
+    if (seen.notInline !== undefined) {
+      problems.push(
+        `${mode}: the mark is a <${seen.notInline}> rather than inline SVG, so its ` +
+          `reduced-motion rules cannot take effect`,
+      );
+      continue;
+    }
+    if (seen.invisible.length > 0) {
+      problems.push(`${mode}: the mark is missing ${seen.invisible.join(', ')}`);
+    }
+    if (seen.overflowTop > 0) {
+      problems.push(`${mode}: the crop cuts ${String(seen.overflowTop)}px off the top of the mark`);
+    }
+    if (seen.overflowBottom > 0) {
+      problems.push(
+        `${mode}: the crop cuts ${String(seen.overflowBottom)}px off the bottom of the mark`,
+      );
+    }
+  }
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+  return problems;
+}
+
 async function main() {
   const names = referenced();
   const { page, close } = await open({ port: PORT });
@@ -265,6 +359,7 @@ async function main() {
 
     problems.push(...(await fills(page)));
     problems.push(...(await oneIndicator(page)));
+    problems.push(...(await brandMark(page, PORT)));
     identity = 'unreachable';
     problems.push(...(await errorSurface(page, PORT)));
     identity = 'signedOut';
