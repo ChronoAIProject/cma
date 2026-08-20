@@ -64,7 +64,7 @@ function renderDialog(options: DialogOptions = {}) {
 
 /** Open the authoring branch, which is where every field below lives. */
 async function author(user: ReturnType<typeof userEvent.setup>) {
-  await chooseOption(user, /environment profile/i, /new profile/i);
+  await user.click(screen.getByRole('button', { name: 'New environment profile' }));
   // The name is the first field of the authoring form, so its presence is what
   // says the form is open. The plane is no longer asked: a session is a
   // conversation, and the terminal is somewhere its owner moves it to later.
@@ -87,22 +87,33 @@ describe('starting from what already exists', () => {
     const user = userEvent.setup();
     const { onStart } = renderDialog({ profiles: [profile('envp_1', 'Talos Controller')] });
 
-    await chooseOption(user, /environment profile/i, 'Talos Controller');
+    await chooseOption(user, 'Environment profile', 'Talos Controller');
     await user.click(screen.getByRole('button', { name: /start session/i }));
 
     expect(onStart).toHaveBeenCalledWith('envp_1');
   });
 
-  it('offers every profile the person owns, and the option to author one', async () => {
+  it('lists only what a session can be started from', async () => {
+    /*
+     * Authoring is a key beside the picker, not its last option. A picker's
+     * options are alternatives to each other, and authoring is not an
+     * alternative to a profile: choosing it opens a form while choosing
+     * anything else starts a session.
+     */
     const user = userEvent.setup();
     renderDialog({ profiles: [profile('envp_1', 'Talos Controller'), profile('envp_2', 'Rev')] });
 
-    expect(await openedOptions(user, /environment profile/i)).toEqual([
+    expect(await openedOptions(user, 'Environment profile')).toEqual([
       "This deployment's defaults",
       'Talos Controller',
       'Rev',
-      'New profile…',
     ]);
+  });
+
+  it('offers a key for authoring one, beside the picker', async () => {
+    renderDialog();
+
+    expect(screen.getByRole('button', { name: 'New environment profile' })).toBeInTheDocument();
   });
 
   it('says what a chosen profile starts', async () => {
@@ -120,7 +131,7 @@ describe('starting from what already exists', () => {
       ],
     });
 
-    await chooseOption(user, /environment profile/i, 'Reviewer');
+    await chooseOption(user, 'Environment profile', 'Reviewer');
 
     expect(screen.getByText(/starts a conversation session on Claude Code/i)).toBeInTheDocument();
   });
@@ -201,14 +212,16 @@ describe('authoring a scoped profile in place', () => {
   });
 
   it('will not author a profile when the deployment’s runtimes are unknown', async () => {
-    // Choosing a runtime blind is how somebody fills a form in and then learns
-    // the control plane refuses the pairing.
-    const user = userEvent.setup();
+    /*
+     * Choosing a runtime blind is how somebody fills a form in and then learns
+     * the control plane refuses the pairing. §7: disabled with its reason
+     * beside it rather than absent — this one works again once the runtimes
+     * can be read, and a key that vanishes is one somebody hunts for.
+     */
     renderDialog({ kernels: [] });
 
-    const options = await openedOptions(user, /environment profile/i);
-
-    expect(options).toContain('New profile…This deployment’s runtimes could not be read');
+    expect(screen.getByRole('button', { name: 'New environment profile' })).toBeDisabled();
+    expect(screen.getByText(/runtimes could not be read/i)).toBeInTheDocument();
   });
 
   it('needs a name before it saves anything', async () => {
