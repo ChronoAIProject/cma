@@ -122,6 +122,21 @@ async function pickerReachable(page) {
     return ['no New session control on the signed-in surface'];
   }
   await settle();
+
+  /*
+   * Checked before the list is opened: one Escape closes the menu and the
+   * dialog together, so there is no moment afterwards with the dialog still
+   * up to look at.
+   */
+  const authoring = await page.evaluate(() =>
+    [...document.querySelectorAll('button')].some(
+      (candidate) => candidate.textContent?.trim() === 'New environment profile',
+    ),
+  );
+  if (!authoring) {
+    problems.push('picker: no key for authoring a profile beside it');
+  }
+
   await page.evaluate(() => {
     document.querySelector('.picker__anchor')?.click();
   });
@@ -158,9 +173,10 @@ async function pickerReachable(page) {
   if (seen.offscreen) {
     problems.push('picker: the list falls outside the window');
   }
-  // Four profiles, the deployment's defaults, and the authoring entry.
-  if (seen.options < 6) {
-    problems.push(`picker: ${String(seen.options)} options drawn, expected every one of 6`);
+  // Four profiles and the deployment's defaults. Authoring is a key beside the
+  // picker rather than an option inside it, so it is not counted here.
+  if (seen.options < 5) {
+    problems.push(`picker: ${String(seen.options)} options drawn, expected every one of 5`);
   }
   await page.keyboard.press('Escape');
   await settle(300);
