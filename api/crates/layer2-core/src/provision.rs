@@ -71,18 +71,33 @@ impl SessionService {
         outcome: crate::provision_failure::Abandonment,
     ) {
         let id = session.id.clone();
-        // Nobody may have been present to delegate one — a session recovered by
-        // the controller has no request behind it — so it is fetched here
-        // rather than being required of every caller.
+        /*
+         * The session's own credential, minted against what it was granted.
+         *
+         * Unconditional, and that is the fix for a defect this gate used to
+         * hide. It read `if the caller supplied one, use theirs` — and an
+         * interface did supply one: the caller's own access token, put on the
+         * spec so the platform could be asked questions as them. Provisioning
+         * found the field filled, skipped the mint, and handed the agent its
+         * owner's whole identity. Every session a person created ran that way,
+         * while the minting machinery ran only for sessions the controller
+         * recovered, which is the one path nobody takes by hand.
+         *
+         * `credential_for` is idempotent per session: asking twice — for a
+         * replaced runtime, or after a restart — returns the value already
+         * issued rather than leaving two alive for one session.
+         */
         let mut spec = spec;
-        if spec.subject_credential.is_none() {
-            let services = self
-                .environments
-                .services_for(&session.owner, session.environment_profile.as_ref())
-                .await;
-            spec.subject_credential = self
-                .credential_for(&session.id, &session.owner, &services)
-                .await;
+        let services = self.services_for(&session.id).await;
+        spec.runtime_credential = self
+            .credential_for(&session.id, &session.owner, &services)
+            .await;
+        if spec.runtime_credential.is_none() {
+            tracing::warn!(
+                session_id = %id,
+                "no credential could be minted for this session; it will start unable to act \
+                 on its owner's behalf until the top-up sweep supplies one"
+            );
         }
         match tokio::time::timeout(
             PROVISION_DEADLINE,
@@ -200,7 +215,7 @@ impl SessionService {
                     cols: geometry.columns(),
                     rows: geometry.rows(),
                 },
-                subject_credential: spec.subject_credential.clone(),
+                subject_credential: spec.runtime_credential.clone(),
                 options: options.clone(),
                 restore_from: restore.cloned(),
                 reaches,
@@ -318,7 +333,7 @@ impl SessionService {
         let mut entry = SessionEntry {
             session: seeded,
             sequences: Arc::clone(&self.sequences),
-            subject_credential: spec.subject_credential.clone(),
+            subject_credential: spec.runtime_credential.clone(),
             environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
@@ -372,7 +387,7 @@ impl SessionService {
         // the terminal channel: the credential's consumer is the supervisor's
         // proxy, and a runtime that renders no terminal still calls out on its
         // owner's behalf.
-        if let Some(credential) = spec.subject_credential.as_deref() {
+        if let Some(credential) = spec.runtime_credential.as_deref() {
             if let Err(e) = adapter.refresh_credential(&handle, credential).await {
                 // Logged rather than fatal, and never with the value. The
                 // session is usable — someone can read it and type into it —
