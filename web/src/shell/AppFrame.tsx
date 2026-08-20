@@ -37,11 +37,26 @@ interface AppFrameProps {
   readonly details?: ReactNode;
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
+  /**
+   * Whether the owner has asked for the sidebar to be closed.
+   *
+   * The frame owns the column widths, so the toggle has to reach it to change
+   * anything. Without this the sidebar re-laid its own contents into icon mode
+   * inside a track that was still 280px wide, and the control read as broken.
+   */
+  readonly sidebarCollapsed?: boolean;
   /** Things that float over every column — a banner, a dialog's own layer. */
   readonly overlay?: ReactNode;
 }
 
-export function AppFrame({ sidebar, center, details, detailsOpen, overlay }: AppFrameProps) {
+export function AppFrame({
+  sidebar,
+  center,
+  details,
+  detailsOpen,
+  overlay,
+  sidebarCollapsed = false,
+}: AppFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
@@ -83,7 +98,16 @@ export function AppFrame({ sidebar, center, details, detailsOpen, overlay }: App
   }, []);
 
   const narrow = viewport > 0 && viewport < SIDEBAR_AUTO_COLLAPSE;
-  const sidebarPreference = narrow && !expandedAnyway ? 0 : sidebarWidth;
+  /*
+   * Asked for, or forced by the width. Both reach the solver as a preference
+   * of zero, which is what `computeColumns` already reads as closed — so the
+   * two routes to a closed sidebar produce one result rather than two.
+   *
+   * An explicit collapse outranks `expandedAnyway`: that flag exists to keep
+   * a hand-opened sidebar open against the automatic rule, not against its
+   * owner asking a second time for it to close.
+   */
+  const sidebarPreference = sidebarCollapsed || (narrow && !expandedAnyway) ? 0 : sidebarWidth;
   const columns = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
 
   const onSidebarDrag = useCallback((to: number) => {
