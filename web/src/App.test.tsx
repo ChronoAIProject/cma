@@ -487,7 +487,8 @@ describe('App', () => {
       expect(sockets).toHaveLength(3);
     });
 
-    await user.click(screen.getByRole('button', { name: /^reconnect/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^reconnect/i }));
 
     /*
      * One more socket, not four more. Reconnect is a per-session button in a
@@ -536,8 +537,8 @@ describe('App', () => {
     // Nothing stubs the stop endpoint, so the request comes back 404 — the
     // same shape as a 409, an expired token or a network blip. End lives in
     // the header's overflow menu now (§7).
-    await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: 'Pause session' }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^pause session/i }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toBeInTheDocument();
@@ -571,11 +572,12 @@ describe('App', () => {
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: 'Pause session' }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^pause session/i }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /^reconnect$/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^reconnect/i }));
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
@@ -601,10 +603,10 @@ describe('App', () => {
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
       await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
-    // Delete sits at the drawer's foot (§12), so the drawer opens first, and
-    // the deletion is gated behind an acknowledgement (§7).
-    await user.click(screen.getByRole('button', { name: /^details$/i }));
-    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    // Delete is in the session's lifecycle menu (§12), gated behind an
+    // acknowledgement (§7).
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete/i }));
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /delete permanently/i }));
 

@@ -3,10 +3,10 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { InlineConfirm } from '../ui/InlineConfirm';
 import { ProfileEditor } from './ProfileEditor';
+import { NOTHING_MANDATED } from './types';
 import type {
   EnvironmentProfile,
   EnvironmentProfileStore,
-  MandatoryEntries,
   ProfileDraft,
   ServiceCatalogue,
   SkillCatalogue,
@@ -41,7 +41,6 @@ interface EnvironmentProfilesProps {
 }
 
 /** Until a profile has been read back, this is what the platform mandates. */
-const NOTHING_MANDATED: MandatoryEntries = { packages: [], skills: [] };
 
 type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'edit'; id: string };
 
