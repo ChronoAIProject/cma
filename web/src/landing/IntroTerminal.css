@@ -11,10 +11,16 @@
  * is the drift the token system exists to prevent.
  */
 
+/*
+ * `height`, not `flex: 1 1 auto`. This is `#root`'s only child, and `#root` is
+ * a block, so a request to grow has nothing to grow inside and the surface
+ * collapsed to its content — a 270px panel on a 900px page. `.frame` states
+ * its height for the same reason and was never affected.
+ */
 .intro {
   position: relative;
   display: flex;
-  flex: 1 1 auto;
+  height: 100%;
   gap: var(--space-8);
   /* Stretch, so the terminal panel fills its share rather than hugging the
      script that happens to be printing into it. */
