@@ -65,7 +65,7 @@ describe('the column headers', () => {
      * itself accordingly.
      */
     expect(rule(sheet('sessions/SessionHeader.css'), '.sessionheader')).toContain(
-      'padding: 12px 28px 0 20px',
+      'padding: 10px 20px',
     );
   });
 
