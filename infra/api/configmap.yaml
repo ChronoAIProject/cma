@@ -230,4 +230,11 @@ data:
   #
   # Named the way a person reads them; the identifiers the provider wants are
   # resolved when a credential is minted.
-  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api"
+  #
+  # ornn and ornn-api are two services, not one name spelled twice. ornn-api
+  # answers the skill registry this service itself searches; ornn is the skill
+  # runtime an agent calls, and it is the one the baseline skills above tell the
+  # agent to reach for. Scoping to only the first produced sessions that could
+  # be told a skill exists and were then refused when they tried to use it —
+  # "API key scope forbidden" from the provider, on every call.
+  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api,ornn"
