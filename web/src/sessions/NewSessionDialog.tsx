@@ -89,6 +89,7 @@ export function NewSessionDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const profileLabelId = useId();
+  const noRuntimesId = useId();
   const nameId = useId();
   const kernelId = useId();
 
@@ -209,21 +210,46 @@ export function NewSessionDialog({
          * agent, which model, how freely it acts — so this chooses between
          * described sessions rather than between something and nothing.
          */}
-        <Picker
-          label="Environment profile"
-          value={profile}
-          options={[
-            { value: '', label: "This deployment's defaults" },
-            ...profiles.map((p) => ({ value: p.id, label: p.name })),
-            {
-              value: AUTHOR,
-              label: 'New profile…',
-              unavailable:
-                kernels.length === 0 ? 'This deployment’s runtimes could not be read' : undefined,
-            },
-          ]}
-          onChange={setProfile}
-        />
+        {/*
+         * The picker lists only what a session can be started from, and the
+         * authoring entry is a button beside it rather than a last option
+         * inside it. A picker's options are alternatives to each other;
+         * authoring is not an alternative to a profile — choosing it opened a
+         * form while choosing anything else started a session, which is why
+         * it alone needed a disabled state and a reason of its own.
+         */}
+        <div className="profilerow">
+          <Picker
+            label="Environment profile"
+            value={profile}
+            options={[
+              { value: '', label: "This deployment's defaults" },
+              ...profiles.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            onChange={setProfile}
+          />
+          {authoring ? null : (
+            <Button
+              disabled={kernels.length === 0}
+              aria-describedby={kernels.length === 0 ? noRuntimesId : undefined}
+              onClick={() => {
+                setProfile(AUTHOR);
+              }}
+            >
+              New environment profile
+            </Button>
+          )}
+        </div>
+        {/*
+         * §7: a disabled key states its reason beside it. Choosing a runtime
+         * blind is how somebody fills a form in and then learns the deployment
+         * could not tell them what it runs.
+         */}
+        {authoring || kernels.length > 0 ? null : (
+          <span className="control-reason" id={noRuntimesId}>
+            This deployment&rsquo;s runtimes could not be read
+          </span>
+        )}
         <span className="field__hint">
           The whole description of the session: the agent and how it behaves, the software it
           carries, and the variables it is started with.
