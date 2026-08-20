@@ -14,10 +14,19 @@
  * message moved while somebody was writing it. Outside it holds its place, and
  * the pair keeps the reading column's width between them.
  */
+/*
+ * Centred on each other, not aligned to a shared bottom edge.
+ *
+ * `flex-end` put the key against the card's bottom, which reads as level only
+ * while the field is one line — the card is a capsule with its own padding, so
+ * the key sat low against a rounded edge rather than on the same line as the
+ * text beside it. Centring holds as the field grows: the key stays on the
+ * middle of the box it belongs to, which is where the eye puts it.
+ */
 .composer-block {
   display: flex;
   gap: 8px;
-  align-items: flex-end;
+  align-items: center;
 }
 
 .composer-block > .composer {
