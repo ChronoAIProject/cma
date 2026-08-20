@@ -311,6 +311,10 @@ impl EnvironmentProfileService {
             services: spec.services,
             created_at: now.clone(),
             updated_at: now,
+            // A new profile is not its owner's default. Making one so is a
+            // decision they take, and taking it for them would move where
+            // every later session starts as a side effect of authoring.
+            preferred: false,
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
         // Noted after the write, never instead of it: a selection the
@@ -345,10 +349,60 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
-        self.store
+        let mut profiles = self
+            .store
             .list_for(&caller.subject)
             .await
-            .map_err(store_failed)
+            .map_err(store_failed)?;
+        settle_preferred(&mut profiles);
+        Ok(profiles)
+    }
+
+    /// Make one of the caller's profiles the one their sessions start from.
+    ///
+    /// At most one may hold it, so the others are cleared in the same call.
+    /// There is no transaction across the store port, so this is written to be
+    /// safe without one: a write that half-succeeds leaves either two claims or
+    /// none, and both are resolved on read rather than left to be discovered —
+    /// see `settle_preferred`.
+    ///
+    /// Passing `None` clears the preference, which is a real choice: it returns
+    /// the caller to the deployment's own defaults rather than being the
+    /// absence of one.
+    pub async fn prefer(
+        &self,
+        caller: &Caller,
+        id: Option<&EnvironmentProfileId>,
+    ) -> Result<Vec<EnvironmentProfile>, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        // Read through `owned` so a profile the caller does not own is refused
+        // by the same rule every other operation is refused by.
+        if let Some(wanted) = id {
+            self.owned(caller, wanted).await?;
+        }
+
+        let mut profiles = self
+            .store
+            .list_for(&caller.subject)
+            .await
+            .map_err(store_failed)?;
+        for profile in &mut profiles {
+            let wanted = id.is_some_and(|chosen| &profile.id == chosen);
+            if profile.preferred == wanted {
+                continue;
+            }
+            profile.preferred = wanted;
+            self.store.upsert(profile).await.map_err(store_failed)?;
+        }
+        tracing::info!(
+            owner = %caller.subject,
+            profile_id = id.map(|chosen| chosen.0.as_str()).unwrap_or("<none>"),
+            "the profile this owner's sessions start from"
+        );
+        settle_preferred(&mut profiles);
+        Ok(profiles)
     }
 
     /// Replace a profile's contents, keeping its identity and creation time.
@@ -377,6 +431,10 @@ impl EnvironmentProfileService {
             services: spec.services,
             created_at: existing.created_at,
             updated_at: now_rfc3339(),
+            // Carried across an edit. Editing a profile is not choosing where
+            // sessions start from, and silently clearing it would move that
+            // the next time somebody fixed a typo in its name.
+            preferred: existing.preferred,
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
         self.warn_ungranted(caller, None, &profile.services).await;
@@ -540,3 +598,24 @@ mod environment_resolution_tests;
 #[cfg(test)]
 #[path = "environment_service_tests.rs"]
 mod tests;
+
+/// Leave at most one profile claiming to be the owner's default.
+///
+/// The store has no transaction, so a half-finished `prefer` can leave two
+/// claims. Rather than trusting the write, the read settles it: the most
+/// recently updated wins, and the rest are reported as what they are. None
+/// claiming it is not a fault — it means the owner has not chosen one, and
+/// their sessions start from the deployment's own defaults.
+fn settle_preferred(profiles: &mut [EnvironmentProfile]) {
+    let winner = profiles
+        .iter()
+        .filter(|profile| profile.preferred)
+        .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
+        .map(|profile| profile.id.clone());
+    let Some(winner) = winner else {
+        return;
+    };
+    for profile in profiles.iter_mut() {
+        profile.preferred = profile.id == winner;
+    }
+}
