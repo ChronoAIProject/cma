@@ -163,6 +163,61 @@ async function oneIndicator(page) {
   });
 }
 
+/**
+ * Is the surface shown when nothing works, itself designed?
+ *
+ * It is reached only when the control plane cannot be answered, so it renders
+ * for nobody in development and for everybody at the worst possible moment.
+ * `.app-error` had no rule at all and drew at browser defaults — the one
+ * screen the restyle never reached, found by accident while the check was
+ * still pointed at the wrong page.
+ *
+ * Driven deliberately here rather than left to a stub failing by chance: the
+ * check answers `/auth/session` with a 401 so it can measure the landing, and
+ * that same stub is what stops this state ever appearing again.
+ */
+async function errorSurface(page, port) {
+  const problems = [];
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.goto(`http://localhost:${String(port)}/`, {
+    waitUntil: 'networkidle0',
+    timeout: 15_000,
+  });
+
+  const seen = await page.evaluate(() => {
+    const surface = document.querySelector('.app-error');
+    if (surface === null) {
+      return { missing: true };
+    }
+    const style = getComputedStyle(surface);
+    return {
+      missing: false,
+      height: Math.round(surface.getBoundingClientRect().height),
+      viewport: window.innerHeight,
+      background: style.backgroundColor,
+      // A paragraph left at browser defaults inherits the UA serif stack.
+      face: getComputedStyle(surface.querySelector('p') ?? surface).fontFamily,
+    };
+  });
+
+  if (seen.missing) {
+    return ['error: the unreachable state does not render its own surface'];
+  }
+  if (seen.height < seen.viewport * 0.9) {
+    problems.push(
+      `error: .app-error fills ${String(seen.height)}px of a ` +
+        `${String(seen.viewport)}px viewport`,
+    );
+  }
+  if (seen.background === 'rgba(0, 0, 0, 0)') {
+    problems.push('error: the unreachable state has no ground colour');
+  }
+  if (/^(Times|serif)/i.test(seen.face)) {
+    problems.push(`error: the unreachable state is set in ${seen.face}`);
+  }
+  return problems;
+}
+
 async function main() {
   const names = referenced();
   const server = spawn('npx', ['vite', 'preview', '--port', String(PORT)], { stdio: 'ignore' });
@@ -183,8 +238,18 @@ async function main() {
      * production, so answering with it renders the real landing.
      */
     await page.setRequestInterception(true);
+    /*
+     * How the control plane answers, for the page being measured. `signedOut`
+     * is the landing; `unreachable` is the error surface, which renders for
+     * nobody in development and for everybody at the worst possible moment.
+     */
+    let identity = 'signedOut';
     page.on('request', (request) => {
       if (new URL(request.url()).pathname === '/auth/session') {
+        if (identity === 'unreachable') {
+          void request.abort('failed');
+          return;
+        }
         void request.respond({ status: 401, contentType: 'application/json', body: '{}' });
         return;
       }
@@ -243,6 +308,9 @@ async function main() {
 
     problems.push(...(await fills(page)));
     problems.push(...(await oneIndicator(page)));
+    identity = 'unreachable';
+    problems.push(...(await errorSurface(page, PORT)));
+    identity = 'signedOut';
 
     if (problems.length > 0) {
       console.error(`computed styles: ${String(problems.length)} problem(s)`);
