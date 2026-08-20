@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check:styles": "node scripts/computed-styles.mjs"
+    "check:styles": "node scripts/computed-styles.mjs",
+    "check:surfaces": "node scripts/signed-in-surfaces.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
