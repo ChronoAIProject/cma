@@ -174,6 +174,9 @@ pub struct ProfileView {
     mandatory: MandatoryView,
     created_at: String,
     updated_at: String,
+    /// Whether its owner's sessions start from this profile unless told
+    /// otherwise. At most one of theirs carries it.
+    preferred: bool,
 }
 
 /// The parts of a profile a caller may not remove.
@@ -228,6 +231,7 @@ impl ProfileView {
             mandatory: MandatoryView::of(service.baseline()),
             created_at: profile.created_at,
             updated_at: profile.updated_at,
+            preferred: profile.preferred,
         }
     }
 }

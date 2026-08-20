@@ -31,6 +31,7 @@ import type {
 
 /** What the control plane sends for a profile. */
 interface ProfilePayload {
+  preferred?: unknown;
   readonly id?: unknown;
   readonly name?: unknown;
   readonly variables?: unknown;
@@ -119,6 +120,9 @@ export function toProfile(raw: unknown): EnvironmentProfile {
     mandatory: readMandatory(p.mandatory),
     createdAt: typeof p.created_at === 'string' ? p.created_at : '',
     updatedAt: typeof p.updated_at === 'string' ? p.updated_at : '',
+    // Anything but `true` is not the default, which is the right reading of a
+    // profile stored before the preference existed and of a malformed one.
+    preferred: p.preferred === true,
   };
 }
 
@@ -190,6 +194,18 @@ export function createRestProfileStore(): EnvironmentProfileStore {
   return {
     async list(): Promise<readonly EnvironmentProfile[]> {
       const payload = await call(BASE);
+      const items = (payload as { profiles?: unknown })?.profiles ?? payload;
+      if (!Array.isArray(items)) {
+        throw new ApiError(0, 'the profile list was not a list');
+      }
+      return items.map(toProfile);
+    },
+
+    async prefer(id: string | null): Promise<readonly EnvironmentProfile[]> {
+      const payload = await call(`${BASE}/preferred`, {
+        method: 'PUT',
+        body: JSON.stringify({ profile: id }),
+      });
       const items = (payload as { profiles?: unknown })?.profiles ?? payload;
       if (!Array.isArray(items)) {
         throw new ApiError(0, 'the profile list was not a list');

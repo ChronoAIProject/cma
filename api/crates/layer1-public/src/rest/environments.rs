@@ -15,11 +15,11 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::get,
+    routing::{get, put},
     Json, Router,
 };
 use layer2_core::{EnvironmentProfileId, EnvironmentProfileService};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
@@ -41,6 +41,16 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
             "/api/v1/environment-profiles/{id}",
             get(read).put(replace).delete(remove),
         )
+        /*
+         * Which profile this owner's sessions start from.
+         *
+         * A collection rather than a flag on one profile, because setting it
+         * changes two records — the one taking it and the one giving it up —
+         * and a `PUT` on a single profile would describe only half of that.
+         * The answer is the whole list, so a client never has to guess which
+         * other rows moved.
+         */
+        .route("/api/v1/environment-profiles/preferred", put(prefer))
         .with_state(service)
 }
 
@@ -61,6 +71,33 @@ async fn list(
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Result<Json<Vec<ProfileView>>, Problem> {
     let profiles = service.list(&caller).await?;
+    Ok(Json(
+        profiles
+            .into_iter()
+            .map(|p| ProfileView::render(p, &service))
+            .collect(),
+    ))
+}
+
+/// Which profile the caller's sessions should start from.
+///
+/// `null` is a value rather than an omission: it clears the preference and
+/// returns them to the deployment's own defaults, which is a choice somebody
+/// makes rather than the absence of one. `deny_unknown_fields` so a caller who
+/// spells the field wrong is told, instead of silently clearing it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreferredRequest {
+    profile: Option<String>,
+}
+
+async fn prefer(
+    State(service): State<Arc<EnvironmentProfileService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Json(body): Json<PreferredRequest>,
+) -> Result<Json<Vec<ProfileView>>, Problem> {
+    let wanted = body.profile.map(EnvironmentProfileId);
+    let profiles = service.prefer(&caller, wanted.as_ref()).await?;
     Ok(Json(
         profiles
             .into_iter()
@@ -218,6 +255,7 @@ mod tests {
 
     fn profile() -> EnvironmentProfile {
         EnvironmentProfile {
+            preferred: false,
             id: EnvironmentProfileId("envp_1".into()),
             owner: SubjectId("subject-a".into()),
             name: "build tools".into(),
