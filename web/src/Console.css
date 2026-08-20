@@ -70,14 +70,3 @@
  * surface to give up width: the sheet closes first, then the rail collapses,
  * then the rail leaves the layout.
  */
-
-/*
- * Below 30rem the sheet gives up its 412px: at that width it would leave the
- * terminal a few rows, and §16 makes the terminal the last surface to lose
- * space. Closed it is still the 40px band, still saying what the session is.
- */
-@media (max-width: 29.999rem) {
-  .details {
-    height: 50dvh;
-  }
-}

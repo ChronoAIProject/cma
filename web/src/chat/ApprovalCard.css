@@ -73,10 +73,6 @@
   align-items: center;
 }
 
-.approval__answers .button--md {
-  height: calc(var(--control-h-md) + 2px);
-}
-
 .approval__aside {
   color: var(--ink-3);
   font-size: var(--text-note);
