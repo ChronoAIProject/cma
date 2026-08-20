@@ -220,6 +220,7 @@ export function NewSessionDialog({
          */}
         <div className="profilerow">
           <Picker
+            placement="profilerow__picker"
             label="Environment profile"
             value={profile}
             options={[

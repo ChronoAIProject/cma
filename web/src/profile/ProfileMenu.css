@@ -121,12 +121,16 @@
 /*
  * Closed, the column is 56px and there is no room for either line. The face
  * stays and centres itself, so the control keeps its place and its meaning.
+ *
+ * Its own modifier rather than `.sidebar--collapsed .profile__who`: that read
+ * another component's class from this sheet, which is the coupling that let an
+ * unrelated `.picker` rule reach into the picker primitive.
  */
-.sidebar--collapsed .profile__who {
+.profile--collapsed .profile__who {
   display: none;
 }
 
-.sidebar--collapsed .profile__trigger {
+.profile--collapsed .profile__trigger {
   justify-content: center;
   padding: 6px 0;
 }

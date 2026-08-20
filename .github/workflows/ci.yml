@@ -166,6 +166,12 @@ jobs:
       #
       # Runs against the built output rather than the source: a sheet that is
       # correct in src/ and broken after bundling is still broken.
+      - name: CSS collisions
+        # These sheets are global, so a class declared in two files silently
+        # merges and load order decides. That is how an unrelated selection
+        # list handed every picker in the product an overflow it never asked
+        # for, which clipped the picker's own menu inside its own anchor.
+        run: npm run check:css
       - name: Computed styles
         # Bounded: a browser that never answers should fail this job rather
         # than hold a runner for the workflow's whole timeout.
