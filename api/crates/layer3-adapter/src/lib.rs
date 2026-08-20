@@ -33,11 +33,11 @@ pub use runtime::{
 use tokio::sync::mpsc;
 
 pub use conversation::{
-    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
-    ConversationUpdate, MessageId, PermissionDecision, PermissionOption, PermissionOptionId,
-    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
-    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind, TurnStopReason, TurnUsage, UsageUpdate,
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
+    ConversationId, ConversationInput, ConversationUpdate, MessageId, PermissionDecision,
+    PermissionOption, PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
+    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind, TurnStopReason, TurnUsage, UsageUpdate,
 };
 
 pub mod claude_code;
