@@ -22,6 +22,37 @@ impl Bridge {
     /// than reasoned about: a live bridge refuses to load a session it is
     /// already holding, because loading reads a file that a conversation with
     /// no committed turns has not written yet.
+    /// Open the exchange, and accept a bridge that is already open.
+    ///
+    /// `initialize` is once per bridge, not once per connection, and a bot pod
+    /// outlives the control plane that started it. So a control plane taking
+    /// back over a live runtime — every rollout, every restart — meets a
+    /// kernel that was initialized by its predecessor and says so.
+    ///
+    /// That refusal is the answer we want. It is only reachable from a process
+    /// that exists and is dispatching, which is exactly what the greeting is
+    /// asking. Failing on it cost a live session its history on every deploy:
+    /// the rejection was read as the sandbox being gone, and a fresh one was
+    /// provisioned over the top of a runtime that was still working (#416).
+    ///
+    /// **Nothing is recognised by its message.** The discriminator is whether
+    /// a reply frame came back at all: `call_within` produces `Rejected` only
+    /// after a frame has arrived and been matched to this call, and silence —
+    /// a deadline, a closed link — produces `Unavailable` instead. A kernel
+    /// may reword its refusal, change its code, or refuse for a reason nobody
+    /// has seen, and this still reads correctly. Matching on prose would start
+    /// destroying sessions again the day the wording changed, during a
+    /// rollout, with nobody watching. It would also have covered one kernel
+    /// and not the other, since nothing here has ever observed what the second
+    /// says when it is greeted twice.
+    ///
+    /// The reply is `null` in that case rather than a declaration. Every
+    /// caller of it already handles a declaration that says nothing, because a
+    /// bridge is allowed not to advertise.
+    async fn greet(&self, params: serde_json::Value) -> Result<serde_json::Value, AdapterError> {
+        greeted(self.call("initialize", params).await)
+    }
+
     pub(super) async fn handshake(
         &self,
         rejoining: Option<String>,
@@ -31,23 +62,20 @@ impl Bridge {
         own_credential: bool,
     ) -> Result<(), AdapterError> {
         let hello = self
-            .call(
-                "initialize",
-                serde_json::json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "clientCapabilities": {
-                    "fs": { "readTextFile": false, "writeTextFile": false },
-                    // Declared so the bridge will offer a sign-in this client
-                    // can actually complete. It advertises its device-code
-                    // method only to a client that says it can put a URL in
-                    // front of a person, and this client can: the address and
-                    // the code travel up as an update and reach a surface. Say
-                    // nothing here and the method is never offered, which is
-                    // why an own-account session had no way to sign in.
-                    "elicitation": { "url": {} },
-                },
-                }),
-            )
+            .greet(serde_json::json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "clientCapabilities": {
+                "fs": { "readTextFile": false, "writeTextFile": false },
+                // Declared so the bridge will offer a sign-in this client
+                // can actually complete. It advertises its device-code
+                // method only to a client that says it can put a URL in
+                // front of a person, and this client can: the address and
+                // the code travel up as an update and reach a surface. Say
+                // nothing here and the method is never offered, which is
+                // why an own-account session had no way to sign in.
+                "elicitation": { "url": {} },
+            },
+            }))
             .await?;
 
         /*
@@ -87,7 +115,12 @@ impl Bridge {
                 self.call("session/load", params).await.map_err(|e| {
                     // Loud: the runtime this conversation came from is about to
                     // be torn down, and reporting success here would lose it.
-                    AdapterError::Rejected(format!("could not resume conversation: {e}"))
+                    //
+                    // `context` rather than a new variant: a deadline and a
+                    // closed link are both silence, and rewording them as a
+                    // refusal told the core the runtime had answered when
+                    // nothing had.
+                    e.context("could not resume conversation")
                 })?;
                 conversation
             }
@@ -121,8 +154,8 @@ impl Bridge {
             )
             .await
             .map_err(|e| {
-                AdapterError::Rejected(format!(
-                    "this session could not be held to its permission mode ({mode}): {e}"
+                e.context(&format!(
+                    "this session could not be held to its permission mode ({mode})"
                 ))
             })?;
             tracing::info!(%session, %mode, "conversation opened");
@@ -176,8 +209,39 @@ impl Bridge {
             // Named rather than swallowed. A refused or expired sign-in is
             // the likeliest way this fails, and the person who has to act
             // on it is the one reading the session.
-            AdapterError::Rejected(format!("the sign-in did not complete: {e}"))
+            e.context("the sign-in did not complete")
         })?;
         Ok(())
     }
 }
+
+/// Read a greeting's outcome: an answer, a refusal, or silence.
+///
+/// Free rather than a method, and this is deliberate — it is the one decision
+/// in the handshake that must be exercised in both directions, and taking a
+/// `Result` lets a test hand it silence without a socket that has to time out
+/// to produce some. A socket-level test of this cannot tell the two apart:
+/// under either behaviour the link is dead and the *next* call fails as loss
+/// anyway, so the assertion passes for the wrong reason.
+fn greeted(
+    outcome: Result<serde_json::Value, AdapterError>,
+) -> Result<serde_json::Value, AdapterError> {
+    match outcome {
+        Ok(hello) => Ok(hello),
+        Err(refused @ AdapterError::Rejected(_)) => {
+            tracing::info!(
+                refusal = %refused,
+                "this runtime was already greeted; taking over the bridge it is holding"
+            );
+            Ok(serde_json::Value::Null)
+        }
+        // Silence, or a stated absence. Neither is proof of a live bridge, and
+        // reading them as one leaves a session pointed at a sandbox that is
+        // gone and never replaced.
+        Err(quiet) => Err(quiet),
+    }
+}
+
+#[cfg(test)]
+#[path = "handshake_tests.rs"]
+mod handshake_tests;

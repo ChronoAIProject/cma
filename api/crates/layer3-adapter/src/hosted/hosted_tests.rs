@@ -442,3 +442,97 @@ async fn a_refused_command_is_not_a_switch() {
         "a refusal names itself: {outcome:?}"
     );
 }
+
+/// What a provider's answer means about whether a sandbox is still there.
+///
+/// The variant is not cosmetic: the core replaces a session's runtime on
+/// `Unavailable` and leaves it alone on `Rejected`, so a status read into the
+/// wrong one either destroys a working session or strands a dead one.
+mod what_the_provider_said {
+    use super::*;
+
+    #[test]
+    fn a_sandbox_the_provider_says_is_not_there_is_loss() {
+        // The clearest statement of loss there is, and it used to arrive as a
+        // refusal — the same variant as "answered and said no". Read that way,
+        // a deleted sandbox would never be replaced and its session would sit
+        // pointed at nothing forever.
+        for status in [404_u16, 410] {
+            let mapped = AdapterError::from(SandboxError::Rejected {
+                status,
+                detail: "no such sandbox".to_string(),
+            });
+            assert!(
+                mapped.is_runtime_loss(),
+                "{status} is the provider saying it is gone, got {mapped:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_provider_that_is_briefly_broken_is_not_a_lost_sandbox() {
+        // 5xx is the provider failing to answer about anything, which says
+        // nothing about this sandbox either way. Reading it as loss would
+        // replace a healthy runtime because the provider had a bad minute.
+        for status in [500_u16, 502, 503] {
+            let mapped = AdapterError::from(SandboxError::Rejected {
+                status,
+                detail: "upstream".to_string(),
+            });
+            assert!(
+                !mapped.is_runtime_loss(),
+                "{status} says nothing about the sandbox, got {mapped:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refusal_that_is_not_about_absence_stays_a_refusal() {
+        let mapped = AdapterError::from(SandboxError::Rejected {
+            status: 409,
+            detail: "busy".to_string(),
+        });
+        assert!(
+            matches!(mapped, AdapterError::Rejected(_)),
+            "got {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn a_provider_that_could_not_be_reached_is_loss() {
+        let mapped =
+            AdapterError::from(SandboxError::Unreachable("connection refused".to_string()));
+        assert!(mapped.is_runtime_loss(), "got {mapped:?}");
+    }
+
+    #[test]
+    fn a_stated_absence_is_neither_loss_nor_refusal() {
+        // 501 means this image cannot do it, so another sandbox from the same
+        // image would say the same. Replacing one is never the answer.
+        let mapped = AdapterError::from(SandboxError::Rejected {
+            status: 501,
+            detail: "not implemented".to_string(),
+        });
+        assert!(
+            matches!(mapped, AdapterError::Unsupported(_)),
+            "got {mapped:?}"
+        );
+        assert!(!mapped.is_runtime_loss());
+    }
+
+    #[test]
+    fn saying_it_with_more_context_does_not_change_what_was_said() {
+        // Three call sites used to reword every failure as a refusal, so a
+        // deadline and a closed link — both silence — reached the core as
+        // though the runtime had answered.
+        let loss = AdapterError::Unavailable("never answered".to_string())
+            .context("could not resume conversation");
+        assert!(loss.is_runtime_loss(), "got {loss:?}");
+        assert!(format!("{loss}").contains("could not resume conversation"));
+
+        let refused =
+            AdapterError::Rejected("no".to_string()).context("the sign-in did not complete");
+        assert!(!refused.is_runtime_loss(), "got {refused:?}");
+        assert!(format!("{refused}").contains("the sign-in did not complete"));
+    }
+}
