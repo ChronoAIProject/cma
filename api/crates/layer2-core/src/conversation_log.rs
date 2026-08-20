@@ -25,7 +25,7 @@ use layer3_adapter::{
 };
 use tokio::sync::mpsc;
 
-use crate::event::{ConfigOption, EventKind, LiveFrame, PlanStep, ToolBody};
+use crate::event::{ConfigOption, Event, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
@@ -296,12 +296,74 @@ impl SessionService {
         tracing::info!(session_id = %id, "this session is waiting for its owner to sign in");
         {
             let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
+            if let Some(entry) = entries.get_mut(id) {
+                append(entry, EventKind::SignInRequired { url, code, message });
+                drop(entries);
+                self.flush(id).await;
                 return;
-            };
-            append(entry, EventKind::SignInRequired { url, code, message });
+            }
         }
-        self.flush(id).await;
+        /*
+         * No entry yet, which for this one update is the normal case rather
+         * than the exception. `entries` holds sessions that have a running
+         * runtime, and a kernel raises this from inside `open_conversation`,
+         * before that is true — then waits there for as long as a person takes
+         * to act on it. Returning here is what left an own-account session
+         * sitting in `provisioning` with nothing in its log to say why.
+         *
+         * So it goes to the store directly, the way provisioning progress
+         * already does. The sequence comes from the same shared allocator, so
+         * the two paths cannot hand out the same number.
+         */
+        self.append_without_entry(id, EventKind::SignInRequired { url, code, message })
+            .await;
+    }
+
+    /// Append one event for a session that has no live entry yet.
+    ///
+    /// Deliberately not offered to `fold_update` at large: every other update
+    /// describes a conversation that is already running, and one arriving with
+    /// no entry means something is wrong rather than something is early. This
+    /// is the single update that legitimately precedes the runtime being
+    /// ready, and it says so at its call site.
+    async fn append_without_entry(&self, id: &SessionId, kind: EventKind) {
+        let Ok(Some(mut record)) = self.store.get(id).await else {
+            tracing::error!(
+                session_id = %id,
+                "cannot record that this session needs a sign-in: it is not in the store"
+            );
+            return;
+        };
+        let seq = self.sequences.take(id, record.session.last_seq, 1);
+        record.session.last_seq = seq;
+        if let Err(e) = self.store.upsert(&record).await {
+            tracing::error!(session_id = %id, error = %e, "cannot advance the log position");
+            return;
+        }
+        if let Err(e) = self
+            .append_durably(
+                id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind,
+                    appended_at: String::new(),
+                }],
+            )
+            .await
+        {
+            /*
+             * Error, not a warning, and never a silent return. A dropped
+             * sign-in leaves a session waiting on a prompt nobody will ever
+             * see, and the whole of #351 was that this path failed quietly
+             * underneath a `tracing::info!` that read like success.
+             */
+            tracing::error!(
+                session_id = %id,
+                error = %e,
+                "cannot record that this session needs a sign-in"
+            );
+        }
     }
 
     /// Record a turn that stopped because something went wrong.
