@@ -6,8 +6,11 @@
 
 use std::sync::Arc;
 
-use crate::conversation_support::{asking, chunk, conversation, said, until_logged};
+use crate::authz::Caller;
+use crate::conversation_support::{asking, chunk, conversation, conversing, said, until_logged};
 use crate::event::EventKind;
+use crate::ids::SessionId;
+use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
 
@@ -569,4 +572,145 @@ fn a_tool_body_over_the_cap_says_it_was_cut() {
         }
         other => panic!("expected a truncated result, got {other:?}"),
     }
+}
+
+/*
+ * A session whose kernel wants its owner to sign in — #351.
+ *
+ * These assert on the **durable log**, never on the adapter having reported
+ * it. That distinction is the bug: #320 made the request reach the folder and
+ * was verified by asking the adapter, so nobody noticed the folder had
+ * nowhere to put it and the event was discarded on arrival.
+ */
+
+/// Build a conversation session whose kernel asks for a sign-in during the
+/// open, before the core has a live entry for it.
+async fn signing_in() -> (Arc<SessionService>, Caller, SessionId) {
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        sign_in_on_open: true,
+        ..FakeAdapter::default()
+    });
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    let svc = crate::test_support::service_with_environments(
+        Arc::new(FakeStore::default()),
+        Arc::clone(&adapter),
+        profiles,
+    );
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    (svc, alice, created.id)
+}
+
+#[tokio::test]
+async fn a_sign_in_raised_before_the_session_is_ready_reaches_the_log() {
+    let (svc, alice, id) = signing_in().await;
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::SignInRequired { url, .. } if url == "https://auth.example.test/device"
+        ))
+        .await,
+        "the owner cannot sign in to a prompt that was never recorded"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_carries_the_code_its_owner_has_to_enter() {
+    // The address alone is not actionable: a device flow asks for a code, and
+    // one that reached nobody leaves the session waiting on it forever.
+    let (svc, alice, id) = signing_in().await;
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::SignInRequired { code, message, .. }
+                if code.as_deref() == Some("WDJB-MJHT")
+                    && message.as_deref() == Some("Sign in to continue")
+        ))
+        .await,
+        "the code and the kernel's own wording must survive into the record"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_is_recorded_for_a_session_with_no_live_entry() {
+    /*
+     * The fallback itself, pinned directly rather than through the timing of
+     * an open. `entries` holds only sessions with a running runtime, so its
+     * absence is what the sign-in path has to survive — removing the entry
+     * from a settled session reproduces that exactly, and driving the update
+     * down the kernel's own channel keeps the test on the real path rather
+     * than on a hook that exists only for it.
+     */
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.entries.write().await.remove(&id);
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::SignInRequired {
+                url: "https://auth.example.test/device".to_string(),
+                code: Some("WDJB-MJHT".to_string()),
+                message: None,
+            })
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::SignInRequired { code, .. } if code.as_deref() == Some("WDJB-MJHT")
+        ))
+        .await,
+        "a sign-in must be recorded even with no live entry to append to"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_for_a_session_nobody_holds_any_more_is_dropped_quietly() {
+    /*
+     * The failure path. Once the session is gone from the record there is
+     * nothing to append against and nobody left to show it to, so dropping it
+     * is right — but it must drop rather than panic, because the runtime
+     * raising it has simply not noticed the session ended yet.
+     */
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.terminate_session(&alice, &id)
+        .await
+        .expect("terminated");
+    svc.delete_session(&alice, &id).await.expect("deleted");
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        // A closed channel is itself the session being gone; either way this
+        // must not bring the folder down.
+        let _ = kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::SignInRequired {
+                url: "https://auth.example.test/device".to_string(),
+                code: None,
+                message: None,
+            })
+            .await;
+    }
+
+    // Give the folder a chance to meet it, then prove the service is still
+    // answering: a panic in that task would take the log with it.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !svc.list_sessions(&alice).await.iter().any(|s| s.id == id),
+        "the core must survive a sign-in for a session that no longer exists"
+    );
 }
