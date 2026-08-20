@@ -362,6 +362,54 @@ fn the_sequence_rides_outside_the_payload() {
 }
 
 #[test]
+fn the_commands_a_kernel_offers_replay_onto_the_live_lane_s_own_path() {
+    // The kernel announces these once, as the conversation opens — before any
+    // client has subscribed. Replay is the only way a client ever sees them,
+    // and it must land on the same state path the live lane writes, or a
+    // reader who was already watching and one who reloaded hold two different
+    // lists under two different names.
+    let p = projected(EventKind::AvailableCommandsSet {
+        commands: vec![
+            layer2_core::event::AvailableCommand {
+                name: "review".into(),
+                description: "Review the working tree".into(),
+            },
+            layer2_core::event::AvailableCommand {
+                name: "compact".into(),
+                description: "Summarise the conversation so far".into(),
+            },
+        ],
+    });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    let delta = &p.events[0].body["delta"][0];
+    assert_eq!(delta["op"], "replace");
+    assert_eq!(delta["path"], "/availableCommands");
+    assert_eq!(delta["value"][0]["name"], "review");
+    assert_eq!(delta["value"][0]["description"], "Review the working tree");
+    assert_eq!(delta["value"][1]["name"], "compact");
+    assert!(p.ending.is_none());
+}
+
+#[test]
+fn a_kernel_that_offers_nothing_replays_an_empty_list_rather_than_no_patch() {
+    // "This kernel has no commands" and "nobody has said yet" are different
+    // facts, and a client renders them differently. Skipping the patch when
+    // the list is empty would leave a stale list standing.
+    let p = projected(EventKind::AvailableCommandsSet { commands: vec![] });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    let delta = &p.events[0].body["delta"][0];
+    assert_eq!(delta["path"], "/availableCommands");
+    assert_eq!(
+        delta["value"].as_array().map(Vec::len),
+        Some(0),
+        "got {}",
+        p.events[0].body
+    );
+}
+
+#[test]
 fn a_plane_change_is_drawn_as_a_boundary() {
     // The surface changed under whoever is watching, and the snapshot moment
     // is where their history stops being continuous. A client that skips it

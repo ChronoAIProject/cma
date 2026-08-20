@@ -6,10 +6,10 @@
 //! updates and permission requests down, and reads back what the core sent up.
 
 use layer3_adapter::{
-    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
-    ConversationUpdate, KernelCapabilities, PermissionOption, PermissionOptionId,
-    PermissionOptionKind, PermissionRequest, RequestPermissionRequest, SessionUpdate, ToolCallId,
-    ToolCallUpdate, ToolCallUpdateFields,
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
+    ConversationId, ConversationInput, ConversationUpdate, KernelCapabilities, PermissionOption,
+    PermissionOptionId, PermissionOptionKind, PermissionRequest, RequestPermissionRequest,
+    SessionUpdate, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
 };
 use std::sync::Arc;
 
@@ -68,6 +68,20 @@ impl FakeConversation {
 /// Something a runtime said, wrapped for the stream that carries it.
 pub(crate) fn said(update: SessionUpdate) -> ConversationUpdate {
     ConversationUpdate::Said(update)
+}
+
+/// What a kernel says it offers, in the protocol's own shape.
+///
+/// Built through the schema's own constructors: these types are
+/// `#[non_exhaustive]`, so a struct expression here would stop compiling the
+/// first time the protocol adds a field.
+pub(crate) fn offering(commands: &[(&str, &str)]) -> AvailableCommandsUpdate {
+    AvailableCommandsUpdate::new(
+        commands
+            .iter()
+            .map(|(name, description)| AvailableCommand::new(*name, *description))
+            .collect(),
+    )
 }
 
 /// A message chunk, as a runtime streams one.
