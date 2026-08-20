@@ -362,7 +362,7 @@ function StreamEntry({
       return (
         <article className="turn" data-role={entry.role}>
           {/*
-            No eyebrow on an agent turn. It repeated "chronobot · codex" above
+            No eyebrow on an agent turn. It repeated "CMA · codex" above
             every single one, which is a label that stops being read after the
             first and takes a line of the reading column with it each time.
             Shape already tells the two roles apart — the owner's turns are
