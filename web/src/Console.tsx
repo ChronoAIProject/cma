@@ -7,6 +7,7 @@ import type { SortOrder } from './sessions/sessionTime';
 import type { KernelOffer, Session, SessionLifecycle } from './sessions/types';
 import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
+import { BouncingText } from './sessions/BouncingText';
 import { SignInCard } from './chat/SignInCard';
 import type { SignIn } from './chat/conversationModel';
 import type { Stage } from './sessions/progress';
@@ -504,6 +505,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               onReorder={setOrder}
               arrangement={arrangementShown}
               onArrange={changeArrangement}
+              loading={loading}
               stages={stages}
               waitingId={waitingId}
               signingIn={signIns}
@@ -618,7 +620,11 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             ) : null}
 
             {loading ? (
-              <p className="console__empty">Loading your sessions…</p>
+              // §14a: the wave says the surface is live. A bar would claim to
+              // know how far along a read is, and nothing here does.
+              <p className="console__empty">
+                <BouncingText text="Reading your sessions" />
+              </p>
             ) : arrangementShown === 'canvas' && canvasNodes.length > 0 ? (
               <SessionCanvas
                 /*
