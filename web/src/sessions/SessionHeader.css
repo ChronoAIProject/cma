@@ -11,7 +11,12 @@
   flex: none;
   gap: 12px;
   align-items: center;
-  padding: 12px 28px 0 20px;
+  /*
+   * Symmetric. It was `12px 28px 0 20px`, so a 36px control in a 49px band sat
+   * one pixel off the hairline while everything above it had a dozen — the row
+   * read as having slipped down rather than as having been placed.
+   */
+  padding: 10px 20px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   /*
    * Deliberately NOT `overflow: hidden`, and this is load-bearing. The header
@@ -38,6 +43,11 @@
  * beneath is the content, and a heading here would make the page's outline
  * claim this row is what somebody came to read.
  */
+/*
+ * One size across the row. The crumb was 14px beside a 12px kernel name and a
+ * 12px pill, with 14px keys after them — four elements on one line, set three
+ * different ways, which reads as three rows that happen to be adjacent.
+ */
 .sessionheader__crumb {
   padding: 4px 8px;
   color: var(--dsw-alias-label-tertiary);
@@ -52,10 +62,24 @@
   flex: 1;
 }
 
-/* The kernel, in the code face because it is an identifier. */
+/*
+ * The kernel, in the code face because it is an identifier — but at the row's
+ * size. Set 12px beside a 14px crumb and 14px keys, it read as a footnote
+ * attached to the row rather than as part of it.
+ */
 .sessionheader__kernel {
   color: var(--dsw-alias-label-tertiary);
   font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/*
+ * The state pill takes the row's size too. `Pill` is 12px everywhere else and
+ * stays that way; this is the one row where it sits in a line of 14px text and
+ * has to belong to it.
+ */
+.sessionheader .pill {
+  font-size: 14px;
+  line-height: 20px;
 }
