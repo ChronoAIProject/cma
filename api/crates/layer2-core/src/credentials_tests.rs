@@ -336,3 +336,72 @@ async fn a_session_is_minted_a_credential_even_when_the_caller_delegated_none() 
         "and it is a minted one, got {seen:?}"
     );
 }
+
+/// Which sessions still have a claim on the credential minted for them.
+///
+/// The reclaim sweep asks this before taking a key back, and asking the wrong
+/// question revoked the key of every paused session as soon as the process
+/// holding the in-memory record of it restarted.
+mod what_still_claims_a_credential {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_paused_session_still_claims_its_credential() {
+        // Its owner stopped it and can pick it up again. Taking the key back
+        // leaves them returning to a session whose credential was revoked
+        // underneath them.
+        let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let svc = service(Arc::clone(&sent));
+        let owner = caller("subject-a");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("created");
+        await_settled(&svc, &owner, &session.id).await;
+
+        svc.stop_session(&owner, &session.id)
+            .await
+            .expect("a session can be paused");
+
+        assert!(
+            svc.session_claims_credential(&session.id).await,
+            "a paused session keeps its claim"
+        );
+        assert!(
+            !svc.session_is_live(&session.id).await,
+            "though it wants no runtime, which is the answer that used to be asked"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_terminated_session_claims_nothing() {
+        let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let svc = service(Arc::clone(&sent));
+        let owner = caller("subject-a");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("created");
+        await_settled(&svc, &owner, &session.id).await;
+
+        svc.terminate_session(&owner, &session.id)
+            .await
+            .expect("a session can be ended");
+
+        assert!(
+            !svc.session_claims_credential(&session.id).await,
+            "an ended session has no claim, so its key is the sweep's to take"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_that_does_not_exist_claims_nothing() {
+        let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let svc = service(Arc::clone(&sent));
+        assert!(
+            !svc.session_claims_credential(&crate::ids::SessionId("sesn_never".into()))
+                .await,
+            "a key naming a session nobody has is exactly what the sweep exists for"
+        );
+    }
+}
