@@ -158,6 +158,19 @@ jobs:
         run: npm run test
       - name: Production build
         run: npm run build
+      # The one check the rest of this job cannot make. Everything above runs
+      # under jsdom, which resolves no custom properties at all — so a
+      # stylesheet that parses and computes to nothing passes every one of
+      # them. #339 shipped through twenty-two green pull requests that way,
+      # with the whole product rendering on browser defaults.
+      #
+      # Runs against the built output rather than the source: a sheet that is
+      # correct in src/ and broken after bundling is still broken.
+      - name: Computed styles
+        # Bounded: a browser that never answers should fail this job rather
+        # than hold a runner for the workflow's whole timeout.
+        timeout-minutes: 5
+        run: npm run check:styles
       - name: Dependency audit
         run: npm audit --audit-level=high
 
