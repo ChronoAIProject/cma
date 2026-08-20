@@ -48,6 +48,7 @@ function renderActions(
       onReconnect={vi.fn()}
       onRevive={vi.fn()}
       onStop={vi.fn()}
+      onDelete={vi.fn()}
       onDetails={vi.fn()}
     />,
   );
@@ -189,6 +190,7 @@ describe('the affordance in the session header', () => {
         onReconnect={vi.fn()}
         onRevive={vi.fn()}
         onStop={vi.fn()}
+        onDelete={vi.fn()}
         onDetails={vi.fn()}
       />,
     );
