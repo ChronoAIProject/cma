@@ -61,6 +61,15 @@
   padding: 0 4px 0 8px;
 }
 
+/*
+ * The row's control sits at its far edge, not against the label. `flex: 1` on
+ * the label with a 45% cap left the trigger stranded mid-row, reading as
+ * punctuation after the word rather than as the control for the row.
+ */
+.rail__optionsanchor {
+  margin-left: auto;
+}
+
 .rail__label {
   flex: 1;
   max-width: 45%;
