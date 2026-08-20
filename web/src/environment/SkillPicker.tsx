@@ -74,7 +74,7 @@ export function SkillPicker({ skills, selected, mandatory, onChange, error }: Sk
         />
       ) : null}
 
-      <div className="picker">
+      <div className="selection">
         {matching.length === 0 ? (
           <p className="empty">
             {skills.length === 0
@@ -85,7 +85,7 @@ export function SkillPicker({ skills, selected, mandatory, onChange, error }: Sk
           matching.map((skill) => {
             const required = mandatory.includes(skill.id);
             return (
-              <label className="picker__row" key={skill.id}>
+              <label className="selection__row" key={skill.id}>
                 {/*
                   A checkbox is not a text field and does not take the field
                   wrapper: that wrapper exists to put a border and a glyph
@@ -99,15 +99,15 @@ export function SkillPicker({ skills, selected, mandatory, onChange, error }: Sk
                     toggle(skill.id, event.target.checked);
                   }}
                 />
-                <span className="picker__text">
-                  <span className="picker__name">
+                <span className="selection__text">
+                  <span className="selection__name">
                     {skill.name}
                     {required ? <Pill>required</Pill> : null}
                     {skill.access === undefined || required ? null : (
-                      <span className="picker__access">{skill.access}</span>
+                      <span className="selection__access">{skill.access}</span>
                     )}
                   </span>
-                  <span className="picker__description">{skill.description}</span>
+                  <span className="selection__description">{skill.description}</span>
                 </span>
               </label>
             );
