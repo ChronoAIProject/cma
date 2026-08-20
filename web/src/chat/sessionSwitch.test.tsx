@@ -42,11 +42,21 @@ const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
   ],
 }));
 
+/**
+ * A stream that opens and says nothing.
+ *
+ * `addEventListener` is not decoration: the AG-UI wire subscribes by event
+ * name for every kind this build knows (`wire.ts`), so a stub carrying only
+ * `onmessage` throws the moment a conversation surface mounts — and throws
+ * outside any assertion, which is an unhandled error rather than a failure.
+ */
 class QuietEventSource {
   static readonly CLOSED = 2;
   readyState = 1;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
+  addEventListener(): void {}
+  removeEventListener(): void {}
   close(): void {
     this.readyState = QuietEventSource.CLOSED;
   }
