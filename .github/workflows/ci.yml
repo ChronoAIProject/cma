@@ -171,6 +171,12 @@ jobs:
         # than hold a runner for the workflow's whole timeout.
         timeout-minutes: 5
         run: npm run check:styles
+      - name: Signed-in surfaces
+        # The check above cannot get past identity, and the interface is
+        # mostly behind it — a picker whose list was clipped to two of five
+        # options shipped underneath a green suite because of that.
+        timeout-minutes: 5
+        run: npm run check:surfaces
       - name: Dependency audit
         run: npm audit --audit-level=high
 
