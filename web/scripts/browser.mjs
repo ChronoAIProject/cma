@@ -55,12 +55,20 @@ export async function open({ port, viewport = { width: 1440, height: 900 } }) {
   };
 }
 
-/** Navigate, retrying while the preview server is still coming up. */
-export async function visit(page, port) {
+/**
+ * Navigate, retrying while the preview server is still coming up.
+ *
+ * `waitUntil` is the caller's because it cannot be one answer. A signed-out
+ * page settles, so `networkidle0` is the strongest wait available and worth
+ * having. A signed-in one never does: the event stream reconnects as soon as
+ * it closes, so there is always a request in flight and the page is never
+ * idle by that definition — a check waiting for it waits until it times out.
+ */
+export async function visit(page, port, waitUntil = 'networkidle0') {
   for (let attempt = 0; ; attempt += 1) {
     try {
       await page.goto(`http://localhost:${String(port)}/`, {
-        waitUntil: 'networkidle0',
+        waitUntil,
         timeout: 15_000,
       });
       return;
