@@ -43,21 +43,6 @@
 
 /* Form field */
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: flex-start;
-}
-
-.field__label {
-  color: var(--ink-3);
-  font-size: var(--text-label);
-  line-height: var(--leading-ui);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
-}
-
 /*
  * A field takes §7's control height like every other control, declared rather
  * than left to a min-height that padding then overruns. It is flat: you type
@@ -91,18 +76,6 @@ textarea.field__input {
   border-color: var(--fail);
 }
 
-.field__hint {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
-}
-
-.field__error {
-  color: var(--fail);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
-}
-
 /* Key/value rows */
 
 .pairs {
@@ -118,19 +91,25 @@ textarea.field__input {
   align-items: center;
 }
 
-/* Selection list */
-
-.picker {
+/*
+ * Selection list — a scrolling box of checkboxes, not the value picker.
+ *
+ * It was `.picker`, which is the root class of the `Picker` primitive. These
+ * sheets are global, so every `<Picker>` in the product silently took this
+ * rule's `overflow-y`, `max-height` and border — and the `overflow-y` is what
+ * clipped a picker's own menu inside its own anchor (#364).
+ */
+.selection {
   display: flex;
   flex-direction: column;
   width: 100%;
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
 }
 
-.picker__row {
+.selection__row {
   display: flex;
   gap: var(--space-3);
   align-items: flex-start;
@@ -138,23 +117,23 @@ textarea.field__input {
   cursor: pointer;
 }
 
-.picker__row:hover {
+.selection__row:hover {
   background: var(--raised);
 }
 
-.picker__text {
+.selection__text {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
 }
 
-.picker__name {
+.selection__name {
   color: var(--ink);
   font-size: var(--text-note);
 }
 
-.picker__access {
+.selection__access {
   margin-left: var(--space-2);
   color: var(--ink-3);
   font-size: var(--text-label);
@@ -162,7 +141,7 @@ textarea.field__input {
   text-transform: uppercase;
 }
 
-.picker__description {
+.selection__description {
   color: var(--ink-3);
   font-size: var(--text-meta);
   line-height: var(--leading-ui);
@@ -174,12 +153,12 @@ textarea.field__input {
   line-height: var(--leading-ui);
 }
 
-.picker__row {
+.selection__row {
   transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .picker__row {
+  .selection__row {
     transition: none;
   }
 }
