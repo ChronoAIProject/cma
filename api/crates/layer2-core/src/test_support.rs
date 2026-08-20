@@ -192,8 +192,11 @@ pub(crate) fn service_over(
         adapters,
         factory,
         store,
-        None,
-        None,
+        crate::service::SessionPorts {
+            context: None,
+            credentials: None,
+            skills: None,
+        },
         no_environments(),
         owned(),
     );
@@ -214,7 +217,18 @@ pub(crate) fn service_with_environments(
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    SessionService::new(adapters, factory, store, None, None, profiles, owned())
+    SessionService::new(
+        adapters,
+        factory,
+        store,
+        crate::service::SessionPorts {
+            context: None,
+            credentials: None,
+            skills: None,
+        },
+        profiles,
+        owned(),
+    )
 }
 
 /// A profile service with nothing in it, for tests that do not care.
@@ -298,7 +312,8 @@ pub(crate) fn spec() -> SessionSpec {
     SessionSpec {
         geometry: None,
         environment_profile: None,
-        subject_credential: None,
+        caller_credential: None,
+        runtime_credential: None,
         requested_mode: None,
         options: Default::default(),
     }

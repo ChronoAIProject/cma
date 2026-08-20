@@ -71,18 +71,33 @@ impl SessionService {
         outcome: crate::provision_failure::Abandonment,
     ) {
         let id = session.id.clone();
-        // Nobody may have been present to delegate one — a session recovered by
-        // the controller has no request behind it — so it is fetched here
-        // rather than being required of every caller.
+        /*
+         * The session's own credential, minted against what it was granted.
+         *
+         * Unconditional, and that is the fix for a defect this gate used to
+         * hide. It read `if the caller supplied one, use theirs` — and an
+         * interface did supply one: the caller's own access token, put on the
+         * spec so the platform could be asked questions as them. Provisioning
+         * found the field filled, skipped the mint, and handed the agent its
+         * owner's whole identity. Every session a person created ran that way,
+         * while the minting machinery ran only for sessions the controller
+         * recovered, which is the one path nobody takes by hand.
+         *
+         * `credential_for` is idempotent per session: asking twice — for a
+         * replaced runtime, or after a restart — returns the value already
+         * issued rather than leaving two alive for one session.
+         */
         let mut spec = spec;
-        if spec.subject_credential.is_none() {
-            let services = self
-                .environments
-                .services_for(&session.owner, session.environment_profile.as_ref())
-                .await;
-            spec.subject_credential = self
-                .credential_for(&session.id, &session.owner, &services)
-                .await;
+        let services = self.services_for(&session.id).await;
+        spec.runtime_credential = self
+            .credential_for(&session.id, &session.owner, &services)
+            .await;
+        if spec.runtime_credential.is_none() {
+            tracing::warn!(
+                session_id = %id,
+                "no credential could be minted for this session; it will start unable to act \
+                 on its owner's behalf until the top-up sweep supplies one"
+            );
         }
         match tokio::time::timeout(
             PROVISION_DEADLINE,
@@ -168,6 +183,39 @@ impl SessionService {
                     "this session's environment could not be prepared: {e}"
                 ))
             })?;
+        /*
+         * The session's skills, fetched before a sandbox is asked for.
+         *
+         * Here rather than after, because a skill that cannot be had is a
+         * session that would start without something it was told it has —
+         * and the agent only discovers that by failing to do what it was
+         * told it could. Fetching first means the refusal costs nothing but
+         * the request.
+         */
+        let skills = match (self.skills.as_ref(), environment.skills.is_empty()) {
+            (Some(source), false) => {
+                let wanted: Vec<crate::environment::SkillId> = environment
+                    .skills
+                    .iter()
+                    .map(|s| crate::environment::SkillId::new(s.clone()))
+                    .collect();
+                match source
+                    .packs_for(spec.caller_credential.as_deref(), &wanted)
+                    .await
+                {
+                    Ok(packs) => packs,
+                    Err(why) => {
+                        return Err(StartFailure::permanent(format!(
+                            "this session's skills could not be prepared: {why}"
+                        )))
+                    }
+                }
+            }
+            // Nothing to fetch, or nothing that knows how. A deployment with
+            // no registry configured still starts sessions; they simply carry
+            // whatever the image does.
+            _ => Vec::new(),
+        };
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
         // What the runtime is told, translated once. Some kernels settle how
@@ -200,9 +248,16 @@ impl SessionService {
                     cols: geometry.columns(),
                     rows: geometry.rows(),
                 },
-                subject_credential: spec.subject_credential.clone(),
+                subject_credential: spec.runtime_credential.clone(),
                 options: options.clone(),
                 restore_from: restore.cloned(),
+                skills: skills
+                    .iter()
+                    .map(|pack| layer3_adapter::SkillPackage {
+                        name: pack.name.clone(),
+                        files: pack.files.clone(),
+                    })
+                    .collect(),
                 reaches,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
@@ -215,6 +270,14 @@ impl SessionService {
         self.remember_runtime(&id, &handle).await;
         self.note_progress(&id, ProvisioningStage::RuntimeCreated)
             .await;
+        // The skills are on the pod's disk by now: the adapter puts them there
+        // before it returns, in the window before the agent starts. Said as its
+        // own step because it is time a person waits through that is neither the
+        // provider nor the agent.
+        if !skills.is_empty() {
+            self.note_progress(&id, ProvisioningStage::SkillsInstalled)
+                .await;
+        }
         self.note_progress(&id, ProvisioningStage::Attaching).await;
 
         // Whichever plane this session was granted, and only that one. A
@@ -318,7 +381,7 @@ impl SessionService {
         let mut entry = SessionEntry {
             session: seeded,
             sequences: Arc::clone(&self.sequences),
-            subject_credential: spec.subject_credential.clone(),
+            subject_credential: spec.runtime_credential.clone(),
             environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
@@ -372,7 +435,7 @@ impl SessionService {
         // the terminal channel: the credential's consumer is the supervisor's
         // proxy, and a runtime that renders no terminal still calls out on its
         // owner's behalf.
-        if let Some(credential) = spec.subject_credential.as_deref() {
+        if let Some(credential) = spec.runtime_credential.as_deref() {
             if let Err(e) = adapter.refresh_credential(&handle, credential).await {
                 // Logged rather than fatal, and never with the value. The
                 // session is usable — someone can read it and type into it —

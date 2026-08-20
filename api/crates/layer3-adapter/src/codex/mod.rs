@@ -32,7 +32,12 @@ impl CodexAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
         Self {
-            hosted: HostedKernel::new(client, spec.deployment.shape.clone(), "codex"),
+            hosted: HostedKernel::new(
+                client,
+                spec.deployment.shape.clone(),
+                "codex",
+                spec.deployment.skills_root.clone(),
+            ),
             spec,
         }
     }

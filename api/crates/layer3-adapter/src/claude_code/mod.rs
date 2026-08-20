@@ -57,7 +57,12 @@ impl ClaudeCodeAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: ClaudeCodeSandboxSpec) -> Self {
         Self {
-            hosted: HostedKernel::new(client, spec.deployment.shape.clone(), "claude_code"),
+            hosted: HostedKernel::new(
+                client,
+                spec.deployment.shape.clone(),
+                "claude_code",
+                spec.deployment.skills_root.clone(),
+            ),
             spec,
         }
     }
