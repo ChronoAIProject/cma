@@ -697,7 +697,10 @@ async fn create(
                 // also what a rotation rebuilds a session from, where these
                 // are the values the session was started with.
                 options: Default::default(),
-                subject_credential: credential.map(|axum::Extension(c)| c.0),
+                // The caller's own token, for asking the platform as them. It is
+                // never what the session runs on: the core mints that.
+                caller_credential: credential.map(|axum::Extension(c)| c.0),
+                runtime_credential: None,
                 // This interface takes no plane, so the profile or the
                 // deployment decides — which is what it has always done.
                 requested_mode: None,

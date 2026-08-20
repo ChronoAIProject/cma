@@ -381,11 +381,7 @@ impl SessionService {
         // perfectly and refuse every call the agent made on their behalf,
         // which is the failure this refusal exists to replace.
         self.environments
-            .refuse_ungranted(
-                caller,
-                spec.subject_credential.as_deref(),
-                &granted_services,
-            )
+            .refuse_ungranted(caller, spec.caller_credential.as_deref(), &granted_services)
             .await?;
 
         let geometry = spec.geometry.unwrap_or_default();
