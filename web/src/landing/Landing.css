@@ -1,0 +1,144 @@
+/*
+ * The signed-out surface — `docs/Web_Style.md` §15.
+ *
+ * Written in the alias tier. The sheet this replaced was still entirely in the
+ * retired vocabulary — `--accent`, `--ink`, `--rule`, `--space-*` — reaching
+ * the page through the migration shim, which is how a surface ends up unable
+ * to change theme.
+ */
+
+/*
+ * The stack is centred in the viewport rather than in the flow: this page has
+ * no frame around it (§9 — a visitor has no sessions, so there are no columns
+ * to draw), so the viewport is the only thing there is to centre against.
+ *
+ * `100dvh`, not `100vh`: on mobile Safari the static viewport unit is the tall
+ * one, so the toolbar overlaps the bottom of a box sized by it and the button
+ * lands underneath the browser chrome.
+ */
+.landing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 32px var(--page-gutter);
+  background: var(--dsw-alias-bg-base);
+}
+
+.landing__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 560px;
+  text-align: center;
+}
+
+/*
+ * The mark is the page. `vmin` rather than `vw` so it is bounded by whichever
+ * axis is short — sized on width alone it grows past the bottom of a landscape
+ * phone and pushes the prompt off-screen.
+ *
+ * The clamp floor is 200px because below roughly that the two lenses stop
+ * resolving as lenses and the mark reads as a smudge.
+ *
+ * Cropped rather than letterboxed. The artwork occupies y 23–77 of a square
+ * viewBox, so a third of the file is empty and drawing it whole spends a third
+ * of the mark's height on nothing — which is what "not as big as it should be"
+ * turned out to mean when it was measured. A 100:60 box centred on the same
+ * origin trims to y 20–80: the padding goes, no part of the mark does.
+ */
+.landing__mark {
+  width: clamp(200px, 52vmin, 560px);
+  height: auto;
+  aspect-ratio: 100 / 60;
+  object-fit: cover;
+}
+
+/*
+ * Tight against the mark and set in the display face. The letterspacing is
+ * negative to match the lockup's own `-1.6` at its own size — this is the same
+ * wordmark, set live rather than shipped as paths, so it inherits the theme
+ * and stays selectable text.
+ */
+.landing__word {
+  margin: 20px 0 0;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 700;
+  font-size: clamp(40px, 9vmin, 72px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.landing__expand {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/*
+ * The prompt and its button on one line, the field taking the slack. It wraps
+ * on a narrow screen rather than shrinking the field to a stub — a prompt you
+ * cannot read what you typed into is worse than a button on its own row.
+ */
+.landing__ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 36px;
+}
+
+.landing__prompt {
+  flex: 1 1 260px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 14px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 20px;
+  background: var(--dsw-alias-bg-base);
+  /*
+   * A border, not a fill. In light theme every layer token resolves to the
+   * page ground, so a field distinguished only by `bg-layer-2` is invisible
+   * there and appears only in dark.
+   */
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.landing__prompt::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.landing__prompt:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: var(--focus-ring);
+}
+
+.landing__prompt:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing__prompt {
+    transition: none;
+  }
+}
+
+.landing__note {
+  margin: 20px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+}
