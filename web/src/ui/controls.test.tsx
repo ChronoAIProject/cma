@@ -55,11 +55,11 @@ describe('the button', () => {
     // made every disabled control taller than its enabled neighbour.
     render(
       <div>
-        <Button disabled>End session</Button>
+        <Button disabled>Pause session</Button>
         <span className="control-reason">This session is not running</span>
       </div>,
     );
-    const button = screen.getByRole('button', { name: /end session/i });
+    const button = screen.getByRole('button', { name: 'Pause session' });
     expect(button).toBeDisabled();
     expect(button.textContent).not.toContain('This session is not running');
 

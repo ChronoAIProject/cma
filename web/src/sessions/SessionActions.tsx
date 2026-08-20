@@ -12,7 +12,7 @@ import { Menu } from '../ui/Menu';
  *
  * One primary, one secondary, and the overflow menu (§7): a header carrying
  * four equally weighted keys makes the reader choose before they can read,
- * which is what this header used to do. The primary is Revive where §11
+ * which is what this header used to do. The primary is Resume where §11
  * offers it — revive is the primary action wherever it is offered — and
  * Reconnect otherwise. The secondary is Details, which opens the drawer.
  * Everything else — moving the session's plane, ending it — lives behind the
@@ -108,12 +108,12 @@ export function SessionActions({
       )}
 
       {/*
-       * Revive is the primary action wherever it is offered (§11), which is
+       * Resume is the primary action wherever it is offered (§11), which is
        * where this surface spends the one primary key §7 allows it.
        */}
       {can.canRevive ? (
         <Button variant="primary" disabled={busy} onClick={onRevive} aria-describedby={describedBy}>
-          Revive
+          Resume
         </Button>
       ) : (
         <Button
@@ -164,10 +164,10 @@ export function SessionActions({
             id: 'stop',
             label:
               can.reason === undefined ? (
-                'End session'
+                'Pause session'
               ) : (
                 <span className="actions__whynot">
-                  End session
+                  Pause session
                   <span className="actions__reason">{can.reason}</span>
                 </span>
               ),
