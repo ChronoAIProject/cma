@@ -136,27 +136,56 @@ impl SessionService {
             return;
         }
 
-        // The actions the owner may invoke are liveness, not history: a
-        // stale list replayed from the log would offer actions that no longer
-        // exist. Sent on the live lane rather than recorded.
+        /*
+         * The actions the owner may invoke, sent live *and* recorded.
+         *
+         * This was liveness only, on the reasoning that a stale list replayed
+         * from the log would offer actions that no longer exist. The reasoning
+         * was sound and the outcome was not: the kernel announces this once,
+         * as the conversation opens, which is before any client has subscribed
+         * — so the send had no receiver and the list reached nobody, every
+         * session, every time. The protocol has no request to ask again, so
+         * there was no recovering it either.
+         *
+         * A list one announcement old beats the empty list that was the
+         * alternative, and it is replaced whole each time the kernel speaks.
+         */
         if let SessionUpdate::AvailableCommandsUpdate(commands) = &update {
+            let commands: Vec<crate::event::AvailableCommand> = commands
+                .available_commands
+                .iter()
+                .map(|command| crate::event::AvailableCommand {
+                    name: command.name.clone(),
+                    description: command.description.clone(),
+                })
+                .collect();
             let live = {
-                let entries = self.entries.read().await;
-                let Some(entry) = entries.get(id) else {
-                    return;
-                };
-                entry.live_frames.clone()
+                let mut entries = self.entries.write().await;
+                match entries.get_mut(id) {
+                    Some(entry) => {
+                        append(
+                            entry,
+                            EventKind::AvailableCommandsSet {
+                                commands: commands.clone(),
+                            },
+                        );
+                        Some(entry.live_frames.clone())
+                    }
+                    // Announced before the entry exists, which for this update
+                    // is the ordinary case rather than a fault.
+                    None => None,
+                }
             };
-            let _ = live.send(LiveFrame::AvailableCommands(
-                commands
-                    .available_commands
-                    .iter()
-                    .map(|command| crate::event::AvailableCommand {
-                        name: command.name.clone(),
-                        description: command.description.clone(),
-                    })
-                    .collect(),
-            ));
+            match live {
+                Some(live) => {
+                    let _ = live.send(LiveFrame::AvailableCommands(commands));
+                    self.flush(id).await;
+                }
+                None => {
+                    self.append_without_entry(id, EventKind::AvailableCommandsSet { commands })
+                        .await;
+                }
+            }
             return;
         }
 
@@ -321,16 +350,19 @@ impl SessionService {
 
     /// Append one event for a session that has no live entry yet.
     ///
-    /// Deliberately not offered to `fold_update` at large: every other update
-    /// describes a conversation that is already running, and one arriving with
-    /// no entry means something is wrong rather than something is early. This
-    /// is the single update that legitimately precedes the runtime being
-    /// ready, and it says so at its call site.
+    /// Deliberately not offered to `fold_update` at large: most updates
+    /// describe a conversation that is already running, and one arriving with
+    /// no entry means something is wrong rather than something is early. Two
+    /// legitimately precede the runtime being ready — a sign-in the owner must
+    /// complete before anything can start, and the kernel's announcement of
+    /// what it offers, which it makes as the conversation opens. Both say so
+    /// at their call sites.
     async fn append_without_entry(&self, id: &SessionId, kind: EventKind) {
         let Ok(Some(mut record)) = self.store.get(id).await else {
             tracing::error!(
                 session_id = %id,
-                "cannot record that this session needs a sign-in: it is not in the store"
+                event = kind.tag(),
+                "cannot record this event: the session is not in the store"
             );
             return;
         };
@@ -361,7 +393,7 @@ impl SessionService {
             tracing::error!(
                 session_id = %id,
                 error = %e,
-                "cannot record that this session needs a sign-in"
+                "cannot record this event"
             );
         }
     }
