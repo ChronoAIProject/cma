@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="12 12 76 76" width="64" height="64" role="img" aria-label="CMA">
+  <path d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="#2F5BEA" stroke-width="11" stroke-linecap="round"></path>
+  <path d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="#2F5BEA" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+  <rect x="30" y="38" width="17" height="12" rx="4" fill="#2F5BEA"></rect>
+  <rect x="53" y="38" width="17" height="12" rx="4" fill="#2F5BEA"></rect>
+  <path d="M46 44 L54 44" fill="none" stroke="#2F5BEA" stroke-width="4"></path>
+</svg>
