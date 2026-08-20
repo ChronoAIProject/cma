@@ -73,19 +73,6 @@ export function Picker<Value extends string>({
       label={label}
       selectedId={value}
       items={items}
-      /*
-       * Always, rather than only where something is known to clip. In place,
-       * the list is absolutely positioned inside the anchor and is cut by the
-       * nearest scrolling ancestor — in a dialog that is `.modal__body`, whose
-       * `overflow-y: auto` left the profile picker showing two of its five
-       * options and no way to reach the rest.
-       *
-       * A picker cannot know what encloses it, so making this conditional
-       * would be making a guess that is wrong the first time one is placed
-       * somewhere new. Portalled, the list is fixed to the viewport and
-       * `placeMenu` nudges it back inside, which is right in both cases.
-       */
-      portal
       placement={filter ? 'picker--filter' : 'picker'}
       onSelect={(id_) => {
         setOpen(false);
