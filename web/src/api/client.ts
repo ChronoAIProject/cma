@@ -201,10 +201,19 @@ export function followSession(
     if (payload.event?.type === 'sign_in_required') {
       const url = payload.event.url;
       if (typeof url === 'string' && url !== '') {
+        /*
+         * Read defensively, the same way the AG-UI fold does. The wire sends
+         * `null` for a code the kernel did not declare separately — Codex puts
+         * it inside the sentence instead — and `null` is not `undefined`, so
+         * passing it through drew an empty code block above a Copy control
+         * that copied nothing. Absent has to arrive as absent.
+         */
+        const code = payload.event.code;
+        const message = payload.event.message;
         onSignIn?.({
           url,
-          code: payload.event.code,
-          message: payload.event.message,
+          code: typeof code === 'string' && code !== '' ? code : undefined,
+          message: typeof message === 'string' && message !== '' ? message : undefined,
         });
       }
     }
