@@ -228,8 +228,16 @@ export function MessageStream({
            *
            * Drawn only where there is genuinely nothing — the moment a turn
            * exists this is gone, and it never sits above a conversation.
+           *
+           * `linkLive` is part of the condition and not decoration. An empty
+           * column means "this session has said nothing" only once the log has
+           * actually been read; before that it means "nothing has arrived
+           * yet", and those are different facts. Without it, opening a session
+           * with a long history announced "Ready when you are." over its own
+           * conversation until the replay landed — telling somebody their work
+           * is not there, in the moment they are waiting to see it.
            */}
-          {entries.length === 0 && plan === undefined ? (
+          {entries.length === 0 && plan === undefined && linkLive ? (
             <div className="stream__opening">
               <p className="stream__openingtitle">Ready when you are.</p>
               <p className="stream__openinghint">
