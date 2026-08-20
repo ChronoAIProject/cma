@@ -82,7 +82,17 @@ export function NewSessionDialog({
   store,
   onProfileCreated,
 }: NewSessionDialogProps) {
-  const [profile, setProfile] = useState<string>('');
+  /*
+   * Starts on the profile this owner chose, and on the deployment's own
+   * defaults where they have not chosen one — which is a described session
+   * rather than a bare one, so both are real starting points.
+   *
+   * Read once. Re-deriving it as the list arrives would move the selection
+   * under somebody who had already changed it.
+   */
+  const [profile, setProfile] = useState<string>(
+    () => profiles.find((candidate) => candidate.preferred)?.id ?? '',
+  );
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
   const [catalogue, setCatalogue] = useState<ServiceCatalogue | undefined>(undefined);
   /*

@@ -6,7 +6,7 @@ import { createMockProfileStore } from '../environment/mock';
 import type { EnvironmentProfile, EnvironmentProfileStore } from '../environment/types';
 import { DEFAULT_AGENT } from '../environment/types';
 import type { KernelOffer } from './types';
-import { chooseOption, openedOptions } from '../test/select';
+import { chooseOption, chosenOption, openedOptions } from '../test/select';
 
 /**
  * The dialog makes two decisions and both are fixed for the session's life:
@@ -34,6 +34,7 @@ function profile(id: string, name: string, agent = DEFAULT_AGENT): EnvironmentPr
     mandatory: { packages: [], skills: [] },
     createdAt: '2026-08-14T00:00:00Z',
     updatedAt: '2026-08-14T00:00:00Z',
+    preferred: false,
   };
 }
 
@@ -275,5 +276,44 @@ describe('when the deployment cannot answer', () => {
     });
     expect(onStart).not.toHaveBeenCalled();
     expect(screen.getByLabelText(/^name$/i)).toHaveValue('Doomed');
+  });
+});
+
+/*
+ * Where a session starts from — #371.
+ *
+ * The picker opens on the profile this owner chose, and on the deployment's
+ * own defaults where they have not chosen one. Both are described starting
+ * points; neither is a bare session.
+ */
+describe('the profile a session starts from', () => {
+  it('opens on the one its owner chose', async () => {
+    renderDialog({
+      profiles: [
+        profile('envp_1', 'Talos Controller'),
+        { ...profile('envp_2', 'Reviewer'), preferred: true },
+      ],
+    });
+
+    expect(chosenOption('Environment profile')).toContain('Reviewer');
+  });
+
+  it('opens on the deployment’s defaults where nobody has chosen', async () => {
+    // Not a bare session: it is started the way this deployment says an
+    // unqualified one should be.
+    renderDialog({ profiles: [profile('envp_1', 'Talos Controller')] });
+
+    expect(chosenOption('Environment profile')).toContain("This deployment's defaults");
+  });
+
+  it('starts the session from it without anything else being pressed', async () => {
+    const user = userEvent.setup();
+    const { onStart } = renderDialog({
+      profiles: [{ ...profile('envp_2', 'Reviewer'), preferred: true }],
+    });
+
+    await user.click(screen.getByRole('button', { name: /start session/i }));
+
+    expect(onStart).toHaveBeenCalledWith('envp_2');
   });
 });
