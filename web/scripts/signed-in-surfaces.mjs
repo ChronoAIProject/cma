@@ -40,11 +40,28 @@ const PROFILES = [
   updated_at: '2026-08-19T18:45:39Z',
 }));
 
+/** Two sessions, so the rail has rows to choose between. */
+const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
+  id,
+  kernel: 'codex',
+  status: 'ready',
+  cols: 120,
+  rows: 32,
+  last_seq: 4,
+  created_at: `2026-08-20T0${String(6 - index)}:00:00Z`,
+  conforms_to: [
+    'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core',
+    'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation',
+  ],
+}));
+
 /**
- * Answer as a control plane would for a signed-in owner with no sessions.
+ * Answer as a control plane would for a signed-in owner who may also operate.
  *
- * No sessions on purpose: this is about chrome — the dialog and the account
- * menu — and a fleet would only add surfaces that are not being asked about.
+ * The operator capability is granted deliberately: without it the view switch
+ * is not offered, and the check that selecting a session leaves Operations
+ * would pass by never running — which is the shape of a test that tests
+ * nothing.
  */
 async function stub(page) {
   await page.setRequestInterception(true);
@@ -59,9 +76,16 @@ async function stub(page) {
         subject: 'sub_check',
         display_name: 'Ada Lovelace',
         email: 'ada@example.test',
+        capabilities: [
+          'create_session',
+          'use_own_sessions',
+          'manage_own_environment_profiles',
+          'read_all_sessions',
+          'read_user_directory',
+        ],
       });
     }
-    if (path === '/api/v1/sessions') return void json({ sessions: [] });
+    if (path === '/api/v1/sessions') return void json({ sessions: SESSIONS });
     if (path === '/api/v1/kernels') {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
     }
@@ -145,14 +169,100 @@ async function pickerReachable(page) {
   return problems;
 }
 
+/**
+ * Does closing the sidebar close the sidebar?
+ *
+ * It used to set a class on the panel and nothing else. The frame owns the
+ * column widths and had no idea the toggle existed, so the sidebar re-laid its
+ * own contents into icon mode inside a track that was still 280px wide — the
+ * state changed, the layout did not, and the control read as broken.
+ *
+ * Measured as a rendered width. Asserting the class is what would have passed
+ * throughout.
+ */
+async function sidebarCollapses(page) {
+  const width = () =>
+    page.evaluate(() =>
+      Math.round(document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0),
+    );
+  const toggle = () =>
+    page.evaluate(() => {
+      const button = [...document.querySelectorAll('.sidebar button')].find((candidate) =>
+        candidate.hasAttribute('aria-expanded'),
+      );
+      button?.click();
+      return button !== undefined;
+    });
+
+  const before = await width();
+  if (!(await toggle())) {
+    return ['no control to close the sidebar'];
+  }
+  await settle();
+  const closed = await width();
+  await toggle();
+  await settle();
+  const reopened = await width();
+
+  const problems = [];
+  if (closed >= before) {
+    problems.push(`sidebar: closing left it at ${String(closed)}px, from ${String(before)}px`);
+  }
+  if (reopened !== before) {
+    problems.push(
+      `sidebar: reopening gave ${String(reopened)}px, not the ${String(before)}px it had`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * Choosing a session leaves whatever else was showing.
+ *
+ * With Operations open, picking a session from the rail changed which session
+ * was active and kept the operator panel on screen. The command bar did this
+ * correctly and the rail did not, so the surface people use was the broken one.
+ *
+ * Driven only where the operator panel is reachable: a caller without the
+ * capability is not offered it, and that is not a failure.
+ */
+async function selectingLeavesOperations(page) {
+  const opened = await page.evaluate(() => {
+    const button = [...document.querySelectorAll('button')].find((candidate) =>
+      /operations/i.test(candidate.textContent ?? ''),
+    );
+    button?.click();
+    return button !== undefined;
+  });
+  if (!opened) {
+    return ['operations: the view switch was not offered to a caller who may operate'];
+  }
+  await settle();
+  const picked = await page.evaluate(() => {
+    const row = document.querySelector('.row-item');
+    row?.click();
+    return row !== null;
+  });
+  if (!picked) {
+    return ['no session row to choose while Operations was open'];
+  }
+  await settle();
+  const stuck = await page.evaluate(() => document.querySelector('[class*="operator"]') !== null);
+  return stuck ? ['operations: choosing a session left the operator panel on screen'] : [];
+}
+
 async function main() {
   const { page, close } = await open({ port: PORT });
   try {
     await stub(page);
-    await visit(page, PORT);
+    await visit(page, PORT, 'domcontentloaded');
     await settle(1500);
 
-    const problems = await pickerReachable(page);
+    const problems = [
+      ...(await pickerReachable(page)),
+      ...(await sidebarCollapses(page)),
+      ...(await selectingLeavesOperations(page)),
+    ];
 
     if (problems.length > 0) {
       console.error(`signed-in surfaces: ${String(problems.length)} problem(s)`);
@@ -162,7 +272,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    console.log('signed-in surfaces: every option in the dialog picker is reachable');
+    console.log('signed-in surfaces: the picker, the sidebar toggle and the view switch all act');
   } finally {
     await close();
   }
