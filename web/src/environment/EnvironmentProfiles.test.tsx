@@ -80,7 +80,6 @@ describe('EnvironmentProfiles', () => {
     expect(screen.getByRole('heading', { name: /environment configuration/i })).toBeInTheDocument();
     for (const label of [
       /^agent$/i,
-      /^plane$/i,
       /^model$/i,
       /thinking effort/i,
       /permissions/i,
@@ -341,15 +340,19 @@ describe('EnvironmentProfiles', () => {
 });
 
 describe('the plane a profile starts sessions on', () => {
-  it('saves the plane the profile was given', async () => {
-    // On the profile because that is where the core keeps it: two sessions
-    // started from one profile must agree about which plane they are.
+  /*
+   * It is not asked. A profile describes a conversation, and moving a session
+   * onto the terminal is a rotation its owner performs on a running session
+   * rather than a setting chosen before one exists — so the form does not put
+   * the question to somebody who has no way to judge the answer yet.
+   */
+  it('saves a conversation without asking which plane', async () => {
     const user = userEvent.setup();
     const { store } = open();
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
     await user.type(screen.getByLabelText(/^name$/i), 'reviewer');
-    await chooseOption(user, /^plane$/i, 'Conversation');
+    expect(screen.queryByLabelText(/^plane$/i)).toBeNull();
     await user.click(screen.getByRole('button', { name: /save profile/i }));
 
     await waitFor(async () => {
@@ -359,30 +362,20 @@ describe('the plane a profile starts sessions on', () => {
     expect(saved?.agent.mode).toBe('conversation');
   });
 
-  it('says why a runtime cannot serve the chosen plane', async () => {
+  it('says why a runtime cannot hold a conversation, under the agent', async () => {
+    // The refusal moved with the question. The agent is the only choice left
+    // that can produce one, so it is named there rather than beside a control
+    // that no longer exists.
     const user = userEvent.setup();
-    open();
+    open(createMockProfileStore(), vi.fn(), [
+      { id: 'codex', modes: ['conversation'] },
+      { id: 'claude-code', modes: ['terminal'] },
+    ]);
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
-    // A new profile starts on the conversation plane, which Claude Code
-    // serves — so the refusal has to be provoked by asking for the plane it
-    // does not serve, rather than by arriving on it.
-    await chooseOption(user, /^plane$/i, 'Terminal');
     await chooseOption(user, /^agent$/i, 'Claude Code');
 
-    expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “terminal”/i);
-  });
-
-  it('starts a new profile on the conversation plane', async () => {
-    // The conversation plane is the default surface: it is where approvals
-    // are answered and where a failure can be explained rather than printed.
-    const user = userEvent.setup();
-    open();
-
-    await user.click(await screen.findByRole('button', { name: /new profile/i }));
-    expect(await screen.findByRole('button', { name: /^plane$/i })).toHaveTextContent(
-      /conversation/i,
-    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “conversation”/i);
   });
 
   it('refuses nothing when this deployment’s runtimes could not be read', async () => {
