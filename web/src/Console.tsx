@@ -493,6 +493,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               onArrange={changeArrangement}
               stages={stages}
               waitingId={waitingId}
+              signingIn={signIns}
             />
           )}
         </Sidebar>
@@ -541,6 +542,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 active === null ? undefined : (
                   <SessionActions
                     session={active}
+                    signingIn={pendingSignIn !== undefined}
                     busy={acting}
                     onReconnect={() => {
                       /*
