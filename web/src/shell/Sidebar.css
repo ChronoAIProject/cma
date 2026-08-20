@@ -39,10 +39,41 @@
   overflow: hidden;
 }
 
+/*
+ * Closed, the mark and the toggle stack rather than sharing a row.
+ *
+ * `justify-content: space-between` in a 56px column put a 36px control beside
+ * a 24px mark with nowhere to go: they overlapped, the mark was squeezed to
+ * zero width, and the toggle sat 8px right of every other icon — so the one
+ * column where alignment is the only thing holding the rail together was the
+ * one place nothing lined up.
+ */
 .sidebar--collapsed .sidebar__logorow {
-  height: 36px;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-start;
+  height: auto;
   margin-bottom: 12px;
   padding: 0;
+}
+
+/*
+ * Every closed control on one axis. The icons are 36px squares in a 56px
+ * column, so centring is what puts them on it — and the mark centres with
+ * them rather than hugging the padding edge it had when it had a label.
+ */
+.sidebar--collapsed .sidebar__brand,
+.sidebar--collapsed .sidebar__new,
+.sidebar--collapsed .sidebar__icon {
+  align-self: center;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+}
+
+.sidebar--collapsed .sidebar__brand {
+  height: 36px;
 }
 
 /*

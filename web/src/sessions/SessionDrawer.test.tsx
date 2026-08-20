@@ -25,37 +25,39 @@ function session(lifecycle: SessionLifecycle, extra: Partial<Session> = {}): Ses
   };
 }
 
-function renderActions(lifecycle: SessionLifecycle, extra: Partial<Session> = {}) {
+function renderActions(
+  lifecycle: SessionLifecycle,
+  extra: Partial<Session> = {},
+  handlers: { onDelete?: () => void } = {},
+) {
   return render(
     <SessionActions
       session={session(lifecycle, extra)}
       onReconnect={vi.fn()}
       onRevive={vi.fn()}
       onStop={vi.fn()}
+      onDelete={handlers.onDelete ?? vi.fn()}
       onDetails={vi.fn()}
     />,
   );
 }
 
-function renderDrawer(
-  lifecycle: SessionLifecycle,
-  extra: Partial<Session> = {},
-  handlers: { onDelete?: () => void; onStop?: () => void } = {},
-) {
-  return render(
-    <SessionDrawer
-      session={session(lifecycle, extra)}
-      onClose={vi.fn()}
-      onStop={handlers.onStop ?? vi.fn()}
-      onDelete={handlers.onDelete ?? vi.fn()}
-    />,
-  );
+function renderDrawer(lifecycle: SessionLifecycle, extra: Partial<Session> = {}) {
+  return render(<SessionDrawer session={session(lifecycle, extra)} onClose={vi.fn()} />);
 }
 
 describe('the session header', () => {
-  it('carries one primary, one secondary, and the overflow menu', () => {
-    // §12 and §7: a header carrying four equally weighted keys makes the
-    // reader choose before they can read.
+  it('carries one lifecycle key, one details key, and the overflow menu', () => {
+    /*
+     * §12 and §7: a header carrying four equally weighted keys makes the
+     * reader choose before they can read.
+     *
+     * The lifecycle is one key rather than whichever action happened to apply.
+     * `Reconnect` and `Resume` were the same slot showing different words, so
+     * which one somebody saw depended on a state nobody had told them about —
+     * and they are different acts: one re-dials a live session's transport,
+     * the other gives a paused one a sandbox back.
+     */
     const { container } = render(
       <SessionHeader
         session={session('running')}
@@ -65,22 +67,51 @@ describe('the session header', () => {
             onReconnect={vi.fn()}
             onRevive={vi.fn()}
             onStop={vi.fn()}
+            onDelete={vi.fn()}
             onDetails={vi.fn()}
           />
         }
       />,
     );
     expect(container.querySelector('.sessionheader .actions')).not.toBeNull();
-    expect(screen.getByRole('button', { name: /^reconnect$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Manage lifecycle' })).toBeEnabled();
     expect(screen.getByRole('button', { name: /^details$/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /more actions/i })).toHaveAttribute(
       'aria-haspopup',
       'menu',
     );
-    // End and Delete are not header keys: End lives in the overflow, Delete
-    // at the drawer's foot.
-    expect(screen.queryByRole('button', { name: /^end$/i })).toBeNull();
+    // Nothing loose beside them: every lifecycle act is inside the one key.
+    expect(screen.queryByRole('button', { name: /^reconnect$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^resume$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^pause session$/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^delete$/i })).toBeNull();
+  });
+
+  it('offers every lifecycle act in one place, disabled rather than absent', async () => {
+    // §7: the set keeps its shape as a session moves through its life, so
+    // somebody who paused one yesterday finds Resume where Pause was rather
+    // than hunting a menu that has rearranged itself.
+    const user = userEvent.setup();
+    renderActions('running');
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    for (const name of [/^resume$/i, /^reconnect$/i, /pause session/i, /^delete$/i]) {
+      expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('asks before deleting, and says what is lost', async () => {
+    // §12.4: the tick is spent on the one action that loses something, and
+    // moving it out of the drawer must not be how that is quietly dropped.
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+    renderActions('running', {}, { onDelete });
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete$/i }));
+
+    expect(screen.getByRole('dialog', { name: /delete this session/i })).toBeInTheDocument();
+    expect(onDelete).not.toHaveBeenCalled();
   });
 
   it('carries the status pill beside the subject', () => {
@@ -90,7 +121,7 @@ describe('the session header', () => {
     expect(pill?.textContent).toContain('running');
   });
 
-  it('ends the session from the overflow menu', async () => {
+  it('pauses the session from the lifecycle menu', async () => {
     const user = userEvent.setup();
     const onStop = vi.fn();
     render(
@@ -99,10 +130,11 @@ describe('the session header', () => {
         onReconnect={vi.fn()}
         onRevive={vi.fn()}
         onStop={onStop}
+        onDelete={vi.fn()}
         onDetails={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
     await user.click(screen.getByRole('menuitem', { name: /pause session/i }));
     expect(onStop).toHaveBeenCalled();
   });
@@ -135,27 +167,26 @@ describe('the session header', () => {
       const can = abilitiesFor(session(lifecycle));
 
       const actions = renderActions(lifecycle);
-      if (can.canRevive) {
-        expect(screen.getByRole('button', { name: /^resume$/i })).toBeEnabled();
-      } else {
-        expect(screen.getByRole('button', { name: /^reconnect$/i }).hasAttribute('disabled')).toBe(
-          !can.canReconnect,
-        );
+      // Every lifecycle act is one menu now, so every one is checked against
+      // the same source rather than whichever happened to be a header key.
+      await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+      /*
+       * Prefix rather than exact: a disabled row carries its reason beside the
+       * label, and the accessible name is their text run together.
+       */
+      const allowed: [RegExp, boolean][] = [
+        [/^resume/i, can.canRevive],
+        [/^reconnect/i, can.canReconnect],
+        [/^pause session/i, can.canStop],
+        [/^delete/i, can.canDelete],
+      ];
+      for (const [name, may] of allowed) {
+        expect(
+          screen.getByRole('menuitem', { name }).getAttribute('aria-disabled'),
+          `${lifecycle} ${String(name)}`,
+        ).toBe(String(!may));
       }
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-      expect(
-        screen.getByRole('menuitem', { name: /pause session/i }).getAttribute('aria-disabled'),
-      ).toBe(String(!can.canStop));
       actions.unmount();
-
-      const drawer = renderDrawer(lifecycle);
-      expect(
-        screen.getByRole('button', { name: /^pause session$/i }).hasAttribute('disabled'),
-      ).toBe(!can.canStop);
-      expect(screen.getByRole('button', { name: /^delete$/i }).hasAttribute('disabled')).toBe(
-        !can.canDelete,
-      );
-      drawer.unmount();
     }
   });
 });
@@ -195,11 +226,15 @@ describe('the details drawer', () => {
      * §7. The safeguard is the tick, not a colour: a red key is one a person
      * can click as fast as any other, and what is being protected here is a
      * session's whole history.
+     *
+     * Driven from the header, where delete lives now — the lifecycle is one
+     * menu, and moving it must not be how the acknowledgement is dropped.
      */
     const user = userEvent.setup();
     const onDelete = vi.fn();
-    renderDrawer('running', {}, { onDelete });
-    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    renderActions('running', {}, { onDelete });
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete/i }));
 
     const confirm = screen.getByRole('button', { name: /delete permanently/i });
     expect(confirm).toBeDisabled();
@@ -215,25 +250,41 @@ describe('the details drawer', () => {
     // Otherwise the dialog reopens already ticked, which is the one state
     // this control exists to prevent.
     const user = userEvent.setup();
-    renderDrawer('running');
+    renderActions('running');
 
-    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete/i }));
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /^cancel$/i }));
 
-    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete/i }));
     expect(screen.getByRole('checkbox')).not.toBeChecked();
     expect(screen.getByRole('button', { name: /delete permanently/i })).toBeDisabled();
   });
 
-  it('carries End and Delete at its foot, and no other lifecycle control', () => {
-    // §12: the two acts that release or destroy sit at the drawer's foot,
-    // away from everything reversible. Revive stays the header's primary.
+  it('acts on nothing, and says nothing about itself', () => {
+    /*
+     * Reference material. Every lifecycle act is one key in the session header
+     * now, and splitting them across two surfaces is how somebody comes
+     * looking for an action where it used to be — a panel that also acts is
+     * one people are afraid to open.
+     *
+     * The heading went with them: the `aside` is named for assistive
+     * technology, and "Details" over a list of details told a sighted reader
+     * what they were already looking at while spending the top of the column
+     * on it.
+     */
     const { container } = renderDrawer('idle');
-    const foot = container.querySelector('.drawer__foot');
-    expect(foot?.textContent).toContain('Pause session');
-    expect(foot?.textContent).toContain('Delete');
-    expect(screen.queryByRole('button', { name: /^resume$/i })).toBeNull();
+
+    expect(container.querySelector('.drawer__foot')).toBeNull();
+    expect(container.querySelector('.drawer__title')).toBeNull();
+    expect(screen.queryByRole('heading', { name: /^details$/i })).toBeNull();
+    for (const name of [/^pause session/i, /^delete/i, /^resume/i, /^reconnect/i]) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    // The one control it keeps is the way out of it.
+    expect(screen.getByRole('button', { name: /close session details/i })).toBeInTheDocument();
   });
 
   it('offers the identifier as a copyable control', () => {

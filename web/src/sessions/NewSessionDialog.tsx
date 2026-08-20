@@ -2,18 +2,18 @@ import { useEffect, useId, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Picker } from '../ui/Picker';
-import { ServicePicker } from '../environment/ServicePicker';
-import { emptyDraft, validate } from '../environment/types';
+import { ProfileEditor } from '../environment/ProfileEditor';
+import { emptyDraft, NOTHING_MANDATED, validate } from '../environment/types';
 import type {
   EnvironmentProfile,
   EnvironmentProfileStore,
   ProfileDraft,
+  SkillCatalogue,
   ServiceCatalogue,
 } from '../environment/types';
 import { kernelLabel, planeRefusal, PLANES } from './kernels';
 import './NewSessionDialog.css';
 import type { KernelOffer, SessionPlane } from './types';
-import { Input } from '../ui/Input';
 
 /**
  * The choice made when a session starts.
@@ -85,13 +85,18 @@ export function NewSessionDialog({
   const [profile, setProfile] = useState<string>('');
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
   const [catalogue, setCatalogue] = useState<ServiceCatalogue | undefined>(undefined);
+  /*
+   * The skill registry, read alongside the services for the same reason and
+   * failing the same way: a registry that cannot be listed is recoverable, and
+   * everything else on the form still works.
+   */
+  const [skills, setSkills] = useState<SkillCatalogue | undefined>(undefined);
+  const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
   const [servicesError, setServicesError] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const profileLabelId = useId();
   const noRuntimesId = useId();
-  const nameId = useId();
-  const kernelId = useId();
 
   const authoring = profile === AUTHOR;
 
@@ -110,6 +115,19 @@ export function NewSessionDialog({
      * picker out and the profile still saves — what this deployment mandates
      * is added to it either way.
      */
+    store
+      .catalogue()
+      .then((available) => {
+        if (live) {
+          setSkills(available);
+          setSkillsError(undefined);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (live) {
+          setSkillsError(message(cause, 'The skill registry could not be reached.'));
+        }
+      });
     store
       .services()
       .then((available) => {
@@ -173,8 +191,12 @@ export function NewSessionDialog({
     <Modal
       open
       title="New session"
-      /* A form with a picker in it needs the room; a question does not. */
-      placement={authoring ? 'modal--wide' : undefined}
+      /*
+       * A whole profile form needs the room; choosing between profiles needs
+       * less, but not the 380px default — that card held a picker, a key and
+       * two hints in a column narrower than the hints.
+       */
+      placement={authoring ? 'modal--widest' : 'modal--wide'}
       onClose={onCancel}
       footer={
         <>
@@ -262,76 +284,34 @@ export function NewSessionDialog({
         )}
       </div>
 
+      {/*
+       * The real editor, not a smaller copy of it.
+       *
+       * This carried its own form of three fields — a name, an agent and the
+       * services it reaches — while a profile has an agent configuration, a
+       * skill set, its NyxID access and its environment variables. Somebody
+       * authoring one here got a profile they then had to go and finish
+       * somewhere else, and the two forms had to be kept in step by hand.
+       *
+       * One form, in both places. What it can express is what a profile is.
+       *
+       * It is given no `error`: this dialog draws the save failure once at its
+       * head, above whichever half of it is showing, and the editor works out
+       * the agent's own refusal for itself. Handing it either drew the same
+       * sentence twice.
+       */}
       {!authoring ? null : (
-        <>
-          <div className="field">
-            <label className="field__label" htmlFor={nameId}>
-              Name
-            </label>
-            <Input
-              id={nameId}
-              placement="field__input"
-              value={draft.name}
-              onChange={(event) => {
-                setDraft({ ...draft, name: event.target.value });
-              }}
-            />
-            <span className="field__hint">
-              Saved as a profile you can start again, and edit under Environment profiles.
-            </span>
-          </div>
-
-          <div className="field">
-            <label className="field__label" htmlFor={kernelId}>
-              Agent
-            </label>
-            <Picker
-              id={kernelId}
-              label="Agent"
-              value={draft.agent.kernel}
-              options={kernels.map((kernel) => ({
-                value: kernel.id,
-                label: kernelLabel(kernel.id),
-                unavailable: kernel.modes.length === 0 ? 'Runs no sessions' : undefined,
-              }))}
-              onChange={(kernel) => {
-                setDraft({ ...draft, agent: { ...draft.agent, kernel } });
-              }}
-            />
-            {/*
-             * The refusal sits under the control that causes it. It used to
-             * live with the plane picker, which is where somebody chose the
-             * thing being refused — with the plane no longer asked, the agent
-             * is the only choice that can produce it, and §9 wants it named
-             * here rather than reported as a disabled key with no reason.
-             */}
-            {refusal === undefined ? null : (
-              <p className="field__error" role="alert">
-                {refusal}
-              </p>
-            )}
-          </div>
-
-          <div className="field">
-            <span className="field__label">Reaches</span>
-            {catalogue === undefined && servicesError === undefined ? (
-              <p className="empty">Reading what you can reach…</p>
-            ) : (
-              <ServicePicker
-                services={catalogue?.services ?? []}
-                selected={draft.nyxid.services}
-                mandatory={catalogue?.mandatory ?? []}
-                error={servicesError}
-                onChange={(services) => {
-                  setDraft({ ...draft, nyxid: { services } });
-                }}
-              />
-            )}
-            <span className="field__hint">
-              What this session&rsquo;s own credential may reach. Nothing else is delegated to it.
-            </span>
-          </div>
-        </>
+        <ProfileEditor
+          draft={draft}
+          onChange={setDraft}
+          kernels={kernels}
+          skills={skills?.skills ?? []}
+          skillsError={skillsError}
+          services={catalogue?.services ?? []}
+          mandatoryServices={catalogue?.mandatory ?? []}
+          servicesError={servicesError}
+          mandatory={skills?.mandatory ?? NOTHING_MANDATED}
+        />
       )}
     </Modal>
   );
