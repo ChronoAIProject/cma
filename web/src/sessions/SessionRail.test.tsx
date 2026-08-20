@@ -72,6 +72,24 @@ describe('the rail row', () => {
     expect(screen.getByText('Ended after a failure')).toBeInTheDocument();
   });
 
+  it('says a session waiting on its owner is waiting on them, not on a sandbox', () => {
+    /*
+     * #361. It is `provisioning` either way, so the row said the same thing
+     * for a runtime being built and for a person who has to go and sign in
+     * somewhere else — sending them to wait for a thing that was waiting for
+     * them. Same precedent as the approval line above: say who it waits on.
+     */
+    renderRail({ signingIn: { b: true } });
+    expect(screen.getByText('Waiting for you to sign in')).toBeInTheDocument();
+    expect(screen.queryByText('Waiting for a sandbox')).toBeNull();
+  });
+
+  it('still names the sandbox step when nobody is being waited on', () => {
+    // A stage outranks nothing here: without a sign-in the row is unchanged.
+    renderRail({ stages: { b: 'runtime_created' }, signingIn: {} });
+    expect(screen.getByText('Sandbox created')).toBeInTheDocument();
+  });
+
   it('names the step a starting session has reached', () => {
     renderRail({ stages: { b: 'runtime_created' } });
     expect(screen.getByText('Sandbox created')).toBeInTheDocument();
