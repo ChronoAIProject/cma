@@ -108,6 +108,7 @@ function materialise(id: string, draft: ProfileDraft, createdAt: string): Enviro
     mandatory: MANDATORY,
     createdAt,
     updatedAt: new Date().toISOString(),
+    preferred: false,
   };
 }
 
@@ -173,6 +174,21 @@ export function createMockProfileStore(options: MockProfileOptions = {}): Enviro
         throw new Error('That profile no longer exists.');
       }
       stored.splice(index, 1);
+    },
+
+    async prefer(id) {
+      guard();
+      if (id !== null && !stored.some((p) => p.id === id)) {
+        throw new Error('That profile no longer exists.');
+      }
+      // Exactly one, mirroring the core: the others give it up in the same call.
+      for (let i = 0; i < stored.length; i += 1) {
+        const profile = stored[i];
+        if (profile !== undefined) {
+          stored[i] = { ...profile, preferred: profile.id === id };
+        }
+      }
+      return [...stored];
     },
 
     async services() {

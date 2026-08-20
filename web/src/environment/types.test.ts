@@ -13,6 +13,7 @@ const PROFILE: EnvironmentProfile = {
   mandatory: { packages: ['nyxid'], skills: ['nyxid'] },
   createdAt: '2026-08-12T00:00:00Z',
   updatedAt: '2026-08-13T00:00:00Z',
+  preferred: false,
 };
 
 describe('isValidKey', () => {
