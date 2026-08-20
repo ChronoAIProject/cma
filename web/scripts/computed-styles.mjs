@@ -13,10 +13,9 @@
  * Run against the production build, not the source. A stylesheet that is
  * correct in `src/` and broken after bundling is still broken.
  */
-import { spawn } from 'node:child_process';
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import puppeteer from 'puppeteer-core';
+import { open, visit } from './browser.mjs';
 
 const PORT = 4318;
 const DIST = 'dist/assets';
@@ -37,24 +36,6 @@ const EXEMPT = new Map([
   ['--mark-quiet', 'declared on .mark for its own descendants'],
   ['--vscode-scrollbar-shadow', "xterm's own, carried with a #000 fallback"],
 ]);
-
-/** Where Chrome is, on a runner or on a developer's machine. */
-function chrome() {
-  const candidates = [
-    process.env.CHROME_PATH,
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ].filter((path) => typeof path === 'string' && path.length > 0);
-  const found = candidates.find((path) => existsSync(path));
-  if (found === undefined) {
-    throw new Error(
-      `no Chrome found. Set CHROME_PATH, or install one of: ${candidates.join(', ')}`,
-    );
-  }
-  return found;
-}
 
 /** Every custom property the built sheets reference. */
 function referenced() {
@@ -179,10 +160,7 @@ async function oneIndicator(page) {
 async function errorSurface(page, port) {
   const problems = [];
   await page.setViewport({ width: 1440, height: 900 });
-  await page.goto(`http://localhost:${String(port)}/`, {
-    waitUntil: 'networkidle0',
-    timeout: 15_000,
-  });
+  await visit(page, port);
 
   const seen = await page.evaluate(() => {
     const surface = document.querySelector('.app-error');
@@ -220,16 +198,9 @@ async function errorSurface(page, port) {
 
 async function main() {
   const names = referenced();
-  const server = spawn('npx', ['vite', 'preview', '--port', String(PORT)], { stdio: 'ignore' });
-  const browser = await puppeteer.launch({
-    executablePath: chrome(),
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-gpu'],
-  });
+  const { page, close } = await open({ port: PORT });
 
   try {
-    const page = await browser.newPage();
-
     /*
      * The preview server has no control plane behind it, so `/auth/session`
      * comes back as the index HTML and the app renders its error state. That
@@ -256,21 +227,7 @@ async function main() {
       void request.continue();
     });
 
-    // The preview server takes a moment; retry rather than racing it.
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await page.goto(`http://localhost:${String(PORT)}/`, {
-          waitUntil: 'networkidle0',
-          timeout: 15_000,
-        });
-        break;
-      } catch (error) {
-        if (attempt >= 5) {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
+    await visit(page, PORT);
 
     const problems = [];
     for (const dark of [false, true]) {
@@ -325,8 +282,7 @@ async function main() {
         `(${String(EXEMPT.size)} exempt)`,
     );
   } finally {
-    await browser.close();
-    server.kill();
+    await close();
   }
 }
 
