@@ -79,6 +79,24 @@ impl SessionService {
         }
     }
 
+    /// Whether a session still has a claim on a credential minted for it.
+    ///
+    /// Deliberately not `session_is_live`. That asks whether a runtime should
+    /// be running, which a paused session answers no to — and a paused session
+    /// is one its owner deliberately kept. Reclaiming on that answer took back
+    /// the key of every stopped session as soon as the process holding the
+    /// in-memory record of it restarted, so the owner came back to a session
+    /// whose credential had been revoked underneath them.
+    ///
+    /// A credential is unclaimed only when the session it was minted for has
+    /// ended or is no longer there at all.
+    pub async fn session_claims_credential(&self, id: &SessionId) -> bool {
+        match self.store.get(id).await {
+            Ok(Some(record)) => !record.session.status.is_terminal(),
+            _ => false,
+        }
+    }
+
     pub async fn session_services(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
         self.services_for(id).await
     }
