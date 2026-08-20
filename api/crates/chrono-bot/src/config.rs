@@ -127,6 +127,23 @@ pub struct Config {
     pub auth_mode: AuthMode,
 }
 
+/// Services every session's credential may reach when a deployment names none.
+///
+/// Named the way a person reads them; the identifiers the provider wants are
+/// resolved when a credential is minted.
+///
+/// `ornn` and `ornn-api` are two services, not one name spelled twice.
+/// `ornn-api` answers the skill registry this service itself searches to show
+/// somebody what they may pick; `ornn` is the skill runtime the agent calls
+/// once it has picked, and it is the one the baseline skills tell it to reach
+/// for. A baseline naming only the registry mints a credential the provider
+/// refuses on every call the agent actually makes.
+///
+/// A constant rather than a literal at the use site so the default is a thing
+/// a test can hold, instead of a string a test would have to repeat — which
+/// would pin the test to itself and nothing else.
+const BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
+
 impl Config {
     /// Read configuration from the environment.
     pub fn from_env() -> Result<Self, String> {
@@ -155,9 +172,7 @@ impl Config {
         // genuinely mandates nothing sets the keys to a single space.
         let baseline_packages = list_or("CHRONO_BASELINE_PACKAGES", "nyxid");
         let baseline_skills = list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli");
-        // Named the way a person reads them; the identifiers the provider
-        // wants are resolved when a credential is minted.
-        let baseline_services = list_or("CHRONO_BASELINE_SERVICES", "chrono-llm,ornn-api");
+        let baseline_services = list_or("CHRONO_BASELINE_SERVICES", BASELINE_SERVICES);
         // What a session is when nobody chose anything. Each key is read on
         // its own and a value the software does not recognise is refused
         // rather than silently replaced: a deployment that meant "ask first"
@@ -430,6 +445,24 @@ mod tests {
         // An env var set to the empty string is a common deployment mistake and
         // must behave as absent rather than producing an empty bind address.
         assert_eq!(var_or("CHRONO_TEST_ABSENT_KEY", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn the_baseline_reaches_the_skill_runtime_and_not_only_its_registry() {
+        // `ornn` and `ornn-api` are two services. The registry is what this
+        // service searches to show a person what they may pick; the runtime is
+        // what the agent calls once it has picked. A baseline naming only the
+        // registry mints a credential the provider refuses on every call the
+        // agent actually makes — the failure this pins.
+        let baseline = list_or("CHRONO_TEST_ABSENT_SERVICES", BASELINE_SERVICES);
+        assert!(
+            baseline.iter().any(|s| s == "ornn"),
+            "the skill runtime must be reachable, got {baseline:?}"
+        );
+        assert!(
+            baseline.iter().any(|s| s == "ornn-api"),
+            "the skill registry must stay reachable, got {baseline:?}"
+        );
     }
 
     #[test]
