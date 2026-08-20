@@ -110,10 +110,12 @@ pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use reconcile::Reclaimed;
-pub use service::{AttachmentHandle, Deployment, Detached, ScreenFactory, SessionService};
+pub use service::{
+    AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
+};
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
-    SessionStore, StoreError, UserDirectoryStore,
+    SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
 };
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

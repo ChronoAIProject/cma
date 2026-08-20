@@ -20,6 +20,13 @@ pub enum ProvisioningStage {
     RuntimeRequested,
     /// The provider gave us one.
     RuntimeCreated,
+    /// The session's skills are being put on its disk.
+    ///
+    /// Its own step because it is the one a person waits on that is neither
+    /// the provider nor the agent: skills are fetched and written before the
+    /// agent starts, and a session that appeared to hang here used to look
+    /// like a slow sandbox.
+    SkillsInstalled,
     /// Connecting to its terminal.
     Attaching,
     /// Usable.
@@ -28,10 +35,11 @@ pub enum ProvisioningStage {
 
 impl ProvisioningStage {
     /// Every stage, in the order they happen.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Accepted,
         Self::RuntimeRequested,
         Self::RuntimeCreated,
+        Self::SkillsInstalled,
         Self::Attaching,
         Self::Ready,
     ];
