@@ -62,7 +62,7 @@ export function lastActivity(
       return rotated(session) ?? 'Running';
 
     case 'idle':
-      return 'Stopped — its sandbox was released';
+      return 'Paused — its sandbox was released';
 
     case 'terminated':
       return session.stopReason === 'error' ? 'Ended after a failure' : 'Ended';

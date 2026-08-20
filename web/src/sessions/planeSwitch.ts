@@ -76,7 +76,7 @@ export function unavailableBecause(session: Session): string {
     case 'provisioning':
       return 'This session is still starting.';
     case 'idle':
-      return 'Revive this session before moving it.';
+      return 'Resume this session before moving it.';
     case 'terminated':
       return 'This session has ended.';
     default:

@@ -103,14 +103,14 @@ describe('the session header', () => {
       />,
     );
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /end session/i }));
+    await user.click(screen.getByRole('menuitem', { name: /pause session/i }));
     expect(onStop).toHaveBeenCalled();
   });
 
   it.each([
     ['provisioning', 'This session is still starting.'],
     ['rotating', 'This session is being moved to another runtime. It will come back.'],
-    ['idle', 'This session is stopped. Revive it to carry on.'],
+    ['idle', 'This session is paused. Resume it to carry on.'],
   ] as const)('states why %s disables what it disables', (lifecycle, reason) => {
     // §7 and §11: the reason is drawn once per row, beside the controls it
     // explains. `abilitiesFor` disables for exactly one cause at a time, so
@@ -136,7 +136,7 @@ describe('the session header', () => {
 
       const actions = renderActions(lifecycle);
       if (can.canRevive) {
-        expect(screen.getByRole('button', { name: /^revive$/i })).toBeEnabled();
+        expect(screen.getByRole('button', { name: /^resume$/i })).toBeEnabled();
       } else {
         expect(screen.getByRole('button', { name: /^reconnect$/i }).hasAttribute('disabled')).toBe(
           !can.canReconnect,
@@ -144,14 +144,14 @@ describe('the session header', () => {
       }
       await user.click(screen.getByRole('button', { name: /more actions/i }));
       expect(
-        screen.getByRole('menuitem', { name: /end session/i }).getAttribute('aria-disabled'),
+        screen.getByRole('menuitem', { name: /pause session/i }).getAttribute('aria-disabled'),
       ).toBe(String(!can.canStop));
       actions.unmount();
 
       const drawer = renderDrawer(lifecycle);
-      expect(screen.getByRole('button', { name: /^end session$/i }).hasAttribute('disabled')).toBe(
-        !can.canStop,
-      );
+      expect(
+        screen.getByRole('button', { name: /^pause session$/i }).hasAttribute('disabled'),
+      ).toBe(!can.canStop);
       expect(screen.getByRole('button', { name: /^delete$/i }).hasAttribute('disabled')).toBe(
         !can.canDelete,
       );
@@ -231,9 +231,9 @@ describe('the details drawer', () => {
     // away from everything reversible. Revive stays the header's primary.
     const { container } = renderDrawer('idle');
     const foot = container.querySelector('.drawer__foot');
-    expect(foot?.textContent).toContain('End session');
+    expect(foot?.textContent).toContain('Pause session');
     expect(foot?.textContent).toContain('Delete');
-    expect(screen.queryByRole('button', { name: /^revive$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^resume$/i })).toBeNull();
   });
 
   it('offers the identifier as a copyable control', () => {

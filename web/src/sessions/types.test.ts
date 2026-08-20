@@ -11,7 +11,7 @@ describe('session lifecycle presentation', () => {
     // under the same id. Styling it as danger would teach operators to panic.
     expect(toneFor('idle')).toBe('wait');
     expect(toneFor('idle')).not.toBe('fail');
-    expect(labelFor('idle')).toBe('idle');
+    expect(labelFor('idle')).toBe('paused');
   });
 
   it('treats healthy states as healthy', () => {
