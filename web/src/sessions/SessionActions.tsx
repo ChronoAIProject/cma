@@ -1,9 +1,11 @@
 import { useId, useState } from 'react';
 import type { KernelOffer, Session } from './types';
 import { abilitiesFor } from './availability';
-import { switchFor, unavailableBecause } from './planeSwitch';
+import { planeOf, switchFor, unavailableBecause } from './planeSwitch';
 import { Modal } from '../ui/Modal';
 import { RiskConfirmation } from '../ui/RiskConfirmation';
+import { effectiveAppearance, storedAppearance } from '../theme/appearance';
+import { resolveTheme, storeThemeId, storedThemeId, themesFor } from '../terminal/themes';
 import { Button } from '../ui/Button';
 import './SessionActions.css';
 import { Menu } from '../ui/Menu';
@@ -45,6 +47,8 @@ interface SessionActionsProps {
    * quietly dropped.
    */
   readonly onDelete: () => void;
+  /** Told when the terminal palette changes, so the surface can be rebuilt. */
+  readonly onTerminalThemeChange?: (id: string) => void;
   /** Opens and closes the details drawer. */
   readonly onDetails: () => void;
   readonly detailsOpen?: boolean;
@@ -77,6 +81,7 @@ export function SessionActions({
   onRevive,
   onStop,
   onDelete,
+  onTerminalThemeChange,
   onDetails,
   detailsOpen = false,
   kernels = [],
@@ -87,6 +92,15 @@ export function SessionActions({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [lifecycleOpen, setLifecycleOpen] = useState(false);
+  /*
+   * The terminal palette. It sat in the account menu, where it applied to a
+   * plane most sessions are not on — an account setting for a surface its
+   * owner may never open. It belongs to the session that draws one.
+   */
+  const [terminalThemeId, setTerminalThemeId] = useState<string | null>(() => storedThemeId());
+  const surface = effectiveAppearance(storedAppearance());
+  const theme = resolveTheme(surface, terminalThemeId);
+  const onTerminal = planeOf(session) === 'terminal';
   const reasonId = useId();
   const can = abilitiesFor(session, signingIn);
   // Absent rather than disabled where the kernel does not advertise the other
@@ -223,11 +237,33 @@ export function SessionActions({
                   disabled: busy || !move.available,
                 },
               ]),
+          /*
+           * Only on a terminal session. §7: a control that can never do
+           * anything here is absent rather than drawn — a conversation has no
+           * palette to change.
+           */
+          ...(onTerminal ? [{ id: 'palette', label: `Terminal theme: ${theme.label}` }] : []),
         ]}
         onSelect={(id) => {
           setMenuOpen(false);
           if (id === 'move') {
             setConfirmingSwitch(true);
+            return;
+          }
+          if (id === 'palette') {
+            // Only palettes suiting the current appearance are offered, so a
+            // dark theme can never be placed on a light page.
+            const options = themesFor(surface);
+            const next =
+              options[(options.findIndex((t) => t.id === theme.id) + 1) % options.length];
+            if (next !== undefined) {
+              setTerminalThemeId(next.id);
+              storeThemeId(next.id);
+              // Read when a terminal is constructed, so the change lands on
+              // the next one rather than repainting a live screen underneath
+              // somebody mid-command.
+              onTerminalThemeChange?.(next.id);
+            }
           }
         }}
         onClose={() => {

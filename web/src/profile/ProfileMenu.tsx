@@ -3,7 +3,6 @@ import type { User } from '../auth/types';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import {
   IconAgentPresetOutline16,
-  IconCodeOutline16,
   IconDarkOutline16,
   IconDataOutline16,
   IconFollowsystemOutline16,
@@ -13,12 +12,10 @@ import {
 import {
   APPEARANCE_ORDER,
   appearanceLabel,
-  effectiveAppearance,
   setAppearance,
   storedAppearance,
   type Appearance,
 } from '../theme/appearance';
-import { resolveTheme, storeThemeId, storedThemeId, themesFor } from '../terminal/themes';
 import './ProfileMenu.css';
 
 /**
@@ -43,13 +40,6 @@ import './ProfileMenu.css';
 interface ProfileMenuProps {
   readonly user: User;
   readonly onSignOut: () => void;
-  /**
-   * Told when the terminal palette changes, so the surface can be rebuilt.
-   *
-   * Optional because the menu is useful without a terminal behind it — the
-   * preference is still stored either way.
-   */
-  readonly onTerminalThemeChange?: (id: string) => void;
   /**
    * Open the environment profile manager.
    *
@@ -126,7 +116,6 @@ function appearanceIcon(appearance: Appearance) {
 export function ProfileMenu({
   user,
   onSignOut,
-  onTerminalThemeChange,
   onManageEnvironments,
   onOperations,
   operationsActive = false,
@@ -137,21 +126,12 @@ export function ProfileMenu({
   // An avatar that fails to load must fall back to initials rather than leave
   // a broken image where a person's face should be.
   const [avatarBroken, setAvatarBroken] = useState(false);
-  const [terminalThemeId, setTerminalThemeId] = useState<string | null>(() => storedThemeId());
-
-  const surface = effectiveAppearance(appearance);
-  const theme = resolveTheme(surface, terminalThemeId);
 
   const items: MenuEntry[] = [
     {
       id: 'appearance',
       icon: appearanceIcon(appearance),
       label: `Appearance: ${appearanceLabel(appearance)}`,
-    },
-    {
-      id: 'terminal-theme',
-      icon: <IconCodeOutline16 />,
-      label: `Terminal theme: ${theme.label}`,
     },
   ];
   if (onManageEnvironments !== undefined) {
@@ -199,21 +179,6 @@ export function ProfileMenu({
           'system';
         setLocalAppearance(next);
         setAppearance(next);
-        return;
-      }
-      case 'terminal-theme': {
-        // Only palettes suiting the current appearance are offered, so a dark
-        // theme can never be placed on a light page.
-        const options = themesFor(surface);
-        const next = options[(options.findIndex((t) => t.id === theme.id) + 1) % options.length];
-        if (next !== undefined) {
-          setTerminalThemeId(next.id);
-          storeThemeId(next.id);
-          // The palette is read when a terminal is constructed, so the change
-          // lands on the next one rather than repainting a live canvas
-          // underneath someone mid-command.
-          onTerminalThemeChange?.(next.id);
-        }
         return;
       }
       case 'environments':
