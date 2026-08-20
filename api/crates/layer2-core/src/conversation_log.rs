@@ -361,7 +361,8 @@ impl SessionService {
         let Ok(Some(mut record)) = self.store.get(id).await else {
             tracing::error!(
                 session_id = %id,
-                "cannot record that this session needs a sign-in: it is not in the store"
+                event = kind.tag(),
+                "cannot record this event: the session is not in the store"
             );
             return;
         };
@@ -392,7 +393,7 @@ impl SessionService {
             tracing::error!(
                 session_id = %id,
                 error = %e,
-                "cannot record that this session needs a sign-in"
+                "cannot record this event"
             );
         }
     }

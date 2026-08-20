@@ -433,6 +433,24 @@ impl EventKind {
     pub fn recognizes_tag(tag: &str) -> bool {
         KNOWN_TAGS.contains(&tag)
     }
+
+    /// The discriminator this variant serializes under.
+    ///
+    /// Derived from the serialization rather than from a second match, so it
+    /// cannot drift from what the store actually writes. For diagnostics: a
+    /// failure to record says which event was lost, and a message that names
+    /// the wrong one is worse than a message that names none.
+    pub fn tag(&self) -> String {
+        serde_json::to_value(self)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "unrecognised".to_string())
+    }
 }
 
 /// A liveness delta. Deliberately carries no sequence number: it is not part of
@@ -653,6 +671,18 @@ mod tests {
                 EventKind::recognizes_tag(tag),
                 "{tag} is written by this build but would be read back as a stranger's"
             );
+        }
+    }
+
+    #[test]
+    fn the_tag_a_variant_reports_is_the_one_it_serializes_under() {
+        // The reporting path and the storage path must agree: a diagnostic
+        // naming a different event than the one that was lost sends whoever
+        // reads it looking in the wrong place.
+        for kind in one_of_every_kind() {
+            let json = serde_json::to_value(&kind).expect("serializes");
+            assert_eq!(kind.tag(), json["type"].as_str().expect("carries a tag"));
+            assert!(EventKind::recognizes_tag(&kind.tag()), "{}", kind.tag());
         }
     }
 
