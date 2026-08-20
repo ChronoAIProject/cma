@@ -286,6 +286,33 @@ impl SessionService {
                     reclaimed.deferred_sessions += 1;
                     return;
                 }
+                Err(crate::error::CoreError::RuntimeRefused(why)) => {
+                    /*
+                     * The runtime answered, and would not be taken over.
+                     *
+                     * Never replaced on this. An answer is proof something is
+                     * there to have sent it, and replacing it destroys a
+                     * working agent along with everything it knows — which is
+                     * what happened on every rollout while a refusal and a
+                     * silence were the same answer here. A bridge greeted
+                     * twice refused the second greeting, and a session was
+                     * rebuilt empty beside the pod still holding its
+                     * conversation.
+                     *
+                     * Deferred instead, so the next sweep tries again. A
+                     * refusal that clears costs one sweep; one that does not
+                     * leaves the session listed and its work intact for its
+                     * owner to act on, which is the recoverable failure of the
+                     * two available here.
+                     */
+                    tracing::warn!(
+                        session_id = %id,
+                        %why,
+                        "this runtime answered and refused the takeover; leaving it alone"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
                 Err(e) => {
                     // The provider was asked and says this runtime is there.
                     // Listed but unreachable is no more usable than gone.
