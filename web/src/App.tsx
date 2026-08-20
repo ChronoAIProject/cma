@@ -14,6 +14,7 @@ import './styles/scrollbar.css';
 import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
+import './AppError.css';
 
 /*
  * The console pulls in xterm.js, roughly 400KB before compression. A visitor
@@ -61,8 +62,8 @@ export function App() {
     case 'error':
       return (
         <main className="app-error" role="alert">
-          <p>{state.message}</p>
-          <p>Reload the page to try again.</p>
+          <p className="app-error__what">{state.message}</p>
+          <p className="app-error__next">Reload the page to try again.</p>
         </main>
       );
 
