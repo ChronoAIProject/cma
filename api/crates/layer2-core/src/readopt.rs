@@ -211,13 +211,28 @@ impl SessionService {
         // exclusive, and a conversation session picked back up as a terminal
         // one is a session that is listed, intact, and unusable.
         let conversing = capabilities.conversation;
+        /*
+         * Whether the runtime is gone, or merely would not do this.
+         *
+         * These used to be the same answer, and the caller replaces a session's
+         * runtime on it. So a bridge that answered — proving it was alive — was
+         * reported as a sandbox that no longer exists, and the session was
+         * rebuilt empty next to the pod still holding its conversation.
+         *
+         * The adapter already keeps the distinction: silence is `Unavailable`,
+         * an answer is `Rejected`. This carries it rather than flattening it.
+         */
         let unreachable = |e: layer3_adapter::AdapterError| {
-            // The sandbox is genuinely gone. Say so in terms of what the person
-            // can do rather than repeating the provider's wording.
-            tracing::warn!(session_id = %id, error = %e, "cannot reconnect to the runtime");
-            CoreError::RuntimeUnavailable(
-                "the sandbox for this session is no longer running".to_string(),
-            )
+            if e.is_runtime_loss() {
+                tracing::warn!(session_id = %id, error = %e, "the runtime is gone");
+                return CoreError::RuntimeUnavailable(
+                    "the sandbox for this session is no longer running".to_string(),
+                );
+            }
+            tracing::warn!(session_id = %id, error = %e, "the runtime refused the takeover");
+            CoreError::RuntimeRefused(format!(
+                "the sandbox for this session would not resume: {e}"
+            ))
         };
 
         let terminal = match conversing {

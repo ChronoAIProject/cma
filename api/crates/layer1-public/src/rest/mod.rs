@@ -387,6 +387,11 @@ impl IntoResponse for Problem {
             CoreError::RuntimeUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
             }
+            // 503 as well, and named apart. Both say "not now"; the difference
+            // is that this one came from a runtime that answered, so a caller
+            // reading the slug can tell a session that is gone from one that
+            // is there and would not.
+            CoreError::RuntimeRefused(_) => (StatusCode::SERVICE_UNAVAILABLE, "runtime-refused"),
             CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
             // 422 rather than 404: the route exists and the request is
             // well-formed, and this session simply cannot honour it. A 404
