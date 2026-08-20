@@ -125,8 +125,10 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
         adapters,
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
         Arc::new(FakeStore::default()),
-        None,
-        Some(Arc::new(MintingSource)),
+        crate::service::SessionPorts {
+            credentials: Some(Arc::new(MintingSource)),
+            ..Default::default()
+        },
         crate::environment_service::EnvironmentProfileService::new(
             Arc::new(crate::test_support::FakeProfileStore::default()),
             crate::environment::Baseline::default(),

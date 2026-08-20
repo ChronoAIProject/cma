@@ -28,7 +28,9 @@ use std::collections::BTreeMap;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
-use crate::{AdapterError, RuntimeHandle, RuntimeListing, RuntimeSpec, TerminalInput};
+use crate::{
+    AdapterError, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage, TerminalInput,
+};
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
 
@@ -53,6 +55,12 @@ const KERNEL_METADATA_KEY: &str = "chrono-bot/kernel";
 
 /// Where the supervisor serves and accepts the agent's conversation.
 const CONVERSATION_PATH: &str = "/runtime/conversation";
+
+/// Where a pod takes the files its kernel needs before starting.
+const PRELUDE_PATH: &str = "/runtime/prelude";
+
+/// Where a pod says what it is and what it can take.
+const READY_PATH: &str = "/readyz";
 
 /// How long to wait for a freshly created sandbox to start serving.
 const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -170,6 +178,12 @@ pub struct HostedKernel {
     shape: SandboxShape,
     /// Which kernel this is, recorded on the sandboxes it creates.
     kernel: &'static str,
+    /// Where this kernel reads its skills, relative to the pod's home.
+    ///
+    /// Held so paths are composed here rather than by anything above: the pod
+    /// is handed paths and writes them, and the core names skills and never
+    /// where they live.
+    skills_root: String,
     /// The open link to each runtime, by handle.
     ///
     /// Held because a credential has to reach a runtime that is already
@@ -190,11 +204,17 @@ pub struct HostedKernel {
 
 impl HostedKernel {
     /// Host `kernel` in sandboxes of this shape, from this provider.
-    pub fn new(client: SandboxClient, shape: SandboxShape, kernel: &'static str) -> Self {
+    pub fn new(
+        client: SandboxClient,
+        shape: SandboxShape,
+        kernel: &'static str,
+        skills_root: impl Into<String>,
+    ) -> Self {
         Self {
             client,
             shape,
             kernel,
+            skills_root: skills_root.into(),
             links: tokio::sync::Mutex::new(BTreeMap::new()),
             switch_waiters: SwitchWaiters::default(),
         }
@@ -251,7 +271,94 @@ impl HostedKernel {
             self.hand_over(&sandbox.id, conversation).await?;
         }
 
+        // Skills land in the same window and for the same reason. The agent
+        // reads them when it starts, so delivering now is delivering before
+        // anything can look — and a session whose skills arrive afterwards is
+        // a session promised tools it is not using.
+        if !spec.skills.is_empty() {
+            self.install_skills(&sandbox.id, &spec.skills).await?;
+        }
+
         Ok(RuntimeHandle(sandbox.id))
+    }
+
+    /// Put a session's skills on its pod's disk, under this kernel's root.
+    ///
+    /// The paths are composed here, so the pod is handed paths and writes
+    /// them and never learns what a skill is — the same naivety the
+    /// conversation carry commits to, and for the same reason.
+    ///
+    /// A supervisor that cannot take a prelude is refused by name rather than
+    /// having a POST land on a router without the route: that answers 404,
+    /// which reads as a sandbox that is gone and would replace a healthy one.
+    async fn install_skills(
+        &self,
+        sandbox: &str,
+        skills: &[SkillPackage],
+    ) -> Result<(), AdapterError> {
+        let root = self.skills_root.trim();
+        if root.is_empty() {
+            return Err(AdapterError::Unsupported(
+                "this runtime's agent reads no skills".to_string(),
+            ));
+        }
+        let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
+        if !self.takes_a_prelude(&endpoint.endpoint).await {
+            return Err(AdapterError::Unsupported(format!(
+                "this runtime's image cannot be given skills, so {} would be missing",
+                skills
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+
+        let mut entries = Vec::new();
+        let mut bodies = Vec::new();
+        for skill in skills {
+            for (relative, body) in &skill.files {
+                entries.push(serde_json::json!({
+                    "path": format!("{root}/{}/{relative}", skill.name),
+                    "len": body.len(),
+                }));
+                bodies.push(body.clone());
+            }
+        }
+        let mut pack = serde_json::json!({ "chronoPrelude": 1, "files": entries })
+            .to_string()
+            .into_bytes();
+        pack.push(b'\n');
+        for body in bodies {
+            pack.extend_from_slice(body.as_slice());
+        }
+
+        let bytes = pack.len();
+        self.client
+            .post_to_sandbox(&endpoint.endpoint, PRELUDE_PATH, pack)
+            .await?;
+        tracing::info!(
+            %sandbox,
+            skills = skills.len(),
+            bytes,
+            "installed this session's skills into its runtime"
+        );
+        Ok(())
+    }
+
+    /// Whether this pod's supervisor can be handed files at all.
+    ///
+    /// Read from readiness, which every image ever built answers. An older one
+    /// answers without the key, which is unambiguous — and asking is cheaper
+    /// than discovering it from a 404 that means something else entirely.
+    async fn takes_a_prelude(&self, endpoint: &str) -> bool {
+        let Ok(body) = self.client.get_from_sandbox(endpoint, READY_PATH).await else {
+            return false;
+        };
+        serde_json::from_slice::<serde_json::Value>(body.unwrap_or_default().as_slice())
+            .ok()
+            .and_then(|v| v.get("prelude").and_then(serde_json::Value::as_bool))
+            .unwrap_or(false)
     }
 
     /// Capture the agent's conversation so it can be resumed elsewhere.

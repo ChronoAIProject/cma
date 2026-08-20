@@ -309,3 +309,33 @@ mod tests {
         assert_eq!(r.session.owner, s.owner);
     }
 }
+
+/// One skill, fetched and ready to be written.
+#[derive(Debug, Clone)]
+pub struct SkillPack {
+    /// The directory it occupies, which is the name the agent invokes.
+    pub name: String,
+    /// Each file, relative to that directory, exactly as the registry names it.
+    pub files: Vec<(String, Vec<u8>)>,
+}
+
+/// Where a session's skills come from.
+///
+/// The core knows a session was granted skills and knows nothing about where
+/// they live or how one is resolved — the same division as a credential.
+/// Named per skill and fetched as the caller, because which skills exist
+/// depends on who is asking.
+#[async_trait::async_trait]
+pub trait SkillSource: Send + Sync {
+    /// Fetch each of these, or say which one could not be had.
+    ///
+    /// Failing by name matters: a session started without a skill it was
+    /// promised looks identical to one that never asked for it, and the
+    /// difference only surfaces when the agent cannot do what it was told it
+    /// could.
+    async fn packs_for(
+        &self,
+        caller_credential: Option<&str>,
+        skills: &[crate::environment::SkillId],
+    ) -> Result<Vec<SkillPack>, String>;
+}
