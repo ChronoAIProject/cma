@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
+import { Pill } from '../ui/Pill';
 import { Modal } from '../ui/Modal';
 import { InlineConfirm } from '../ui/InlineConfirm';
 import { ProfileEditor } from './ProfileEditor';
@@ -46,6 +47,8 @@ type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'edit'; id: string };
 
 export function EnvironmentProfiles({ store, onClose, kernels = [] }: EnvironmentProfilesProps) {
   const [profiles, setProfiles] = useState<readonly EnvironmentProfile[] | null>(null);
+  /** While the default is moving, so it cannot be pressed twice. */
+  const [choosing, setChoosing] = useState(false);
   const [catalogue, setCatalogue] = useState<SkillCatalogue | null>(null);
   const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
   const [servicesCatalogue, setServicesCatalogue] = useState<ServiceCatalogue | undefined>(
@@ -160,6 +163,25 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
     }
   }
 
+  /**
+   * Choose which profile this owner's sessions start from, or none.
+   *
+   * The whole list comes back, because setting it moves two rows — the one
+   * taking it and the one giving it up — and reloading instead would show a
+   * moment where both or neither held it.
+   */
+  async function choose(id: string | null): Promise<void> {
+    setChoosing(true);
+    try {
+      setProfiles(await store.prefer(id));
+      setError(undefined);
+    } catch (cause: unknown) {
+      setError(message(cause, 'That profile could not be made the default.'));
+    } finally {
+      setChoosing(false);
+    }
+  }
+
   async function remove(id: string): Promise<void> {
     try {
       await store.remove(id);
@@ -258,7 +280,16 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
           {profiles.map((profile) => (
             <li className="profiles__row" key={profile.id}>
               <span className="profiles__text">
-                <span className="profiles__name">{profile.name}</span>
+                <span className="profiles__name">
+                  {profile.name}
+                  {/*
+                   * Said on the row rather than only by the control beside it:
+                   * a list where one row's key reads "Default" and the rest
+                   * read "Make default" makes somebody compare four buttons to
+                   * answer a question the list could state.
+                   */}
+                  {profile.preferred ? <Pill placement="profiles__default">default</Pill> : null}
+                </span>
                 <span className="profiles__meta">{summarise(profile)}</span>
               </span>
               {confirmingRemoval === profile.id ? (
@@ -279,6 +310,21 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
                 />
               ) : (
                 <>
+                  {/*
+                   * Choosing one clears the last, so the key on the row that
+                   * already holds it clears the preference instead — which is
+                   * a real choice, returning sessions to the deployment's own
+                   * defaults rather than leaving nothing chosen by accident.
+                   */}
+                  <Button
+                    size="sm"
+                    disabled={choosing}
+                    onClick={() => {
+                      void choose(profile.preferred ? null : profile.id);
+                    }}
+                  >
+                    {profile.preferred ? 'Stop using by default' : 'Use by default'}
+                  </Button>
                   <Button
                     size="sm"
                     onClick={() => {
