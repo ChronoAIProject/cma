@@ -317,3 +317,64 @@ describe('the profile a session starts from', () => {
     expect(onStart).toHaveBeenCalledWith('envp_2');
   });
 });
+
+describe('the preference reaching the dialog', () => {
+  it('applies when the list arrives after the dialog mounted', async () => {
+    /*
+     * The regression this covers: the dialog is mounted with the console, long
+     * before the profile list has been read, so seeding the selection once at
+     * mount saw an empty list every time and the preference never applied —
+     * which is the whole of what the preference is for.
+     */
+    const { rerender } = render(
+      <NewSessionDialog
+        open={false}
+        onCancel={vi.fn()}
+        onStart={vi.fn()}
+        store={createMockProfileStore()}
+        profiles={[]}
+        kernels={BOTH}
+      />,
+    );
+
+    // The list arrives, then somebody opens it — which is the real order.
+    rerender(
+      <NewSessionDialog
+        open
+        onCancel={vi.fn()}
+        onStart={vi.fn()}
+        store={createMockProfileStore()}
+        profiles={[{ ...profile('envp_2', 'Reviewer'), preferred: true }]}
+        kernels={BOTH}
+      />,
+    );
+
+    expect(chosenOption('Environment profile')).toContain('Reviewer');
+  });
+
+  it('does not carry a previous opening’s choice into the next', async () => {
+    // Opening is when the choice starts. A selection made and abandoned last
+    // time is not a preference, and reinstating it would be inventing one.
+    const user = userEvent.setup();
+    const profiles = [
+      profile('envp_1', 'Talos Controller'),
+      { ...profile('envp_2', 'Reviewer'), preferred: true },
+    ];
+    const props = {
+      onCancel: vi.fn(),
+      onStart: vi.fn(),
+      store: createMockProfileStore(),
+      profiles,
+      kernels: BOTH,
+    };
+    const { rerender } = render(<NewSessionDialog open {...props} />);
+
+    await chooseOption(user, 'Environment profile', 'Talos Controller');
+    expect(chosenOption('Environment profile')).toContain('Talos Controller');
+
+    rerender(<NewSessionDialog open={false} {...props} />);
+    rerender(<NewSessionDialog open {...props} />);
+
+    expect(chosenOption('Environment profile')).toContain('Reviewer');
+  });
+});

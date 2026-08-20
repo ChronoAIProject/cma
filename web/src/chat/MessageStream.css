@@ -645,3 +645,45 @@
   background: var(--dsw-alias-border-l1);
   border: 0;
 }
+
+/*
+ * What an empty conversation says.
+ *
+ * A session with no turns drew a blank column, and the only sign it was ready
+ * was the composer no longer refusing — a state somebody had to infer from the
+ * absence of a refusal.
+ *
+ * In the reading column rather than centred in the surface: this is the first
+ * entry, where every entry after it will be, so nothing moves when the first
+ * turn arrives.
+ */
+.stream__opening {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 24px 0;
+}
+
+.stream__openingtitle {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.stream__openinghint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.stream__key {
+  padding: 1px 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+}
