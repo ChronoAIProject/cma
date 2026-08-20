@@ -249,3 +249,154 @@ async fn removing_something_that_never_existed_is_reported_not_ignored() {
         .expect_err("must be reported");
     assert_eq!(err, CoreError::EnvironmentProfileNotFound);
 }
+
+/*
+ * Which profile an owner's sessions start from — #371.
+ *
+ * At most one of theirs holds it, and none is a real answer rather than a
+ * missing one: it means they have not chosen, and their sessions start from
+ * the deployment's own defaults.
+ */
+
+#[tokio::test]
+async fn a_new_profile_is_not_its_owners_default() {
+    // Authoring a profile must not move where every later session starts.
+    let service = environments(Arc::new(FakeProfileStore::default()));
+    let owner = caller("subject-a");
+
+    let created = service
+        .create(&owner, profile_spec("build tools"))
+        .await
+        .expect("creates");
+
+    assert!(!created.preferred);
+}
+
+#[tokio::test]
+async fn choosing_a_default_clears_the_one_before_it() {
+    let service = environments(Arc::new(FakeProfileStore::default()));
+    let owner = caller("subject-a");
+    let first = service
+        .create(&owner, profile_spec("first"))
+        .await
+        .expect("creates");
+    let second = service
+        .create(&owner, profile_spec("second"))
+        .await
+        .expect("creates");
+
+    service.prefer(&owner, Some(&first.id)).await.expect("sets");
+    let after = service
+        .prefer(&owner, Some(&second.id))
+        .await
+        .expect("moves");
+
+    let held: Vec<_> = after
+        .iter()
+        .filter(|p| p.preferred)
+        .map(|p| &p.id)
+        .collect();
+    assert_eq!(held, vec![&second.id], "exactly one, and it is the new one");
+}
+
+#[tokio::test]
+async fn clearing_the_default_is_a_choice_rather_than_an_omission() {
+    // It returns the owner to the deployment's own defaults, which is
+    // something somebody decides rather than a state they fall into.
+    let service = environments(Arc::new(FakeProfileStore::default()));
+    let owner = caller("subject-a");
+    let profile = service
+        .create(&owner, profile_spec("first"))
+        .await
+        .expect("creates");
+    service
+        .prefer(&owner, Some(&profile.id))
+        .await
+        .expect("sets");
+
+    let after = service.prefer(&owner, None).await.expect("clears");
+
+    assert!(after.iter().all(|p| !p.preferred));
+}
+
+#[tokio::test]
+async fn a_default_survives_an_edit_of_the_profile_holding_it() {
+    // Editing a profile is not choosing where sessions start from, and
+    // clearing it silently would move that the next time somebody fixed a typo.
+    let service = environments(Arc::new(FakeProfileStore::default()));
+    let owner = caller("subject-a");
+    let profile = service
+        .create(&owner, profile_spec("first"))
+        .await
+        .expect("creates");
+    service
+        .prefer(&owner, Some(&profile.id))
+        .await
+        .expect("sets");
+
+    let edited = service
+        .update(&owner, &profile.id, profile_spec("first, renamed"))
+        .await
+        .expect("updates");
+
+    assert!(edited.preferred);
+}
+
+#[tokio::test]
+async fn a_profile_somebody_else_owns_cannot_be_made_their_default() {
+    let service = environments(Arc::new(FakeProfileStore::default()));
+    let owner = caller("subject-a");
+    let stranger = caller("subject-b");
+    let theirs = service
+        .create(&owner, profile_spec("theirs"))
+        .await
+        .expect("creates");
+
+    let refused = service.prefer(&stranger, Some(&theirs.id)).await;
+
+    assert!(
+        matches!(refused, Err(CoreError::EnvironmentProfileNotFound)),
+        "not yours and does not exist collapse to one answer, so a stranger \
+         cannot probe for what exists"
+    );
+}
+
+#[tokio::test]
+async fn two_profiles_claiming_the_default_are_settled_on_read() {
+    /*
+     * There is no transaction across the store port, so a `prefer` that
+     * half-succeeds can leave two claims. The read settles it rather than
+     * leaving it to be discovered: the most recently updated wins.
+     */
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments(Arc::clone(&store));
+    let owner = caller("subject-a");
+    let older = service
+        .create(&owner, profile_spec("older"))
+        .await
+        .expect("creates");
+    let newer = service
+        .create(&owner, profile_spec("newer"))
+        .await
+        .expect("creates");
+
+    // Both written directly, as a torn write would leave them.
+    for (profile, updated) in [
+        (&older, "2026-01-01T00:00:00Z"),
+        (&newer, "2026-06-01T00:00:00Z"),
+    ] {
+        let mut claim = profile.clone();
+        claim.preferred = true;
+        claim.updated_at = updated.to_string();
+        store.upsert(&claim).await.expect("writes");
+    }
+
+    let listed = service.list(&owner).await.expect("lists");
+
+    let held: Vec<_> = listed
+        .iter()
+        .filter(|p| p.preferred)
+        .map(|p| &p.id)
+        .collect();
+    assert_eq!(held, vec![&newer.id], "one claim survives, the most recent");
+}
