@@ -390,3 +390,57 @@ describe('the plane a profile starts sessions on', () => {
     expect(chosenOption(/^agent$/i)).toContain('Codex');
   });
 });
+
+/*
+ * Which profile an owner's sessions start from — #371.
+ *
+ * None is a real answer rather than a missing one: it means they have not
+ * chosen, and their sessions start from the deployment's own defaults.
+ */
+describe('the profile sessions start from', () => {
+  it('says which one it is on the row', async () => {
+    const user = userEvent.setup();
+    const store = createMockProfileStore();
+    open(store);
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'reviewer');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+    await user.click(await screen.findByRole('button', { name: 'Use by default' }));
+
+    expect(await screen.findByText('default')).toBeInTheDocument();
+  });
+
+  it('offers to stop using it, which returns to the deployment’s defaults', async () => {
+    // Clearing is a choice rather than the absence of one, so it has its own
+    // key rather than being reached by pressing the current default twice.
+    const user = userEvent.setup();
+    open(createMockProfileStore());
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'reviewer');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+    await user.click(await screen.findByRole('button', { name: 'Use by default' }));
+    await user.click(await screen.findByRole('button', { name: 'Stop using by default' }));
+
+    expect(await screen.findByRole('button', { name: 'Use by default' })).toBeInTheDocument();
+    expect(screen.queryByText('default')).toBeNull();
+  });
+
+  it('moves it rather than holding two', async () => {
+    const user = userEvent.setup();
+    open(createMockProfileStore());
+
+    for (const name of ['first', 'second']) {
+      await user.click(await screen.findByRole('button', { name: /new profile/i }));
+      await user.type(screen.getByLabelText(/^name$/i), name);
+      await user.click(screen.getByRole('button', { name: /save profile/i }));
+    }
+    const keys = await screen.findAllByRole('button', { name: 'Use by default' });
+    await user.click(keys[0]!);
+    const moved = await screen.findAllByRole('button', { name: 'Use by default' });
+    await user.click(moved[0]!);
+
+    expect(screen.getAllByText('default')).toHaveLength(1);
+  });
+});
