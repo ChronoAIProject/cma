@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check:styles": "node scripts/computed-styles.mjs",
-    "check:surfaces": "node scripts/signed-in-surfaces.mjs"
+    "check:surfaces": "node scripts/signed-in-surfaces.mjs",
+    "check:css": "node scripts/css-collisions.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
