@@ -10,7 +10,7 @@ import type {
   ProfileDraft,
   ServiceCatalogue,
 } from '../environment/types';
-import { kernelLabel, modesOf, planeRefusal, PLANES } from './kernels';
+import { kernelLabel, planeRefusal, PLANES } from './kernels';
 import './NewSessionDialog.css';
 import type { KernelOffer, SessionPlane } from './types';
 import { Input } from '../ui/Input';
@@ -19,9 +19,9 @@ import { Input } from '../ui/Input';
  * The choice made when a session starts.
  *
  * Two things are decided here and both are fixed for the session's life: which
- * profile describes it, and — inside that profile — which plane it is driven
- * on. The plane cannot be chosen later, because moving a session between
- * planes is a rotation rather than a toggle (`Web_Style.md` §18.6), so it is
+ * profile describes it. **A session is a conversation**: the plane is no longer
+ * asked here, because moving a session between planes is a rotation rather
+ * than a toggle (`Web_Style.md` §18.6), and it is
  * chosen at the only moment it can be.
  *
  * Deliberately small at rest. Everything has a working default, so someone who
@@ -91,7 +91,6 @@ export function NewSessionDialog({
   const profileLabelId = useId();
   const nameId = useId();
   const kernelId = useId();
-  const planeId = useId();
 
   const authoring = profile === AUTHOR;
 
@@ -272,51 +271,13 @@ export function NewSessionDialog({
                 setDraft({ ...draft, agent: { ...draft.agent, kernel } });
               }}
             />
-          </div>
-
-          <div className="field">
-            <span className="field__label" id={planeId}>
-              Plane
-            </span>
             {/*
-             * §7: the plane choice is two labelled cards rather than a
-             * select — the choice is fixed for the session's life, and a
-             * decision that cannot be revisited deserves both answers on the
-             * surface at once. A row of peer cards is a grid, never a flex
-             * row of hand-set widths.
+             * The refusal sits under the control that causes it. It used to
+             * live with the plane picker, which is where somebody chose the
+             * thing being refused — with the plane no longer asked, the agent
+             * is the only choice that can produce it, and §9 wants it named
+             * here rather than reported as a disabled key with no reason.
              */}
-            <div className="card-grid" role="radiogroup" aria-labelledby={planeId}>
-              {PLANES.map((plane) => {
-                const unavailable = !served(kernels, draft.agent.kernel, plane.id);
-                const chosen = draft.agent.mode === plane.id;
-                return (
-                  <button
-                    key={plane.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={chosen}
-                    className={`card planecard${chosen ? ' planecard--chosen' : ''}`}
-                    disabled={unavailable}
-                    onClick={() => {
-                      setDraft({ ...draft, agent: { ...draft.agent, mode: plane.id } });
-                    }}
-                  >
-                    <span className="planecard__name">{plane.label}</span>
-                    <span className="planecard__what">
-                      {plane.id === 'terminal'
-                        ? 'The kernel’s own screen, entire and unmediated.'
-                        : 'Messages, tool calls and approvals, as structure.'}
-                    </span>
-                    {unavailable ? (
-                      <span className="control-reason">
-                        Not on {kernelLabel(draft.agent.kernel)}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-            <span className="field__hint">Fixed for the session&rsquo;s life.</span>
             {refusal === undefined ? null : (
               <p className="field__error" role="alert">
                 {refusal}
@@ -349,13 +310,13 @@ export function NewSessionDialog({
   );
 }
 
-/** Whether this runtime serves this plane, where anything is known about it. */
-function served(kernels: readonly KernelOffer[], kernel: string, plane: SessionPlane): boolean {
-  const modes = modesOf(kernels, kernel);
-  return modes === undefined || modes.includes(plane);
-}
-
-/** The plane in the words a sentence needs. */
+/**
+ * The plane in the words a sentence needs.
+ *
+ * Still needed although the form no longer asks: a profile stored before this
+ * may name the terminal, and the hint describing it must say so rather than
+ * claim every profile is a conversation.
+ */
 function planeWord(plane: SessionPlane): string {
   return PLANES.find((p) => p.id === plane)?.label.toLowerCase() ?? plane;
 }

@@ -14,14 +14,8 @@
   min-width: 0;
 }
 
-.actions__reason,
-.actions__question {
+.actions__reason {
   flex: 0 1 auto;
-}
-
-/* The inline confirmation may take two lines; the band still fits 40px keys. */
-.actions__question {
-  white-space: normal;
 }
 
 .actions__more {
@@ -56,4 +50,19 @@
 .actions__menu {
   top: calc(100% + var(--space-1));
   right: 0;
+}
+
+/*
+ * The dialog's own sentences. The card is §12.4's; only what it says about a
+ * plane change is decided here.
+ */
+.actions__explain {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.actions__explain + .actions__explain {
+  margin-top: 12px;
 }

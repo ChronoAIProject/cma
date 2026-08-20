@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import type { KernelOffer, Session } from './types';
 import { abilitiesFor } from './availability';
 import { switchFor, unavailableBecause } from './planeSwitch';
+import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import './SessionActions.css';
 import { Menu } from '../ui/Menu';
@@ -78,41 +79,18 @@ export function SessionActions({
   // plane (§18.6): a control that can never work is not one that is currently
   // unavailable.
   const move = onChangePlane === undefined ? undefined : switchFor(session, kernels);
-
-  if (confirmingSwitch && move !== undefined) {
-    /*
-     * §18.6: it confirms inline, in place of the header's own controls, and
-     * states the two things that are true and not obvious. Neither is
-     * recoverable by pressing the key again, which is why they are said
-     * before rather than reported after.
-     */
-    return (
-      <div className="actions">
-        <span className="control-reason actions__question">
-          Move to {move.label.toLowerCase()}? The turn in flight is lost, and this session is not
-          interactive while it moves.
-        </span>
-        <Button
-          size="sm"
-          onClick={() => {
-            setConfirmingSwitch(false);
-          }}
-        >
-          Stay here
-        </Button>
-        <Button
-          size="sm"
-          disabled={busy}
-          onClick={() => {
-            setConfirmingSwitch(false);
-            onChangePlane?.(move.to);
-          }}
-        >
-          Move to {move.label.toLowerCase()}
-        </Button>
-      </div>
-    );
-  }
+  /*
+   * What the entry is called, from the plane it would move to. It names the
+   * act rather than the destination — "Terminal" beside "Conversation" read as
+   * two views to flip between, which is what the retired tab strip made this
+   * look like. It is a rotation with a cost, and the words say so.
+   */
+  const moveLabel =
+    move === undefined
+      ? undefined
+      : move.to === 'terminal'
+        ? 'Interact directly with terminal'
+        : 'Return to chat mode';
 
   /*
    * §7: one reason per row, beside the controls it explains. The session's
@@ -172,10 +150,10 @@ export function SessionActions({
                    * person reading the menu will look.
                    */
                   label: move.available ? (
-                    move.label
+                    moveLabel
                   ) : (
                     <span className="actions__whynot">
-                      {move.label}
+                      {moveLabel}
                       <span className="actions__reason">{unavailableBecause(session)}</span>
                     </span>
                   ),
@@ -221,6 +199,58 @@ export function SessionActions({
           </Button>
         }
       />
+
+      {/*
+       * §12.4 and §18.6: a card in the middle of the page, because this is a
+       * rotation and not a view change. It states the two things that are true
+       * and not obvious before it happens — neither is recoverable by pressing
+       * the key again, which is why they are said rather than reported after.
+       *
+       * It replaced an inline confirmation that took over the header's own
+       * controls. That was quiet enough to be missed and put the question
+       * somewhere the eye was not, for the one action in this menu that costs
+       * something.
+       */}
+      {move === undefined ? null : (
+        <Modal
+          open={confirmingSwitch}
+          title={moveLabel ?? ''}
+          onClose={() => {
+            setConfirmingSwitch(false);
+          }}
+          footer={
+            <>
+              <Button
+                onClick={() => {
+                  setConfirmingSwitch(false);
+                }}
+              >
+                Stay here
+              </Button>
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmingSwitch(false);
+                  onChangePlane?.(move.to);
+                }}
+              >
+                {move.to === 'terminal' ? 'Open the terminal' : 'Return to chat'}
+              </Button>
+            </>
+          }
+        >
+          <p className="actions__explain">
+            {move.to === 'terminal'
+              ? 'This session restarts on its terminal, where you type to the agent’s shell directly rather than talking to it.'
+              : 'This session restarts as a conversation, where you talk to the agent rather than typing to its shell.'}
+          </p>
+          <p className="actions__explain">
+            It is not interactive while it moves, and the turn in flight is lost. Everything it has
+            already shown stays where it is.
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }
