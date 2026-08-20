@@ -80,9 +80,17 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             timestamp: None,
             seq: None,
         }),
-        // The actions the owner may invoke, as a state patch on the live
-        // lane. A stale list is worse than none, so this never rides the log:
-        // a client that missed it shows no commands rather than dead ones.
+        // The actions the owner may invoke, as a state patch on the live lane.
+        //
+        // This once said the list never rides the log, and it no longer holds:
+        // the same list is recorded durably and projected onto this very path
+        // from the log. The reasoning was that a replayed list could offer
+        // actions that no longer exist, and the outcome was that it reached
+        // nobody at all — the kernel announces it as the conversation opens,
+        // before any client has subscribed.
+        //
+        // Both lanes write the same path deliberately. A client that was
+        // watching and one that reloaded must hold one list, not two.
         LiveFrame::AvailableCommands(commands) => Some(AguiEvent {
             kind: "STATE_DELTA",
             run_id: run_id.to_string(),
