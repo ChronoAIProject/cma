@@ -8,6 +8,18 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    /*
+     * Build-time scripts run in node, and the callbacks they hand to a browser
+     * run in a browser — `page.evaluate` bodies are serialised and executed
+     * there, so both sets of globals are genuinely in scope in one file.
+     */
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2022,
