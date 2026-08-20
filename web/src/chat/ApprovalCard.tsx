@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { InterruptOption } from '../agui';
 import { Button } from '../ui/Button';
 import { renderInline } from './inline';
@@ -30,7 +31,14 @@ import './ApprovalCard.css';
 
 interface ApprovalCardProps {
   readonly interrupt: PendingApproval;
-  readonly onAnswer: (decision: string) => void;
+  /**
+   * Send the answer, and say whether the service took it.
+   *
+   * Returning the outcome is what lets the card put the question back when a
+   * send is refused, instead of standing there showing an answer nothing
+   * received. A caller with nothing to report may return nothing.
+   */
+  readonly onAnswer: (decision: string) => void | Promise<boolean>;
   readonly busy?: boolean;
 }
 
@@ -72,6 +80,34 @@ function questionOf(message: string) {
 }
 
 export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCardProps) {
+  /*
+   * The answer this reader gave, held here from the moment they press.
+   *
+   * The card is cleared by the durable event, which arrives a whole lap of the
+   * stream after the request returns — so answering used to grey the buttons,
+   * ungrey them when the request resolved, and leave the card sitting there
+   * unchanged until the log caught up. It read as a click that did not
+   * register, and in the window between the two the answers were live again,
+   * so it could be answered twice.
+   *
+   * Committing here is the same rule §18.1 already holds for a message being
+   * typed: shown at once, replaced by the record, and identical either way
+   * after a reload — because what is drawn from this never enters the log.
+   */
+  const [sent, setSent] = useState<string | undefined>(undefined);
+  /*
+   * A different question is a different answer: without this, a second
+   * approval arriving in this same place inherits the first one's.
+   *
+   * Adjusted during render rather than in an effect. An effect would run after
+   * the card had already been drawn once carrying the previous answer, and
+   * setting state from one is the cascading render the lint rule is about.
+   */
+  const [asked, setAsked] = useState(interrupt.id);
+  if (asked !== interrupt.id) {
+    setAsked(interrupt.id);
+    setSent(undefined);
+  }
   const answers =
     interrupt.options === undefined || interrupt.options.length === 0
       ? PROTOCOL_ANSWERS
@@ -123,20 +159,38 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
        * makes it safe to take a moment: nothing else is waiting on this.
        */}
       <div className="approval__answers">
-        {answers.map((answer) => (
-          <Button
-            key={answer.decision}
-            size="md"
-            variant={answer.affirmative === true ? 'primary' : 'ghost'}
-            disabled={busy}
-            onClick={() => {
-              onAnswer(answer.decision);
-            }}
-          >
-            {answer.label ?? answer.decision}
-          </Button>
-        ))}
-        <span className="approval__aside">Your other sessions keep working.</span>
+        {/*
+         * Once answered, the one chosen is all that is drawn. The others are
+         * withdrawn rather than disabled: they are not unavailable, they are
+         * no longer the question, and a row of greyed alternatives beside the
+         * answer invites somebody to press one again.
+         */}
+        {answers
+          .filter((answer) => sent === undefined || answer.decision === sent)
+          .map((answer) => (
+            <Button
+              key={answer.decision}
+              size="md"
+              variant={answer.affirmative === true ? 'primary' : 'ghost'}
+              disabled={busy || sent !== undefined}
+              onClick={() => {
+                setSent(answer.decision);
+                const outcome = onAnswer(answer.decision);
+                // A refusal puts the question back rather than leaving the
+                // card showing an answer the service never took.
+                void Promise.resolve(outcome).then((taken) => {
+                  if (taken === false) {
+                    setSent(undefined);
+                  }
+                });
+              }}
+            >
+              {answer.label ?? answer.decision}
+            </Button>
+          ))}
+        <span className="approval__aside">
+          {sent === undefined ? 'Your other sessions keep working.' : 'Sending your answer…'}
+        </span>
       </div>
     </section>
   );
