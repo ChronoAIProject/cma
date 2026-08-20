@@ -314,6 +314,42 @@ describe('followSession and the sign-in frame', () => {
     expect(signIns).toEqual([]);
   });
 
+  it('reports the frame production actually sends, with a null code', () => {
+    /*
+     * Copied from a production session's durable log. Codex declares no
+     * separate code and puts it inside the sentence, so the field arrives as
+     * `null` — which is not `undefined`, and passing it through drew an empty
+     * code block above a Copy control that copied nothing.
+     */
+    const { stream, signIns, stop } = following();
+
+    stream.deliver({
+      type: 'sign_in_required',
+      url: 'https://auth.openai.com/codex/device',
+      code: null,
+      message: 'Sign in to ChatGPT and enter this code: 1YF1-RUC10',
+    });
+    stop();
+
+    expect(signIns).toEqual([
+      {
+        url: 'https://auth.openai.com/codex/device',
+        code: undefined,
+        message: 'Sign in to ChatGPT and enter this code: 1YF1-RUC10',
+      },
+    ]);
+  });
+
+  it('treats an empty code as no code rather than as a code', () => {
+    // An empty string draws the same empty block a null did.
+    const { stream, signIns, stop } = following();
+
+    stream.deliver({ type: 'sign_in_required', url: 'https://auth.example.test/device', code: '' });
+    stop();
+
+    expect(signIns[0]).toMatchObject({ code: undefined });
+  });
+
   it('leaves every other frame alone', () => {
     const { stream, signIns, stop } = following();
 

@@ -22,7 +22,23 @@ import { stageLabel } from './progress';
  * interface begins projecting turn-level activity, this is the one place that
  * has to change.
  */
-export function lastActivity(session: Session, stage?: Stage, waiting = false): string {
+export function lastActivity(
+  session: Session,
+  stage?: Stage,
+  waiting = false,
+  signingIn = false,
+): string {
+  /*
+   * A session whose kernel spends its owner's own vendor account stops inside
+   * the conversation open to ask them to sign in, and waits there. It is
+   * `provisioning` to the lifecycle and waiting on a person, so saying it
+   * waits for a sandbox sends them to look at infrastructure while the thing
+   * it needs is on their own screen. Same shape as the approval case above.
+   */
+  if (signingIn && session.lifecycle === 'provisioning') {
+    return 'Waiting for you to sign in';
+  }
+
   /*
    * §11 and §18.3: a session parked on an answerable approval is `idle` to
    * the lifecycle and the most alive a session gets to its owner. The line

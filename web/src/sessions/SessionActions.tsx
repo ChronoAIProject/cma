@@ -47,10 +47,20 @@ interface SessionActionsProps {
   /** Move this session onto the other plane. */
   readonly onChangePlane?: (to: 'terminal' | 'conversation') => void;
   readonly busy?: boolean;
+  /**
+   * Whether this session is waiting on its owner's sign-in.
+   *
+   * It is `provisioning` either way and takes no input either way, so nothing
+   * about what can be done changes. What changes is the sentence: telling
+   * somebody the session is still starting sends them to wait for a thing
+   * that is waiting for them.
+   */
+  readonly signingIn?: boolean;
 }
 
 export function SessionActions({
   session,
+  signingIn = false,
   onReconnect,
   onRevive,
   onStop,
@@ -63,7 +73,7 @@ export function SessionActions({
   const [confirmingSwitch, setConfirmingSwitch] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const reasonId = useId();
-  const can = abilitiesFor(session);
+  const can = abilitiesFor(session, signingIn);
   // Absent rather than disabled where the kernel does not advertise the other
   // plane (§18.6): a control that can never work is not one that is currently
   // unavailable.
