@@ -43,6 +43,18 @@ pub enum Capability {
     ReadActivityLog,
     /// Read the directory of subjects that have used the service.
     ReadUserDirectory,
+    /// Read and change settings that apply to the whole deployment.
+    ///
+    /// Read and write together, unlike the operator's monitoring set, because
+    /// there is no role that wants to watch these without changing them: they
+    /// are configuration, not activity, and a caller who may not edit them has
+    /// nothing to do with the value.
+    ///
+    /// Privileged in the strongest sense here. Every other privileged
+    /// capability reaches across subjects to *observe* or to *stop*; this one
+    /// changes what every future session on the deployment is told before it
+    /// does anything.
+    ConfigurePlatform,
     /// End or pause a session whatever subject owns it.
     ///
     /// Deliberately separate from ending your own. Every caller who can use a
@@ -66,6 +78,7 @@ impl Capability {
                 | Self::ReadActivityLog
                 | Self::ReadUserDirectory
                 | Self::ControlAnySession
+                | Self::ConfigurePlatform
         )
     }
 }
@@ -264,6 +277,7 @@ mod tests {
             Capability::ReadActivityLog,
             Capability::ReadUserDirectory,
             Capability::ControlAnySession,
+            Capability::ConfigurePlatform,
         ] {
             assert!(
                 Authorization::from_capabilities([c]).is_privileged(),
