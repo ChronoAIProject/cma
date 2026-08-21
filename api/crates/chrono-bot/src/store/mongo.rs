@@ -20,11 +20,47 @@ use super::event_doc;
 const SESSIONS: &str = "sessions";
 const EVENTS: &str = "session_events";
 
+/// A granted skill as it is stored.
+///
+/// Two shapes, because records written before versions were carried hold a
+/// bare string. Reading accepts either; writing always produces the object, so
+/// the old shape disappears as records are rewritten rather than needing a
+/// migration nobody would run.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum StoredSkill {
+    Versioned {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    /// Written before this service recorded versions.
+    Bare(String),
+}
+
+impl StoredSkill {
+    fn into_granted(self) -> layer2_core::GrantedSkill {
+        match self {
+            Self::Versioned { id, version } => layer2_core::GrantedSkill {
+                id: layer2_core::SkillId::new(id),
+                version,
+            },
+            // Not "version unknown to the registry" but "this record predates
+            // us keeping it". Both render the same way, and neither invents one.
+            Self::Bare(id) => layer2_core::GrantedSkill {
+                id: layer2_core::SkillId::new(id),
+                version: None,
+            },
+        }
+    }
+}
+
 /// How a session record is shaped on the wire.
 ///
 /// A distinct type from the core's record on purpose: the core owns its model,
 /// and this owns how it is written. `_id` carries the session id so the
 /// database enforces uniqueness rather than the application.
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SessionDoc {
     #[serde(rename = "_id")]
@@ -77,8 +113,14 @@ struct SessionDoc {
     granted_services: Option<Vec<String>>,
     /// The skills the session was given. Same distinction as above: absent
     /// means the grant predates the field, empty means it was given none.
+    /// Each granted skill and the version that arrived.
+    ///
+    /// Records written before versions were carried hold bare strings, so the
+    /// read accepts either shape and treats a bare string as a skill whose
+    /// version was never recorded. Absent still means the grant itself was
+    /// never recorded, which is a third thing again.
     #[serde(default)]
-    granted_skills: Option<Vec<String>>,
+    granted_skills: Option<Vec<StoredSkill>>,
 }
 
 /// A MongoDB-backed session store.
@@ -196,10 +238,15 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
             .granted_services
             .as_ref()
             .map(|services| services.iter().map(|id| id.0.clone()).collect()),
-        granted_skills: s
-            .granted_skills
-            .as_ref()
-            .map(|skills| skills.iter().map(|id| id.0.clone()).collect()),
+        granted_skills: s.granted_skills.as_ref().map(|skills| {
+            skills
+                .iter()
+                .map(|granted| StoredSkill::Versioned {
+                    id: granted.id.0.clone(),
+                    version: granted.version.clone(),
+                })
+                .collect()
+        }),
     })
 }
 
@@ -251,7 +298,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
                 .map(|services| services.into_iter().map(layer2_core::ServiceId).collect()),
             granted_skills: d
                 .granted_skills
-                .map(|skills| skills.into_iter().map(layer2_core::SkillId::new).collect()),
+                .map(|skills| skills.into_iter().map(StoredSkill::into_granted).collect()),
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,
