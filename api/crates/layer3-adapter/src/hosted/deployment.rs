@@ -70,6 +70,12 @@ pub struct Deployment {
     /// something it cannot be given, and is refused by name rather than started
     /// without it.
     pub provided_packages: Vec<String>,
+    /// Where this kernel reads standing instructions, relative to the home.
+    ///
+    /// The kernel's own convention, which is why it is named in the kernel's
+    /// own directory. Empty means this kernel reads none, and the note below
+    /// is simply not written.
+    pub agent_notes: String,
     /// Where this kernel reads its skills, relative to the pod's home.
     ///
     /// The kernel's own business, which is why it is set in the kernel's own

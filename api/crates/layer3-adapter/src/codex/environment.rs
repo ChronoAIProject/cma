@@ -58,6 +58,7 @@ impl Default for CodexSandboxSpec {
                 // mechanism, and it reports the skill at user scope. No
                 // plugin and no marketplace is involved.
                 skills_root: ".codex/skills".into(),
+                agent_notes: "AGENTS.md".into(),
                 ..Deployment::default()
             },
             resume_args: "resume".into(),
