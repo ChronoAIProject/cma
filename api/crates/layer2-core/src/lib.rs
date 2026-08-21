@@ -29,6 +29,7 @@ pub mod inventory;
 mod lease;
 mod lifecycle;
 mod log;
+mod platform;
 mod provision;
 mod provision_failure;
 mod reading;
@@ -109,6 +110,7 @@ pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
+pub use platform::{PlatformSettings, SessionBriefing};
 pub use reconcile::Reclaimed;
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
