@@ -283,8 +283,13 @@ impl HostedKernel {
         // together: both have to be on disk before the kernel starts, and both
         // are useless if they land after it has already decided what to do.
         if !spec.skills.is_empty() || !self.agent_notes.trim().is_empty() {
-            self.install_prelude(&sandbox.id, &spec.skills, &spec.reaches)
-                .await?;
+            self.install_prelude(
+                &sandbox.id,
+                &spec.skills,
+                &spec.reaches,
+                &spec.environment.agent_notes,
+            )
+            .await?;
         }
 
         Ok(RuntimeHandle(sandbox.id))
@@ -304,25 +309,55 @@ impl HostedKernel {
     /// lies: it lists every service on the account — fifty, against the four
     /// this key can use — so an agent picks a plausible one and collects a
     /// refusal it cannot interpret.
-    fn agent_note(&self, reaches: &[String]) -> String {
-        let mut note = String::from(
-            "# This session\n\n             You are already authenticated. A credential was minted for this              session alone and is attached to your requests automatically; you              will never see its value and do not need it.\n\n             **Do not run `nyxid login`.** There is nobody to log in as. The              same goes for `nyxid whoami`, `nyxid status` and `nyxid service              list`: they ask about a user account, this session is not one, and              they will fail however many times they are tried.\n\n             Reach a service with `nyxid proxy request <slug> <path>`.\n\n",
+    fn agent_note(&self, reaches: &[String], owner_notes: &str) -> String {
+        let mut note = String::new();
+        note.push_str("# This session\n\n");
+        note.push_str(
+            "You are already authenticated. A credential was minted for this session alone and is\n\
+             attached to your requests automatically. You will never see its value and do not need it.\n\n",
         );
-        match reaches.is_empty() {
-            true => note.push_str(
-                "This session was granted no services, so every proxied call                  will be refused. That is a property of how it was created and                  will not change while it runs.\n",
-            ),
-            false => {
-                note.push_str(
-                    "## What you can reach\n\n                     These slugs and no others. `nyxid proxy discover` lists                      everything on the account rather than what this session                      was granted, so treat this list as the truth and that one                      as a catalogue:\n\n",
-                );
-                for slug in reaches {
-                    note.push_str(&format!("- `{slug}`\n"));
-                }
-                note.push_str(
-                    "\nA call to anything else is refused for the life of this                      session. It is not worth retrying.\n",
-                );
+        note.push_str(
+            "**Do not run `nyxid login`.** There is nobody to log in as. The same goes for\n\
+             `nyxid whoami`, `nyxid status` and `nyxid service list`: they ask about a user account,\n\
+             this session is not one, and they will fail however many times they are tried.\n\n",
+        );
+        note.push_str("Reach a service with `nyxid proxy request <slug> <path>`.\n\n");
+
+        if reaches.is_empty() {
+            note.push_str(
+                "This session was granted no services, so every proxied call will be refused. That\n\
+                 is a property of how it was created and will not change while it runs.\n",
+            );
+        } else {
+            note.push_str("## What you can reach\n\n");
+            note.push_str(
+                "These slugs and no others. `nyxid proxy discover` lists everything on the account\n\
+                 rather than what this session was granted, so treat this list as the truth and that\n\
+                 one as a catalogue:\n\n",
+            );
+            for slug in reaches {
+                note.push_str(&format!("- `{slug}`\n"));
             }
+            note.push_str(
+                "\nA call to anything else is refused for the life of this session. It is not worth\n\
+                 retrying.\n",
+            );
+        }
+
+        /*
+         * The owner's own instructions, after ours and separated from them.
+         *
+         * Appended rather than merged: everything above is what this session
+         * is, and an owner able to edit it could talk their agent out of
+         * knowing it is already authenticated — which costs the first minutes
+         * of every session rediscovering that badly. Below the rule they say
+         * whatever they like.
+         */
+        let owner_notes = owner_notes.trim();
+        if !owner_notes.is_empty() {
+            note.push_str("\n---\n\n# From the owner of this session\n\n");
+            note.push_str(owner_notes);
+            note.push('\n');
         }
         note
     }
@@ -341,6 +376,7 @@ impl HostedKernel {
         sandbox: &str,
         skills: &[SkillPackage],
         reaches: &[String],
+        owner_notes: &str,
     ) -> Result<(), AdapterError> {
         let root = self.skills_root.trim();
         if !skills.is_empty() && root.is_empty() {
@@ -364,7 +400,7 @@ impl HostedKernel {
         let mut bodies = Vec::new();
         let notes = self.agent_notes.trim();
         if !notes.is_empty() {
-            let body = self.agent_note(reaches).into_bytes();
+            let body = self.agent_note(reaches, owner_notes).into_bytes();
             entries.push(serde_json::json!({ "path": notes, "len": body.len() }));
             bodies.push(body);
         }

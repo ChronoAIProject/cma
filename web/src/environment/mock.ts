@@ -105,6 +105,7 @@ function materialise(id: string, draft: ProfileDraft, createdAt: string): Enviro
     packages,
     agent: { ...draft.agent, skills },
     nyxid: { services: [...draft.nyxid.services] },
+    agentNotes: '',
     mandatory: MANDATORY,
     createdAt,
     updatedAt: new Date().toISOString(),
