@@ -65,7 +65,31 @@ pub fn spawn(service: Arc<SessionService>) {
             "reconciliation started"
         );
         loop {
-            reconciler.reconcile().await;
+            /*
+             * Logged every pass, including one that changed nothing.
+             *
+             * The result used to be discarded here and only `reconcile` itself
+             * logged, and only when it had moved something. So a sweep that
+             * ran and found nothing to do was indistinguishable from one that
+             * never ran — which is exactly what it looked like while a session
+             * sat with a dead sandbox for nineteen minutes, and cost real time
+             * establishing that reconciliation was running at all.
+             *
+             * `debug` for the quiet case so an ordinary deployment is not
+             * filled with it, `info` the moment anything moved.
+             */
+            let moved = reconciler.reconcile().await;
+            if moved == Default::default() {
+                tracing::debug!("reconciliation pass: everything already matched the record");
+            } else {
+                tracing::info!(
+                    orphaned_runtimes = moved.orphaned_runtimes,
+                    readopted_sessions = moved.readopted_sessions,
+                    reprovisioned_sessions = moved.reprovisioned_sessions,
+                    rotated_sessions = moved.rotated_sessions,
+                    "reconciliation pass moved sessions towards their recorded state"
+                );
+            }
             // Sessions recovered by the sweep have no credential of their own
             // yet, and one recovered before its owner signed back in cannot be
             // given one at the time.

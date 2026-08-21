@@ -71,8 +71,10 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
     // A control plane that stopped between minting and releasing leaves one
     // behind, and nothing else records the pairing — the key's own name is
     // what says whose it was. Reclaiming needs the owner's token, which this
-    // process may not hold after a restart; the day-long expiry is what makes
-    // that acceptable rather than a leak.
+    // process may not hold after a restart, and there is no expiry behind it:
+    // until that owner signs in again the key stays valid. This sweep is the
+    // only thing that takes it back, so a pass it cannot make is a credential
+    // still open, not a tidy-up postponed.
     let reclaimed = auth.reclaim_orphaned_credentials(service).await;
     if reclaimed > 0 {
         tracing::info!(

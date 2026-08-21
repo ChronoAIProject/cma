@@ -61,8 +61,18 @@ pub struct Reclaimed {
 /// evidence that nothing is running, and treating it as such would tear down
 /// every live session the moment the provider had a bad minute.
 struct RuntimeCensus {
-    /// Runtime ids the provider reports as existing.
-    handles: HashSet<String>,
+    /// Runtime ids the provider reports as still **serving**.
+    ///
+    /// Serving, not merely existing, and the distinction is the whole reason
+    /// this field changed meaning. A sandbox whose container has exited still
+    /// exists and is still listed, so a set of everything present reads a
+    /// corpse as a live runtime — which is how a session came to report
+    /// `running` for nineteen minutes after the kernel had killed its
+    /// container.
+    ///
+    /// Reclaiming walks `owners` rather than this, so a stopped sandbox that
+    /// no session is entitled to is still found and deleted.
+    serving: HashSet<String>,
     /// Runtime id to the session it says it belongs to.
     owners: HashMap<String, Option<String>>,
     trusted: bool,
@@ -144,22 +154,27 @@ impl SessionService {
             let view = match adapter.list_runtimes().await {
                 Ok(runtimes) => {
                     let mut owners = HashMap::new();
-                    let mut handles = HashSet::new();
+                    let mut serving = HashSet::new();
                     for listing in runtimes {
                         // A runtime this control plane did not create is not
                         // its business. It still counts as alive — a session of
                         // ours pointing at it is not lost — but it is never
                         // reclaimed, because the only thing that knows whether
                         // it should exist is whoever made it.
+                        if listing.serving {
+                            serving.insert(listing.handle.0.clone());
+                        }
+                        // A runtime this control plane did not create is never
+                        // reclaimed, so it is left out of `owners` — but it is
+                        // still counted above as serving, because a session of
+                        // ours pointing at it is not lost.
                         if !self.may_judge(listing.created_by.as_deref()) {
-                            handles.insert(listing.handle.0);
                             continue;
                         }
-                        handles.insert(listing.handle.0.clone());
                         owners.insert(listing.handle.0, listing.session);
                     }
                     RuntimeCensus {
-                        handles,
+                        serving,
                         owners,
                         trusted: true,
                     }
@@ -168,7 +183,7 @@ impl SessionService {
                     // Not knowing is not the same as nothing being there.
                     tracing::warn!(kernel = %kernel, error = %e, "cannot enumerate runtimes");
                     RuntimeCensus {
-                        handles: HashSet::new(),
+                        serving: HashSet::new(),
                         owners: HashMap::new(),
                         trusted: false,
                     }
@@ -212,11 +227,14 @@ impl SessionService {
         // would replace every live session behind an adapter that merely cannot
         // enumerate.
         let alive: Option<bool> = match census.get(&record.session.kernel) {
+            // `serving`, not `handles`. A sandbox that exists but has stopped
+            // is not one a session can be settled onto, and reading presence
+            // as liveness is what let a session outlive its own runtime.
             Some(view) if view.trusted => Some(
                 record
                     .runtime_id
                     .as_deref()
-                    .is_some_and(|r| view.handles.contains(r)),
+                    .is_some_and(|r| view.serving.contains(r)),
             ),
             Some(_) => None,
             None => {
