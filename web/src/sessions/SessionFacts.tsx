@@ -162,9 +162,28 @@ const SKILL_REGISTRY = 'https://ornn.chrono-ai.fun/skills';
  * "what was this session given", and drawing them differently would suggest
  * they are different kinds of fact.
  */
-export function SkillList({ skills }: { readonly skills?: readonly SessionSkill[] }) {
+export function SkillList({
+  skills,
+  installing,
+}: {
+  readonly skills?: readonly SessionSkill[];
+  /**
+   * Whether this session is still being provisioned.
+   *
+   * Skills are written down by provisioning and by nothing else, so before it
+   * finishes there is genuinely nothing recorded — and saying so flatly reads
+   * as a permanent answer to somebody watching a session start. "Not recorded"
+   * and "not yet" are different facts, and the second one is the true one for
+   * the twenty seconds it applies.
+   */
+  readonly installing?: boolean;
+}) {
   if (skills === undefined) {
-    return <Unknown>Not recorded for this session</Unknown>;
+    return installing === true ? (
+      <Unknown>Being installed &mdash; this session is still starting</Unknown>
+    ) : (
+      <Unknown>Not recorded for this session</Unknown>
+    );
   }
   if (skills.length === 0) {
     return <Unknown>None — this session was given no skills</Unknown>;
