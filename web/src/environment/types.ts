@@ -35,6 +35,8 @@ export interface EnvironmentProfile {
   readonly name: string;
   readonly agent: AgentConfiguration;
   readonly nyxid: NyxIdAccess;
+  /** Standing instructions the owner wrote for their own sessions. */
+  readonly agentNotes: AgentNotes;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
   readonly mandatory: MandatoryEntries;
@@ -86,6 +88,17 @@ export interface AgentConfiguration {
 export interface NyxIdAccess {
   readonly services: readonly string[];
 }
+
+/**
+ * Standing instructions the owner wants their sessions to start with.
+ *
+ * Theirs alone. What the platform tells an agent about itself — that it is
+ * already authenticated, which services it may reach, which commands will
+ * refuse it — is composed by the control plane and appended to, never edited
+ * from here: a session talked out of knowing those things spends its first
+ * minutes rediscovering them badly.
+ */
+export type AgentNotes = string;
 
 /** A service the owner may allow, as the picker lists it. */
 export interface PlatformService {
@@ -141,6 +154,8 @@ export interface ProfileDraft {
   readonly name: string;
   readonly agent: AgentConfiguration;
   readonly nyxid: NyxIdAccess;
+  /** Standing instructions the owner wrote for their own sessions. */
+  readonly agentNotes: AgentNotes;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
 }
@@ -215,6 +230,7 @@ export function emptyDraft(): ProfileDraft {
     packages: [],
     agent: { ...DEFAULT_AGENT },
     nyxid: { services: [] },
+    agentNotes: '',
   };
 }
 
@@ -226,6 +242,7 @@ export function draftOf(profile: EnvironmentProfile): ProfileDraft {
     packages: [...profile.packages],
     agent: { ...profile.agent, skills: [...profile.agent.skills] },
     nyxid: { services: [...profile.nyxid.services] },
+    agentNotes: profile.agentNotes,
   };
 }
 
