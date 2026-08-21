@@ -272,6 +272,20 @@ export async function listSessions(config: ResolvedConfig): Promise<readonly Ses
  * Worth asking once and passing down rather than wherever a caller needs it:
  * the answer describes the deployment and does not change underneath anybody.
  */
+/**
+ * Read one session as the control plane currently describes it.
+ *
+ * Needed because a session's record is not complete when it is created. Some
+ * of what a client draws is settled during provisioning — which skills were
+ * actually installed, which runtime version it landed on — and a client
+ * holding the object it got back from `POST /sessions` is holding the answer
+ * from before any of that happened.
+ */
+export async function readSession(config: ResolvedConfig, id: string): Promise<Session> {
+  const body = await request(config, `/api/v1/sessions/${encodeURIComponent(id)}`);
+  return toSession(body);
+}
+
 export async function listKernels(config: ResolvedConfig): Promise<readonly KernelOffer[]> {
   const body = await request(config, '/api/v1/kernels');
   const items = (body as { kernels?: unknown })?.kernels;
