@@ -154,7 +154,10 @@ export function SessionDrawer({ session, onClose, ending }: SessionDrawerProps) 
          * whether the skill is there.
          */}
         <Section title="Skills" count={agent?.skills?.length}>
-          <SkillList skills={agent?.skills} />
+          <SkillList
+            skills={agent?.skills}
+            installing={session.lifecycle === 'provisioning' || session.lifecycle === 'rotating'}
+          />
         </Section>
 
         {/*
