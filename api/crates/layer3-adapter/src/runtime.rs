@@ -41,6 +41,21 @@ pub struct RuntimeListing {
     /// `None` means it predates this being recorded, which is a different
     /// thing from belonging to somebody else and is treated differently.
     pub created_by: Option<String>,
+    /// Whether the provider says this runtime is still serving.
+    ///
+    /// Listed and serving are not the same thing, and conflating them is how a
+    /// session survives its own sandbox: a sandbox whose container has exited
+    /// is still a sandbox, so it is still listed, and a reconciliation that
+    /// reads presence as liveness finds record and reality agreeing and does
+    /// nothing. Observed on production — a session reported `running` for
+    /// nineteen minutes after the kernel had OOM-killed its container.
+    ///
+    /// `false` is a positive statement that it has stopped, not an absence of
+    /// news. It is safe to act on because provisioning **waits** for a sandbox
+    /// to report itself running before recording it: anything a record points
+    /// at was serving once, so not serving now means it stopped rather than
+    /// that it has yet to start.
+    pub serving: bool,
 }
 
 /// What the runtime should already have when the agent starts.

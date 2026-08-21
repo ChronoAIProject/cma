@@ -480,6 +480,10 @@ impl HostedKernel {
             .map(|s| RuntimeListing {
                 session: s.metadata.get(SESSION_METADATA_KEY).cloned(),
                 created_by: s.metadata.get(CREATOR_METADATA_KEY).cloned(),
+                // Read rather than discarded. The provider reports this and
+                // this listing used to drop it, which is what let a dead
+                // sandbox count as a live one.
+                serving: s.is_running(),
                 handle: RuntimeHandle(s.id),
             })
             .collect())
