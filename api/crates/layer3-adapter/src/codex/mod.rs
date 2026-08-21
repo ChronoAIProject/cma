@@ -37,6 +37,7 @@ impl CodexAdapter {
                 spec.deployment.shape.clone(),
                 "codex",
                 spec.deployment.skills_root.clone(),
+                spec.deployment.agent_notes.clone(),
             ),
             spec,
         }

@@ -23,6 +23,7 @@ fn hosted(base: &str) -> HostedKernel {
         SandboxShape::default(),
         "test-kernel",
         ".codex/skills",
+        "AGENTS.md",
     )
 }
 
@@ -536,5 +537,58 @@ mod what_the_provider_said {
             AdapterError::Rejected("no".to_string()).context("the sign-in did not complete");
         assert!(!refused.is_runtime_loss(), "got {refused:?}");
         assert!(format!("{refused}").contains("the sign-in did not complete"));
+    }
+}
+
+/// What a session is told about itself before it starts.
+///
+/// Written because nothing told it, and an agent that does not know it is
+/// already authenticated goes looking for a way to log in — which the platform
+/// CLI helpfully suggests, and which cannot work, because an agent key is not
+/// a user. Observed on prod doing exactly that.
+mod the_note_a_session_starts_with {
+    use super::*;
+
+    #[test]
+    fn refuses_the_login_the_cli_would_otherwise_suggest() {
+        let note = hosted("http://x").agent_note(&["ornn".to_string()]);
+        assert!(
+            note.contains("Do not run `nyxid login`"),
+            "the instruction that stops the loop must be explicit: {note}"
+        );
+        assert!(
+            note.contains("already authenticated"),
+            "and it must say why there is nothing to log in as"
+        );
+    }
+
+    #[test]
+    fn names_every_service_the_session_may_reach() {
+        let note =
+            hosted("http://x").agent_note(&["ornn".to_string(), "api-github-pat".to_string()]);
+        assert!(note.contains("`ornn`"), "got {note}");
+        assert!(note.contains("`api-github-pat`"), "got {note}");
+    }
+
+    #[test]
+    fn warns_that_discovery_lists_more_than_the_session_can_use() {
+        // The trap this exists for: discovery answers with everything on the
+        // account, so an agent picks a plausible slug and collects a refusal
+        // it has no way to interpret.
+        let note = hosted("http://x").agent_note(&["ornn".to_string()]);
+        assert!(
+            note.contains("proxy discover"),
+            "the note must name the command that misleads: {note}"
+        );
+    }
+
+    #[test]
+    fn a_session_granted_nothing_is_told_so_rather_than_left_guessing() {
+        // Distinct from "reaches these": a session with no services will have
+        // every call refused, and saying so beats an empty list that reads
+        // like the note was not filled in.
+        let note = hosted("http://x").agent_note(&[]);
+        assert!(note.contains("granted no services"), "got {note}");
+        assert!(!note.contains("## What you can reach"), "got {note}");
     }
 }
