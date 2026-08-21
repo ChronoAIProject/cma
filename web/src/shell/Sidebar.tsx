@@ -61,7 +61,7 @@ export function Sidebar({
           every navigation is the kind of motion §14a exists to refuse.
         */}
         <button type="button" className="sidebar__brand" onClick={onCreate}>
-          <img className="sidebar__mark" src={markUrl} alt="" width={24} height={24} />
+          <img className="sidebar__mark" src={markUrl} alt="" width={32} height={32} />
           {collapsed ? null : <span className="sidebar__name">CMA</span>}
         </button>
         <button
