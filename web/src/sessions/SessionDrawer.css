@@ -323,6 +323,40 @@
   white-space: nowrap;
 }
 
+/*
+ * A skill's name and version, as one link. Underlined only on hover so a band
+ * of entries does not read as a paragraph of links, and never moving — §14a.
+ */
+.facts__entrylink {
+  display: inline-flex;
+  gap: 1px;
+  align-items: baseline;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.facts__entrylink:hover .facts__entryname {
+  text-decoration: underline;
+}
+
+.facts__entrylink:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Quieter than the name and tabular, so a column of versions lines up and the
+ * eye reads the names rather than the numbers.
+ */
+.facts__entryversion {
+  flex: none;
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
 .facts__entryid {
   overflow: hidden;
   color: var(--ink-2);

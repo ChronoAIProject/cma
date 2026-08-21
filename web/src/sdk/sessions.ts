@@ -152,13 +152,20 @@ function agent(raw: unknown): SessionAgent | undefined {
 
 /** One granted skill, or nothing where the entry carried no identifier. */
 function skill(raw: unknown): SessionSkill[] {
-  const entry = raw as { id?: unknown; name?: unknown; description?: unknown } | null;
+  const entry = raw as {
+    id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    version?: unknown;
+  } | null;
   if (typeof entry?.id !== 'string' || entry.id === '') {
     return [];
   }
   return [
     {
       id: entry.id,
+      version:
+        typeof entry.version === 'string' && entry.version !== '' ? entry.version : undefined,
       name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : undefined,
       description:
         typeof entry.description === 'string' && entry.description !== ''

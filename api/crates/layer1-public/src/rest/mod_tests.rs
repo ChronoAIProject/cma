@@ -370,7 +370,10 @@ fn a_view_carries_the_agent_configuration_a_client_draws() {
         rotated_at: None,
         capabilities: Default::default(),
         granted_services: None,
-        granted_skills: Some(vec![layer2_core::SkillId::new("skl_nyxid")]),
+        granted_skills: Some(vec![layer2_core::GrantedSkill {
+            id: layer2_core::SkillId::new("skl_nyxid"),
+            version: Some("0.5".into()),
+        }]),
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let json = serde_json::to_value(SessionView::from(s)).expect("serializes");
@@ -382,6 +385,10 @@ fn a_view_carries_the_agent_configuration_a_client_draws() {
     assert_eq!(json["agent"]["permission"], "unrestricted");
     assert_eq!(json["agent"]["credential"], "own");
     assert_eq!(json["agent"]["skills"][0]["id"], "skl_nyxid");
+    // The version that arrived, recorded when the pack was fetched. Asking the
+    // registry now would answer with whatever is current, which is a different
+    // fact and wrong for any session that has been running a while.
+    assert_eq!(json["agent"]["skills"][0]["version"], "0.5");
     // Unnamed until `skilled` has asked the catalogue, and absent rather than
     // null so a client tells "no name" from "the name is empty".
     assert!(json["agent"]["skills"][0].get("name").is_none());

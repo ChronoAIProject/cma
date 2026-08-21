@@ -538,9 +538,12 @@ impl SessionService {
     /// reports, so a record describing skills the sandbox does not have is an
     /// interface telling somebody their agent can do something it cannot.
     async fn remember_skills(&self, id: &SessionId, skills: &[crate::SkillPack]) {
-        let installed: Vec<crate::environment::SkillId> = skills
+        let installed: Vec<crate::environment::GrantedSkill> = skills
             .iter()
-            .map(|pack| crate::environment::SkillId::new(pack.name.clone()))
+            .map(|pack| crate::environment::GrantedSkill {
+                id: crate::environment::SkillId::new(pack.name.clone()),
+                version: pack.version.clone(),
+            })
             .collect();
         let Ok(Some(mut record)) = self.store.get(id).await else {
             tracing::error!(session_id = %id, "cannot record the skills: session is gone");

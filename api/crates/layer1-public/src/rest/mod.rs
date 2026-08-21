@@ -299,6 +299,13 @@ pub struct ReachView {
 pub struct SkillView {
     /// The identifier the profile stored. Always present.
     id: String,
+    /// The version that was actually installed, where the registry said one.
+    ///
+    /// Recorded when the pack was fetched rather than looked up now: asking
+    /// the registry today answers with what is current, which is a different
+    /// fact and is wrong for every session that has been running a while.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
     /// What the owner recognises it by, when the catalogue offers a name.
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
@@ -329,8 +336,9 @@ impl From<Session> for SessionView {
                 skills: s.granted_skills.clone().map(|skills| {
                     skills
                         .into_iter()
-                        .map(|id| SkillView {
-                            id: id.0,
+                        .map(|granted| SkillView {
+                            id: granted.id.0,
+                            version: granted.version,
                             name: None,
                             description: None,
                         })
@@ -446,13 +454,23 @@ async fn skilled(
         return;
     }
 
-    let named: std::collections::HashMap<String, layer2_core::CatalogSkill> = environments
+    /*
+     * Keyed by identifier AND by name, because a profile stores neither
+     * consistently: the registry's own id is a GUID and what a profile holds
+     * is the slug, so a map keyed only on `id` never matched a single session
+     * and every skill came back unnamed. Both keys point at the same entry, so
+     * whichever a profile happens to hold resolves.
+     */
+    let mut named: std::collections::HashMap<String, layer2_core::CatalogSkill> =
+        std::collections::HashMap::new();
+    for skill in environments
         .available_skills(caller, credential)
         .await
         .unwrap_or_default()
-        .into_iter()
-        .map(|skill| (skill.id.0.clone(), skill))
-        .collect();
+    {
+        named.insert(skill.name.clone(), skill.clone());
+        named.insert(skill.id.0.clone(), skill);
+    }
 
     for view in views.iter_mut() {
         let Some(skills) = view.agent.skills.as_mut() else {
