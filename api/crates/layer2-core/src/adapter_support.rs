@@ -40,6 +40,12 @@ pub(crate) struct FakeAdapter {
     /// When set, enumeration fails. Models a provider that cannot be asked,
     /// which must never be read as a provider running nothing.
     pub(crate) refuse_list: bool,
+    /// Handles the provider still lists but reports as no longer serving.
+    ///
+    /// The case that matters: a sandbox whose container exited is still a
+    /// sandbox. A test that merely removes the handle is describing a
+    /// different failure — one the census already handled.
+    pub(crate) stopped: Mutex<std::collections::HashSet<String>>,
     /// The identity this provider reports on everything it is running.
     ///
     /// Set to model a provider shared with another control plane, whose
@@ -107,6 +113,7 @@ impl Default for FakeAdapter {
             senders: Mutex::default(),
             running: Mutex::default(),
             refuse_list: false,
+            stopped: Mutex::default(),
             created_by: None,
             last_spec: Mutex::default(),
             issued: std::sync::atomic::AtomicUsize::new(0),
@@ -135,6 +142,17 @@ impl FakeAdapter {
     /// is replaced underneath a sandbox.
     pub(crate) async fn lose(&self, handle: &str) {
         self.running.lock().await.remove(handle);
+    }
+
+    /// The sandbox stops serving but is still listed.
+    ///
+    /// Distinct from `lose`, and the distinction is the whole point: a
+    /// container that exits leaves its sandbox behind, so the provider keeps
+    /// reporting it. A test that removes the handle describes a sandbox that
+    /// vanished, which reconciliation already handled — this describes the one
+    /// that killed a session on production while looking perfectly healthy.
+    pub(crate) async fn stop_serving(&self, handle: &str) {
+        self.stopped.lock().await.insert(handle.to_string());
     }
 
     pub(crate) async fn running_count(&self) -> usize {
@@ -303,6 +321,8 @@ impl KernelAdapter for FakeAdapter {
         if self.refuse_list {
             return Err(AdapterError::Unsupported("cannot enumerate".into()));
         }
+        // Both locks taken before the map, because the closure cannot await.
+        let stopped = self.stopped.lock().await.clone();
         Ok(self
             .running
             .lock()
@@ -312,6 +332,10 @@ impl KernelAdapter for FakeAdapter {
                 handle: RuntimeHandle(h.clone()),
                 session: s.clone(),
                 created_by: self.created_by.clone(),
+                // Serving unless this fake was told otherwise, so every
+                // existing test keeps describing a healthy sandbox and only a
+                // test that asks for a dead one gets one.
+                serving: !stopped.contains(h),
             })
             .collect())
     }
