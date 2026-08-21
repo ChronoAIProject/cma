@@ -146,6 +146,16 @@ export function ReachList({ services }: { readonly services?: readonly SessionSe
 }
 
 /**
+ * Where a skill's own page lives.
+ *
+ * A constant rather than a configured value, deliberately: this is the
+ * registry every deployment of this product reads from, the same way the
+ * identity platform is. A deployment that pointed somewhere else would be
+ * showing skills it did not install.
+ */
+const SKILL_REGISTRY = 'https://ornn.chrono-ai.fun/skills';
+
+/**
  * The skills installed into the session's sandbox.
  *
  * The same three answers as reach, and deliberately the same shape: both are
@@ -164,7 +174,35 @@ export function SkillList({ skills }: { readonly skills?: readonly SessionSkill[
       {skills.map((skill) => (
         <li className="facts__entry" key={skill.id}>
           <span className="facts__entryhead">
-            <span className="facts__entryname">{skill.name ?? skill.id}</span>
+            {/*
+             * Linked to the registry it came from, opened away from the
+             * session. A session is a live thing somebody is working in, and
+             * navigating it away to read a skill's page would cost them the
+             * surface they were using — so `_blank`, with the `rel` that
+             * always accompanies it: `noopener` denies the opened page a
+             * handle back to this one, which it would otherwise have.
+             *
+             * The identifier is the slug the profile stored, and the registry
+             * addresses skills by that, so no lookup is needed to build this.
+             */}
+            <a
+              className="facts__entrylink"
+              href={`${SKILL_REGISTRY}/${encodeURIComponent(skill.id)}`}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              <span className="facts__entryname">{skill.name ?? skill.id}</span>
+              {/*
+               * The version rides with the name rather than sitting on its
+               * own line: "this session has nyxid" is not something anybody
+               * can act on without knowing which nyxid, so the two are one
+               * label. Absent where the registry reported none, rather than
+               * shown as a guess or an empty `@`.
+               */}
+              {skill.version === undefined ? null : (
+                <span className="facts__entryversion">@{skill.version}</span>
+              )}
+            </a>
           </span>
           {/*
            * The summary where the catalogue gave one, and the identifier where

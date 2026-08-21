@@ -319,6 +319,9 @@ struct PackResponse {
 struct PackBody {
     #[serde(default)]
     name: String,
+    /// Which version this fetch returned, where the registry reports one.
+    #[serde(default)]
+    version: Option<String>,
     /// Path within the skill's directory, to its contents.
     #[serde(default)]
     files: std::collections::BTreeMap<String, String>,
@@ -374,6 +377,13 @@ impl layer2_core::SkillSource for PlatformSkillCatalog {
             };
             packs.push(layer2_core::SkillPack {
                 name,
+                // Kept from the fetch, so a session reports the version it was
+                // actually given rather than whatever is current when somebody
+                // opens its details months later.
+                version: body
+                    .version
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty()),
                 files: body
                     .files
                     .into_iter()
