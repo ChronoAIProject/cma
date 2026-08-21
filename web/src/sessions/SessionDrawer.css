@@ -1,17 +1,25 @@
 /*
- * The details column — `docs/Web_Style.md` §12.
+ * The details column — `docs/Web_Style.md` §17.
  *
  * It fills the column the frame gives it: §9 moved the width decision into
  * the solver, which is what makes the column draggable, so a width declared
  * here would be one the solver cannot honour.
  *
  * Its body scrolls inside itself. The page does not scroll, and a column that
- * grew with its contents would push the foot's destructive keys off the
- * window.
+ * grew with its contents would push its lower bands off the window.
+ *
+ * The panel spends colour in exactly one place — the state band at its head,
+ * in the session's own state tone. That is a deliberate limit rather than an
+ * omission: this interface's colours are already spoken for by §12.1's state
+ * vocabulary, and tinting five bands for decoration would leave no way to say
+ * that the one row which genuinely matters — an unrestricted agent — matters.
+ * Sections are told apart by rule, rank and rhythm instead, which is what the
+ * flat list of eighteen rows this replaces was missing.
  */
 
 .drawer {
   display: flex;
+  position: relative;
   flex: 1;
   flex-direction: column;
   min-height: 0;
@@ -20,29 +28,12 @@
   background: var(--dsw-alias-bg-base);
 }
 
-.drawer__head {
-  display: flex;
-  flex: none;
-  gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 12px 12px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-}
-
-.drawer__title {
-  margin: 0;
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .drawer__close {
   display: inline-flex;
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
   flex: none;
   align-items: center;
   justify-content: center;
@@ -68,62 +59,283 @@
 .drawer__body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 12px 16px;
   overflow-y: auto;
 }
 
-.drawer__list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  margin: 0;
-}
-
-.drawer__row {
+/*
+ * The state band. Its ground is the state's own wash and its left edge is the
+ * state's own colour, so the first thing read is what the session is doing —
+ * and it is the same colour the rail and the header already use for it.
+ *
+ * Right padding clears the floating close key, which sits over this band.
+ */
+.drawer__band {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  padding: var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) - 3px);
+  border-bottom: 1px solid var(--rule-2);
+  border-left: 3px solid var(--ended);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.drawer__band[data-tone='live'] {
+  border-left-color: var(--live);
+}
+
+.drawer__band[data-tone='wait'] {
+  border-left-color: var(--wait);
+}
+
+.drawer__band[data-tone='fail'] {
+  border-left-color: var(--fail);
+}
+
+.drawer__state {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0;
+  padding-right: 32px;
+}
+
+.drawer__dot {
+  flex: none;
 }
 
 /*
- * Labels in sentence case at the reading size, not uppercase mono. A column
- * of shouted abbreviations is harder to scan than the values under it, which
- * is the wrong way round for a panel that exists to be read.
+ * The state word at the panel's largest size. It is the answer somebody opened
+ * the drawer for; a label is not.
  */
-.drawer__row dt {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
+.drawer__statename {
+  color: var(--ink);
+  font-size: var(--text-title);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  text-transform: capitalize;
 }
 
-.drawer__row dd {
+.drawer__started {
   margin: 0;
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  line-height: 22px;
+  color: var(--ink-2);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
 }
 
 .drawer__creator {
   display: flex;
   gap: var(--space-2);
   align-items: center;
+  margin: var(--space-1) 0 0;
+  color: var(--ink-2);
+  font-size: var(--text-note);
+  line-height: var(--leading-ui);
 }
 
-.drawer__face {
+.facts__face {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   overflow: hidden;
   color: var(--ink-2);
-  font-size: var(--text-meta);
+  font-size: var(--text-label);
   font-weight: 600;
   background: var(--inset);
   border-radius: 50%;
   object-fit: cover;
+}
+
+/*
+ * A band of facts. One hairline between bands and none above the first, so a
+ * boundary draws one rule (§5) rather than doubling against the state band's.
+ */
+.facts__section {
+  padding: var(--space-4);
+  border-top: 1px solid var(--rule-2);
+}
+
+.facts__section:first-of-type {
+  border-top: none;
+}
+
+/*
+ * The band title: small, tracked and quiet. It ranks the band without
+ * competing with the answers under it, which is the inversion the previous
+ * revision had backwards — labels there sat two sizes from their values and
+ * read as the content.
+ */
+.facts__title {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0 0 var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--text-label);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+/* The count beside a title, so a list's size is legible without counting. */
+.facts__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  color: var(--ink-2);
+  font-size: var(--text-label);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  background: var(--inset);
+  border-radius: var(--radius-pill);
+}
+
+/*
+ * Facts as a two-column grid rather than stacked pairs. A label beside its
+ * value halves the panel's height and gives every answer the same left edge,
+ * which is what makes a column of them scannable.
+ */
+.facts__grid {
+  display: grid;
+  grid-template-columns: minmax(72px, 34%) 1fr;
+  gap: var(--space-3) var(--space-3);
+  margin: 0;
+}
+
+.facts__fact {
+  display: contents;
+}
+
+.facts__label {
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
+}
+
+.facts__value {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+}
+
+.facts__answer {
+  color: var(--ink);
+  font-size: var(--text-ui);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The one colour spent below the band, and only where the value carries a fact
+ * of its own — an agent that asks for nothing and confines nothing.
+ */
+.facts__answer[data-tone='fail'] {
+  color: var(--fail);
+  font-weight: 600;
+}
+
+.facts__answer[data-tone='wait'] {
+  color: var(--wait);
+  font-weight: 600;
+}
+
+.facts__answer[data-tone='live'] {
+  color: var(--live);
+  font-weight: 600;
+}
+
+/*
+ * The sentence under an answer, for values that name a setting rather than
+ * describe one. "Guarded" is not something anybody can look up from here.
+ *
+ * On `--ink-2` rather than `--ink-3`, along with everything else in this
+ * panel. `--ink-3` measures 3.71:1 on the light ground, which is under AA for
+ * every size the drawer uses, and there is nothing here a reader is meant to
+ * skip. The rank it would have carried is carried by size, weight, tracking
+ * and family instead — which is what a typographic hierarchy is, and it works
+ * in both themes rather than only the one where the token happens to clear.
+ */
+.facts__note {
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
+}
+
+.facts__unknown {
+  color: var(--ink-2);
+  font-size: var(--text-ui);
+  line-height: var(--leading-ui);
+}
+
+/* A band's entries — skills, services — as a list of two-line rows. */
+.facts__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.facts__entry {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.facts__entryhead {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.facts__entryname {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--text-ui);
+  line-height: var(--leading-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.facts__entryid {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * A skill's summary, held to two lines. The registry writes these and does not
+ * promise a length, and a four-line paragraph in a 360px column would push the
+ * rest of the panel out of sight.
+ */
+.facts__entrynote {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.drawer__mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
 }
 
 /*
@@ -132,9 +344,9 @@
  */
 .drawer__id {
   display: flex;
-  gap: var(--space-2);
-  align-items: baseline;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: stretch;
   width: 100%;
   padding: var(--space-2) var(--space-3);
   text-align: left;
@@ -142,6 +354,10 @@
   background: var(--inset);
   border: 1px solid var(--rule-2);
   border-radius: var(--radius);
+}
+
+.drawer__id:hover {
+  background: var(--tint-hover);
 }
 
 .drawer__id:focus-visible {
@@ -156,48 +372,28 @@
   word-break: break-all;
 }
 
+/*
+ * Under the value rather than beside it. A 36-character identifier at 12px
+ * mono is 259px wide, which fits the control's 304px and does not fit what is
+ * left after a hint sits on the same line — so beside it the last character
+ * wrapped alone onto a second row.
+ */
 .drawer__idhint {
-  flex: none;
-  color: var(--ink-3);
+  align-self: flex-end;
+  color: var(--ink-2);
   font-size: var(--text-meta);
 }
 
-.drawer__reach {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.drawer__service {
-  display: flex;
-  gap: var(--space-2);
-  align-items: baseline;
-  min-width: 0;
-}
-
-.drawer__servicename {
-  color: var(--ink);
-}
-
-.drawer__serviceid {
-  overflow: hidden;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drawer__unknown {
-  color: var(--ink-3);
-}
-
-.drawer__state,
+/*
+ * Why the session cannot be typed into, and how it ended. Both sit below every
+ * band rather than inside one: neither is a fact about the session's
+ * configuration, and putting them in a band would say they were.
+ */
+.drawer__reason,
 .drawer__ending {
-  margin: var(--space-4) 0 0;
+  margin: 0;
+  padding: var(--space-4);
+  border-top: 1px solid var(--rule-2);
   color: var(--ink-2);
   font-size: var(--text-note);
   line-height: var(--leading-ui);
@@ -206,28 +402,3 @@
 .drawer__ending {
   color: var(--fail);
 }
-
-/*
- * The foot — End session and Delete, away from everything reversible. Its own
- * band, ruled off from the body so the two keys read as a different kind of
- * thing from the facts above them.
- */
-.drawer__foot {
-  display: flex;
-  flex: none;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 12px 16px;
-  border-top: 1px solid var(--dsw-alias-border-l2);
-}
-
-.drawer__question {
-  flex: 1 1 auto;
-  white-space: normal;
-}
-
-/*
- * §16: between 60 and 75rem the drawer becomes an overlay rather than
- * narrowing the surface. It floats, so it takes the plate depth.
- */
