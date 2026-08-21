@@ -157,6 +157,46 @@ pub struct AgentOptions {
 
 #[cfg(test)]
 mod tests {
+    /// The wire names a client switches on, pinned.
+    ///
+    /// The frontend draws a different word for each of these, so a rename here
+    /// silently turns into a blank field there. `XHigh` is the one worth the
+    /// test: `as_str` spells it `xhigh` and serde spells it `x_high`, and only
+    /// the serde spelling ever reaches a client.
+    #[test]
+    fn option_wire_names_are_what_clients_read() {
+        use super::*;
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Guarded).unwrap(),
+            "\"guarded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Autonomous).unwrap(),
+            "\"autonomous\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Unrestricted).unwrap(),
+            "\"unrestricted\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialMode::Delegated).unwrap(),
+            "\"delegated\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialMode::Own).unwrap(),
+            "\"own\""
+        );
+        for (value, wire) in [
+            (ReasoningEffort::Minimal, "\"minimal\""),
+            (ReasoningEffort::Low, "\"low\""),
+            (ReasoningEffort::Medium, "\"medium\""),
+            (ReasoningEffort::High, "\"high\""),
+            (ReasoningEffort::XHigh, "\"x_high\""),
+        ] {
+            assert_eq!(serde_json::to_string(&value).unwrap(), wire, "{value:?}");
+        }
+    }
+
     use super::*;
 
     #[test]

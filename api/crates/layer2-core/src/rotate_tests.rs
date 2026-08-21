@@ -921,3 +921,125 @@ async fn a_session_whose_skills_cannot_be_refetched_is_still_carried() {
         "a skill that could not be refetched must not end the session"
     );
 }
+
+/// A source that hands back whatever was asked for, the way the registry
+/// answers a caller whose credential can actually see the skill.
+struct WorkingSkills;
+
+#[async_trait::async_trait]
+impl crate::store::SkillSource for WorkingSkills {
+    async fn packs_for(
+        &self,
+        _caller_credential: Option<&str>,
+        skills: &[crate::environment::SkillId],
+    ) -> Result<Vec<crate::store::SkillPack>, String> {
+        Ok(skills
+            .iter()
+            .map(|id| crate::store::SkillPack {
+                name: id.0.clone(),
+                files: vec![("SKILL.md".to_string(), b"# a skill".to_vec())],
+            })
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn the_record_says_what_a_session_has_and_not_what_it_asked_for() {
+    /*
+     * The other half of the test above, and the reason it is not enough that
+     * the session survives.
+     *
+     * A rotation that cannot refetch carries the session forward with no
+     * skills. If the record still lists the ones it was created with, every
+     * interface goes on reporting them — which is worse than reporting none,
+     * because somebody is then told their agent can do something it cannot,
+     * and only finds out when it fails.
+     *
+     * #442 is about not losing them in the first place. Until that lands the
+     * record must at least agree with the disk.
+     */
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service_on_version_with_skills(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:1",
+        Arc::new(WorkingSkills),
+    );
+    let session = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &session.id).await;
+
+    let created = store
+        .get(&session.id)
+        .await
+        .expect("readable")
+        .expect("recorded");
+    assert_eq!(
+        created.session.granted_skills.as_deref(),
+        Some(&[crate::environment::SkillId::new("a-mandated-skill")][..]),
+        "a session that got its skills should say so"
+    );
+
+    let newer = service_on_version_with_skills(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:2",
+        Arc::new(RefusingSkills),
+    );
+    newer.reconcile().await;
+    await_usable(&newer, &alice, &session.id).await;
+
+    let rotated = store
+        .get(&session.id)
+        .await
+        .expect("readable")
+        .expect("recorded");
+    assert_eq!(
+        rotated.session.granted_skills.as_deref(),
+        Some(&[][..]),
+        "a rotation that lost the skills must not leave the record claiming them"
+    );
+}
+
+#[tokio::test]
+async fn a_rotation_that_keeps_its_skills_keeps_them_in_the_record() {
+    /*
+     * The mutation the test above would not catch: clearing the record on
+     * every rotation. Then it agrees with the disk by always saying "nothing",
+     * which is a different lie.
+     */
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service_on_version_with_skills(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:1",
+        Arc::new(WorkingSkills),
+    );
+    let session = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &session.id).await;
+
+    let newer = service_on_version_with_skills(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:2",
+        Arc::new(WorkingSkills),
+    );
+    newer.reconcile().await;
+    await_usable(&newer, &alice, &session.id).await;
+
+    let rotated = store
+        .get(&session.id)
+        .await
+        .expect("readable")
+        .expect("recorded");
+    assert_eq!(
+        rotated.session.granted_skills.as_deref(),
+        Some(&[crate::environment::SkillId::new("a-mandated-skill")][..]),
+        "a rotation that refetched its skills still has them"
+    );
+}

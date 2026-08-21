@@ -425,6 +425,21 @@ impl SessionService {
             rotated_at: None,
             capabilities,
             granted_services: Some(granted_services),
+            /*
+             * Not known yet, and deliberately not guessed.
+             *
+             * `agent.skills` here is the configuration's own list, before the
+             * baseline's mandated entries are folded in and before the
+             * registry has been asked — so writing it would record a set that
+             * is neither what was requested nor what arrives. Provisioning is
+             * the only place that knows which packs were actually fetched, and
+             * it is the only writer of this field.
+             *
+             * `None` until then says "not recorded", which is true for the
+             * seconds a session spends provisioning and stays true for one
+             * that never finished.
+             */
+            granted_skills: None,
             created_at: now_rfc3339(),
         };
 

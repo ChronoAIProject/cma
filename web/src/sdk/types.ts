@@ -154,6 +154,64 @@ export interface Session {
    * as a new record rather than as an edit to this one.
    */
   readonly capabilities: SessionCapabilities;
+  /**
+   * How this session's agent was configured, as the control plane reported it.
+   *
+   * Absent from a control plane that does not project it. Every field inside is
+   * separately optional for the same reason, so a build that learns one of them
+   * later does not have to be matched here first.
+   */
+  readonly agent?: SessionAgent;
+}
+
+/** How much the agent may do before it asks. */
+export type PermissionMode = 'guarded' | 'autonomous' | 'unrestricted';
+
+/** How hard the agent thinks. The wire spells the top step `x_high`. */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'x_high';
+
+/**
+ * Whose account the model calls are spent against.
+ *
+ * `delegated` is the platform's, on the owner's behalf; `own` is the owner's
+ * own account with the model vendor. Never a credential — this says which kind
+ * pays, which is a fact somebody needs, and not the value, which is not.
+ */
+export type CredentialMode = 'delegated' | 'own';
+
+/**
+ * What a session's agent was configured with, settled when it was created.
+ *
+ * The session's answer and never its profile's, for the same reason `reach` is:
+ * a profile can be edited after a session started from it, and the session
+ * keeps what it was provisioned with.
+ */
+export interface SessionAgent {
+  /** The model the agent selects, where the session names one. */
+  readonly model?: string;
+  readonly permission?: PermissionMode;
+  readonly reasoningEffort?: ReasoningEffort;
+  readonly credential?: CredentialMode;
+  /**
+   * The skills this session was given.
+   *
+   * `undefined` and `[]` are different facts, as with `reach`: undefined means
+   * nothing was recorded — a session created before the grant was kept — and
+   * empty means this session was given no skills at all.
+   */
+  readonly skills?: readonly SessionSkill[];
+}
+
+/**
+ * One skill a session was given.
+ *
+ * The same shape as `SessionService` and for the same reason: the identifier
+ * is always true, and a catalogue that could not be asked costs the name.
+ */
+export interface SessionSkill {
+  readonly id: string;
+  readonly name?: string;
+  readonly description?: string;
 }
 
 /** How the person who started a session is drawn. */
