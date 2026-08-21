@@ -29,6 +29,7 @@ function profile(id: string, name: string, agent = DEFAULT_AGENT): EnvironmentPr
     name,
     agent,
     nyxid: { services: [] },
+    agentNotes: '',
     variables: [],
     packages: [],
     mandatory: { packages: [], skills: [] },

@@ -74,6 +74,7 @@ export function ProfileEditor({
   const modelId = useId();
   const effortId = useId();
   const permissionId = useId();
+  const notesId = useId();
   const credentialId = useId();
   /*
    * Which values are currently shown. A variable's value is where a user puts
@@ -253,6 +254,28 @@ export function ProfileEditor({
             onChange({ ...draft, nyxid: { services: [...selected] } });
           }}
           error={servicesError}
+        />
+      </div>
+
+      <div className="field">
+        <label className="field__label" htmlFor={notesId}>
+          Standing instructions
+        </label>
+        <p className="field__hint">
+          Written into every session started from this profile, before the agent does anything.
+          Yours alone — the platform adds its own section above this one, telling the session it is
+          already signed in and which services it may reach. That part is not editable, because a
+          session talked out of knowing it spends its first minutes finding out the hard way.
+        </p>
+        <textarea
+          id={notesId}
+          className="field__input editor__notes"
+          rows={6}
+          value={draft.agentNotes}
+          placeholder="e.g. Always run the tests before saying you are done."
+          onChange={(event) => {
+            onChange({ ...draft, agentNotes: event.target.value });
+          }}
         />
       </div>
 

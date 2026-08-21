@@ -59,6 +59,13 @@ pub struct RuntimeEnvironment {
     pub packages: Vec<String>,
     /// Skill identifiers the runtime should load.
     pub skills: Vec<String>,
+    /// Standing instructions the session's owner wrote for their own sessions.
+    ///
+    /// Appended to what this layer tells the agent about itself, never merged
+    /// into it: an owner adds to what a session is told and cannot edit it,
+    /// because a session talked out of knowing it is already authenticated
+    /// spends its first minutes rediscovering that badly.
+    pub agent_notes: String,
 }
 
 impl RuntimeEnvironment {

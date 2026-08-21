@@ -10,6 +10,7 @@ const PROFILE: EnvironmentProfile = {
   packages: [{ name: 'nyxid' }, { name: 'ripgrep', version: '14' }],
   agent: { ...DEFAULT_AGENT, skills: ['nyxid', 'chosen'] },
   nyxid: { services: [] },
+  agentNotes: '',
   mandatory: { packages: ['nyxid'], skills: ['nyxid'] },
   createdAt: '2026-08-12T00:00:00Z',
   updatedAt: '2026-08-13T00:00:00Z',

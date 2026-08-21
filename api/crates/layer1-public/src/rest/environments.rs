@@ -265,6 +265,7 @@ mod tests {
                 version: Some("14".into()),
             }],
             services: Vec::new(),
+            agent_notes: String::new(),
             agent: layer2_core::AgentConfiguration {
                 skills: vec![SkillId::new("mandatory-one"), SkillId::new("chosen")],
                 ..Default::default()
