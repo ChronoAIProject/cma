@@ -578,6 +578,14 @@ the answers under it.
 something they did not choose and cannot look up from the panel; "Asks before anything outside its
 workspace" tells them what it does.
 
+**A skill is a link to its own page in the registry, opened in a new tab**, labelled `name@version`
+where a version was recorded. `target="_blank"` always carries `rel="noreferrer noopener"`: a session
+is a live thing somebody is working in, so navigating it away costs them the surface they were using,
+and `noopener` denies the opened page the handle back to this one it would otherwise hold. The version
+sits with the name as one label rather than on its own line — "this session has nyxid" is not
+something anybody can act on without knowing which nyxid — and is omitted entirely rather than shown
+as an empty `@` where the registry reported none.
+
 **Absent, empty and unreported are three answers and are drawn as three sentences.** A control plane
 that did not report a field, a grant recorded as empty, and a grant never recorded at all are
 different facts, and one blank row cannot be all three.
@@ -836,3 +844,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-21 | Set the wordmark in chrome the way the lockup sets it, in §21. The sidebar's CMA was weight 600 at **+0.04em** — positive tracking, which holds letters apart and is a treatment for small caps and label runs, not for a three-letter product name at reading size. It is now 700 at `--track-display` (-0.035em), against the shipped lockup's own -1.6 on a 54px face (-0.030em), so the name in chrome and the name on the lockup read as one wordmark rather than as two that happen to spell the same thing. |
 | 2026-08-21 | Gave the chrome mark a size in §21, which had none. It was 24px in a 60px logo row with a 44px content box, so it sat in more than its own height of empty space and read as an icon that happened to be beside the name rather than as the product's mark; it is now 32px. That one size serves both rail states — it still clears the 36px square the collapsed rail gives the brand button — so no second rule exists for the closed case, since a second rule is how the two drift. |
 | 2026-08-21 | Added a one-line caption under a band title in §17, and put it on Reaches only. The band lists slugs like `api-github-pat`; its count answers "how many" and its entries answer "which", and nothing answered "of what" — a reader had no way to tell that those were services on the identity platform rather than something this product invented. Set at `--text-meta` below the title and above the content so it reads as a caption on the band rather than as its first entry, and stated the rule that most bands do not get one, because a caption on every band is a caption nobody reads. Also corrected §17's claim that band titles are `--ink-3`: nothing in the drawer sits on that token, for the contrast reason recorded on 2026-08-21 and tracked in #441. |
+| 2026-08-21 | Made each skill in §17's Skills band a link to its own page in the registry, opened in a new tab and labelled `name@version`. A session is a live thing somebody is working in, so the link opens away from it rather than navigating it off the surface they were using, and `target="_blank"` carries `rel="noreferrer noopener"` so the opened page holds no handle back. The version sits with the name as one label — "this session has nyxid" is not actionable without knowing which nyxid — and is omitted rather than drawn as an empty `@` when the registry reported none. Underlined on hover only, so a band of entries does not read as a paragraph of links, and the version is tabular and quieter than the name so a column of them lines up. |

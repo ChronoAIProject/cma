@@ -212,6 +212,14 @@ export interface SessionSkill {
   readonly id: string;
   readonly name?: string;
   readonly description?: string;
+  /**
+   * The version that was actually installed, where the registry reported one.
+   *
+   * Recorded when the pack was fetched, not looked up now: the registry
+   * answers with what is current, which is a different fact and is wrong for
+   * any session that has been running a while.
+   */
+  readonly version?: string;
 }
 
 /** How the person who started a session is drawn. */
