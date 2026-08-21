@@ -294,6 +294,8 @@ impl SessionService {
         // Recorded before anything else is attempted. From here a runtime
         // exists, and a record that does not name it is one nothing can reclaim.
         self.remember_runtime(&id, &handle).await;
+        // And what it actually has, which is not always what it asked for.
+        self.remember_skills(&id, &skills).await;
         self.note_progress(&id, ProvisioningStage::RuntimeCreated)
             .await;
         // The skills are on the pod's disk by now: the adapter puts them there
@@ -524,6 +526,45 @@ impl SessionService {
     }
 
     /// Record the runtime a session was given, as soon as it exists.
+    /// Write down the skills this runtime was actually given.
+    ///
+    /// Not the set the session asked for. A rotation has no caller to fetch as
+    /// and falls back to this service's own identity, which sees only public
+    /// skills — so a session can legitimately come back with fewer than it
+    /// started with, and #442 is about stopping that. Until it does, the record
+    /// must say what is on the disk rather than what was once requested.
+    ///
+    /// The difference is not cosmetic: the record is what every interface
+    /// reports, so a record describing skills the sandbox does not have is an
+    /// interface telling somebody their agent can do something it cannot.
+    async fn remember_skills(&self, id: &SessionId, skills: &[crate::SkillPack]) {
+        let installed: Vec<crate::environment::SkillId> = skills
+            .iter()
+            .map(|pack| crate::environment::SkillId::new(pack.name.clone()))
+            .collect();
+        let Ok(Some(mut record)) = self.store.get(id).await else {
+            tracing::error!(session_id = %id, "cannot record the skills: session is gone");
+            return;
+        };
+        if record.session.granted_skills.as_deref() == Some(installed.as_slice()) {
+            return;
+        }
+        tracing::info!(
+            session_id = %id,
+            had = ?record.session.granted_skills,
+            now = ?installed,
+            "recording the skills this runtime was actually given"
+        );
+        record.session.granted_skills = Some(installed);
+        if let Err(e) = self.store.upsert(&record).await {
+            tracing::error!(
+                session_id = %id,
+                error = %e,
+                "skills installed but not recorded; the record now overstates what this session has"
+            );
+        }
+    }
+
     async fn remember_runtime(&self, id: &SessionId, handle: &RuntimeHandle) {
         let Ok(Some(mut record)) = self.store.get(id).await else {
             tracing::error!(session_id = %id, "cannot record the runtime: session is gone");
