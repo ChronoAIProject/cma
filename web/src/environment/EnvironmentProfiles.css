@@ -193,3 +193,17 @@ textarea.field__input {
   margin-left: 8px;
   vertical-align: middle;
 }
+
+/*
+ * The owner's own standing instructions.
+ *
+ * A textarea rather than a single line: what somebody writes here is prose an
+ * agent reads, and a field that shows one line of it invites one line of it.
+ */
+.editor__notes {
+  min-height: 96px;
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  line-height: 20px;
+  resize: vertical;
+}
