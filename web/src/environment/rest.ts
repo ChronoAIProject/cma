@@ -31,6 +31,7 @@ import type {
 
 /** What the control plane sends for a profile. */
 interface ProfilePayload {
+  agent_notes?: unknown;
   preferred?: unknown;
   readonly id?: unknown;
   readonly name?: unknown;
@@ -117,6 +118,7 @@ export function toProfile(raw: unknown): EnvironmentProfile {
     }),
     agent: readAgent(p.agent),
     nyxid: readNyxId(p.nyxid),
+    agentNotes: typeof p.agent_notes === 'string' ? p.agent_notes : '',
     mandatory: readMandatory(p.mandatory),
     createdAt: typeof p.created_at === 'string' ? p.created_at : '',
     updatedAt: typeof p.updated_at === 'string' ? p.updated_at : '',
@@ -187,6 +189,7 @@ function body(draft: ProfileDraft): string {
       skills: [...draft.agent.skills],
     },
     nyxid: { services: [...draft.nyxid.services] },
+    agent_notes: draft.agentNotes,
   });
 }
 

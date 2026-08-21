@@ -75,6 +75,12 @@ struct ProfileDoc {
     /// profile behaves exactly as it did.
     #[serde(default)]
     services: Vec<String>,
+    /// Standing instructions the owner wrote for their own sessions.
+    ///
+    /// Defaulted so a profile stored before this existed reads back as one
+    /// that adds nothing, rather than failing to read at all.
+    #[serde(default)]
+    agent_notes: String,
     created_at: String,
     updated_at: String,
 }
@@ -129,6 +135,7 @@ fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
         // carrying two copies that can disagree.
         skills: Vec::new(),
         services: p.services.iter().map(|s| s.0.clone()).collect(),
+        agent_notes: p.agent_notes.clone(),
         agent: Some(AgentDoc {
             kernel: p.agent.kernel.0.clone(),
             mode: p.agent.mode,
@@ -166,6 +173,7 @@ fn from_doc(d: ProfileDoc) -> EnvironmentProfile {
             })
             .collect(),
         services: d.services.into_iter().map(ServiceId::new).collect(),
+        agent_notes: d.agent_notes,
         // A document written before the agent section has no agent and its
         // skills at the top level. It reads as the deployment's ordinary
         // behaviour, carrying the skills it was saved with.
@@ -283,6 +291,7 @@ mod tests {
         EnvironmentProfile {
             preferred: false,
             services: Vec::new(),
+            agent_notes: String::new(),
             id: EnvironmentProfileId("envp_1".into()),
             owner: SubjectId("subject-a".into()),
             name: "build tools".into(),
