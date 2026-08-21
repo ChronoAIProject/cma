@@ -184,6 +184,8 @@ pub struct HostedKernel {
     /// is handed paths and writes them, and the core names skills and never
     /// where they live.
     skills_root: String,
+    /// Where this kernel reads standing instructions, relative to the home.
+    agent_notes: String,
     /// The open link to each runtime, by handle.
     ///
     /// Held because a credential has to reach a runtime that is already
@@ -209,12 +211,14 @@ impl HostedKernel {
         shape: SandboxShape,
         kernel: &'static str,
         skills_root: impl Into<String>,
+        agent_notes: impl Into<String>,
     ) -> Self {
         Self {
             client,
             shape,
             kernel,
             skills_root: skills_root.into(),
+            agent_notes: agent_notes.into(),
             links: tokio::sync::Mutex::new(BTreeMap::new()),
             switch_waiters: SwitchWaiters::default(),
         }
@@ -275,11 +279,52 @@ impl HostedKernel {
         // reads them when it starts, so delivering now is delivering before
         // anything can look — and a session whose skills arrive afterwards is
         // a session promised tools it is not using.
-        if !spec.skills.is_empty() {
-            self.install_skills(&sandbox.id, &spec.skills).await?;
+        // The skills and the note the agent reads before using them travel
+        // together: both have to be on disk before the kernel starts, and both
+        // are useless if they land after it has already decided what to do.
+        if !spec.skills.is_empty() || !self.agent_notes.trim().is_empty() {
+            self.install_prelude(&sandbox.id, &spec.skills, &spec.reaches)
+                .await?;
         }
 
         Ok(RuntimeHandle(sandbox.id))
+    }
+
+    /// What this session is, in words its agent reads before doing anything.
+    ///
+    /// Written because nothing told it. A session holds a credential scoped to
+    /// a few services, and the platform CLI it is given is documented for a
+    /// person holding a whole account — so an agent asked to use a service
+    /// starts by establishing who it is, is refused because an agent key is
+    /// not a user, and follows the CLI's own advice to log in. Observed doing
+    /// exactly that: seven attempts at `login`, five at `doctor`, nine at a
+    /// listing it cannot read.
+    ///
+    /// The reach is stated because the alternative is discovery, and discovery
+    /// lies: it lists every service on the account — fifty, against the four
+    /// this key can use — so an agent picks a plausible one and collects a
+    /// refusal it cannot interpret.
+    fn agent_note(&self, reaches: &[String]) -> String {
+        let mut note = String::from(
+            "# This session\n\n             You are already authenticated. A credential was minted for this              session alone and is attached to your requests automatically; you              will never see its value and do not need it.\n\n             **Do not run `nyxid login`.** There is nobody to log in as. The              same goes for `nyxid whoami`, `nyxid status` and `nyxid service              list`: they ask about a user account, this session is not one, and              they will fail however many times they are tried.\n\n             Reach a service with `nyxid proxy request <slug> <path>`.\n\n",
+        );
+        match reaches.is_empty() {
+            true => note.push_str(
+                "This session was granted no services, so every proxied call                  will be refused. That is a property of how it was created and                  will not change while it runs.\n",
+            ),
+            false => {
+                note.push_str(
+                    "## What you can reach\n\n                     These slugs and no others. `nyxid proxy discover` lists                      everything on the account rather than what this session                      was granted, so treat this list as the truth and that one                      as a catalogue:\n\n",
+                );
+                for slug in reaches {
+                    note.push_str(&format!("- `{slug}`\n"));
+                }
+                note.push_str(
+                    "\nA call to anything else is refused for the life of this                      session. It is not worth retrying.\n",
+                );
+            }
+        }
+        note
     }
 
     /// Put a session's skills on its pod's disk, under this kernel's root.
@@ -291,13 +336,14 @@ impl HostedKernel {
     /// A supervisor that cannot take a prelude is refused by name rather than
     /// having a POST land on a router without the route: that answers 404,
     /// which reads as a sandbox that is gone and would replace a healthy one.
-    async fn install_skills(
+    async fn install_prelude(
         &self,
         sandbox: &str,
         skills: &[SkillPackage],
+        reaches: &[String],
     ) -> Result<(), AdapterError> {
         let root = self.skills_root.trim();
-        if root.is_empty() {
+        if !skills.is_empty() && root.is_empty() {
             return Err(AdapterError::Unsupported(
                 "this runtime's agent reads no skills".to_string(),
             ));
@@ -316,6 +362,12 @@ impl HostedKernel {
 
         let mut entries = Vec::new();
         let mut bodies = Vec::new();
+        let notes = self.agent_notes.trim();
+        if !notes.is_empty() {
+            let body = self.agent_note(reaches).into_bytes();
+            entries.push(serde_json::json!({ "path": notes, "len": body.len() }));
+            bodies.push(body);
+        }
         for skill in skills {
             for (relative, body) in &skill.files {
                 entries.push(serde_json::json!({
@@ -340,8 +392,9 @@ impl HostedKernel {
         tracing::info!(
             %sandbox,
             skills = skills.len(),
+            reaches = reaches.len(),
             bytes,
-            "installed this session's skills into its runtime"
+            "wrote this session's skills and its standing instructions"
         );
         Ok(())
     }
