@@ -316,6 +316,13 @@ mod tests {
 pub struct SkillPack {
     /// The directory it occupies, which is the name the agent invokes.
     pub name: String,
+    /// Which version of it this is, where the registry said.
+    ///
+    /// Carried from the fetch rather than looked up later, so what a session
+    /// reports is the version it actually received. Asking the registry
+    /// afterwards would answer with whatever is current, which is a different
+    /// fact and is wrong for every session that has been running a while.
+    pub version: Option<String>,
     /// Each file, relative to that directory, exactly as the registry names it.
     pub files: Vec<(String, Vec<u8>)>,
 }
