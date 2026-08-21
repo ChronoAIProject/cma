@@ -103,12 +103,24 @@
   cursor: pointer;
 }
 
+/*
+ * The wordmark, set the way the brand sets it — §21.
+ *
+ * `--track-display` is -0.035em and the shipped lockup tracks its own CMA at
+ * -1.6 on a 54px face, which is -0.030em: the same letterform spacing, so the
+ * name in chrome and the name on the lockup are one wordmark rather than two.
+ * It was on +0.04em, which is the opposite sign — the letters were being held
+ * apart, which is a treatment for small caps and label runs, not for a
+ * three-letter name set at reading size.
+ *
+ * 700 for the same reason: the lockup is 700, and this is the same word.
+ */
 .sidebar__name {
   overflow: hidden;
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 24px;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-display);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
