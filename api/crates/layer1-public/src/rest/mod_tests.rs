@@ -327,6 +327,7 @@ fn a_view_carries_geometry_as_plain_integers() {
         rotated_at: None,
         capabilities: Default::default(),
         granted_services: None,
+        granted_skills: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let view: SessionView = s.into();
@@ -372,6 +373,7 @@ mod reach {
 
     fn session_with(granted: Option<Vec<ServiceId>>) -> Session {
         Session {
+            granted_skills: None,
             id: SessionId("sesn_1".into()),
             owner: layer2_core::SubjectId("subject-a".into()),
             kernel: layer2_core::KernelId::new("example-runtime"),

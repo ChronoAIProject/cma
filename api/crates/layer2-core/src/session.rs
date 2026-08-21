@@ -339,6 +339,16 @@ pub struct Session {
     /// not.
     #[serde(default)]
     pub granted_services: Option<Vec<crate::environment::ServiceId>>,
+    /// The skills this session was given, settled when it was created.
+    ///
+    /// Recorded for the same reason its services are: the profile it came from
+    /// can be edited afterwards and this session's tools do not follow. It is
+    /// also the only honest answer to "what does this session have" — the
+    /// profile says what a *new* session would get.
+    ///
+    /// `None` means the grant predates this field, not that the session has no
+    /// skills; the two are told apart everywhere this is read.
+    pub granted_skills: Option<Vec<crate::environment::SkillId>>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
@@ -411,6 +421,7 @@ mod tests {
             rotated_at: None,
             capabilities: Default::default(),
             granted_services: None,
+            granted_skills: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
         assert!(session.is_owned_by(&owner));
