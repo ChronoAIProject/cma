@@ -441,6 +441,35 @@ describe('what a session was given', () => {
     expect(container.querySelector('.facts__count')?.textContent).toBe('2');
   });
 
+  it('links each skill to its page in the registry, in a new tab', () => {
+    renderDrawer('running', {
+      agent: { skills: [{ id: 'nyxid', name: 'NyxID CLI', version: '0.5' }] },
+    });
+
+    const link = screen.getByRole('link', { name: /NyxID CLI/ });
+    expect(link).toHaveAttribute('href', 'https://ornn.chrono-ai.fun/skills/nyxid');
+    // A session is a live thing somebody is working in; navigating it away to
+    // read a skill's page would cost them the surface they were using.
+    expect(link).toHaveAttribute('target', '_blank');
+    // `noopener` denies the opened page a handle back to this one.
+    expect(link.getAttribute('rel')).toContain('noopener');
+    expect(link.textContent).toContain('@0.5');
+  });
+
+  it('shows no version rather than an empty one when the registry reported none', () => {
+    // The mutation this kills: rendering `@` with nothing after it, or
+    // inventing "latest".
+    const { container } = renderDrawer('running', {
+      agent: { skills: [{ id: 'nyxid', name: 'NyxID CLI' }] },
+    });
+    expect(container.textContent).not.toContain('@');
+    // And it is still a link — the version is not what makes it one.
+    expect(screen.getByRole('link', { name: /NyxID CLI/ })).toHaveAttribute(
+      'href',
+      'https://ornn.chrono-ai.fun/skills/nyxid',
+    );
+  });
+
   it('falls back to the identifier when the catalogue could not name a skill', () => {
     // A catalogue that could not be asked costs the name and not the answer.
     renderDrawer('running', { agent: { skills: [{ id: 'skl_unknown' }] } });
