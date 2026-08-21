@@ -30,6 +30,7 @@ mod lease;
 mod lifecycle;
 mod log;
 mod platform;
+pub mod platform_service;
 mod provision;
 mod provision_failure;
 mod reading;
@@ -120,4 +121,5 @@ pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
     SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
 };
+pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
