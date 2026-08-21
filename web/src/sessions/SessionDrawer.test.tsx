@@ -476,6 +476,24 @@ describe('what a session was given', () => {
     expect(screen.getByText('skl_unknown')).toBeInTheDocument();
   });
 
+  it('says a starting session is still installing, not that nothing was recorded', () => {
+    /*
+     * Provisioning is the only writer of the grant, so before it finishes
+     * there genuinely is nothing recorded. Saying that flatly reads as a
+     * permanent answer to somebody watching a session start — and it is the
+     * sentence that got reported as a bug against a session whose agent was
+     * visibly using the skills.
+     */
+    const starting = renderDrawer('provisioning', { agent: {} });
+    expect(starting.container.textContent).toContain('still starting');
+    expect(starting.container.textContent).not.toContain('Not recorded');
+
+    // And once it has settled, an absent grant IS the permanent answer.
+    const settled = renderDrawer('running', { agent: {} });
+    expect(settled.container.textContent).toContain('Not recorded for this session');
+    expect(settled.container.textContent).not.toContain('still starting');
+  });
+
   it('tells a session given no skills apart from one that recorded none', () => {
     /*
      * The same distinction `reach` draws, and for the same reason: a session

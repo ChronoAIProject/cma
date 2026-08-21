@@ -43,6 +43,16 @@ export function listSessions(): Promise<readonly Session[]> {
 }
 
 /**
+ * Read one session, as the control plane currently describes it.
+ *
+ * Used when a session settles: what it was handed at creation is the answer
+ * from before provisioning ran, and provisioning is what settles some of it.
+ */
+export function readSession(id: string): Promise<Session> {
+  return bot.readSession(id);
+}
+
+/**
  * The runtimes this deployment can start a session on, and what each can be.
  *
  * Asked once and passed down, rather than asked wherever a form needs it: the

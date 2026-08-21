@@ -42,6 +42,17 @@ export class Cma {
     return sessions.listSessions(this.#config);
   }
 
+  /**
+   * Read one session as the control plane currently describes it.
+   *
+   * A session's record is not complete when it is created: some of what a
+   * client draws is settled during provisioning, and a client holding the
+   * object `createSession` returned is holding the answer from before that.
+   */
+  readSession(id: string): Promise<Session> {
+    return sessions.readSession(this.#config, id);
+  }
+
   /** The runtimes this deployment offers, and what each can be. */
   listKernels(): Promise<readonly KernelOffer[]> {
     return sessions.listKernels(this.#config);
