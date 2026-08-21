@@ -87,6 +87,36 @@ export function settle(ms = 700) {
 }
 
 /**
+ * Wait until the surface a check is about is actually on screen.
+ *
+ * `settle` is a fixed sleep, which is the right tool after an interaction on a
+ * page that is already up. It is the wrong tool for the first paint of a
+ * signed-in surface: the bundle is half a megabyte, the runner it executes on
+ * is not the machine this was tuned on, and a sleep that is generous locally
+ * is a race on a loaded CI worker.
+ *
+ * When it loses, the whole check misreports. A surface that has not rendered
+ * has no controls and measures zero, so the harness reports the absence of
+ * things it never waited for — "no New session control", "the sidebar is 0px"
+ * — and a green build fails for a reason that is nothing to do with it. A gate
+ * that fails on good builds is worse than no gate, because it teaches everyone
+ * reading it to re-run rather than to look.
+ *
+ * So this waits for a signal instead of a duration, and fails loudly with what
+ * it was waiting for when the signal never comes.
+ */
+export async function ready(page, selector, { timeout = 20_000, label = selector } = {}) {
+  try {
+    await page.waitForSelector(selector, { visible: true, timeout });
+  } catch {
+    throw new Error(
+      `the surface never rendered: waited ${String(timeout)}ms for ${label} and it did not appear. ` +
+        'Every check after this point would have measured an empty page.',
+    );
+  }
+}
+
+/**
  * Report what is clipping an element, if anything is.
  *
  * The question every one of these checks turns out to need: an element can be
