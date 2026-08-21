@@ -62,6 +62,7 @@ impl ClaudeCodeAdapter {
                 spec.deployment.shape.clone(),
                 "claude_code",
                 spec.deployment.skills_root.clone(),
+                spec.deployment.agent_notes.clone(),
             ),
             spec,
         }
