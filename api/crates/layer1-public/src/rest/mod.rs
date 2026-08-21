@@ -190,6 +190,13 @@ pub struct SessionView {
     #[serde(skip_serializing_if = "Option::is_none")]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
+    /// How this session's agent was configured, settled when it was created.
+    ///
+    /// Read from the session rather than from the profile it came from: a
+    /// profile can be edited afterwards and a running session does not follow
+    /// it, so the profile answers what a *new* session would get and this
+    /// answers what this one has.
+    agent: AgentView,
     cols: u16,
     rows: u16,
     last_seq: u64,
@@ -233,6 +240,34 @@ pub struct SessionView {
     reach: Vec<ReachView>,
 }
 
+/// How a session's agent is configured, as this interface renders it.
+///
+/// Never a credential and never an endpoint. Which *kind* of credential pays
+/// for the model is a fact somebody needs — it decides whose bill a turn lands
+/// on — and the value behind it is not.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentView {
+    /// The model the agent selects, when the session names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    /// How much the agent may do before asking.
+    permission: layer2_core::PermissionMode,
+    /// How hard it thinks.
+    reasoning_effort: layer2_core::ReasoningEffort,
+    /// Whose account the model calls are spent against.
+    credential: layer2_core::CredentialMode,
+    /// The skills this session was given, or absent where none was recorded.
+    ///
+    /// Absent and empty are different answers and stay that way: a session
+    /// created before this was recorded cannot be told from one given no
+    /// skills unless the two are drawn apart.
+    ///
+    /// Filled by `skilled`, so `From<Session>` leaves it as the identifiers
+    /// alone until the catalogue has been asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skills: Option<Vec<SkillView>>,
+}
+
 /// One service a session may reach, as this interface renders it.
 ///
 /// Never a credential, never a token, and never an expiry. What a session may
@@ -255,6 +290,22 @@ pub struct ReachView {
     mandated: bool,
 }
 
+/// One skill a session was given, as this interface renders it.
+///
+/// The same shape and the same reasoning as `ReachView`: the identifier is
+/// always true, and a catalogue that could not be asked costs the name rather
+/// than the answer.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillView {
+    /// The identifier the profile stored. Always present.
+    id: String,
+    /// What the owner recognises it by, when the catalogue offers a name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
@@ -267,6 +318,25 @@ impl From<Session> for SessionView {
             recovery_state: s.recovery_state,
             stop_reason: s.stop_reason,
             kernel: s.kernel.0,
+            agent: AgentView {
+                model: s.options.model.clone(),
+                permission: s.options.permission,
+                reasoning_effort: s.options.reasoning_effort,
+                credential: s.options.credential,
+                // Absent and empty are different answers: absent means the
+                // grant predates the field, empty means the session was given
+                // none. A client draws them differently.
+                skills: s.granted_skills.clone().map(|skills| {
+                    skills
+                        .into_iter()
+                        .map(|id| SkillView {
+                            id: id.0,
+                            name: None,
+                            description: None,
+                        })
+                        .collect()
+                }),
+            },
             cols: s.geometry.columns(),
             rows: s.geometry.rows(),
             last_seq: s.last_seq,
@@ -300,6 +370,7 @@ async fn viewed(
 ) -> Vec<SessionView> {
     let mut views = named(users, caller, sessions.clone()).await;
     reached(environments, caller, credential, &sessions, &mut views).await;
+    skilled(environments, caller, credential, &mut views).await;
     views
 }
 
@@ -351,6 +422,49 @@ async fn reached(
                 }
             })
             .collect();
+    }
+}
+
+/// Name the skills each session was given, as far as the catalogue can say.
+///
+/// One lookup for the whole page, for the reason its neighbours give. A
+/// catalogue that cannot be reached costs the names and not the answer: the
+/// identifiers were already on the view, and they are still true.
+///
+/// Nothing here is asked unless some session actually carries a skill, so the
+/// common case of a page of sessions with none costs no registry call at all.
+async fn skilled(
+    environments: &EnvironmentProfileService,
+    caller: &Caller,
+    credential: Option<&str>,
+    views: &mut [SessionView],
+) {
+    if !views
+        .iter()
+        .any(|view| view.agent.skills.as_ref().is_some_and(|s| !s.is_empty()))
+    {
+        return;
+    }
+
+    let named: std::collections::HashMap<String, layer2_core::CatalogSkill> = environments
+        .available_skills(caller, credential)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|skill| (skill.id.0.clone(), skill))
+        .collect();
+
+    for view in views.iter_mut() {
+        let Some(skills) = view.agent.skills.as_mut() else {
+            continue;
+        };
+        for skill in skills.iter_mut() {
+            let Some(known) = named.get(&skill.id) else {
+                continue;
+            };
+            skill.name = Some(known.name.clone());
+            skill.description = Some(known.description.clone());
+        }
     }
 }
 

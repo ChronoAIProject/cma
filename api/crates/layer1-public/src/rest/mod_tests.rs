@@ -327,6 +327,7 @@ fn a_view_carries_geometry_as_plain_integers() {
         rotated_at: None,
         capabilities: Default::default(),
         granted_services: None,
+        granted_skills: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let view: SessionView = s.into();
@@ -334,6 +335,113 @@ fn a_view_carries_geometry_as_plain_integers() {
     assert_eq!(json["cols"], 120);
     assert_eq!(json["rows"], 40);
     assert!(json.get("stop_reason").is_none(), "absent reason omitted");
+}
+
+/// The exact document a client parses.
+///
+/// One test on each side of the wire, over the same JSON. This one asserts the
+/// backend emits it; `web/src/sdk/sessions.test.ts` asserts the client reads
+/// that document back into the model its surfaces draw.
+///
+/// Field-by-field assertions on one side and a hand-written fixture on the
+/// other are how the two drift: each stays green while disagreeing about a
+/// name. Sharing the document is what stops that.
+#[test]
+fn a_view_carries_the_agent_configuration_a_client_draws() {
+    let s = Session {
+        id: SessionId("sesn_1".into()),
+        owner: layer2_core::SubjectId("subject-a".into()),
+        kernel: layer2_core::KernelId::new("codex"),
+        status: layer2_core::SessionStatus::Ready,
+        recovery_state: layer2_core::RecoveryState::Normal,
+        stop_reason: None,
+        options: layer2_core::AgentOptions {
+            model: Some("gpt-5-codex".into()),
+            reasoning_effort: layer2_core::ReasoningEffort::XHigh,
+            permission: layer2_core::PermissionMode::Unrestricted,
+            credential: layer2_core::CredentialMode::Own,
+            ..Default::default()
+        },
+        environment_profile: None,
+        geometry: TerminalGeometry::new(120, 40).expect("valid"),
+        last_seq: 3,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: Some(vec![layer2_core::SkillId::new("skl_nyxid")]),
+        created_at: "2026-08-12T00:00:00Z".into(),
+    };
+    let json = serde_json::to_value(SessionView::from(s)).expect("serializes");
+
+    assert_eq!(json["agent"]["model"], "gpt-5-codex");
+    // Not `xhigh`. `as_str` spells it that way and serde does not, and only
+    // serde reaches a client — see `option_wire_names_are_what_clients_read`.
+    assert_eq!(json["agent"]["reasoning_effort"], "x_high");
+    assert_eq!(json["agent"]["permission"], "unrestricted");
+    assert_eq!(json["agent"]["credential"], "own");
+    assert_eq!(json["agent"]["skills"][0]["id"], "skl_nyxid");
+    // Unnamed until `skilled` has asked the catalogue, and absent rather than
+    // null so a client tells "no name" from "the name is empty".
+    assert!(json["agent"]["skills"][0].get("name").is_none());
+}
+
+#[test]
+fn a_session_with_no_recorded_skills_carries_no_skills_field() {
+    /*
+     * Absent and empty are different answers all the way to the wire.
+     *
+     * A session created before the grant was recorded has nothing to say;
+     * one that was given no skills has said something. A client draws the
+     * two differently, so collapsing them here would make that impossible.
+     */
+    let s = Session {
+        id: SessionId("sesn_1".into()),
+        owner: layer2_core::SubjectId("subject-a".into()),
+        kernel: layer2_core::KernelId::new("codex"),
+        status: layer2_core::SessionStatus::Ready,
+        recovery_state: layer2_core::RecoveryState::Normal,
+        stop_reason: None,
+        options: layer2_core::AgentOptions::default(),
+        environment_profile: None,
+        geometry: TerminalGeometry::default(),
+        last_seq: 0,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: None,
+        created_at: "2026-08-12T00:00:00Z".into(),
+    };
+    let unrecorded = serde_json::to_value(SessionView::from(s.clone())).expect("serializes");
+    assert!(
+        unrecorded["agent"].get("skills").is_none(),
+        "nothing recorded, so nothing on the wire: {unrecorded}"
+    );
+
+    let given_none = Session {
+        granted_skills: Some(Vec::new()),
+        ..s
+    };
+    let json = serde_json::to_value(SessionView::from(given_none)).expect("serializes");
+    assert_eq!(
+        json["agent"]["skills"],
+        serde_json::json!([]),
+        "given none is an answer and must be sent: {json}"
+    );
+
+    // And the defaults are named rather than omitted: a client that draws
+    // "not reported" for an absent field would draw it for every session
+    // nobody configured, which is most of them.
+    assert_eq!(json["agent"]["permission"], "guarded");
+    assert_eq!(json["agent"]["credential"], "delegated");
+    assert_eq!(json["agent"]["reasoning_effort"], "high");
+    assert!(
+        json["agent"].get("model").is_none(),
+        "no model chosen is absent, not empty: {json}"
+    );
 }
 
 /// What a session reports it may reach — the other half of its capabilities.
@@ -372,6 +480,7 @@ mod reach {
 
     fn session_with(granted: Option<Vec<ServiceId>>) -> Session {
         Session {
+            granted_skills: None,
             id: SessionId("sesn_1".into()),
             owner: layer2_core::SubjectId("subject-a".into()),
             kernel: layer2_core::KernelId::new("example-runtime"),

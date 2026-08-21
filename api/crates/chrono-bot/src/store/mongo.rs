@@ -75,6 +75,10 @@ struct SessionDoc {
     /// the other says the session may reach nothing.
     #[serde(default)]
     granted_services: Option<Vec<String>>,
+    /// The skills the session was given. Same distinction as above: absent
+    /// means the grant predates the field, empty means it was given none.
+    #[serde(default)]
+    granted_skills: Option<Vec<String>>,
 }
 
 /// A MongoDB-backed session store.
@@ -192,6 +196,10 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
             .granted_services
             .as_ref()
             .map(|services| services.iter().map(|id| id.0.clone()).collect()),
+        granted_skills: s
+            .granted_skills
+            .as_ref()
+            .map(|skills| skills.iter().map(|id| id.0.clone()).collect()),
     })
 }
 
@@ -241,6 +249,9 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             granted_services: d
                 .granted_services
                 .map(|services| services.into_iter().map(layer2_core::ServiceId).collect()),
+            granted_skills: d
+                .granted_skills
+                .map(|skills| skills.into_iter().map(layer2_core::SkillId::new).collect()),
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,
