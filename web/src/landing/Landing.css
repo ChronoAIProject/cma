@@ -60,6 +60,39 @@
   width: clamp(200px, 52vmin, 560px);
   aspect-ratio: 100 / 69;
   overflow: hidden;
+  /*
+   * The bob begins where the drawing ends. The mark's own file draws its arc,
+   * then its base, then its lenses, and fades in the bridge last at 1.78s over
+   * 0.3s — so 2.1s is the first moment there is a finished mark to move, and
+   * starting earlier would drag a half-drawn one around.
+   *
+   * On the wrapper rather than on the `svg` inside it, and that is the whole
+   * trick: the wrapper is the crop, so the window and its contents travel
+   * together and the mark cannot ride up into its own clipped edge. Bobbing
+   * the `svg` would push its apex past `overflow: hidden` and shear the top of
+   * the arc off at the peak of every bounce.
+   */
+  animation: landing-bob 1.9s var(--ds-ease-in-out) 2.1s infinite;
+}
+
+/*
+ * Up and down and nothing else. No rotation, no scale, no shadow travelling
+ * with it: this is the product's mark on the one screen that has nothing else
+ * on it, and a mark that tilts or swells reads as a toy.
+ *
+ * The distance is a percentage so it holds at every size — `translateY` here
+ * resolves against the wrapper's own height, which is the mark's, so the
+ * travel is the same fraction of the logo whether it is drawn at 200px or 560.
+ */
+@keyframes landing-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4.5%);
+  }
 }
 
 /*
@@ -154,6 +187,16 @@
 @media (prefers-reduced-motion: reduce) {
   .landing__prompt {
     transition: none;
+  }
+
+  /*
+   * Still, and at rest rather than mid-bounce. Somebody who has asked for less
+   * movement is asking to be shown the thing, which is the same rule the
+   * mark's own file follows for its drawing.
+   */
+  .landing__mark {
+    animation: none;
+    transform: none;
   }
 }
 
