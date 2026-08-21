@@ -311,6 +311,61 @@ mod tests {
     }
 }
 
+/// Where the deployment's own settings are kept.
+///
+/// A singleton rather than a collection: there is one deployment, so there is
+/// one record, and nothing addresses it by identifier. That is why there is no
+/// `get(id)` here and why the service rather than the caller decides what an
+/// absent record means.
+///
+/// The save is conditional on what the writer last read. Two administrators
+/// with the editor open is not a hypothetical — it is the ordinary case for a
+/// setting that changes rarely and is opened by whoever is asking about it —
+/// and a last-write-wins save silently discards the other's work.
+#[async_trait::async_trait]
+pub trait PlatformSettingsStore: Send + Sync {
+    /// Read the settings, and the revision they were at.
+    ///
+    /// `None` where nothing has ever been written, which is a real answer and
+    /// not a failure: a deployment nobody has configured is the common case.
+    async fn load(&self) -> Result<Option<StoredSettings>, StoreError>;
+
+    /// Write these settings, but only if nobody has written since `expected`.
+    ///
+    /// `Ok(None)` means somebody had, and the caller is told rather than
+    /// having their write applied over the top.
+    ///
+    /// `expected` is a plain number and **zero means nothing is stored**, which
+    /// is the revision an unconfigured deployment reports. An `Option` here
+    /// carried no information the number did not: `None` and `Some(0)` were
+    /// the same state described twice, and the first write on a fresh
+    /// deployment failed depending on which one a caller happened to send.
+    async fn save_if_unchanged(
+        &self,
+        expected: u64,
+        settings: &crate::PlatformSettings,
+    ) -> Result<Option<StoredSettings>, StoreError>;
+}
+
+/// Settings as they were read, with the revision that identifies them.
+#[derive(Debug, Clone)]
+pub struct StoredSettings {
+    pub settings: crate::PlatformSettings,
+    /// Increments on every write, and is **zero when nothing is stored**.
+    ///
+    /// Carried by a client so its next save can be refused rather than
+    /// silently overwriting somebody else's. Zero is a real revision that a
+    /// client sends back like any other, so the first write on a fresh
+    /// deployment takes the same conditional path as every write after it
+    /// rather than a special case that skips the check.
+    pub revision: u64,
+    /// What was stored before this write, so an overwrite is recoverable.
+    ///
+    /// One step and no more: this exists so a mistake can be undone in the
+    /// moment, not so the service keeps a history nobody asked it to keep.
+    pub previous: Option<crate::PlatformSettings>,
+}
+
 /// One skill, fetched and ready to be written.
 #[derive(Debug, Clone)]
 pub struct SkillPack {

@@ -103,6 +103,26 @@ pub enum CoreError {
     /// with one.
     #[error("service catalogue unavailable: {0}")]
     ServiceCatalogUnavailable(String),
+
+    /// The platform's settings were changed by somebody else since this
+    /// caller read them.
+    ///
+    /// Not a failure of theirs and not a failure of the service. Two people
+    /// with the settings page open is the ordinary case for a value that
+    /// changes rarely and is opened by whoever is asking about it, and a
+    /// last-write-wins save would discard one of them silently. Its own
+    /// variant so a client can tell "re-read and try again" from "this will
+    /// not work", which are different things to say to somebody.
+    #[error("the platform's settings changed since they were read: {0}")]
+    SettingsConflict(String),
+
+    /// The platform's settings could not be read or written.
+    ///
+    /// Distinct from a refusal: the caller may well be entitled and the
+    /// service simply cannot answer. Retrying is the right response, which is
+    /// why it is not conflated with anything that means "stop".
+    #[error("the platform's settings are unavailable: {0}")]
+    SettingsUnavailable(String),
 }
 
 impl CoreError {
@@ -125,6 +145,8 @@ impl CoreError {
             Self::InvalidRequest(_) => "invalid_request",
             Self::ServiceNotGranted(_) => "service_not_granted",
             Self::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+            Self::SettingsConflict(_) => "settings_conflict",
+            Self::SettingsUnavailable(_) => "settings_unavailable",
         }
     }
 }
