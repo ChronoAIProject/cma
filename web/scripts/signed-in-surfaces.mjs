@@ -14,7 +14,7 @@
  * built bundle actually draws. It asserts reachability, never appearance: a
  * colour is `check:styles`'s question and a layout is this one's.
  */
-import { open, visit, settle, CLIPPED_BY } from './browser.mjs';
+import { open, visit, settle, ready, CLIPPED_BY } from './browser.mjs';
 
 const PORT = 4319;
 
@@ -400,7 +400,11 @@ async function main() {
   try {
     await stub(page);
     await visit(page, PORT, 'domcontentloaded');
-    await settle(1500);
+    // The signed-in surface, not a duration. See `ready`: on a loaded runner
+    // the fixed sleep this replaced lost the race and every check below then
+    // measured an empty page and reported what it could not find.
+    await ready(page, '.sidebar__new', { label: 'the New session control' });
+    await settle(400);
 
     const problems = [
       ...(await pickerReachable(page)),
