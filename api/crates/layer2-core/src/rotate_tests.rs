@@ -937,6 +937,7 @@ impl crate::store::SkillSource for WorkingSkills {
             .iter()
             .map(|id| crate::store::SkillPack {
                 name: id.0.clone(),
+                version: Some("1.0".to_string()),
                 files: vec![("SKILL.md".to_string(), b"# a skill".to_vec())],
             })
             .collect())
@@ -978,7 +979,12 @@ async fn the_record_says_what_a_session_has_and_not_what_it_asked_for() {
         .expect("recorded");
     assert_eq!(
         created.session.granted_skills.as_deref(),
-        Some(&[crate::environment::SkillId::new("a-mandated-skill")][..]),
+        Some(
+            &[crate::environment::GrantedSkill {
+                id: crate::environment::SkillId::new("a-mandated-skill"),
+                version: Some("1.0".to_string()),
+            }][..]
+        ),
         "a session that got its skills should say so"
     );
 
@@ -1039,7 +1045,12 @@ async fn a_rotation_that_keeps_its_skills_keeps_them_in_the_record() {
         .expect("recorded");
     assert_eq!(
         rotated.session.granted_skills.as_deref(),
-        Some(&[crate::environment::SkillId::new("a-mandated-skill")][..]),
+        Some(
+            &[crate::environment::GrantedSkill {
+                id: crate::environment::SkillId::new("a-mandated-skill"),
+                version: Some("1.0".to_string()),
+            }][..]
+        ),
         "a rotation that refetched its skills still has them"
     );
 }
