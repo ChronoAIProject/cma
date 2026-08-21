@@ -198,6 +198,20 @@
 }
 
 /*
+ * The line under a band title, saying what the band is.
+ *
+ * Sits below the title and above the content, at the note size, so it reads as
+ * a caption on the band rather than as the band's first entry. Pulled up
+ * against the title and pushed away from the content for the same reason.
+ */
+.facts__subtitle {
+  margin: -6px 0 var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
+}
+
+/*
  * Facts as a two-column grid rather than stacked pairs. A label beside its
  * value halves the panel's height and gives every answer the same left edge,
  * which is what makes a column of them scannable.
