@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -107,5 +109,26 @@ describe('the collapsed rail', () => {
     await user.click(screen.getByRole('button', { name: /find a session/i }));
     expect(handlers.onSearch).toHaveBeenCalledOnce();
     expect(handlers.onToggleCollapsed).not.toHaveBeenCalled();
+  });
+});
+
+describe('the brand row is set the way the brand is', () => {
+  it("sets the wordmark at the lockup's weight and tracking, never held apart", () => {
+    /*
+     * `docs/Web_Style.md` §21. The wordmark was on +0.04em — positive
+     * tracking, which is the opposite sign from the lockup and is a treatment
+     * for small caps and label runs. Held apart, a three-letter product name
+     * at reading size reads as a category label.
+     *
+     * Asserted against the sheet rather than a rendered node because jsdom
+     * resolves no custom property, so a computed style here would report the
+     * token name back rather than what a browser paints.
+     */
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/Sidebar.css'), 'utf8');
+    const rule = /\.sidebar__name\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(rule).toMatch(/font-weight:\s*700/);
+    expect(rule).toMatch(/letter-spacing:\s*var\(--track-display\)/);
+    // The mutation this kills: any positive tracking creeping back in.
+    expect(rule).not.toMatch(/letter-spacing:\s*0?\.\d/);
   });
 });
