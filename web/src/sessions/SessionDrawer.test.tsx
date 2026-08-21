@@ -462,6 +462,26 @@ describe('what a session was given', () => {
 });
 
 describe('the drawer reads as sections rather than a list', () => {
+  it('says what the Reaches band is, since a list of slugs does not', () => {
+    /*
+     * The band lists identifiers like `api-github-pat`, and nothing on the
+     * surface said those were services on the identity platform rather than
+     * something this product invented. The count and the entries answer "how
+     * many" and "which"; neither answers "of what".
+     */
+    const { container } = renderDrawer('running', {
+      reach: [{ id: 'api-github-pat', name: 'GitHub', mandated: true }],
+    });
+    expect(container.textContent).toContain('NyxID services which this session is scoped to.');
+  });
+
+  it('leaves a band without a note unannotated, rather than captioning them all', () => {
+    // The mutation that would make the test above pass for the wrong reason.
+    // A caption on every band is a caption nobody reads.
+    const { container } = renderDrawer('running', { agent: { model: 'gpt-5-codex' } });
+    expect(container.querySelectorAll('.facts__subtitle')).toHaveLength(1);
+  });
+
   it('groups its facts under titles', () => {
     const { container } = renderDrawer('running', {
       agent: { model: 'gpt-5-codex' },
