@@ -29,7 +29,9 @@ use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
 pub use crate::environment_catalog::{
     CatalogError, CatalogService, CatalogSkill, ServiceAvailability, ServiceCatalog, SkillCatalog,
 };
-pub use crate::environment_values::{EnvironmentVariable, ServiceId, SkillId, SoftwarePackage};
+pub use crate::environment_values::{
+    EnvironmentVariable, GrantedSkill, ServiceId, SkillId, SoftwarePackage,
+};
 
 use crate::environment_values::{MAX_ENTRIES, MAX_NAME, MAX_VALUE};
 use crate::options::{CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
