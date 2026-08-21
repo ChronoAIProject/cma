@@ -309,6 +309,7 @@ impl EnvironmentProfileService {
             packages: spec.packages,
             agent: spec.agent,
             services: spec.services,
+            agent_notes: spec.agent_notes,
             created_at: now.clone(),
             updated_at: now,
             // A new profile is not its owner's default. Making one so is a
@@ -429,6 +430,7 @@ impl EnvironmentProfileService {
             packages: spec.packages,
             agent: spec.agent,
             services: spec.services,
+            agent_notes: spec.agent_notes,
             created_at: existing.created_at,
             updated_at: now_rfc3339(),
             // Carried across an edit. Editing a profile is not choosing where

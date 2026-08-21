@@ -53,6 +53,14 @@ pub struct ProfileRequest {
     /// Which of the owner's platform services the session may reach.
     #[serde(default)]
     pub nyxid: NyxIdBody,
+    /// Standing instructions the owner wants their sessions to start with.
+    ///
+    /// Theirs alone. What this platform tells an agent about itself is
+    /// composed separately and is not editable from here — a session talked
+    /// out of knowing it is already authenticated spends its first minutes
+    /// rediscovering that badly.
+    #[serde(default)]
+    pub agent_notes: String,
 }
 
 /// The platform-access half of a profile, as a caller supplies it.
@@ -99,6 +107,7 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
     fn from(body: ProfileRequest) -> Self {
         Self {
             name: body.name,
+            agent_notes: body.agent_notes,
             variables: body
                 .variables
                 .into_iter()
@@ -168,6 +177,12 @@ pub struct ProfileView {
     packages: Vec<PackageBody>,
     agent: AgentView,
     nyxid: NyxIdView,
+    /// Standing instructions the owner wrote for their own sessions.
+    ///
+    /// Only theirs. What the platform tells an agent about itself is composed
+    /// when a session starts and is never returned here, because a client that
+    /// showed it as editable would be offering to edit something it cannot.
+    agent_notes: String,
     /// Which entries the platform mandates, so a client can render them as
     /// fixed rather than guessing — and so the rule is visible rather than
     /// only enforced when the client gets it wrong.
@@ -228,6 +243,7 @@ impl ProfileView {
             nyxid: NyxIdView {
                 services: profile.services.into_iter().map(|s| s.0).collect(),
             },
+            agent_notes: profile.agent_notes,
             mandatory: MandatoryView::of(service.baseline()),
             created_at: profile.created_at,
             updated_at: profile.updated_at,
