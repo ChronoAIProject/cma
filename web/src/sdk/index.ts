@@ -56,6 +56,7 @@ export {
   fetchTranscript,
   listKernels,
   listSessions,
+  readSession,
   reviveSession,
   stopSession,
   terminateSession,
