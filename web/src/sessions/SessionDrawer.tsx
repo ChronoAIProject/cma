@@ -162,7 +162,11 @@ export function SessionDrawer({ session, onClose, ending }: SessionDrawerProps) 
          * watching an agent work on their behalf has one question the
          * interface did not answer — what does this thing have access to?
          */}
-        <Section title="Reaches" count={session.reach?.length}>
+        <Section
+          title="Reaches"
+          count={session.reach?.length}
+          note="NyxID services which this session is scoped to."
+        >
           <ReachList services={session.reach} />
         </Section>
 
