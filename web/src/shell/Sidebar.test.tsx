@@ -131,4 +131,14 @@ describe('the brand row is set the way the brand is', () => {
     // The mutation this kills: any positive tracking creeping back in.
     expect(rule).not.toMatch(/letter-spacing:\s*0?\.\d/);
   });
+
+  it('gives the mark one size that serves the open rail and the closed one', () => {
+    // 32px inside the collapsed rail's 36px square, so no second rule is
+    // needed for the closed state — and a second rule is how the two drift.
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/Sidebar.css'), 'utf8');
+    const mark = /\.sidebar__mark\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(mark).toMatch(/width:\s*32px/);
+    expect(mark).toMatch(/height:\s*32px/);
+    expect(css).not.toMatch(/\.sidebar--collapsed\s+\.sidebar__mark/);
+  });
 });
