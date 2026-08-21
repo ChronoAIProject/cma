@@ -447,7 +447,25 @@ fade; the text inside it does not animate as it is read.
 
 ### What motion is for here
 
-Only two things: saying a surface changed, and saying a surface is working. Neither decorates.
+Inside the product, two things: saying a surface changed, and saying a surface is working. Neither
+decorates.
+
+**The signed-out surface is the one exception, and it is one surface and one object.** The mark on
+§20 draws itself in and then bobs, on a loop, and that is decoration — it says nothing about state
+and nothing about work. It is permitted because the rule above is about a working interface: every
+other surface has somebody's session on it, and motion that means nothing there competes with motion
+that means something. The signed-out screen has no state to report, nothing running, and one object
+on it. What the mark is doing there is being the product's presence, which is what a mark is for.
+
+The exception is bounded, deliberately, so it does not become a licence:
+
+- It applies to the **signed-out mark only**. Nothing inside the product loops.
+- **Up and down and nothing else.** No rotation, no scale, no travelling shadow — a mark that tilts
+  or swells reads as a toy.
+- It **starts only once the mark has finished drawing**, so a half-drawn mark is never dragged
+  around.
+- It obeys `prefers-reduced-motion: reduce` by stopping **at rest**, not mid-travel.
+- It uses the one curve from the tokens, like everything else.
 
 **A surface that replaces another fades in.** Switching sessions changes the whole centre column, and
 without a handover it reads as a different screen rather than the same screen showing something else.
@@ -577,6 +595,14 @@ the answers under it.
 **A value that names a setting carries a sentence under it.** "Guarded" tells somebody the name of
 something they did not choose and cannot look up from the panel; "Asks before anything outside its
 workspace" tells them what it does.
+
+**A skill is a link to its own page in the registry, opened in a new tab**, labelled `name@version`
+where a version was recorded. `target="_blank"` always carries `rel="noreferrer noopener"`: a session
+is a live thing somebody is working in, so navigating it away costs them the surface they were using,
+and `noopener` denies the opened page the handle back to this one it would otherwise hold. The version
+sits with the name as one label rather than on its own line — "this session has nyxid" is not
+something anybody can act on without knowing which nyxid — and is omitted entirely rather than shown
+as an empty `@` where the registry reported none.
 
 **Absent, empty and unreported are three answers and are drawn as three sentences.** A control plane
 that did not report a field, a grant recorded as empty, and a grant never recorded at all are
@@ -747,7 +773,15 @@ animated file adds timing and changes no path, so the two can never drift into b
 | `cma-lockup-horizontal*` | anywhere outside the product                  |
 
 The animated mark draws its arc, then its base, then its lenses, and afterwards a highlight crosses
-the lenses on a long loop. It is animated in CSS inside the file rather than in SMIL, because CSS
+the lenses on a long loop.
+
+**Once the drawing finishes, the whole mark bobs, on a loop, and the highlight keeps crossing.** The
+bob is the exception §14a carves out and is bounded by the terms stated there. It runs on the crop
+rather than on the artwork inside it: the wrapper is what clips the square file to the mark's own
+proportions, so moving the wrapper moves the window and its contents together — moving the artwork
+instead pushes the arc's apex into the clipped edge and shears the top off it at the peak of every
+bounce. The travel is a percentage of the wrapper's height, so it is the same fraction of the logo at
+every size. It is animated in CSS inside the file rather than in SMIL, because CSS
 honours `prefers-reduced-motion` and SMIL cannot read it; under that preference the mark is shown
 finished, not slowed. Chrome uses the still file — a logo that replays its entrance on every
 navigation is the motion §14a exists to refuse.
@@ -836,3 +870,5 @@ Append-only. Never edit or delete an entry.
 | 2026-08-21 | Set the wordmark in chrome the way the lockup sets it, in §21. The sidebar's CMA was weight 600 at **+0.04em** — positive tracking, which holds letters apart and is a treatment for small caps and label runs, not for a three-letter product name at reading size. It is now 700 at `--track-display` (-0.035em), against the shipped lockup's own -1.6 on a 54px face (-0.030em), so the name in chrome and the name on the lockup read as one wordmark rather than as two that happen to spell the same thing. |
 | 2026-08-21 | Gave the chrome mark a size in §21, which had none. It was 24px in a 60px logo row with a 44px content box, so it sat in more than its own height of empty space and read as an icon that happened to be beside the name rather than as the product's mark; it is now 32px. That one size serves both rail states — it still clears the 36px square the collapsed rail gives the brand button — so no second rule exists for the closed case, since a second rule is how the two drift. |
 | 2026-08-21 | Added a one-line caption under a band title in §17, and put it on Reaches only. The band lists slugs like `api-github-pat`; its count answers "how many" and its entries answer "which", and nothing answered "of what" — a reader had no way to tell that those were services on the identity platform rather than something this product invented. Set at `--text-meta` below the title and above the content so it reads as a caption on the band rather than as its first entry, and stated the rule that most bands do not get one, because a caption on every band is a caption nobody reads. Also corrected §17's claim that band titles are `--ink-3`: nothing in the drawer sits on that token, for the contrast reason recorded on 2026-08-21 and tracked in #441. |
+| 2026-08-21 | Let the signed-out mark bob once it has finished drawing, and carved the exception into §14a rather than leaving the sheet contradicting the rule. §14a said motion is for saying a surface changed and saying a surface is working, and that neither decorates — a looping bob is decoration, so the doc had to change deliberately or the code would have been quietly wrong. The reasoning recorded: that rule is about a working interface, where motion meaning nothing competes with motion that means something, and the signed-out screen has no state to report, nothing running and one object on it. Bounded so it does not become a licence — signed-out mark only, up and down and nothing else, never before the drawing finishes, stopping at rest under reduced motion, and on the one curve from the tokens. Put the animation on the crop rather than the artwork, because moving the artwork inside a wrapper that clips it shears the arc's apex off at the peak of every bounce; moving the wrapper takes the window and its contents together, measured at 14.2px of travel with the arc's clearance constant throughout. The lens highlight is unchanged. |
+| 2026-08-21 | Made each skill in §17's Skills band a link to its own page in the registry, opened in a new tab and labelled `name@version`. A session is a live thing somebody is working in, so the link opens away from it rather than navigating it off the surface they were using, and `target="_blank"` carries `rel="noreferrer noopener"` so the opened page holds no handle back. The version sits with the name as one label — "this session has nyxid" is not actionable without knowing which nyxid — and is omitted rather than drawn as an empty `@` when the registry reported none. Underlined on hover only, so a band of entries does not read as a paragraph of links, and the version is tabular and quieter than the name so a column of them lines up. |

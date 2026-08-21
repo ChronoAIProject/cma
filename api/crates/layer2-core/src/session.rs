@@ -348,7 +348,7 @@ pub struct Session {
     ///
     /// `None` means the grant predates this field, not that the session has no
     /// skills; the two are told apart everywhere this is read.
-    pub granted_skills: Option<Vec<crate::environment::SkillId>>,
+    pub granted_skills: Option<Vec<crate::environment::GrantedSkill>>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
