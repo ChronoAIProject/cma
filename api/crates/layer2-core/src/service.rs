@@ -425,6 +425,10 @@ impl SessionService {
             rotated_at: None,
             capabilities,
             granted_services: Some(granted_services),
+            // Settled here with everything else the session is, so what it
+            // has is a fact about the session rather than a lookup against a
+            // profile that may since have changed.
+            granted_skills: Some(agent.skills.clone()),
             created_at: now_rfc3339(),
         };
 
