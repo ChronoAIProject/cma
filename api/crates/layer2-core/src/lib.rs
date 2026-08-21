@@ -99,8 +99,8 @@ pub use directory::{
 };
 pub use environment::{
     AgentConfiguration, Baseline, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
-    EnvironmentProfileSpec, EnvironmentVariable, ResolvedEnvironment, ServiceAvailability,
-    ServiceCatalog, ServiceId, SkillCatalog, SkillId, SoftwarePackage,
+    EnvironmentProfileSpec, EnvironmentVariable, GrantedSkill, ResolvedEnvironment,
+    ServiceAvailability, ServiceCatalog, ServiceId, SkillCatalog, SkillId, SoftwarePackage,
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
