@@ -24,7 +24,7 @@ import { ProfileMenu } from './profile/ProfileMenu';
 import { CommandBar } from './shell/CommandBar';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
-import { ApiError, followSession, listKernels, listSessions } from './api/client';
+import { ApiError, followSession, listKernels, listSessions, readSession } from './api/client';
 import { abilitiesFor, listable } from './sessions/availability';
 import { useSessionActions, type FailureNotice } from './sessions/useSessionActions';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
@@ -263,6 +263,37 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   }, []);
 
   /*
+   * Take the whole session again, rather than patching the one field that
+   * changed.
+   *
+   * A session's record is not complete when it is created. Which skills were
+   * actually installed and which runtime version it landed on are settled
+   * during provisioning, and provisioning is their only writer — so the object
+   * this client got back from `POST /sessions` is the answer from before any
+   * of it happened, and patching `lifecycle` onto it leaves every other field
+   * frozen at that moment for as long as the tab is open.
+   *
+   * The symptom was a session whose details said its skills were "not recorded"
+   * while the agent was visibly using them.
+   *
+   * Merged rather than replaced wholesale: `capabilities` and the plane are
+   * read once at the boundary and the surfaces hold them, so re-reading is
+   * about the fields provisioning fills, not about discarding what is already
+   * correct. A read that fails changes nothing — the session is running either
+   * way, and a failed refresh must not empty a panel somebody is looking at.
+   */
+  const refreshSession = useCallback((id: string) => {
+    void readSession(id)
+      .then((fresh) => {
+        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...fresh } : s)));
+      })
+      .catch(() => {
+        // Deliberately quiet. Nothing is broken: the client keeps what it had,
+        // and the next settle or reload asks again.
+      });
+  }, []);
+
+  /*
    * Sessions outlive the browser tab, so opening the console restores what is
    * already running. Nothing is created here: starting work is the owner's
    * decision, and a console that provisions a sandbox merely because someone
@@ -330,6 +361,11 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       id,
       (lifecycle, detail) => {
         applyLifecycle(id, lifecycle);
+        // Settled: everything provisioning fills is now written down, and this
+        // client is still holding what it was handed before it ran.
+        if (lifecycle === 'ready' || lifecycle === 'running') {
+          refreshSession(id);
+        }
         if (detail !== undefined && detail !== '') {
           setEndings((prev) => ({ ...prev, [id]: detail }));
         }
@@ -362,7 +398,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     // every render, and depending on it would tear the stream down and reopen
     // it continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, active?.lifecycle, applyLifecycle]);
+  }, [active?.id, active?.lifecycle, applyLifecycle, refreshSession]);
 
   /*
    * One driver per session, whichever arrangement is showing. Held for every
