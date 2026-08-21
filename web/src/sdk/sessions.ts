@@ -19,14 +19,34 @@ import { headersFor, urlOf, type ResolvedConfig } from './config';
 import { ApiError } from './errors';
 import { request } from './http';
 import type {
+  CredentialMode,
   Kernel,
   KernelOffer,
+  PermissionMode,
+  ReasoningEffort,
   Session,
+  SessionAgent,
   SessionCreator,
   SessionLifecycle,
   SessionPlane,
   SessionService,
+  SessionSkill,
 } from './types';
+
+/*
+ * The wire vocabularies this client can draw, kept beside the parser that
+ * checks against them. Pinned on the other side by `option_wire_names_are_what
+ * _clients_read` in `layer2-core`, because a rename there is silent here.
+ */
+const PERMISSION_MODES: readonly PermissionMode[] = ['guarded', 'autonomous', 'unrestricted'];
+const REASONING_EFFORTS: readonly ReasoningEffort[] = [
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'x_high',
+];
+const CREDENTIAL_MODES: readonly CredentialMode[] = ['delegated', 'own'];
 
 const LIFECYCLES: readonly SessionLifecycle[] = [
   'provisioning',
@@ -56,6 +76,7 @@ interface SessionPayload {
   creator?: unknown;
   reach?: unknown;
   conforms_to?: unknown;
+  agent?: unknown;
 }
 
 /**
@@ -98,7 +119,60 @@ export function toSession(raw: unknown): Session {
     // Read once at the boundary, so a consumer asks what a session may do
     // rather than trying and handling a refusal.
     capabilities: toCapabilities(raw),
+    agent: agent(p.agent),
   };
+}
+
+/**
+ * How the session's agent was configured.
+ *
+ * Every field is validated against the vocabulary this client draws rather than
+ * carried through as whatever arrived. A word the client has no rendering for
+ * becomes absent, which draws as "not reported" — honest — where passing it
+ * through would print a raw wire token into a panel people read.
+ *
+ * The whole object is absent when the control plane sent none, so a build
+ * without it is told apart from a session configured with nothing.
+ */
+function agent(raw: unknown): SessionAgent | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const a = raw as Record<string, unknown>;
+  return {
+    model: typeof a.model === 'string' && a.model !== '' ? a.model : undefined,
+    permission: oneOf(a.permission, PERMISSION_MODES),
+    reasoningEffort: oneOf(a.reasoning_effort, REASONING_EFFORTS),
+    credential: oneOf(a.credential, CREDENTIAL_MODES),
+    // Absent and empty stay different facts. An entry with no usable
+    // identifier is dropped rather than carried blank, exactly as in `reach`.
+    skills: Array.isArray(a.skills) ? a.skills.flatMap(skill) : undefined,
+  };
+}
+
+/** One granted skill, or nothing where the entry carried no identifier. */
+function skill(raw: unknown): SessionSkill[] {
+  const entry = raw as { id?: unknown; name?: unknown; description?: unknown } | null;
+  if (typeof entry?.id !== 'string' || entry.id === '') {
+    return [];
+  }
+  return [
+    {
+      id: entry.id,
+      name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : undefined,
+      description:
+        typeof entry.description === 'string' && entry.description !== ''
+          ? entry.description
+          : undefined,
+    },
+  ];
+}
+
+/** The value when the wire said one of these words, and absent otherwise. */
+function oneOf<T extends string>(raw: unknown, allowed: readonly T[]): T | undefined {
+  return typeof raw === 'string' && (allowed as readonly string[]).includes(raw)
+    ? (raw as T)
+    : undefined;
 }
 
 /**

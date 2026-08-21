@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PATHS, STATE_DELTA_PATCHES, frameKey } from './wire';
 import { toEvent } from '../agui/events';
+import { toSession } from './sessions';
 import { EMPTY, reduce } from '../chat/conversation';
 
 /**
@@ -127,5 +128,91 @@ describe('the paths match what the service emits', () => {
     // client cannot keep, and the reason the usage panel read zero for months.
     const extra = Object.values(PATHS).filter((path) => !EMITTED.includes(path));
     expect(extra).toEqual(['/usage/cost']);
+  });
+});
+
+describe("a session's agent configuration is read as the service writes it", () => {
+  /*
+   * The other half of `a_view_carries_the_agent_configuration_a_client_draws`
+   * in `api/crates/layer1-public/src/rest/mod_tests.rs`. That test asserts the
+   * service emits this document; this one asserts the client reads it.
+   *
+   * The document is written out in full rather than built from the client's own
+   * constants, for the reason this whole file exists: a client reading its own
+   * names back to itself stays green while disagreeing with the service, which
+   * is how every defect above shipped.
+   */
+  const asTheServiceSendsIt = {
+    id: 'sesn_1',
+    status: 'ready',
+    recovery_state: 'normal',
+    kernel: 'codex',
+    cols: 120,
+    rows: 40,
+    last_seq: 3,
+    created_at: '2026-08-12T00:00:00Z',
+    conforms_to: [],
+    reach: [],
+    agent: {
+      model: 'gpt-5-codex',
+      reasoning_effort: 'x_high',
+      permission: 'unrestricted',
+      credential: 'own',
+      skills: [{ id: 'skl_nyxid' }],
+    },
+  };
+
+  it('reads every field, under the name the service uses', () => {
+    const session = toSession(asTheServiceSendsIt);
+    expect(session.agent?.model).toBe('gpt-5-codex');
+    // `x_high` and not `xhigh`. The service's `as_str` spells it the other way
+    // and only serde reaches this client.
+    expect(session.agent?.reasoningEffort).toBe('x_high');
+    expect(session.agent?.permission).toBe('unrestricted');
+    expect(session.agent?.credential).toBe('own');
+    expect(session.agent?.skills).toEqual([
+      { id: 'skl_nyxid', name: undefined, description: undefined },
+    ]);
+  });
+
+  it('drops a word it has no rendering for, rather than printing it', () => {
+    // A newer service naming a mode this build does not know. Absent draws as
+    // "not reported", which is honest; passing it through would print a raw
+    // wire token into a panel somebody reads.
+    const session = toSession({
+      ...asTheServiceSendsIt,
+      agent: { ...asTheServiceSendsIt.agent, permission: 'something-new' },
+    });
+    expect(session.agent?.permission).toBeUndefined();
+    // And only that field. The rest of the document still reads.
+    expect(session.agent?.credential).toBe('own');
+  });
+
+  it('tells a service that said nothing from one that said none', () => {
+    const older = toSession({ ...asTheServiceSendsIt, agent: undefined });
+    expect(older.agent).toBeUndefined();
+
+    const withoutSkills = { ...asTheServiceSendsIt.agent, skills: undefined };
+    const unrecorded = toSession({ ...asTheServiceSendsIt, agent: withoutSkills });
+    expect(unrecorded.agent?.skills).toBeUndefined();
+
+    const none = toSession({
+      ...asTheServiceSendsIt,
+      agent: { ...asTheServiceSendsIt.agent, skills: [] },
+    });
+    expect(none.agent?.skills).toEqual([]);
+  });
+
+  it('reads the defaults the service always names', () => {
+    // The service sends these on every session rather than omitting them, so a
+    // client must not treat an unconfigured session as an unreported one.
+    const session = toSession({
+      ...asTheServiceSendsIt,
+      agent: { permission: 'guarded', credential: 'delegated', reasoning_effort: 'high' },
+    });
+    expect(session.agent?.permission).toBe('guarded');
+    expect(session.agent?.credential).toBe('delegated');
+    expect(session.agent?.reasoningEffort).toBe('high');
+    expect(session.agent?.model).toBeUndefined();
   });
 });
