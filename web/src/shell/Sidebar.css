@@ -79,11 +79,16 @@
 /*
  * The mark keeps its box whether or not the asset has landed, so the row does
  * not jump on a cold load. Square, because the file is.
+ *
+ * 32px rather than 24: the row is 60px tall with 44px of content box, so the
+ * smaller mark was sitting in more than its own height of empty space and read
+ * as an icon beside the name rather than as the product's mark. It still
+ * clears the 36px square the collapsed rail gives it.
  */
 .sidebar__mark {
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
 }
 
 /*
