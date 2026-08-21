@@ -31,10 +31,20 @@ import { useState } from 'react';
 export function Section({
   title,
   count,
+  note,
   children,
 }: {
   readonly title: string;
   readonly count?: number;
+  /**
+   * One line saying what the band is, for a title that names a thing without
+   * saying what kind of thing it is.
+   *
+   * "Reaches" is the case it exists for: the band lists slugs, and nothing on
+   * the surface said those were services on the identity platform rather than
+   * something this product invented.
+   */
+  readonly note?: string;
   readonly children: ReactNode;
 }) {
   return (
@@ -43,6 +53,7 @@ export function Section({
         <span>{title}</span>
         {count === undefined ? null : <span className="facts__count">{count}</span>}
       </h3>
+      {note === undefined ? null : <p className="facts__subtitle">{note}</p>}
       {children}
     </section>
   );
