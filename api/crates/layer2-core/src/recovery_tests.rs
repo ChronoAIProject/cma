@@ -63,6 +63,59 @@ async fn a_running_session_survives_the_control_plane_restarting() {
 }
 
 #[tokio::test]
+async fn a_session_whose_sandbox_stopped_serving_is_given_another() {
+    /*
+     * The production incident this was written for.
+     *
+     * `sesn_7e8fab0b…` had its container OOM-killed. The sandbox object stayed
+     * — a container exiting does not remove it — so the provider went on
+     * listing it, the census counted it as alive, reconciliation found record
+     * and reality agreeing, and did nothing. The session reported `running`
+     * with `recovery_state: normal` for nineteen minutes while its runtime was
+     * a corpse, and its owner could not interrupt it because there was nothing
+     * left to interrupt.
+     *
+     * The distinction from `a_session_whose_sandbox_vanished_is_given_another`
+     * is exactly the bug: that one removes the handle, and reconciliation
+     * always handled it. This one keeps the handle and stops it serving.
+     */
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+
+    // Still listed, no longer serving.
+    adapter.stop_serving(&dead).await;
+    assert!(
+        adapter.running.lock().await.contains_key(&dead),
+        "the sandbox must still be listed, or this is testing the wrong failure"
+    );
+
+    let recovered = first.reconcile().await;
+    assert_eq!(
+        recovered.reprovisioned_sessions, 1,
+        "a sandbox that has stopped serving is gone, however present it looks"
+    );
+
+    let settled = await_settled(&first, &alice, &created.id).await;
+    assert_eq!(
+        settled.status,
+        SessionStatus::Ready,
+        "and the session comes back usable rather than being left to rot"
+    );
+}
+
+#[tokio::test]
 async fn a_session_whose_sandbox_vanished_is_given_another() {
     // A node is replaced and the sandbox goes with it. The owner did not ask
     // for that and should not have to notice it.
