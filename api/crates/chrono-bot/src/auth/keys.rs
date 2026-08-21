@@ -21,10 +21,23 @@
 //! session, and cleanup reads it back. That survives a restart, which a note
 //! held in memory would not.
 //!
-//! **Expiry is the backstop, deletion is the hygiene.** These keys last a day
-//! whatever happens to them, so one left behind stops working on its own. That
-//! is what makes it acceptable that reclaiming a key needs its owner's token,
-//! which this process may not hold after a restart until they next sign in.
+//! **There is no backstop. Deletion is the only hygiene there is.** This module
+//! used to say the opposite — that these keys last a day whatever happens to
+//! them, so one left behind stops working on its own — and every decision
+//! about tolerating a failed reclaim was justified by it. The mint below
+//! requests no expiry, and production reports `expires_at: null` on every key
+//! this service has ever created. The claim was never true.
+//!
+//! It is worth being blunt about the cost, because four separate comments in
+//! this tree leaned on it: a key we fail to take back is a live credential
+//! carrying `proxy read` over that session's services, for ever, held by
+//! nobody and watched by nobody. Reclaiming needs its owner's token, which
+//! this process may not hold after a restart until they next sign in, and
+//! until then the key stays valid.
+//!
+//! Giving these keys a bounded life is #445's own follow-up. Until that is
+//! demonstrated against the platform rather than assumed, nothing here may be
+//! written as though it already were.
 
 use layer2_core::{ServiceId, SessionId, SubjectId};
 use serde::Deserialize;
@@ -297,9 +310,12 @@ impl KeyIssuer {
 
     /// Take a key back.
     ///
-    /// Failure is logged and not retried here: the key expires on its own, so
-    /// a reclaim that did not happen costs a row in a list rather than an open
-    /// credential.
+    /// Failure is logged and not retried **here**, which is a statement about
+    /// this function and not about the consequence: these keys carry no
+    /// expiry, so a reclaim that did not happen costs an open credential
+    /// rather than a row in a list. The retry belongs to the sweep that calls
+    /// this, which sees the key again on its next pass; what must not happen
+    /// is this returning quietly as though nothing were owed.
     pub async fn revoke(&self, id: &str, owner_token: &str) {
         let url = format!("{}{KEYS_PATH}/{id}", self.base_url);
         match self.http.delete(&url).bearer_auth(owner_token).send().await {
