@@ -66,6 +66,7 @@ impl DshAdapter {
                 spec.deployment.shape.clone(),
                 "dsh",
                 spec.deployment.skills_root.clone(),
+                spec.deployment.agent_notes.clone(),
             ),
             spec,
         }
