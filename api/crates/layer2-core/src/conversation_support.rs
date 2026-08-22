@@ -40,13 +40,14 @@ impl FakeConversation {
     /// the core is already folding when it calls, so a fake that made its own
     /// would not be able to reproduce anything reported during the open.
     pub(crate) fn open(updates: mpsc::Sender<ConversationUpdate>) -> (ConversationChannel, Self) {
-        let (input, mut input_rx) = mpsc::channel(BUFFER);
         let received = std::sync::Arc::new(Mutex::new(Vec::new()));
 
         let recorder = std::sync::Arc::clone(&received);
-        tokio::spawn(async move {
-            while let Some(sent) = input_rx.recv().await {
+        let input = layer3_adapter::ConversationInputSender::spawn(BUFFER, move |sent| {
+            let recorder = std::sync::Arc::clone(&recorder);
+            async move {
                 recorder.lock().await.push(sent);
+                Ok(())
             }
         });
 
