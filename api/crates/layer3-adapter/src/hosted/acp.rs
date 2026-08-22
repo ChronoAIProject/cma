@@ -30,13 +30,15 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::supervisor;
-use crate::{AdapterError, ConversationChannel, ConversationUpdate, PromptResponse};
+use crate::{
+    AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, PromptResponse,
+};
 
 /// The protocol version this client speaks.
 pub(super) const PROTOCOL_VERSION: u32 = 1;
 
-/// How many messages either direction may queue before back pressure applies.
-const BUFFER: usize = 256;
+/// One operation may wait behind the writer, but a second is a backed-up link.
+const INPUT_BUFFER: usize = 1;
 
 /// How long to wait for the pod to say what it is.
 ///
@@ -166,8 +168,6 @@ impl Bridge {
                 ))
             }
         };
-        let (input_tx, mut input_rx) = mpsc::channel(BUFFER);
-
         let bridge = Arc::new(Self {
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -175,6 +175,15 @@ impl Bridge {
             session: Mutex::new(None),
             blocked: Mutex::new(HashMap::new()),
         });
+
+        let writer = Arc::clone(&bridge);
+        let writer_updates = updates_tx.clone();
+        let (input, input_task) =
+            ConversationInputSender::spawn_with_abort(INPUT_BUFFER, move |input| {
+                let writer = Arc::clone(&writer);
+                let updates = writer_updates.clone();
+                async move { writer.drive(input, &updates).await }
+            });
 
         // Read before anything is sent: the handshake's own answers arrive on
         // this loop, so it has to be running to receive them.
@@ -225,6 +234,7 @@ impl Bridge {
              * and it has to be delivered as one.
              */
             reader.pending.lock().await.clear();
+            input_task.abort();
             tracing::info!("conversation link ended");
         });
 
@@ -237,20 +247,11 @@ impl Bridge {
             .await?;
         let conversation_id = bridge.session.lock().await.clone();
 
-        let writer = Arc::clone(&bridge);
-        let updates = updates_tx;
-        tokio::spawn(async move {
-            while let Some(input) = input_rx.recv().await {
-                writer.drive(input, &updates).await;
-            }
-            tracing::info!("conversation input ended");
-        });
-
         let control = super::control_lane(Arc::clone(&bridge.sink));
 
         Ok((
             ConversationChannel {
-                input: input_tx,
+                input,
                 conversation_id,
             },
             control,
@@ -273,7 +274,7 @@ impl Bridge {
         params: serde_json::Value,
         deadline: std::time::Duration,
     ) -> Result<serde_json::Value, AdapterError> {
-        let waiting = self.begin(method, params)?;
+        let waiting = self.begin(method, params).await?;
         let frame = tokio::time::timeout(deadline, waiting)
             .await
             .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
@@ -298,7 +299,7 @@ impl Bridge {
     ///
     /// Registered before it is sent, because the answer can arrive on the read
     /// loop before this function returns.
-    pub(super) fn begin(
+    pub(super) async fn begin(
         &self,
         method: &str,
         params: serde_json::Value,
@@ -312,25 +313,11 @@ impl Bridge {
             "params": params,
         });
 
-        let pending = Arc::clone(&self.pending);
-        let sink = Arc::clone(&self.sink);
-        tokio::spawn(async move {
-            pending.lock().await.insert(id, answer);
-            let body = framed.to_string();
-            let frame = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
-            if sink
-                .lock()
-                .await
-                .send(Message::Binary(frame))
-                .await
-                .is_err()
-            {
-                // Dropped from the map so the caller's wait ends now rather
-                // than at the deadline: the link is gone and no answer is
-                // coming.
-                pending.lock().await.remove(&id);
-            }
-        });
+        self.pending.lock().await.insert(id, answer);
+        if let Err(error) = self.send(&framed).await {
+            self.pending.lock().await.remove(&id);
+            return Err(error);
+        }
         Ok(waiting)
     }
 
