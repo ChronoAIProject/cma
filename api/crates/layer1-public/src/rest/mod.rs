@@ -542,6 +542,12 @@ impl IntoResponse for Problem {
             CoreError::InvalidSessionSize(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "invalid-session-size")
             }
+            // 422 and never 409: nothing is in conflict, and stopping another
+            // session does not make this one startable. The request is well
+            // formed and this deployment will not provision it.
+            CoreError::SizeOutOfBounds(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "size-out-of-bounds")
+            }
             CoreError::RuntimeUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
             }

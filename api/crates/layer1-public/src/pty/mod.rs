@@ -265,6 +265,10 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::AlreadyAttached => "already_attached",
         CoreError::SessionTerminated => "session_terminated",
         CoreError::InvalidGeometry(_) => "invalid_geometry",
+        // This interface attaches to an existing session, so a creation-time
+        // size refusal cannot arise here. Named so a new core variant cannot
+        // quietly become the wrong terminal frame.
+        CoreError::SizeOutOfBounds(_) => "size_out_of_bounds",
         CoreError::InvalidSessionSize(_) => "invalid_session_size",
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
         CoreError::RuntimeRefused(_) => "runtime_refused",
