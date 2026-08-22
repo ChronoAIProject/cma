@@ -60,6 +60,8 @@ mod service_support;
 mod test_support;
 
 #[cfg(test)]
+mod allowance_tests;
+#[cfg(test)]
 mod capacity_bounds_service_tests;
 #[cfg(test)]
 mod limits_rotation_tests;
@@ -121,6 +123,7 @@ pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
 pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
+pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use platform::{CapacityBounds, OutOfBounds, PlatformSettings, SessionBriefing, SizeDimension};
 pub use platform_service::PlatformSettingsService;
