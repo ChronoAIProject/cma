@@ -81,16 +81,31 @@ fn a_decision_this_service_does_not_offer_is_refused_rather_than_guessed() {
 }
 
 #[test]
-fn usage_crosses_as_the_three_figures_the_core_keeps() {
+fn usage_crosses_with_the_context_window_the_core_keeps() {
     let view = UsageView::from(Usage {
         input_tokens: 412,
         output_tokens: 9,
         context_used: 1_024,
+        context_window: Some(200_000),
     });
     let rendered = serde_json::to_value(&view).expect("serializes");
     assert_eq!(rendered["input_tokens"], 412);
     assert_eq!(rendered["output_tokens"], 9);
     assert_eq!(rendered["context_used"], 1_024);
+    assert_eq!(rendered["context_window"], 200_000);
+}
+
+#[test]
+fn usage_omits_a_context_window_the_runtime_never_stated() {
+    let rendered = serde_json::to_value(UsageView::from(Usage {
+        input_tokens: 412,
+        output_tokens: 9,
+        context_used: 1_024,
+        context_window: None,
+    }))
+    .expect("serializes");
+
+    assert!(rendered.get("context_window").is_none());
 }
 
 #[test]
