@@ -110,6 +110,38 @@ fn the_operator_surface_is_classified_too() {
 }
 
 #[test]
+fn every_platform_settings_operation_is_classified_without_reading_its_body() {
+    for (method, path, action) in [
+        (
+            Method::GET,
+            "/api/v1/admin/settings",
+            Action::PlatformSettingsRead,
+        ),
+        (
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Action::PlatformSettingsChange,
+        ),
+        (
+            Method::POST,
+            "/api/v1/admin/settings/reset",
+            Action::PlatformSettingsReset,
+        ),
+    ] {
+        let classified = classified(method, path);
+        assert_eq!(classified.action, action);
+        assert!(classified.target.is_none());
+        assert!(
+            !classified.reads_body,
+            "administrator prose must never be buffered into the activity record"
+        );
+    }
+
+    assert!(classify(&Method::POST, "/api/v1/admin/settings").is_none());
+    assert!(classify(&Method::GET, "/api/v1/admin/settings/reset").is_none());
+}
+
+#[test]
 fn a_probe_or_an_unserved_path_is_not_recorded() {
     // Probes arrive every few seconds and ask for nothing; a path this service
     // does not serve did nothing, whoever sent it. Recording either would bury

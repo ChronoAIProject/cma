@@ -20,6 +20,7 @@ const ALL: readonly Capability[] = [
   'read_runtime_inventory',
   'read_all_sessions',
   'control_any_session',
+  'configure_platform',
 ];
 
 function open(capabilities: readonly Capability[] = ALL, options: MockOperatorOptions = {}) {
@@ -50,11 +51,20 @@ const ADA = {
 };
 
 describe('the view switch', () => {
-  it('offers only the views this caller holds a capability for', () => {
+  it('offers only the views this caller holds a capability for', async () => {
     open(['read_activity_log']);
     const tabs = screen.getAllByRole('tab');
     expect(tabs).toHaveLength(1);
     expect(tabs[0]).toHaveTextContent(/activity/i);
+    expect(await screen.findByText(/nothing has been recorded yet/i)).toBeInTheDocument();
+  });
+
+  it('offers a configure-only caller Operations with only Settings', async () => {
+    open(['configure_platform']);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toHaveTextContent('Settings');
+    expect(await screen.findByRole('form', { name: 'Platform settings' })).toBeInTheDocument();
   });
 
   it('names the selected view by more than its colour', async () => {
@@ -65,6 +75,19 @@ describe('the view switch', () => {
 
     await userEvent.click(sessions as HTMLElement);
     expect(sessions).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps an unsaved settings draft across view switches', async () => {
+    const user = userEvent.setup();
+    open(['read_user_directory', 'configure_platform']);
+    await user.click(screen.getByRole('tab', { name: 'Settings' }));
+    const heading = await screen.findByLabelText(/granted-services heading/i);
+    await user.clear(heading);
+    await user.type(heading, 'Unsaved heading');
+
+    await user.click(screen.getByRole('tab', { name: 'People' }));
+    await user.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.getByLabelText(/granted-services heading/i)).toHaveValue('Unsaved heading');
   });
 });
 

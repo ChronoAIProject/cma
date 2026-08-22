@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{FromRef, Path, State},
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -601,6 +601,51 @@ impl IntoResponse for BodyProblem {
         let detail = self.0.body_text();
         let body = problem_document(status, slug, &detail, code);
         (status, Json(body)).into_response()
+    }
+}
+
+/// A settings body this interface could not read, without reflecting it.
+///
+/// Axum's JSON rejection text may quote an invalid value. That is useful for
+/// ordinary request shapes, but platform settings contain administrator prose
+/// which must not travel into a response, activity record, or log merely
+/// because it was sent with the wrong JSON type. This renderer keeps axum's
+/// precise status and this API's stable code while using only fixed detail.
+pub(crate) struct ConfidentialBodyProblem(pub(crate) axum::extract::rejection::JsonRejection);
+
+impl IntoResponse for ConfidentialBodyProblem {
+    fn into_response(self) -> Response {
+        use axum::extract::rejection::JsonRejection;
+        let status = self.0.status();
+        let (slug, code, detail) = match &self.0 {
+            JsonRejection::JsonDataError(_) => (
+                "invalid-request",
+                "invalid_request",
+                "The JSON body does not match this operation's request schema.",
+            ),
+            JsonRejection::JsonSyntaxError(_) => (
+                "malformed-json",
+                "malformed_json",
+                "The request body is not valid JSON.",
+            ),
+            JsonRejection::MissingJsonContentType(_) => (
+                "unsupported-media-type",
+                "unsupported_media_type",
+                "The request must use the application/json media type.",
+            ),
+            _ => (
+                "unreadable-request-body",
+                "unreadable_request_body",
+                "The request body could not be read.",
+            ),
+        };
+        let body = problem_document(status, slug, detail, code);
+        let mut response = (status, Json(body)).into_response();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json"),
+        );
+        response
     }
 }
 

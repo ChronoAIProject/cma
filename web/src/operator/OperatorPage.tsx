@@ -4,17 +4,18 @@ import type { ActivityFilter } from './activity';
 import { namesFrom } from './directory';
 import { viewsFor, type OperatorViewId } from './access';
 import { ActivityView, NamespaceView, PeopleView, SessionsView } from './views';
+import { PlatformSettingsView } from './PlatformSettingsView';
 import type { ActivityEntry, AdminSession, OperatorStore, Person, RuntimeInventory } from './types';
 import './OperatorPage.css';
 
 /**
  * Running the service — docs/Web_Style.md §14.
  *
- * Four questions nobody but an operator can answer: who is using it, what it
- * has been asked to do, what is running, and stop that.
+ * Five views nobody but an operator can use: who is using it, what it has been
+ * asked to do, what is running, acting on a session, and deployment policy.
  *
  * **A page, not a dialog.** It is the one surface that shows many rows at
- * once, and a 560px dialog was why its rows truncated. As a page its four
+ * once, and a 560px dialog was why its rows truncated. As a page its five
  * views have somewhere to live without stacking chrome inside a modal: they
  * are a tablist in the page's second band, beneath the head band every column
  * shares.
@@ -42,6 +43,9 @@ type Loaded<T> = { readonly kind: 'loading' } | { readonly kind: 'ready'; readon
 export function OperatorPage({ store, capabilities }: OperatorPageProps) {
   const views = viewsFor(capabilities);
   const [active, setActive] = useState<OperatorViewId | undefined>(() => views[0]?.id);
+  // Once opened, keep the settings editor mounted so a tab switch cannot erase
+  // an unsaved draft. It still makes no request before its view is first used.
+  const [settingsOpened, setSettingsOpened] = useState(() => views[0]?.id === 'settings');
   const [error, setError] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -183,11 +187,11 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
       <div className="operator__intro">
         <h1 className="operator__title">Operations</h1>
         <p className="operator__description">
-          Who is using the service, what it has been asked to do, what is running, and stop that.
+          Service activity, running work, session controls, and deployment policy.
         </p>
       </div>
 
-      {/* The four views, as an underlined tablist — §14. */}
+      {/* The five views, as an underlined tablist — §19. */}
       <div className="operator__tabs" role="tablist" aria-label="Operator views">
         {views.map((view) => (
           <button
@@ -200,6 +204,9 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
             className={`operator__tab${active === view.id ? ' operator__tab--on' : ''}`}
             onClick={() => {
               setActive(view.id);
+              if (view.id === 'settings') {
+                setSettingsOpened(true);
+              }
               setError(undefined);
             }}
           >
@@ -268,6 +275,12 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
               }}
             />
           )
+        ) : null}
+
+        {settingsOpened ? (
+          <div hidden={active !== 'settings'}>
+            <PlatformSettingsView store={store} />
+          </div>
         ) : null}
       </div>
     </section>

@@ -5,6 +5,8 @@
 //! selection the caller may not use has to fail before a sandbox exists.
 
 use super::*;
+use crate::test_support::service_with_environments_and_settings;
+use crate::{PlatformSettings, ServiceId, SessionBriefing};
 
 /// Wait until the adapter has been asked to provision something.
 ///
@@ -81,6 +83,67 @@ async fn a_selected_profile_reaches_the_runtime_that_backs_the_session() {
         .environment
         .skills
         .contains(&"mandatory-one".to_string()));
+}
+
+#[tokio::test]
+async fn the_configured_platform_briefing_reaches_provisioning_separately_from_owner_notes() {
+    // The wiring test #450 requires. Rendering and composition have their own
+    // unit tests, but neither proves the session service actually puts the
+    // configured document on the spec handed to a real adapter.
+    let profiles = Arc::new(FakeProfileStore::default());
+    let environment_service = environments(Arc::clone(&profiles));
+    let owner = user("subject-a");
+    let mut profile_spec = profile_spec("instructions from both authorities");
+    profile_spec.agent_notes = "Run this owner's verification command.".into();
+    profile_spec.services.push(ServiceId::new("github"));
+    let profile = environment_service
+        .create(&owner, profile_spec)
+        .await
+        .expect("profile creates");
+
+    let briefing = SessionBriefing {
+        before: vec!["# Changed deployment policy".into()],
+        ..SessionBriefing::default()
+    };
+    let adapter = Arc::new(FakeAdapter::default());
+    let sessions = service_with_environments_and_settings(
+        Arc::new(FakeStore::default()),
+        Arc::clone(&adapter),
+        environment_service,
+        PlatformSettings {
+            briefing: briefing.clone(),
+            ..PlatformSettings::default()
+        },
+    );
+    sessions
+        .create_session(
+            &owner,
+            crate::session::SessionSpec {
+                environment_profile: Some(profile.id),
+                ..crate::test_support::spec()
+            },
+        )
+        .await
+        .expect("session creates");
+
+    let provisioned = await_provisioned(&adapter).await;
+    assert_eq!(
+        provisioned.platform_briefing,
+        briefing.render(&provisioned.reaches),
+        "the configured document must be rendered with this session's recorded grant"
+    );
+    assert!(provisioned.platform_briefing.contains("- `github`"));
+    assert_eq!(
+        provisioned.environment.agent_notes,
+        "Run this owner's verification command."
+    );
+    assert!(!provisioned
+        .platform_briefing
+        .contains("owner's verification"));
+    assert!(!provisioned
+        .environment
+        .agent_notes
+        .contains("Changed deployment policy"));
 }
 
 #[tokio::test]

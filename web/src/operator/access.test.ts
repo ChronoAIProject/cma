@@ -40,6 +40,12 @@ describe('who is offered the panel', () => {
     expect(viewsFor(['read_activity_log']).map((v) => v.id)).toEqual(['activity']);
     expect(viewsFor(['read_runtime_inventory']).map((v) => v.id)).toEqual(['namespace']);
     expect(viewsFor(['read_all_sessions']).map((v) => v.id)).toEqual(['sessions']);
+    expect(viewsFor(['configure_platform']).map((v) => v.id)).toEqual(['settings']);
+  });
+
+  it('offers Operations with only the platform configuration view', () => {
+    expect(canOperate(['configure_platform'])).toBe(true);
+    expect(viewsFor(['configure_platform']).map((view) => view.label)).toEqual(['Settings']);
   });
 
   it('offers the views in a fixed order however the capabilities arrived', () => {
