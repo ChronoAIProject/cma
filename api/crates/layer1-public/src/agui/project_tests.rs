@@ -364,6 +364,75 @@ fn a_lost_stretch_of_conversation_is_shown_as_a_boundary() {
 }
 
 #[test]
+fn a_lost_runtime_is_appended_to_its_own_state_path() {
+    let mut event = logged(
+        31,
+        EventKind::RuntimeLost {
+            runtime_id: "runtime-gone".into(),
+            cause: Some(layer2_core::RuntimeLossCause::OutOfMemory),
+        },
+    );
+    event.appended_at = "2026-08-23T04:12:00Z".into();
+
+    let p = project(&event, "run_1", "sesn_1");
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert_eq!(
+        p.events[0].body,
+        serde_json::json!({ "delta": [{
+            "op": "add",
+            "path": "/runtimeLosses/-",
+            "value": {
+                "runtime": "runtime-gone",
+                "cause": "out_of_memory",
+                "noticedAt": "2026-08-23T04:12:00Z",
+            },
+        }] })
+    );
+}
+
+#[test]
+fn a_lost_runtime_with_no_cause_says_so_rather_than_omitting_it() {
+    let p = projected(EventKind::RuntimeLost {
+        runtime_id: "runtime-silent".into(),
+        cause: None,
+    });
+    let value = &p.events[0].body["delta"][0]["value"];
+
+    assert!(value.get("cause").is_some(), "got {value}");
+    assert!(value["cause"].is_null(), "got {value}");
+}
+
+#[tokio::test]
+async fn a_lost_runtime_carries_a_cursor() {
+    let p = project(
+        &logged(
+            43,
+            EventKind::RuntimeLost {
+                runtime_id: "runtime-cursored".into(),
+                cause: Some(layer2_core::RuntimeLossCause::Displaced),
+            },
+        ),
+        "run_1",
+        "sesn_1",
+    );
+
+    assert_eq!(p.events[0].seq, Some(43));
+    let wire = on_the_wire(&p.events[0]).await;
+    assert!(wire.contains("id: 43"), "{wire:?}");
+}
+
+#[test]
+fn a_lost_runtime_does_not_end_the_run() {
+    let p = projected(EventKind::RuntimeLost {
+        runtime_id: "runtime-replaced".into(),
+        cause: Some(layer2_core::RuntimeLossCause::Failed),
+    });
+
+    assert!(p.ending.is_none());
+}
+
+#[test]
 fn what_this_interface_cannot_carry_becomes_nothing() {
     // The core's log is the union of what every interface needs. A resize, an
     // attachment, a screen — none has an honest shape here, and inventing one

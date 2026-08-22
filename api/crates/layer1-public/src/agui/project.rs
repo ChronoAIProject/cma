@@ -405,6 +405,33 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             )],
             ending: None,
         },
+        /*
+         * The runtime under this session died and was replaced.
+         *
+         * A state delta rather than an invented event kind, matching how a
+         * gap and a plane change already travel, so a client needs no new
+         * vocabulary to read it. Appended rather than replaced: a session can
+         * lose more than one runtime, and each loss is a separate thing that
+         * happened.
+         *
+         * `noticedAt` and not `at`. It is the moment the service *established*
+         * the loss, which is up to one reconciliation sweep after the runtime
+         * actually stopped. Naming it as the death would be a claim nothing
+         * here can support.
+         */
+        EventKind::RuntimeLost { runtime_id, cause } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "add", "path": "/runtimeLosses/-", "value": {
+                        "runtime": runtime_id,
+                        "cause": cause,
+                        "noticedAt": timestamp.clone(),
+                    } },
+                ]}),
+            )],
+            ending: None,
+        },
         // Recorded for the log's own sake and carried by other interfaces. No
         // honest AG-UI shape exists for a resize or an attachment, and an
         // approval's resolution is already known to whoever sent it.

@@ -129,7 +129,7 @@ fn to_sse(event: &layer2_core::Event) -> SseEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use layer2_core::{Event, EventKind, SessionStatus};
+    use layer2_core::{Event, EventKind, RuntimeLossCause, SessionStatus};
 
     #[test]
     fn the_frame_id_is_the_sequence_so_a_client_can_resume() {
@@ -166,5 +166,22 @@ mod tests {
         .to_string();
         assert!(payload.contains("ready"), "got {payload}");
         assert!(payload.contains("status_changed"), "got {payload}");
+    }
+
+    #[test]
+    fn a_lost_runtime_reaches_a_rest_client_in_the_core_vocabulary() {
+        let e = Event {
+            session_id: SessionId("sesn_1".into()),
+            seq: 9,
+            kind: EventKind::RuntimeLost {
+                runtime_id: "runtime-gone".into(),
+                cause: Some(RuntimeLossCause::OutOfMemory),
+            },
+            appended_at: "2026-08-23T04:12:00Z".into(),
+        };
+
+        let rendered = format!("{:?}", to_sse(&e));
+        assert!(rendered.contains("runtime_lost"), "got {rendered}");
+        assert!(rendered.contains("runtime-gone"), "got {rendered}");
     }
 }
