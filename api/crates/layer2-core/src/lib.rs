@@ -42,6 +42,7 @@ mod readopt;
 pub mod reconcile;
 mod rotate;
 mod sequence;
+mod spend;
 
 #[cfg(test)]
 #[path = "provision_tests.rs"]
@@ -70,6 +71,8 @@ mod limits_rotation_tests;
 mod limits_tests;
 #[cfg(test)]
 mod pricing_service_tests;
+#[cfg(test)]
+mod spend_tests;
 
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
@@ -128,8 +131,9 @@ pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInvent
 pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use platform::{
-    format_usd, CapacityBounds, OutOfBounds, PlatformSettings, PriceList, PriceListViolation,
-    Quote, Rate, RateCard, RateCardId, SessionBriefing, SessionPricing, SizeDimension, CURRENCY,
+    accrue, format_usd, Accrual, CapacityBounds, OutOfBounds, PlatformSettings, PriceList,
+    PriceListViolation, Quote, Rate, RateCard, RateCardId, SessionBriefing, SessionPricing,
+    SizeDimension, CURRENCY,
 };
 pub use platform_service::PlatformSettingsService;
 pub use reconcile::Reclaimed;
@@ -140,6 +144,7 @@ pub use session::{
     RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus, StopReason,
 };
 pub use size::{InvalidSessionSize, SessionSize};
+pub use spend::Spend;
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
     SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,

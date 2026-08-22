@@ -7,6 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::clock::seconds_from_rfc3339;
+use crate::event::{Event, EventKind};
+use crate::session::{SessionStatus, StopReason};
+
 pub use crate::ids::RateCardId;
 
 /// The only currency this deployment prices in.
@@ -60,6 +64,119 @@ pub struct SessionPricing {
     pub micros_per_hour: u64,
     /// RFC 3339 in UTC.
     pub quoted_at: String,
+}
+
+/// Capacity time a session has accrued at its pinned rate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Accrual {
+    pub billable_seconds: u64,
+    pub micros: u64,
+    /// Whether an interval is still open, so this session is accruing now.
+    pub open: bool,
+    /// When the open interval started, when that bound can be trusted.
+    pub since: Option<String>,
+    /// Intervals skipped because their bounds could not be trusted.
+    pub unbounded_intervals: u32,
+}
+
+/// What a session has accrued, derived from its own durable history.
+///
+/// Pure: no clock, store, runtime, or settings. `now_secs` is supplied so the
+/// same history always produces the same answer. The ledger has one-second
+/// resolution because its durable timestamps do, and divides only after all
+/// billable seconds have been combined, rounding deterministically toward the
+/// owner.
+pub fn accrue(
+    events: &[Event],
+    pricing: &SessionPricing,
+    created_at: &str,
+    now_secs: u64,
+) -> Accrual {
+    let created = interval_bound(created_at);
+    let mut open: Option<(String, Option<u64>)> = None;
+    let mut billable_seconds = 0_u64;
+    let mut unbounded_intervals = 0_u32;
+
+    for event in events {
+        let EventKind::StatusChanged {
+            status,
+            stop_reason,
+            ..
+        } = &event.kind
+        else {
+            continue;
+        };
+        let next_holds = holds_capacity(*status, *stop_reason);
+        match (open.is_some(), next_holds) {
+            (false, true) => {
+                open = Some((
+                    event.appended_at.clone(),
+                    interval_bound(&event.appended_at),
+                ));
+            }
+            (true, false) => {
+                let (_, start) = open.take().expect("the interval is open");
+                let end = interval_bound(&event.appended_at);
+                match bounded_seconds(start, end, created, now_secs) {
+                    Some(seconds) => {
+                        billable_seconds = billable_seconds.saturating_add(seconds);
+                    }
+                    None => {
+                        unbounded_intervals = unbounded_intervals.saturating_add(1);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let is_open = open.is_some();
+    let mut since = None;
+    if let Some((stamp, start)) = open {
+        match bounded_seconds(start, (now_secs > 0).then_some(now_secs), created, now_secs) {
+            Some(seconds) => {
+                billable_seconds = billable_seconds.saturating_add(seconds);
+                since = Some(stamp);
+            }
+            None => {
+                unbounded_intervals = unbounded_intervals.saturating_add(1);
+            }
+        }
+    }
+
+    let micros = pricing.micros_per_hour as u128 * billable_seconds as u128 / 3_600;
+    Accrual {
+        billable_seconds,
+        micros: micros.min(u128::from(u64::MAX)) as u64,
+        open: is_open,
+        since,
+        unbounded_intervals,
+    }
+}
+
+fn interval_bound(stamp: &str) -> Option<u64> {
+    seconds_from_rfc3339(stamp).filter(|seconds| *seconds > 0)
+}
+
+fn bounded_seconds(
+    start: Option<u64>,
+    end: Option<u64>,
+    created: Option<u64>,
+    now_secs: u64,
+) -> Option<u64> {
+    let (start, end, created) = (start?, end?, created?);
+    if start < created || end > now_secs {
+        return None;
+    }
+    Some(end.saturating_sub(start))
+}
+
+fn holds_capacity(status: SessionStatus, stop_reason: Option<StopReason>) -> bool {
+    match status {
+        SessionStatus::Ready | SessionStatus::Running | SessionStatus::Rotating => true,
+        SessionStatus::Idle => stop_reason.is_some_and(|reason| !reason.is_terminal()),
+        SessionStatus::Provisioning | SessionStatus::Terminated => false,
+    }
 }
 
 /// Micro-USD as the lossless string a person is shown.
@@ -505,3 +622,7 @@ mod tests {
         assert_eq!(list.in_force(), list.cards.last());
     }
 }
+
+#[cfg(test)]
+#[path = "pricing_accrual_tests.rs"]
+mod accrual_tests;

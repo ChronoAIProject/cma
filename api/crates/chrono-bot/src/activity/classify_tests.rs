@@ -120,7 +120,12 @@ fn every_platform_settings_operation_is_classified_without_reading_its_body() {
         (
             Method::PATCH,
             "/api/v1/admin/settings",
-            Action::PlatformSettingsChange,
+            Action::PlatformSettingsWrite,
+        ),
+        (
+            Method::PUT,
+            "/api/v1/admin/settings",
+            Action::PlatformSettingsWrite,
         ),
         (
             Method::POST,

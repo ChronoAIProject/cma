@@ -78,6 +78,25 @@ async fn response_json(response: Response) -> Value {
     serde_json::from_slice(&bytes).expect("response is json")
 }
 
+fn priced_settings() -> (PlatformSettings, String) {
+    let mut settings = PlatformSettings::default();
+    settings.pricing = settings.pricing.appended(
+        layer2_core::Rate {
+            cpu_micros_per_cpu_hour: 40_000,
+            memory_micros_per_gib_hour: 5_000,
+        },
+        "2026-08-23T01:00:00Z",
+    );
+    let card = settings
+        .pricing
+        .in_force()
+        .expect("the appended card is in force")
+        .id
+        .0
+        .clone();
+    (settings, card)
+}
+
 fn changed_briefing() -> Value {
     json!({
         "before": ["# Changed", "Platform prose"],
@@ -146,6 +165,85 @@ async fn an_administrator_can_read_change_and_reset_the_briefing() {
     assert_eq!(reset["settings"]["live_sessions"], 2);
     assert_ne!(reset["settings"]["briefing"], changed_briefing());
     assert_eq!(reset["previous"], changed["settings"]);
+}
+
+#[tokio::test]
+async fn a_complete_save_reports_the_settings_and_card_that_actually_changed() {
+    let (mut settings, rate_card) = priced_settings();
+    settings
+        .briefing
+        .before
+        .push("Changed with the price".into());
+    let response = app()
+        .oneshot(request(
+            Method::PUT,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "settings": settings
+            })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.extensions().get::<SettingsTouched>(),
+        Some(&SettingsTouched {
+            changed: vec!["briefing", "pricing"],
+            rate_card: Some(rate_card.clone()),
+        })
+    );
+    let body = response_json(response).await;
+    assert_eq!(body["revision"], 1);
+    assert_eq!(body["settings"]["pricing"]["cards"][0]["id"], rate_card);
+}
+
+#[tokio::test]
+async fn an_unconfigured_service_reads_defaults_and_refuses_a_save_by_name() {
+    let app = router(Arc::new(PlatformSettingsService::unconfigured()));
+    let read = app
+        .clone()
+        .oneshot(request(Method::GET, "/api/v1/admin/settings", None, true))
+        .await
+        .expect("route answers");
+    assert_eq!(read.status(), StatusCode::OK);
+    assert_eq!(response_json(read).await["revision"], 0);
+
+    let save = app
+        .oneshot(request(
+            Method::PUT,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "settings": PlatformSettings::default()
+            })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(save.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response_json(save).await["code"], "settings_unavailable");
+}
+
+#[tokio::test]
+async fn a_complete_save_refuses_fields_outside_its_document() {
+    let response = app()
+        .oneshot(request(
+            Method::PUT,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "settings": PlatformSettings::default(),
+                "briefing": "not part of this request shape"
+            })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response_json(response).await["code"], "invalid_request");
 }
 
 #[tokio::test]

@@ -28,12 +28,14 @@ import type {
   SessionAllowance,
   SessionLifecycle,
   SessionPlane,
+  PricingQuote,
+  SessionSpend,
 } from '../sdk';
 import { isStage, type Stage } from '../sessions/progress';
 import type { SignIn } from '../chat/conversationModel';
 
 export { ApiError, CapabilityRefused, SessionLimitReached, toSession } from '../sdk';
-export type { SessionAllowance } from '../sdk';
+export type { PricingQuote, SessionAllowance, SessionSpend } from '../sdk';
 
 /**
  * The one client this app holds.
@@ -86,9 +88,20 @@ export function createSession(
   cols: number,
   rows: number,
   environmentProfile?: string | null,
+  quotedRateCard?: string,
 ): Promise<Session> {
-  const options: CreateSession = { cols, rows, environmentProfile };
+  const options: CreateSession = { cols, rows, environmentProfile, quotedRateCard };
   return bot.createSession(options);
+}
+
+/** Quote a new session at the deployment's current sealed rate card. */
+export function quoteSession(environmentProfile?: string | null): Promise<PricingQuote> {
+  return bot.quoteSession(environmentProfile);
+}
+
+/** Read reserved-capacity spend derived from one session's durable log. */
+export function readSessionSpend(id: string): Promise<SessionSpend> {
+  return bot.readSpend(id);
 }
 
 /**

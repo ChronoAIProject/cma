@@ -109,6 +109,59 @@ fn usage_omits_a_context_window_the_runtime_never_stated() {
 }
 
 #[test]
+fn spend_crosses_as_exact_decimal_strings_with_server_rendered_display() {
+    let rendered = serde_json::to_value(SpendView::from(Spend {
+        priced: true,
+        rate_card: Some(layer2_core::RateCardId("rate_exact".into())),
+        micros_per_hour: Some(45_000),
+        accrued_micros: Some(45_000),
+        billable_seconds: Some(3_600),
+        accruing: false,
+        unbounded_intervals: 0,
+    }))
+    .expect("serializes");
+
+    assert_eq!(
+        rendered,
+        serde_json::json!({
+            "priced": true,
+            "rate_card": "rate_exact",
+            "currency": "USD",
+            "micros_per_hour": "45000",
+            "accrued_micros": "45000",
+            "display": "$0.045",
+            "billable_seconds": 3600,
+            "accruing": false,
+            "unbounded_intervals": 0
+        })
+    );
+}
+
+#[test]
+fn unpriced_spend_omits_every_figure_instead_of_rendering_zero() {
+    let rendered = serde_json::to_value(SpendView::from(Spend {
+        priced: false,
+        rate_card: None,
+        micros_per_hour: None,
+        accrued_micros: None,
+        billable_seconds: None,
+        accruing: false,
+        unbounded_intervals: 0,
+    }))
+    .expect("serializes");
+
+    assert_eq!(
+        rendered,
+        serde_json::json!({
+            "priced": false,
+            "accruing": false,
+            "unbounded_intervals": 0
+        })
+    );
+    assert!(!rendered.to_string().contains("$0.00"));
+}
+
+#[test]
 fn a_resize_needs_both_dimensions() {
     // A geometry with one side missing is not a smaller terminal, it is an
     // unanswerable request.
