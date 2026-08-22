@@ -3,6 +3,7 @@ import { AgentContent } from './AgentContent';
 import { CopyKey } from './CopyKey';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
+import { formatTokens } from './Usage';
 import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from './conversation';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
@@ -454,6 +455,22 @@ function StreamEntry({
           <span className="gap__note">Anything after that moment did not travel.</span>
         </div>
       );
+
+    case 'contextCompaction': {
+      /*
+       * A neutral boundary, not a warning. Both readings are the fact: one
+       * number alone would leave the reader to infer what changed, while the
+       * kernel exposes no signal that can say who asked for the summary.
+       */
+      const ceiling = entry.window === undefined ? '' : ` of ${formatTokens(entry.window)}`;
+      return (
+        <div className="context-compaction" role="separator">
+          The agent summarised the conversation to make room. It was holding{' '}
+          {formatTokens(entry.was)}; it now holds {formatTokens(entry.now)}
+          {ceiling}.
+        </div>
+      );
+    }
 
     case 'failure':
       /*
