@@ -41,16 +41,19 @@ describe('usage lands where the service writes it', () => {
   it('folds the counts the service actually sends', () => {
     // The defect: the paths were spelled `/usage/tokens` and `/usage/cost`
     // here while the service writes `/usage/inputTokens`,
-    // `/usage/outputTokens` and `/usage/contextUsed`, so every patch fell
-    // through to the ignored branch.
+    // `/usage/outputTokens`, `/usage/contextUsed` and
+    // `/usage/contextWindow`, so every patch fell through to the ignored
+    // branch.
     expect(PATHS.inputTokens).toBe('/usage/inputTokens');
     expect(PATHS.outputTokens).toBe('/usage/outputTokens');
     expect(PATHS.contextUsed).toBe('/usage/contextUsed');
+    expect(PATHS.contextWindow).toBe('/usage/contextWindow');
 
     const frames = [
       { op: 'replace', path: PATHS.inputTokens, value: 1200 },
       { op: 'replace', path: PATHS.outputTokens, value: 300 },
       { op: 'replace', path: PATHS.contextUsed, value: 44 },
+      { op: 'replace', path: PATHS.contextWindow, value: 200_000 },
     ];
     let state = EMPTY;
     for (const patch of frames) {
@@ -69,6 +72,7 @@ describe('usage lands where the service writes it', () => {
     expect(state.usage?.inputTokens).toBe(1200);
     expect(state.usage?.outputTokens).toBe(300);
     expect(state.usage?.contextUsed).toBe(44);
+    expect(state.usage?.contextWindow).toBe(200_000);
     // §18.5 asks for the count a reader watches, not a breakdown to add up.
     expect(state.usage?.tokens).toBe(1500);
   });
@@ -106,12 +110,14 @@ describe('the paths match what the service emits', () => {
   const EMITTED = [
     '/availableCommands',
     '/configOptions',
+    '/contextCompactions/-',
     '/gaps/-',
     '/mode',
     '/plan',
     '/planeChanges/-',
     '/signIn',
     '/usage/contextUsed',
+    '/usage/contextWindow',
     '/usage/inputTokens',
     '/usage/outputTokens',
   ];
