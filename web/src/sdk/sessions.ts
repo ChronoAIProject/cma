@@ -18,6 +18,7 @@ import { toCapabilities } from '../agui';
 import { headersFor, urlOf, type ResolvedConfig } from './config';
 import { ApiError } from './errors';
 import { request } from './http';
+import { PRICING_WIRE } from './wire';
 import type {
   CredentialMode,
   Kernel,
@@ -374,6 +375,150 @@ export interface CreateSession {
    * unqualified session", which is not the same as naming a bundle.
    */
   readonly environmentProfile?: string | null;
+  /** The sealed card whose displayed rate the owner accepted. */
+  readonly quotedRateCard?: string;
+}
+
+/** A new session has no configured capacity price. */
+export interface UnpricedQuote {
+  readonly priced: false;
+}
+
+/** The exact hourly rate the service computed for a new session. */
+export interface PricedQuote {
+  readonly priced: true;
+  readonly rateCard: string;
+  readonly currency: string;
+  readonly cpuMillis: number;
+  readonly memoryMib: number;
+  readonly microsPerHour: string;
+  readonly display: string;
+  readonly per: 'hour';
+  readonly quotedAt: string;
+}
+
+export type PricingQuote = PricedQuote | UnpricedQuote;
+
+/** A session created without a configured price. */
+export interface UnpricedSpend {
+  readonly priced: false;
+  readonly accruing: false;
+  readonly unboundedIntervals: number;
+}
+
+/** Reserved-capacity spend derived by the service from durable history. */
+export interface PricedSpend {
+  readonly priced: true;
+  readonly rateCard: string;
+  readonly currency: string;
+  readonly microsPerHour: string;
+  readonly accruedMicros: string;
+  readonly display: string;
+  readonly billableSeconds: number;
+  readonly accruing: boolean;
+  readonly unboundedIntervals: number;
+}
+
+export type SessionSpend = PricedSpend | UnpricedSpend;
+
+/** Read the exact rate a session created from this profile would pin. */
+export async function quoteSession(
+  config: ResolvedConfig,
+  environmentProfile?: string | null,
+): Promise<PricingQuote> {
+  const query = new URLSearchParams();
+  if (environmentProfile !== undefined && environmentProfile !== null) {
+    query.set(PRICING_WIRE.environmentProfile, environmentProfile);
+  }
+  const suffix = query.size === 0 ? '' : `?${query.toString()}`;
+  return toPricingQuote(await request(config, `${PRICING_WIRE.quotePath}${suffix}`));
+}
+
+/** Read a session's reserved-capacity spend, never the model vendor's cost. */
+export async function readSpend(config: ResolvedConfig, id: string): Promise<SessionSpend> {
+  const body = await request(
+    config,
+    `/api/v1/sessions/${encodeURIComponent(id)}/${PRICING_WIRE.spend}`,
+  );
+  return toSessionSpend(body);
+}
+
+/** Validate a quote at the network boundary and keep monetary integers as strings. */
+export function toPricingQuote(raw: unknown): PricingQuote {
+  const body = objectOf(raw, 'pricing quote');
+  if (body[PRICING_WIRE.priced] === false) {
+    return { priced: false };
+  }
+  const per = textOf(body, PRICING_WIRE.per, 'pricing quote');
+  if (per !== 'hour') {
+    throw new ApiError(0, 'pricing quote used an unrecognised interval');
+  }
+  return {
+    priced: true,
+    rateCard: textOf(body, PRICING_WIRE.rateCard, 'pricing quote'),
+    currency: textOf(body, PRICING_WIRE.currency, 'pricing quote'),
+    cpuMillis: integerOf(body, PRICING_WIRE.cpuMillis, 'pricing quote'),
+    memoryMib: integerOf(body, PRICING_WIRE.memoryMib, 'pricing quote'),
+    microsPerHour: decimalOf(body, PRICING_WIRE.microsPerHour, 'pricing quote'),
+    display: textOf(body, PRICING_WIRE.display, 'pricing quote'),
+    per,
+    quotedAt: textOf(body, PRICING_WIRE.quotedAt, 'pricing quote'),
+  };
+}
+
+/** Validate a spend response without deriving or rounding any monetary value. */
+export function toSessionSpend(raw: unknown): SessionSpend {
+  const body = objectOf(raw, 'session spend');
+  const unboundedIntervals = integerOf(body, PRICING_WIRE.unboundedIntervals, 'session spend');
+  if (body[PRICING_WIRE.priced] === false) {
+    return { priced: false, accruing: false, unboundedIntervals };
+  }
+  const accruing = body[PRICING_WIRE.accruing];
+  if (body[PRICING_WIRE.priced] !== true || typeof accruing !== 'boolean') {
+    throw new ApiError(0, 'session spend carried no pricing state');
+  }
+  return {
+    priced: true,
+    rateCard: textOf(body, PRICING_WIRE.rateCard, 'session spend'),
+    currency: textOf(body, PRICING_WIRE.currency, 'session spend'),
+    microsPerHour: decimalOf(body, PRICING_WIRE.microsPerHour, 'session spend'),
+    accruedMicros: decimalOf(body, PRICING_WIRE.accruedMicros, 'session spend'),
+    display: textOf(body, PRICING_WIRE.display, 'session spend'),
+    billableSeconds: integerOf(body, PRICING_WIRE.billableSeconds, 'session spend'),
+    accruing,
+    unboundedIntervals,
+  };
+}
+
+function objectOf(raw: unknown, name: string): Record<string, unknown> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ApiError(0, `${name} was not an object`);
+  }
+  return raw as Record<string, unknown>;
+}
+
+function textOf(body: Record<string, unknown>, field: string, name: string): string {
+  const value = body[field];
+  if (typeof value !== 'string' || value === '') {
+    throw new ApiError(0, `${name} carried no ${field}`);
+  }
+  return value;
+}
+
+function decimalOf(body: Record<string, unknown>, field: string, name: string): string {
+  const value = body[field];
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) {
+    throw new ApiError(0, `${name} carried an invalid ${field}`);
+  }
+  return value;
+}
+
+function integerOf(body: Record<string, unknown>, field: string, name: string): number {
+  const value = body[field];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ApiError(0, `${name} carried an invalid ${field}`);
+  }
+  return value;
 }
 
 /**
@@ -395,6 +540,7 @@ export async function createSession(
       // "this deployment's answer", which is not the same as a caller naming a
       // bundle that does not exist.
       environment_profile: options.environmentProfile ?? undefined,
+      [PRICING_WIRE.quotedRateCard]: options.quotedRateCard,
     },
   });
   return toSession(body);

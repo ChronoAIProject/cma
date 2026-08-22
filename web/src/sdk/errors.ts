@@ -20,6 +20,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The service's stable problem code, where it sent one. */
+    readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
