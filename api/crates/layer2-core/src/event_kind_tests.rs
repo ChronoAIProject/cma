@@ -1,7 +1,7 @@
 //! The durable vocabulary, walked variant by variant.
 
 use super::{AvailableCommand, ConfigOption, EventKind, PlanStep};
-use crate::session::{SessionStatus, StopReason};
+use crate::session::{RuntimeLossCause, SessionStatus, StopReason};
 
 #[test]
 fn status_change_serializes_with_a_type_tag() {
@@ -117,6 +117,10 @@ fn one_of_every_kind() -> Vec<EventKind> {
             request_id: "r-1".into(),
             allowed: true,
         },
+        EventKind::RuntimeLost {
+            runtime_id: "sbx_1".into(),
+            cause: Some(RuntimeLossCause::OutOfMemory),
+        },
         EventKind::ConversationOpened {
             conversation_id: "conv-1".into(),
         },
@@ -155,11 +159,25 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::TerminalResized { .. }
             | EventKind::ApprovalRequested { .. }
             | EventKind::ApprovalResolved { .. }
+            | EventKind::RuntimeLost { .. }
             | EventKind::PlaneChanged { .. }
             | EventKind::SignInRequired { .. } => {}
         }
     }
     all
+}
+
+#[test]
+fn a_runtime_loss_with_no_cause_omits_it_instead_of_writing_null() {
+    let json = serde_json::to_value(EventKind::RuntimeLost {
+        runtime_id: "sbx_1".into(),
+        cause: None,
+    })
+    .expect("serializes");
+    assert_eq!(
+        json,
+        serde_json::json!({"type": "runtime_lost", "runtime_id": "sbx_1"})
+    );
 }
 
 #[test]

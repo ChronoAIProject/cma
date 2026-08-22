@@ -131,7 +131,9 @@ pub use reconcile::Reclaimed;
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
-pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+pub use session::{
+    RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus, StopReason,
+};
 pub use size::{InvalidSessionSize, SessionSize};
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
