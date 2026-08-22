@@ -31,6 +31,7 @@ use crate::rest::{Problem, SessionsState};
 use crate::{InterfaceProfile, Operation};
 
 mod capabilities;
+mod frame;
 mod live;
 mod project;
 mod replay;

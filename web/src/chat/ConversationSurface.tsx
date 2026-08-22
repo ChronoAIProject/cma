@@ -5,6 +5,7 @@ import { SignInCard } from './SignInCard';
 import { Composer } from './Composer';
 import { Context } from './Context';
 import { Usage } from './Usage';
+import { RuntimeLoss } from './RuntimeLoss';
 import { EMPTY, reduce, type Conversation } from './conversation';
 import { planeStateFor } from './planeState';
 import {
@@ -92,6 +93,7 @@ export function ConversationSurface({
    */
   const [linkLost, setLinkLost] = useState(false);
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
+  const [lossDismissed, setLossDismissed] = useState(false);
 
   const client = useMemo(
     () => new AguiOperations(session.id, operations),
@@ -206,6 +208,13 @@ export function ConversationSurface({
 
   return (
     <section className="conversation" aria-label="Conversation">
+      <RuntimeLoss
+        loss={lossDismissed ? undefined : conversation.runtimeLoss}
+        onDismiss={() => {
+          setLossDismissed(true);
+        }}
+      />
+
       {refusal === undefined ? null : (
         <div className="notice notice--fail conversation__refusal" role="alert">
           <span className="notice__detail">{refusal}</span>
