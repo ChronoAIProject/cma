@@ -15,7 +15,7 @@ use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::{store_failed, SessionEntry, SessionService, LIVE_BUFFER};
-use crate::session::{Session, SessionSpec, SessionStatus};
+use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::store::SessionRecord;
 use crate::terminal::ScreenModel;
 use crate::terminal_io::spawn_relay;
@@ -120,6 +120,7 @@ impl SessionService {
     async fn settle_ready(&self, record: &SessionRecord) {
         let mut settled = record.clone();
         settled.session.status = SessionStatus::Ready;
+        settled.session.recovery_state = RecoveryState::Normal;
         settled.session.stop_reason = None;
         let id = settled.session.id.clone();
         let seq = self.sequences.take(&id, settled.session.last_seq, 1);
@@ -150,6 +151,7 @@ impl SessionService {
         }
         if let Some(entry) = self.entries.write().await.get_mut(&id) {
             entry.session.status = SessionStatus::Ready;
+            entry.session.recovery_state = RecoveryState::Normal;
             entry.session.last_seq = seq;
         }
     }

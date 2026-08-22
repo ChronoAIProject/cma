@@ -86,6 +86,7 @@ pub fn spawn(service: Arc<SessionService>) {
                     orphaned_runtimes = moved.orphaned_runtimes,
                     readopted_sessions = moved.readopted_sessions,
                     reprovisioned_sessions = moved.reprovisioned_sessions,
+                    lost_runtimes = moved.lost_runtimes,
                     rotated_sessions = moved.rotated_sessions,
                     "reconciliation pass moved sessions towards their recorded state"
                 );

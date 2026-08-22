@@ -31,7 +31,7 @@ use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
 use crate::provision_failure::StartFailure;
 use crate::service::{SessionEntry, SessionService, LIVE_BUFFER};
-use crate::session::{ProvisioningStage, Session, SessionSpec, SessionStatus};
+use crate::session::{ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::size::SessionSize;
 use crate::terminal::{ScreenModel, TerminalGeometry};
 use crate::terminal_io::spawn_relay;
@@ -457,6 +457,9 @@ impl SessionService {
             captured_len,
         };
         entry.session.status = SessionStatus::Ready;
+        // Whatever brought the session here, it is running now. Without this,
+        // `recovering` would be a state a replacement session never leaves.
+        entry.session.recovery_state = RecoveryState::Normal;
         crate::log::append(
             &mut entry,
             EventKind::StatusChanged {
