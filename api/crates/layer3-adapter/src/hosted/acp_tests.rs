@@ -619,11 +619,39 @@ async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
 }
 
 #[tokio::test]
+async fn an_interrupt_is_accepted_after_it_reaches_the_runtime_link() {
+    let (url, served) = bridging(None, None, Some(3)).await;
+    let stream = connect(&url).await;
+    let (channel, _control, _updates) =
+        open_bridge(stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the bridge answered the handshake");
+
+    channel
+        .input
+        .send(crate::ConversationInput::Cancel)
+        .await
+        .expect("the interrupt reached the bridge link");
+
+    let done = served.await.expect("the fixture finished");
+    assert!(
+        done.frames
+            .iter()
+            .any(|frame| frame["method"] == "session/cancel"),
+        "the bridge must receive session/cancel before the caller sees success: {:?}",
+        done.frames
+    );
+}
+
+#[tokio::test]
 async fn every_request_this_bridge_sends_is_dispatchable() {
     // The general form, so the next request added cannot repeat it. A JSON-RPC
     // request without a method is undispatchable whatever it was meant to ask,
     // and the failure is silent at both ends.
-    let (url, served) = bridging(None, None, Some(3)).await;
+    // Three handshake calls plus the prompt this test inspects. Stopping the
+    // fixture after three closes the runtime link before the prompt and is
+    // now correctly refused rather than accepted into a dead local queue.
+    let (url, served) = bridging(None, None, Some(4)).await;
     let stream = connect(&url).await;
     let (channel, _control, _updates) = open_bridge(
         stream,

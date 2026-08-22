@@ -85,7 +85,7 @@ pub(crate) struct SessionEntry {
     /// business making.
     pub(crate) live_frames: broadcast::Sender<crate::event::LiveFrame>,
     /// Input toward the session's conversation, when it holds one.
-    pub(crate) conversation: Option<mpsc::Sender<layer3_adapter::ConversationInput>>,
+    pub(crate) conversation: Option<layer3_adapter::ConversationInputSender>,
     /// The message the agent is still assembling, and which one it is.
     ///
     /// A runtime streams a message in pieces and says nothing to mark the end
