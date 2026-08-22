@@ -124,6 +124,7 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
         restore: Option<&Vec<u8>>,
+        platform_briefing: &str,
     ) -> Result<(), StartFailure> {
         let mut backoff = Duration::from_millis(
             self.retry_backoff_ms
@@ -136,7 +137,7 @@ impl SessionService {
 
         for attempt in 1..=PROVISION_ATTEMPTS {
             match self
-                .start_runtime(session, spec, adapter, geometry, restore)
+                .start_runtime(session, spec, adapter, geometry, restore, platform_briefing)
                 .await
             {
                 Ok(()) => {
