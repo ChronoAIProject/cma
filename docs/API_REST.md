@@ -57,7 +57,8 @@ Content-Type: application/json
 {
   "cols": 120,
   "rows": 32,
-  "environment_profile": "envp_7dec1b0ca73c46b88121b259577bbe96"
+  "environment_profile": "envp_7dec1b0ca73c46b88121b259577bbe96",
+  "quoted_rate_card": "rate_9f2c4d71"
 }
 ```
 
@@ -66,8 +67,9 @@ Content-Type: application/json
 | `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
 | `rows`                | no       | Initial terminal height                                                                                                                         |
 | `environment_profile` | no       | Id of a profile from `GET /api/v1/environment-profiles`. **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
+| `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
 
-**These three are the whole body.** An earlier version of this section
+**These four are the whole body.** An earlier version of this section
 documented `llm_source` as required, along with `environment`, `workspace`,
 `concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
 side-effecting `POST`. None of them has ever existed in the service. They were
@@ -116,6 +118,26 @@ service does not send and spelled `recovery_state` as an object it does not use.
 it may ask for without trying. `runtime_version`, `rotations` and `rotated_at`
 appear once a session has been moved, and are absent before that because a
 session that has never been rotated has nothing to explain.
+
+A priced session also carries the price settled when it was created:
+
+```json
+{
+  "pricing": {
+    "rate_card": "rate_9f2c4d71",
+    "currency": "USD",
+    "micros_per_hour": "45000",
+    "display": "$0.045",
+    "quoted_at": "2026-08-23T05:00:00Z"
+  }
+}
+```
+
+This is part of the session record, not a fresh lookup. The card may have been
+retired since creation and the session still carries the rate it accepted.
+`pricing` is omitted for a session created before pricing was recorded or on a
+deployment with no configured price. Omission means **not priced**; it never
+means zero or free.
 
 ### Live-session allowance
 
@@ -389,7 +411,67 @@ A session with no terminal capability is refused here with `capability_unsupport
 
 ---
 
-## 7. Usage
+## 7. Pricing and usage
+
+### Quote a new session
+
+```http
+GET /api/v1/pricing/quote?environment_profile=envp_7dec1b0ca73c46b88121b259577bbe96
+```
+
+The route is authenticated. `environment_profile` is optional; omission asks
+for the deployment's unqualified session, exactly as omission on create does.
+The service resolves the profile's actual authored size and computes the quote
+with integer micro-USD arithmetic:
+
+```json
+{
+  "rate_card": "rate_9f2c4d71",
+  "currency": "USD",
+  "cpu_millis": 1000,
+  "memory_mib": 1024,
+  "micros_per_hour": "45000",
+  "display": "$0.045",
+  "per": "hour",
+  "quoted_at": "2026-08-23T05:00:00Z"
+}
+```
+
+`micros_per_hour` is a decimal string so its complete integer survives clients
+whose JSON numbers are binary floating point. `display` is the lossless string
+the service will reconcile against; clients render it verbatim and perform no
+rounding. The only currency is USD. Memory is priced in GiB, with 1,024 MiB per
+GiB.
+
+There is deliberately no raw CPU/memory query. A quote accepts an environment
+profile because it must price the size the service will actually provision,
+not a hypothetical size a client assembled separately. If a price is
+configured but the selected session has no authored size, the route returns
+`422 invalid_request`, naming the missing administrator-declared assumed
+session size. The service does not parse opaque deployment quantity strings or
+invent a default.
+
+Where no price list is configured, the successful response is exactly:
+
+```json
+{ "priced": false }
+```
+
+That is not a zero quote and is never rendered as `$0.00`. The deployment is
+working and has stated no price.
+
+This route quotes a **new** session. There is no route to re-quote a session
+that already exists, deliberately: its `pricing` field is the rate pinned at
+creation, and looking up the current card would give the wrong answer as soon
+as prices change.
+
+Send the returned `rate_card` as `quoted_rate_card` on `POST /api/v1/sessions`.
+The amount pinned on the new session is computed from that same sealed card and
+resolved size. If another card came into force between the two requests,
+creation returns `409 price_changed` and writes no session; read a fresh quote
+and ask the owner again.
+
+### Runtime usage
 
 ```http
 GET /api/v1/sessions/{id}/usage
@@ -405,7 +487,7 @@ Requires the `usage` capability. Not every kernel reports token counts, and one 
 
 `input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall when the agent summarises the conversation to make room. Each such fall is recorded as a durable `context_compacted` event carrying the previous reading, the new reading and the stated ceiling where one is known.
 
-Monetary accounting is not served here yet. When it is, amounts will be **integer strings in micro-USD** — `"412"` is $0.000412 — never floats.
+Accrued monetary accounting is not served here yet. Price quotes and pinned session prices use **integer strings in micro-USD** — `"412"` is $0.000412 — never floats.
 
 ---
 
@@ -471,7 +553,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `401` | Missing or invalid NyxID credential |
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No such session, or not visible to this subject |
-| `409` | Conflicts with current state — turn in progress, session terminated, or live-session limit reached |
+| `409` | Conflicts with current state — turn in progress, session terminated, live-session limit reached, or the quoted rate card is no longer in force |
 | `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |
 | `429` | Rate limited; observe `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
@@ -499,6 +581,31 @@ Told apart by `code` and by status, never by prose — a client matching on a se
 **A catalogue that cannot be asked refuses nothing.** What a session may reach is recorded on the profile; the catalogue exists to help choose, not to authorise. Blocking session creation on NyxID being reachable would take the service down with it, and would do so for selections settled days ago.
 
 See `docs/Services.md` for the whole path.
+
+### Price-change refusal
+
+| `code` | Status | What it means | What to do |
+|---|---|---|---|
+| `price_changed` | `409` | The accepted rate card is no longer the card used for new work. | Read `/api/v1/pricing/quote` again and show the new `display` before retrying. |
+
+```json
+{
+  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/price-changed",
+  "title": "price changed",
+  "status": 409,
+  "detail": "the price changed: quoted against rate card rate_old, now rate_new",
+  "code": "price_changed",
+  "quoted_rate_card": "rate_old",
+  "rate_card": "rate_new"
+}
+```
+
+Both card ids are top-level fields so a client never parses the English
+`detail`. The refusal keys only on the rate-card id, never on the platform
+settings revision: editing a briefing or another unrelated setting is not a
+price change. It is a conflict rather than `429`; time does not clear it and no
+honest `Retry-After` exists. Creation is refused before an identifier is minted
+or a record is written.
 
 ### Size-bound refusal
 
