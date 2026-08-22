@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { abilitiesFor, listable } from './availability';
+import { abilitiesFor, creationAbilityFor, listable } from './availability';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '../agui';
 
@@ -99,6 +99,42 @@ describe('what a session allows', () => {
         expect(can.canReconnect, `${lifecycle} must not offer reconnect`).toBe(false);
       }
     }
+  });
+});
+
+describe('whether another session may be created', () => {
+  it('enables when the allowance could not be read', () => {
+    expect(creationAbilityFor(undefined)).toEqual({ canCreate: true });
+  });
+
+  it('enables an explicitly exempt caller', () => {
+    expect(creationAbilityFor({ limit: 3, live: 3, exempt: true })).toEqual({ canCreate: true });
+  });
+
+  it('enables when the deployment sets no limit', () => {
+    expect(creationAbilityFor({ live: 40, exempt: false })).toEqual({ canCreate: true });
+  });
+
+  it('enables while the caller remains below the limit', () => {
+    expect(creationAbilityFor({ limit: 3, live: 2, exempt: false })).toEqual({ canCreate: true });
+  });
+
+  it('disables at the limit and says how to make room', () => {
+    expect(creationAbilityFor({ limit: 3, live: 3, exempt: false })).toEqual({
+      canCreate: false,
+      reason: 'You have 3 of 3 sessions running. Pause or end one to start another.',
+    });
+  });
+
+  it('gives an owner already over the limit a distinct useful instruction', () => {
+    const atLimit = creationAbilityFor({ limit: 3, live: 3, exempt: false });
+    const overLimit = creationAbilityFor({ limit: 3, live: 4, exempt: false });
+    expect(overLimit).toEqual({
+      canCreate: false,
+      reason:
+        'You have 4 sessions running and the limit is 3. Pause or end sessions until fewer than 3 are running.',
+    });
+    expect(overLimit.reason).not.toBe(atLimit.reason);
   });
 });
 

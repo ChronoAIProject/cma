@@ -12,7 +12,7 @@
 
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config';
 import * as sessions from './sessions';
-import type { CreateSession } from './sessions';
+import type { CreateSession, SessionAllowance } from './sessions';
 import type { KernelOffer, Session, SessionPlane } from './types';
 
 /**
@@ -40,6 +40,11 @@ export class Cma {
   /** Sessions belonging to the authenticated subject, newest first. */
   listSessions(): Promise<readonly Session[]> {
     return sessions.listSessions(this.#config);
+  }
+
+  /** The authenticated subject's advisory live-session allowance. */
+  readAllowance(): Promise<SessionAllowance> {
+    return sessions.readAllowance(this.#config);
   }
 
   /**

@@ -1,5 +1,44 @@
 import type { Session } from './types';
 
+/** What `GET /api/v1/sessions/allowance` permits this caller. */
+export interface Allowance {
+  /** Absent when the deployment sets no limit. */
+  readonly limit?: number;
+  readonly live: number;
+  readonly exempt: boolean;
+}
+
+/** Whether another session may be started, and why not. */
+export interface CreationAbility {
+  readonly canCreate: boolean;
+  /** Present exactly when `canCreate` is false, in the owner's terms. */
+  readonly reason?: string;
+}
+
+/**
+ * Decide whether to offer another session from one advisory answer.
+ *
+ * `undefined` means the client could not ask, and it enables: a failed
+ * courtesy read must not disable the only way to start work. The create
+ * request remains authoritative in every case.
+ */
+export function creationAbilityFor(allowance: Allowance | undefined): CreationAbility {
+  if (allowance === undefined || allowance.exempt || allowance.limit === undefined) {
+    return { canCreate: true };
+  }
+  const { limit, live } = allowance;
+  if (live < limit) {
+    return { canCreate: true };
+  }
+  return {
+    canCreate: false,
+    reason:
+      live === limit
+        ? `You have ${String(live)} of ${String(limit)} sessions running. Pause or end one to start another.`
+        : `You have ${String(live)} sessions running and the limit is ${String(limit)}. Pause or end sessions until fewer than ${String(limit)} are running.`,
+  };
+}
+
 /**
  * What can be done to a session in each of its states.
  *
