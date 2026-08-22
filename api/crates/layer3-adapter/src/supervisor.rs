@@ -37,6 +37,24 @@ pub const LANE_CONVERSATION: u8 = 0x02;
 /// A gap in the conversation, where frames were dropped rather than kept.
 pub const LANE_CONVERSATION_GAP: u8 = 0x03;
 
+/// One resource sample, exactly as the pod read it from its own cgroup.
+pub const LANE_TELEMETRY: u8 = 0x04;
+
+/// The word for that lane in an attach query and in a pod's declaration.
+///
+/// Named on both sides rather than written as a literal in each: the two ends
+/// have to agree on one word, and a literal repeated in two crates is how they
+/// stop agreeing - the argument `SWITCH_RESULT` already makes in
+/// `hosted/link.rs:49-51` and in the pod's `link.rs:122-126`.
+///
+/// Never sent to a pod that has not declared it serves telemetry. A pod that
+/// predates this reads any `lanes` value other than `conv` as the terminal
+/// (`layer4-runtime/src/link.rs:79-83`, `:167-171`), so an ungated attach starts
+/// a second agent process in a conversation-plane sandbox and hijacks the
+/// screen of a terminal-plane one. Support is read from `/readyz` before
+/// anything is opened, the way a prelude is (`hosted/mod.rs:438-451`).
+pub const LANE_NAME_TELEMETRY: &str = "tel";
+
 /// What a pod says about itself the moment a link opens.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Ready {
@@ -104,6 +122,13 @@ mod tests {
     }
 
     #[test]
+    fn a_pod_that_does_not_declare_telemetry_does_not_serve_it() {
+        let ready = Ready::from_control(r#"{"t":"ready","wireVersion":1,"lanes":["term"]}"#)
+            .expect("a pod that speaks lanes says so in this shape");
+        assert!(!ready.serves(LANE_NAME_TELEMETRY));
+    }
+
+    #[test]
     fn a_pod_that_says_nothing_of_the_kind_is_not_declaring() {
         // Everything else on the control lane is somebody else's business, and
         // reading one of those as a declaration would switch the wire under a
@@ -143,6 +168,8 @@ mod tests {
         assert_eq!(LANE_TERMINAL, 0x01);
         assert_eq!(LANE_CONVERSATION, 0x02);
         assert_eq!(LANE_CONVERSATION_GAP, 0x03);
+        assert_eq!(LANE_TELEMETRY, 0x04);
+        assert_eq!(LANE_NAME_TELEMETRY, "tel");
         assert_eq!(WIRE_VERSION, 1);
     }
 }
