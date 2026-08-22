@@ -76,22 +76,36 @@ const OWN_WORK: [Capability; 4] = [
     Capability::ManageOwnEnvironmentProfiles,
 ];
 
-/// What a grant naming this product reaches, beyond the caller's own work.
+/// Whether a grant naming this product reaches `capability`.
 ///
-/// A named array with a length rather than an inline list, and the length is
-/// the point: `OWN_WORK` above has one and this did not, so a capability added
-/// to the core was a compile error in one place and a silent omission in the
-/// other. A capability missing from here is a wildcard that quietly stops
-/// meaning everything, which is the failure nobody would see.
-const EVERYTHING_HERE: [Capability; 7] = [
-    Capability::ReadAllSessions,
-    Capability::ReadRuntimeInventory,
-    Capability::ReadEventLog,
-    Capability::ReadActivityLog,
-    Capability::ReadUserDirectory,
-    Capability::ControlAnySession,
-    Capability::ConfigurePlatform,
-];
+/// A match rather than a list, and exhaustive rather than defaulted: a
+/// capability added to the core stops this file compiling until somebody
+/// decides. The list this replaced could silently narrow the wildcard.
+///
+/// Every arm answers `true` today, and that is not a reason to delete the
+/// question. Translation here is deny-by-default; granting whatever the enum
+/// happens to hold would invert that and hand out an undecided capability by
+/// inheritance. The value is the arm somebody has to type, not its answer.
+const fn product_wildcard_reaches(capability: Capability) -> bool {
+    match capability {
+        // The caller's own work. Reached here too, because a wildcard naming
+        // this product that granted less than the provider's plain wildcard
+        // would be a narrower grant with a wider name.
+        Capability::CreateSession
+        | Capability::UseOwnSessions
+        | Capability::TerminateOwnSession
+        | Capability::ManageOwnEnvironmentProfiles => true,
+        // Everything that crosses subjects. Only a grant naming this product
+        // reaches these; that is the distinction this file exists to draw.
+        Capability::ReadAllSessions
+        | Capability::ReadRuntimeInventory
+        | Capability::ReadEventLog
+        | Capability::ReadActivityLog
+        | Capability::ReadUserDirectory
+        | Capability::ConfigurePlatform
+        | Capability::ControlAnySession => true,
+    }
+}
 
 /// Translate provider permissions into the capabilities the core enforces.
 ///
@@ -148,10 +162,15 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
     }
 
     // A wildcard naming this product is the only thing that crosses subjects
-    // without saying which capability it means.
+    // without saying which capability it means. What it reaches is decided
+    // one capability at a time above, so a new one cannot join by accident or
+    // be left out in silence.
     if everything {
-        granted.extend(OWN_WORK);
-        granted.extend(EVERYTHING_HERE);
+        granted.extend(
+            Capability::ALL
+                .into_iter()
+                .filter(|capability| product_wildcard_reaches(*capability)),
+        );
     }
 
     Authorization::from_capabilities(granted)
@@ -297,32 +316,42 @@ mod tests {
             !a.is_privileged(),
             "a caller entitled on the provider is not an operator here"
         );
+        assert_eq!(
+            a.capabilities().count(),
+            OWN_WORK.len(),
+            "the provider's wildcard reaches a caller's own work and stops there"
+        );
     }
 
     #[test]
     fn a_product_wildcard_grants_everything_here() {
         // Named this product, so it is a decision about this product.
         let a = capabilities_from_permissions(["chrono-bot:*"]);
-        for c in [
-            Capability::CreateSession,
-            Capability::UseOwnSessions,
-            Capability::TerminateOwnSession,
-            Capability::ManageOwnEnvironmentProfiles,
-            Capability::ReadAllSessions,
-            Capability::ReadRuntimeInventory,
-            Capability::ReadEventLog,
-            Capability::ReadActivityLog,
-            Capability::ReadUserDirectory,
-            Capability::ControlAnySession,
-            Capability::ConfigurePlatform,
-        ] {
+        for c in Capability::ALL {
             assert!(a.allows(c), "the product wildcard must grant {c:?}");
         }
+        // Against the enum, deliberately. Counting the grant against the list
+        // that produced it compares a thing with itself and cannot fail from
+        // an omission, which is the omission this test exists to catch.
         assert_eq!(
             a.capabilities().count(),
-            OWN_WORK.len() + EVERYTHING_HERE.len(),
+            Capability::ALL.len(),
             "the wildcard must grant every capability this product has and no more"
         );
+    }
+
+    #[test]
+    fn the_product_wildcard_grants_exactly_what_it_says_it_reaches() {
+        // The grant and the decision are two expressions of one fact, and a
+        // test that reads only one cannot notice them parting.
+        let a = capabilities_from_permissions(["chrono-bot:*"]);
+        for c in Capability::ALL {
+            assert_eq!(
+                a.allows(c),
+                product_wildcard_reaches(c),
+                "{c:?} is granted differently from how it is decided"
+            );
+        }
     }
 
     #[test]
