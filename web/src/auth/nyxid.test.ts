@@ -45,10 +45,9 @@ describe('handleFor', () => {
 
 describe('what the control plane says a caller may do', () => {
   it('keeps the capabilities it recognises', () => {
-    expect(capabilitiesFrom(['read_all_sessions', 'control_any_session'])).toEqual([
-      'read_all_sessions',
-      'control_any_session',
-    ]);
+    expect(
+      capabilitiesFrom(['read_all_sessions', 'control_any_session', 'configure_platform']),
+    ).toEqual(['read_all_sessions', 'control_any_session', 'configure_platform']);
   });
 
   it('drops a name this client does not model', () => {
