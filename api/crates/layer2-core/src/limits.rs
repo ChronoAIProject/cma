@@ -12,6 +12,17 @@ use crate::ids::SubjectId;
 use crate::service::{store_failed, SessionService};
 use crate::store::SessionStore;
 
+/// What the deployment currently permits this caller to start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionAllowance {
+    /// Absent when the deployment has set no live-session limit.
+    pub limit: Option<u32>,
+    /// Sessions this subject has recorded as wanting a runtime.
+    pub live: u32,
+    /// Whether the caller is explicitly exempt from the limit.
+    pub exempt: bool,
+}
+
 /// One in-process mutex per owner who currently has a limit check in flight.
 ///
 /// This narrows the race; it does not close it. The deployment currently pins
