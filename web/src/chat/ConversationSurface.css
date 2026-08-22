@@ -26,6 +26,15 @@
 }
 
 /*
+ * Runtime-loss history sits above the refusal it may explain. The quiet notice
+ * owns its appearance; this class only gives it the surface's existing seat.
+ */
+.conversation__loss {
+  flex: none;
+  margin: var(--space-3) var(--page-gutter) 0;
+}
+
+/*
  * The foot of the reading column — the composer card and, beneath it and
  * outside it, usage (§18.4, §18.5). Centred to the same column as the stream.
  */
