@@ -4,6 +4,7 @@
 //! in its own idiom. Interfaces translate; they must never re-derive the
 //! distinction between, say, "not yours" and "does not exist".
 
+use crate::size::InvalidSessionSize;
 use crate::terminal::InvalidGeometry;
 
 /// Errors surfaced by the core.
@@ -39,6 +40,10 @@ pub enum CoreError {
     /// A terminal geometry with a zero dimension was supplied.
     #[error("invalid geometry: {0}")]
     InvalidGeometry(#[from] InvalidGeometry),
+
+    /// A session size with a zero figure was supplied.
+    #[error("invalid session size: {0}")]
+    InvalidSessionSize(#[from] InvalidSessionSize),
 
     /// The runtime backing this session is not reachable.
     ///
@@ -138,6 +143,7 @@ impl CoreError {
             Self::SessionTerminated => "session_terminated",
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
+            Self::InvalidSessionSize(_) => "invalid_session_size",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::RuntimeRefused(_) => "runtime_refused",
             Self::InvalidState => "invalid_state",
@@ -154,6 +160,7 @@ impl CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::size::SessionSize;
     use crate::terminal::TerminalGeometry;
 
     /// Every variant, and the compiler is what says so.
@@ -176,6 +183,7 @@ mod tests {
             CoreError::SessionTerminated,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails")),
+            CoreError::InvalidSessionSize(SessionSize::new(0, 512).expect_err("zero CPU fails")),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
             CoreError::InvalidState,
@@ -197,6 +205,7 @@ mod tests {
                 | CoreError::SessionTerminated
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
+                | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
                 | CoreError::InvalidState
@@ -253,5 +262,12 @@ mod tests {
         let source = TerminalGeometry::new(80, 0).expect_err("zero height fails");
         let err: CoreError = source.into();
         assert_eq!(err.code(), "invalid_geometry");
+    }
+
+    #[test]
+    fn invalid_size_converts_from_the_size_error() {
+        let source = SessionSize::new(500, 0).expect_err("zero memory fails");
+        let err: CoreError = source.into();
+        assert_eq!(err.code(), "invalid_session_size");
     }
 }
