@@ -66,3 +66,24 @@
   flex: 1;
   min-width: 0;
 }
+
+/* The same card's confirmation step — Web_Style.md §12.5. */
+.sessionconfirmation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sessionconfirmation__price,
+.sessionconfirmation__changed {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-ui);
+  line-height: var(--leading-ui);
+}
+
+.sessionconfirmation__price strong,
+.sessionconfirmation__changed strong {
+  color: var(--ink);
+  font-weight: 600;
+}

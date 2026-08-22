@@ -110,7 +110,9 @@ describe('refreshing the live-session allowance', () => {
   it('refreshes after a failed action too', async () => {
     vi.mocked(createSession).mockRejectedValueOnce(new Error('refused'));
     const { result, refreshAllowance } = renderActions();
-    await act(() => result.current.actions.start());
+    await act(async () => {
+      await expect(result.current.actions.start()).rejects.toThrow('refused');
+    });
     expect(refreshAllowance).toHaveBeenCalledOnce();
   });
 
