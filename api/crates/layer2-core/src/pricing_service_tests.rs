@@ -6,7 +6,7 @@ use crate::authz::{Authorization, Caller, Capability};
 use crate::environment::AgentConfiguration;
 use crate::store::{PlatformSettingsStore, StoreError, StoredSettings};
 use crate::test_support::{
-    environments_defaulting_to, service_with_environments_and_settings,
+    environments_defaulting_to, profile_spec, service_with_environments_and_settings,
     service_with_environments_and_settings_service, spec, user, FakeAdapter, FakeStore,
 };
 use crate::{CoreError, PlatformSettings, PlatformSettingsService, Rate, SessionSize};
@@ -115,6 +115,46 @@ async fn the_quoted_integer_is_the_integer_pinned_on_creation() {
     assert_eq!(crate::format_usd(pinned.micros_per_hour), quote.display);
     assert_eq!(pinned.cpu_millis, quote.cpu_millis);
     assert_eq!(pinned.memory_mib, quote.memory_mib);
+}
+
+#[tokio::test]
+async fn an_explicit_profile_is_quoted_at_the_size_creation_uses() {
+    let owner = user("owner");
+    let environments = environments_defaulting_to(AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        size: None,
+        ..Default::default()
+    });
+    let mut authored = profile_spec("sized");
+    authored.agent.size = Some(SessionSize::new(250, 2_048).expect("test size is non-zero"));
+    let profile = environments
+        .create(&owner, authored)
+        .await
+        .expect("profile creates");
+    let service = service_with_environments_and_settings(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+        environments,
+        priced(),
+    );
+
+    let quote = service
+        .quote(&owner, Some(&profile.id))
+        .await
+        .expect("quote succeeds")
+        .expect("deployment is priced");
+    let mut request = spec();
+    request.environment_profile = Some(profile.id);
+    request.quoted_rate_card = Some(quote.rate_card.clone());
+    let created = service
+        .create_session(&owner, request)
+        .await
+        .expect("quoted profile creates");
+    let pinned = created.pricing.expect("price is pinned");
+
+    assert_eq!((quote.cpu_millis, quote.memory_mib), (250, 2_048));
+    assert_eq!((pinned.cpu_millis, pinned.memory_mib), (250, 2_048));
+    assert_eq!(pinned.micros_per_hour, quote.micros_per_hour);
 }
 
 #[tokio::test]
