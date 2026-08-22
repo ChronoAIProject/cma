@@ -4,10 +4,36 @@ import {
   createRestOperatorStore,
   toActivityEntry,
   toAdminSession,
+  toCapacityBounds,
   toInventory,
   toPerson,
+  toPlatformSettings,
   toProviderReport,
+  toSessionBriefing,
+  toStoredPlatformSettings,
 } from './rest';
+import { PlatformSettingsConflict } from './types';
+
+const SETTINGS_WIRE = {
+  revision: 7,
+  settings: {
+    briefing: {
+      before: ['First block', 'Second block'],
+      reach_heading: 'Granted services',
+      reach_lead: 'You may call:',
+      reach_close: 'No others are available.',
+      reach_none: 'No services are available.',
+      after: ['Last block'],
+    },
+    size_bounds: {
+      min_cpu_millis: 250,
+      max_cpu_millis: 4000,
+      min_memory_mib: 256,
+      max_memory_mib: 8192,
+    },
+    live_sessions: 3,
+  },
+};
 
 /**
  * The operator store that talks to the control plane.
@@ -192,6 +218,56 @@ describe('reading a session off the wire', () => {
   });
 });
 
+describe('reading platform settings off the wire', () => {
+  it('keeps every editable field and the conditional-write revision', () => {
+    const stored = toStoredPlatformSettings({
+      ...SETTINGS_WIRE,
+      previous: { ...SETTINGS_WIRE.settings, live_sessions: null },
+    });
+
+    expect(stored.revision).toBe(7);
+    expect(stored.settings.briefing.before).toEqual(['First block', 'Second block']);
+    expect(stored.settings.briefing.reachHeading).toBe('Granted services');
+    expect(stored.settings.sizeBounds.maxMemoryMib).toBe(8192);
+    expect(stored.settings.liveSessions).toBe(3);
+    expect(stored.previous?.liveSessions).toBeNull();
+  });
+
+  it('accepts deliberately empty prose and an absent live-session limit', () => {
+    const briefing = toSessionBriefing({
+      before: [],
+      reach_heading: '',
+      reach_lead: '',
+      reach_close: '',
+      reach_none: '',
+      after: [],
+    });
+    const settings = toPlatformSettings({
+      briefing: {
+        before: [],
+        reach_heading: '',
+        reach_lead: '',
+        reach_close: '',
+        reach_none: '',
+        after: [],
+      },
+      size_bounds: SETTINGS_WIRE.settings.size_bounds,
+      live_sessions: null,
+    });
+
+    expect(briefing.reachHeading).toBe('');
+    expect(settings.liveSessions).toBeNull();
+  });
+
+  it('refuses incomplete prose, non-positive bounds, and unreadable revisions', () => {
+    expect(() => toSessionBriefing({ before: [], after: [] })).toThrow(/heading/i);
+    expect(() =>
+      toCapacityBounds({ ...SETTINGS_WIRE.settings.size_bounds, min_cpu_millis: 0 }),
+    ).toThrow(/positive integer/i);
+    expect(() => toStoredPlatformSettings({ ...SETTINGS_WIRE, revision: -1 })).toThrow(/revision/i);
+  });
+});
+
 describe('talking to the control plane', () => {
   it('sends the session cookie', async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond([]));
@@ -259,5 +335,49 @@ describe('talking to the control plane', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/admin/sessions/sesn%201/stop');
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/admin/sessions/sesn_2/terminate');
+  });
+
+  it('reads, conditionally replaces, and briefing-resets platform settings', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(SETTINGS_WIRE));
+    vi.stubGlobal('fetch', fetchMock);
+    const store = createRestOperatorStore();
+    const current = await store.readPlatformSettings();
+    await store.changePlatformSettings(current.revision, current.settings);
+    await store.resetPlatformBriefing(current.revision);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/admin/settings');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/admin/settings');
+    const change = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(change.method).toBe('PATCH');
+    expect(JSON.parse(String(change.body))).toEqual({
+      expected_revision: 7,
+      briefing: SETTINGS_WIRE.settings.briefing,
+      size_bounds: SETTINGS_WIRE.settings.size_bounds,
+      live_sessions: 3,
+    });
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/v1/admin/settings/reset');
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ expected_revision: 7 }) }),
+    );
+  });
+
+  it('maps the settings conflict code to the operator-domain error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        respond(
+          {
+            code: 'settings_conflict',
+            detail: 'Platform settings changed after revision 7 was read.',
+          },
+          409,
+        ),
+      ),
+    );
+
+    const settings = toPlatformSettings(SETTINGS_WIRE.settings);
+    await expect(
+      createRestOperatorStore().changePlatformSettings(7, settings),
+    ).rejects.toBeInstanceOf(PlatformSettingsConflict);
   });
 });
