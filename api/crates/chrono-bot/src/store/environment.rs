@@ -103,6 +103,12 @@ struct AgentDoc {
     permission: PermissionMode,
     #[serde(default)]
     credential: CredentialMode,
+    /// The size sessions from this profile reserve.
+    ///
+    /// `None` is the honest reading of a profile that never named a size: it
+    /// takes this deployment's reservation rather than an invented number.
+    #[serde(default)]
+    size: Option<layer2_core::SessionSize>,
     #[serde(default)]
     record_tool_bodies: bool,
     #[serde(default)]
@@ -143,6 +149,7 @@ fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
             reasoning_effort: p.agent.reasoning_effort,
             permission: p.agent.permission,
             credential: p.agent.credential,
+            size: p.agent.size,
             record_tool_bodies: p.agent.record_tool_bodies,
             skills: p.agent.skills.iter().map(|s| s.0.clone()).collect(),
         }),
@@ -185,6 +192,7 @@ fn from_doc(d: ProfileDoc) -> EnvironmentProfile {
                 reasoning_effort: a.reasoning_effort,
                 permission: a.permission,
                 credential: a.credential,
+                size: a.size,
                 record_tool_bodies: a.record_tool_bodies,
                 skills: a.skills.into_iter().map(SkillId::new).collect(),
             },
@@ -325,6 +333,55 @@ mod tests {
         assert_eq!(back.agent.skills, original.agent.skills);
         assert_eq!(back.created_at, original.created_at);
         assert_eq!(back.updated_at, original.updated_at);
+    }
+
+    #[test]
+    fn a_profile_size_round_trips_through_bson() {
+        let mut original = profile();
+        original.agent.size = Some(layer2_core::SessionSize::new(1_500, 3_072).unwrap());
+
+        let encoded = mongodb::bson::serialize_to_bson(&to_doc(&original)).expect("serializes");
+        let decoded: ProfileDoc =
+            mongodb::bson::deserialize_from_bson(encoded).expect("deserializes");
+        let back = from_doc(decoded);
+
+        assert_eq!(back.agent.size, original.agent.size);
+    }
+
+    #[test]
+    fn a_bson_profile_without_a_size_reads_as_the_deployments_own() {
+        let encoded = mongodb::bson::Bson::Document(doc! {
+            "_id": "envp_old",
+            "owner": "subject-a",
+            "name": "old",
+            "agent": { "kernel": "fake" },
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        });
+        let decoded: ProfileDoc =
+            mongodb::bson::deserialize_from_bson(encoded).expect("an old profile reads");
+
+        assert_eq!(from_doc(decoded).agent.size, None);
+    }
+
+    #[test]
+    fn a_bson_profile_with_a_zero_size_is_refused() {
+        let encoded = mongodb::bson::Bson::Document(doc! {
+            "_id": "envp_bad",
+            "owner": "subject-a",
+            "name": "bad",
+            "agent": {
+                "kernel": "fake",
+                "size": { "cpu_millis": 0, "memory_mib": 512 },
+            },
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        });
+
+        assert!(
+            mongodb::bson::deserialize_from_bson::<ProfileDoc>(encoded).is_err(),
+            "a stored zero must not become a usable session size"
+        );
     }
 
     #[test]

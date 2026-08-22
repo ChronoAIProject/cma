@@ -363,6 +363,7 @@ impl SessionService {
             reasoning_effort: agent.reasoning_effort,
             permission: agent.permission,
             credential: agent.credential,
+            size: agent.size,
             record_tool_bodies: agent.record_tool_bodies,
         };
 

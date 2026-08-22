@@ -76,6 +76,17 @@ pub struct AgentConfiguration {
     /// Whose model access it spends.
     #[serde(default)]
     pub credential: CredentialMode,
+    /// How much a session started from this profile reserves.
+    ///
+    /// Part of the profile for the reason everything else here is: two
+    /// sessions started from one profile must be the same session twice, and
+    /// a session that got half the memory is not.
+    ///
+    /// `None` means this deployment's own reservation, which is what every
+    /// profile stored before this field meant and still means. It is not zero,
+    /// and it is not a size this layer invented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<crate::size::SessionSize>,
     /// Whether a session's tool bodies are recorded in its durable log.
     ///
     /// Off by default for the same reason it is on the session's own options:
