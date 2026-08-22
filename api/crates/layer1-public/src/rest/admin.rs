@@ -29,8 +29,8 @@ use axum::{
 };
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, Caller, CoreError, DirectoryQuery,
-    ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId,
-    UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
+    PlatformSettingsService, ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId,
+    SessionService, SubjectId, UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +49,8 @@ pub struct AdminState {
     pub activity: Arc<ActivityService>,
     /// Who has used the service.
     pub users: Arc<UserDirectory>,
+    /// Deployment-wide policy read and changed by administrators.
+    pub settings: Arc<PlatformSettingsService>,
 }
 
 /// A refusal that names no resource.
