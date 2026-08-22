@@ -31,6 +31,68 @@ function delta(seq: number, path: string, value: unknown): AguiEvent {
 /** The stream as a client would have read it. */
 const stream = (events: readonly AguiEvent[]) => fold(events);
 
+describe('a runtime the session lost', () => {
+  it('folds the first loss into the conversation state', () => {
+    const state = stream([
+      delta(8, '/runtimeLosses/-', {
+        runtime: 'runtime-first',
+        cause: 'out_of_memory',
+        noticedAt: '2026-08-23T04:12:00Z',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toEqual({
+      runtime: 'runtime-first',
+      cause: 'out_of_memory',
+      noticedAt: '2026-08-23T04:12:00Z',
+      seq: 8,
+    });
+  });
+
+  it('lets the latest replayed loss supersede the first', () => {
+    const state = stream([
+      delta(8, '/runtimeLosses/-', {
+        runtime: 'runtime-first',
+        cause: 'failed',
+      }),
+      delta(19, '/runtimeLosses/-', {
+        runtime: 'runtime-second',
+        cause: 'displaced',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toEqual({
+      runtime: 'runtime-second',
+      cause: 'displaced',
+      noticedAt: undefined,
+      seq: 19,
+    });
+  });
+
+  it('ignores a malformed loss rather than building a partial fact', () => {
+    const state = stream([
+      delta(8, '/runtimeLosses/-', {
+        cause: 'failed',
+        noticedAt: '2026-08-23T04:12:00Z',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toBeUndefined();
+  });
+
+  it('continues to ignore an unrelated state path', () => {
+    const state = stream([
+      delta(8, '/somethingElse/-', {
+        runtime: 'not-a-runtime-loss',
+        cause: 'failed',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toBeUndefined();
+    expect(state.entries).toEqual([]);
+  });
+});
+
 describe('a plane change is a boundary', () => {
   it('draws where history stopped being continuous, and where the session went', () => {
     // §18.6: a rule across the stream at the snapshot moment, not a status

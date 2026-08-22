@@ -295,10 +295,10 @@ function upsertMessage(state: Conversation, message: MessageEntry): Conversation
 /**
  * Apply the patches a `STATE_DELTA` carries.
  *
- * Four groups matter to this surface and the rest are ignored rather than
- * guessed at: `/usage` carries reported counts, `/contextCompactions` records
- * a conversation being summarised to make room, `/gaps` carries a stretch of
- * lost conversation, and `/planeChanges` records a move between planes.
+ * Each path this surface models is folded defensively below; the rest are
+ * ignored rather than guessed at. `/runtimeLosses` records a runtime the
+ * service established as gone, and the most recent replayed loss is the fact
+ * the surface needs to show.
  */
 function applyPatches(
   state: Conversation,
@@ -438,6 +438,22 @@ function applyPatches(
           window,
           seq: event.seq,
         });
+      }
+    } else if (patch.path.startsWith(PATHS.runtimeLosses.replace('/-', ''))) {
+      const value = (
+        typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
+      ) as Record<string, unknown>;
+      const runtime = typeof value.runtime === 'string' ? value.runtime : undefined;
+      if (runtime !== undefined) {
+        next = {
+          ...next,
+          runtimeLoss: {
+            runtime,
+            cause: typeof value.cause === 'string' ? value.cause : undefined,
+            noticedAt: typeof value.noticedAt === 'string' ? value.noticedAt : undefined,
+            seq: event.seq,
+          },
+        };
       }
     } else if (patch.path.startsWith('/planeChanges')) {
       /*

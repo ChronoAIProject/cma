@@ -21,7 +21,8 @@ export const STATE_DELTA_PATCHES = 'delta';
  *
  * `docs/API_AGUI.md`: token counts arrive as patches against `/usage`, a
  * dropped stretch of conversation is appended to `/gaps`, and a plane change
- * is appended to `/planeChanges`.
+ * is appended to `/planeChanges`; a runtime loss is appended to
+ * `/runtimeLosses`.
  */
 export const PATHS = {
   /** Tokens the turn consumed reading. */
@@ -66,6 +67,15 @@ export const PATHS = {
   availableCommands: '/availableCommands',
   /** Where a plane change is appended. */
   planeChanges: '/planeChanges/-',
+  /**
+   * Where a lost runtime is appended.
+   *
+   * Appended rather than replaced: a session can lose more than one runtime,
+   * and each loss is a separate thing that happened. `noticedAt` is when the
+   * service established it, which is up to one reconciliation sweep after the
+   * runtime stopped — never drawn as the moment of death.
+   */
+  runtimeLosses: '/runtimeLosses/-',
   /** Where a stretch of lost conversation is appended. */
   gaps: '/gaps/-',
   /** Where a conversation being summarised to make room is appended. */
