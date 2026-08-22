@@ -75,7 +75,14 @@ export type {
   SessionService,
   StopReason,
 } from './types';
-export { KNOWN_EVENTS, LIVE_MARKER, PATHS, STATE_DELTA_PATCHES, frameKey } from './wire';
+export {
+  KNOWN_EVENTS,
+  LIVE_MARKER,
+  PATHS,
+  PRICING_WIRE,
+  STATE_DELTA_PATCHES,
+  frameKey,
+} from './wire';
 
 /*
  * The conversation half, re-exported from where it still lives. Listed

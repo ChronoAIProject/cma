@@ -255,12 +255,13 @@ fn a_request_without_a_kernel_passes_through_checked() {
     // The other half. A gate that refuses everything is not a gate, and the
     // geometry has to survive the trip.
     let parts = serde_json::from_str::<CreateSessionRequest>(
-        r#"{"cols":120,"rows":32,"environment_profile":"envp_1"}"#,
+        r#"{"cols":120,"rows":32,"environment_profile":"envp_1","quoted_rate_card":"rate_1"}"#,
     )
     .expect("the declared fields are accepted")
     .into_parts()
     .expect("nothing here is unhonourable");
     assert_eq!(parts.environment_profile.as_deref(), Some("envp_1"));
+    assert_eq!(parts.quoted_rate_card.as_deref(), Some("rate_1"));
     assert!(parts.geometry.is_some());
 
     // Half a geometry is not a size, so it is dropped rather than guessed at.
@@ -284,6 +285,41 @@ fn a_well_formed_create_body_still_parses() {
     // And every field is optional, which is what an unqualified session is.
     let bare = serde_json::from_str::<CreateSessionRequest>("{}").expect("a bare create is valid");
     assert!(bare.cols.is_none() && bare.environment_profile.is_none());
+}
+
+#[test]
+fn priced_and_unpriced_quote_responses_have_distinct_exact_shapes() {
+    let priced = PricingQuoteView::from(Some(layer2_core::Quote {
+        rate_card: layer2_core::RateCardId("rate_exact".into()),
+        rate: layer2_core::Rate {
+            cpu_micros_per_cpu_hour: 40_000,
+            memory_micros_per_gib_hour: 5_000,
+        },
+        cpu_millis: 1_000,
+        memory_mib: 1_024,
+        micros_per_hour: 45_000,
+        display: "$0.045".into(),
+        currency: layer2_core::CURRENCY,
+        quoted_at: "2026-08-23T05:00:00Z".into(),
+    }));
+    assert_eq!(
+        serde_json::to_value(priced).expect("quote serializes"),
+        serde_json::json!({
+            "rate_card": "rate_exact",
+            "currency": "USD",
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "micros_per_hour": "45000",
+            "display": "$0.045",
+            "per": "hour",
+            "quoted_at": "2026-08-23T05:00:00Z"
+        })
+    );
+
+    assert_eq!(
+        serde_json::to_value(PricingQuoteView::from(None)).expect("absence serializes"),
+        serde_json::json!({"priced": false})
+    );
 }
 
 #[tokio::test]
@@ -348,6 +384,53 @@ fn a_view_carries_geometry_as_plain_integers() {
     assert_eq!(json["cols"], 120);
     assert_eq!(json["rows"], 40);
     assert!(json.get("stop_reason").is_none(), "absent reason omitted");
+    assert!(json.get("pricing").is_none(), "absent price omitted");
+}
+
+#[test]
+fn a_view_projects_the_pinned_price_without_rounding() {
+    let s = Session {
+        id: SessionId("sesn_priced".into()),
+        owner: layer2_core::SubjectId("subject-a".into()),
+        kernel: layer2_core::KernelId::new("example-runtime"),
+        status: layer2_core::SessionStatus::Ready,
+        recovery_state: layer2_core::RecoveryState::Normal,
+        stop_reason: None,
+        options: layer2_core::AgentOptions::default(),
+        environment_profile: None,
+        geometry: TerminalGeometry::default(),
+        last_seq: 3,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: None,
+        pricing: Some(layer2_core::SessionPricing {
+            rate_card: layer2_core::RateCardId("rate_exact".into()),
+            rate: layer2_core::Rate {
+                cpu_micros_per_cpu_hour: 40_000,
+                memory_micros_per_gib_hour: 5_000,
+            },
+            cpu_millis: 1_000,
+            memory_mib: 1_024,
+            micros_per_hour: 45_000,
+            quoted_at: "2026-08-23T05:00:00Z".into(),
+        }),
+        created_at: "2026-08-23T05:00:01Z".into(),
+    };
+
+    let json = serde_json::to_value(SessionView::from(s)).expect("session serializes");
+    assert_eq!(
+        json["pricing"],
+        serde_json::json!({
+            "rate_card": "rate_exact",
+            "currency": "USD",
+            "micros_per_hour": "45000",
+            "display": "$0.045",
+            "quoted_at": "2026-08-23T05:00:00Z"
+        })
+    );
 }
 
 /// The exact document a client parses.
