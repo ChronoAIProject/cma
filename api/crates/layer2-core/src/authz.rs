@@ -65,6 +65,26 @@ pub enum Capability {
 }
 
 impl Capability {
+    /// Every capability this build knows, in declaration order.
+    ///
+    /// Named so anything which must decide about all of them walks this list
+    /// rather than repeating it and drifting. The declared length constrains
+    /// the literal, never the enum; `all_names_every_capability` is the guard,
+    /// because its match is exhaustive.
+    pub const ALL: [Capability; 11] = [
+        Self::CreateSession,
+        Self::UseOwnSessions,
+        Self::TerminateOwnSession,
+        Self::ManageOwnEnvironmentProfiles,
+        Self::ReadAllSessions,
+        Self::ReadRuntimeInventory,
+        Self::ReadEventLog,
+        Self::ReadActivityLog,
+        Self::ReadUserDirectory,
+        Self::ConfigurePlatform,
+        Self::ControlAnySession,
+    ];
+
     /// Whether this capability reaches past the caller's own work.
     ///
     /// Kept as a predicate rather than a comment so an audit surface can list
@@ -229,6 +249,44 @@ mod tests {
 
     fn subject(id: &str) -> SubjectId {
         SubjectId(id.to_string())
+    }
+
+    /// Every capability, walked so the compiler has to hear about a new one.
+    ///
+    /// The match is exhaustive on purpose. A capability added to the enum
+    /// stops this compiling, which is the moment somebody decides whether
+    /// `ALL` carries it and whether a wildcard reaches it.
+    ///
+    /// This cannot prove the new variant was added to `ALL`, only that nobody
+    /// added one to the enum without being told. Stable Rust has no construct
+    /// that proves an array names every variant; the compile error is enough.
+    #[test]
+    fn all_names_every_capability() {
+        for capability in Capability::ALL {
+            match capability {
+                Capability::CreateSession
+                | Capability::UseOwnSessions
+                | Capability::TerminateOwnSession
+                | Capability::ManageOwnEnvironmentProfiles
+                | Capability::ReadAllSessions
+                | Capability::ReadRuntimeInventory
+                | Capability::ReadEventLog
+                | Capability::ReadActivityLog
+                | Capability::ReadUserDirectory
+                | Capability::ConfigurePlatform
+                | Capability::ControlAnySession => {}
+            }
+        }
+
+        let mut sorted = Capability::ALL;
+        sorted.sort();
+        let mut deduped = sorted.to_vec();
+        deduped.dedup();
+        assert_eq!(
+            deduped.len(),
+            Capability::ALL.len(),
+            "ALL must not name a capability twice; a duplicate hides a missing one"
+        );
     }
 
     #[test]
