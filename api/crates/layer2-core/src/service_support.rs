@@ -200,6 +200,39 @@ pub(crate) fn service_on_version(
     service
 }
 
+/// A versioned service measured against a concrete settings document.
+pub(crate) fn service_on_version_with_settings(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+    settings: crate::PlatformSettings,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let settings = Arc::new(crate::PlatformSettingsService::new(Arc::new(
+        StaticSettingsStore(settings),
+    )));
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        crate::service::SessionPorts {
+            settings: Some(settings),
+            ..Default::default()
+        },
+        no_environments(),
+        Deployment {
+            runtime_version: Some(version.to_string()),
+            ..owned()
+        },
+    );
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
 /// A versioned service over a particular set of environment profiles.
 ///
 /// Used where an upgrade must prove it carries a choice frozen from a profile
