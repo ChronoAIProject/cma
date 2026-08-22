@@ -121,6 +121,12 @@ pub enum ActivityAction {
     UserDirectoryRead,
     /// This record itself was read.
     ActivityLogRead,
+    /// The deployment's settings were read.
+    PlatformSettingsRead,
+    /// One or more deployment settings were changed.
+    PlatformSettingsChange,
+    /// The session briefing was restored to its shipped text.
+    PlatformSettingsReset,
 }
 
 /// What an action was taken on.
