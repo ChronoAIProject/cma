@@ -12,7 +12,8 @@ import type { Interrupt } from '../agui';
  */
 
 /** One thing in the stream, in the order it happened. */
-export type Entry = MessageEntry | ToolCallEntry | GapEntry | FailureEntry | UnknownEntry;
+export type Entry =
+  MessageEntry | ToolCallEntry | GapEntry | ContextCompactionEntry | FailureEntry | UnknownEntry;
 
 export interface MessageEntry {
   readonly kind: 'message';
@@ -77,6 +78,19 @@ export interface GapEntry {
    * a second thing that went wrong.
    */
   readonly movedTo?: string;
+  readonly seq: number;
+}
+
+/** A boundary where the agent summarised the conversation to make room. */
+export interface ContextCompactionEntry {
+  readonly kind: 'contextCompaction';
+  readonly id: string;
+  /** How full the context was at the previous reading. */
+  readonly was: number;
+  /** How full it was at the reading that revealed the fall. */
+  readonly now: number;
+  /** The ceiling in force, where the runtime stated one. */
+  readonly window?: number;
   readonly seq: number;
 }
 
@@ -250,6 +264,8 @@ export interface Usage {
   readonly outputTokens?: number;
   /** How full the context is, where the runtime says. */
   readonly contextUsed?: number;
+  /** The size of the context that reading is drawn from, where stated. */
+  readonly contextWindow?: number;
   /** What it cost, where the runtime reports a figure. Never estimated. */
   readonly cost?: string;
 }

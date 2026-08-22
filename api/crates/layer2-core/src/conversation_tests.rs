@@ -4,7 +4,10 @@
 //! client saw, a client that arrives later — or comes back after a restart —
 //! must be able to reconstruct from the sequence alone.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
+use layer3_adapter::KernelAdapter;
 
 use crate::authz::Caller;
 use crate::conversation_support::{
@@ -15,6 +18,62 @@ use crate::ids::SessionId;
 use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+
+async fn report_usage(adapter: &Arc<FakeAdapter>, used: u64, window: u64) {
+    let held = adapter.conversation.lock().await;
+    held.as_ref()
+        .expect("the conversation was opened")
+        .updates
+        .send(said(layer3_adapter::SessionUpdate::UsageUpdate(
+            layer3_adapter::UsageUpdate::new(used, window),
+        )))
+        .await
+        .expect("the core is listening");
+}
+
+fn versioned_conversation_service(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+) -> Arc<SessionService> {
+    let mut adapters: HashMap<crate::ids::KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(crate::test_support::kernel(), adapter);
+    let screen: crate::service::ScreenFactory =
+        Arc::new(|geometry| Box::new(crate::test_support::NullScreen(geometry)));
+    let environments =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    SessionService::new(
+        adapters,
+        screen,
+        store,
+        crate::service::SessionPorts::default(),
+        environments,
+        crate::service::Deployment {
+            runtime_version: Some(version.to_string()),
+            ..crate::test_support::owned()
+        },
+    )
+}
+
+async fn await_ready(
+    service: &Arc<SessionService>,
+    caller: &Caller,
+    id: &SessionId,
+) -> crate::session::Session {
+    for _ in 0..400 {
+        if let Ok(session) = service.get_session(caller, id).await {
+            if session.status == SessionStatus::Ready {
+                return session;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    panic!("session never became ready");
+}
 
 #[tokio::test]
 async fn a_tool_call_and_its_progress_are_recorded() {
@@ -79,21 +138,15 @@ async fn a_message_being_typed_is_liveness_and_never_numbered() {
 #[tokio::test]
 async fn usage_is_reported_and_read_back() {
     let (svc, alice, id, adapter) = conversation().await;
-    {
-        let held = adapter.conversation.lock().await;
-        let kernel = held.as_ref().expect("the conversation was opened");
-        kernel
-            .updates
-            .send(said(layer3_adapter::SessionUpdate::UsageUpdate(
-                layer3_adapter::UsageUpdate::new(1290, 258_400),
-            )))
-            .await
-            .expect("the core is listening");
-    }
+    report_usage(&adapter, 1290, 258_400).await;
     assert!(
         until_logged(&svc, &alice, &id, |kind| matches!(
             kind,
-            EventKind::UsageReported { context_used, .. } if *context_used == 1290
+            EventKind::UsageReported {
+                context_used,
+                context_window: Some(258_400),
+                ..
+            } if *context_used == 1290
         ))
         .await,
         "usage must reach the log, which is what get_usage reads"
@@ -101,6 +154,195 @@ async fn usage_is_reported_and_read_back() {
 
     let usage = svc.get_usage(&alice, &id).await.expect("usage is readable");
     assert_eq!(usage.context_used, 1290);
+    assert_eq!(usage.context_window, Some(258_400));
+}
+
+#[tokio::test]
+async fn a_zero_context_window_is_absent_rather_than_a_ceiling() {
+    let (svc, alice, id, adapter) = conversation().await;
+    report_usage(&adapter, 1290, 0).await;
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 1290,
+                context_window: None,
+                ..
+            }
+        ))
+        .await
+    );
+
+    assert_eq!(
+        svc.get_usage(&alice, &id)
+            .await
+            .expect("usage is readable")
+            .context_window,
+        None
+    );
+}
+
+#[tokio::test]
+async fn turn_accounting_does_not_wipe_a_context_reading_or_its_window() {
+    let (svc, alice, id, adapter) = conversation().await;
+    report_usage(&adapter, 1290, 258_400).await;
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 1290,
+                ..
+            }
+        ))
+        .await
+    );
+    {
+        let held = adapter.conversation.lock().await;
+        held.as_ref()
+            .expect("the conversation was opened")
+            .updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn)
+                    .usage(layer3_adapter::TurnUsage::new(421, 412, 9)),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                input_tokens: 412,
+                ..
+            }
+        ))
+        .await
+    );
+
+    let usage = svc.get_usage(&alice, &id).await.expect("usage is readable");
+    assert_eq!(usage.context_used, 1290);
+    assert_eq!(usage.context_window, Some(258_400));
+}
+
+#[tokio::test]
+async fn a_context_fall_is_recorded_before_the_report_that_revealed_it() {
+    let (svc, alice, id, adapter) = conversation().await;
+    report_usage(&adapter, 198_000, 200_000).await;
+    report_usage(&adapter, 42_100, 200_000).await;
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ContextCompacted {
+                was: 198_000,
+                now: 42_100,
+                window: Some(200_000),
+            }
+        ))
+        .await
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("log reads");
+    let compacted: Vec<_> = events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::ContextCompacted { .. }))
+        .collect();
+    assert_eq!(compacted.len(), 1);
+    let revealed = events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                EventKind::UsageReported {
+                    context_used: 42_100,
+                    ..
+                }
+            )
+        })
+        .expect("the revealing report is logged");
+    assert!(compacted[0].seq < revealed.seq);
+}
+
+#[tokio::test]
+async fn a_first_equal_or_rising_reading_is_not_a_compaction() {
+    let (svc, alice, id, adapter) = conversation().await;
+    for used in [42_100, 42_100, 198_000] {
+        report_usage(&adapter, used, 200_000).await;
+    }
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 198_000,
+                ..
+            }
+        ))
+        .await
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("log reads");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::ContextCompacted { .. })),
+        "a context that did not fall must have no compaction boundary"
+    );
+}
+
+#[tokio::test]
+async fn a_replacement_runtime_counting_from_less_is_not_a_compaction() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let alice = user("alice");
+    let old = versioned_conversation_service(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let session = old.create_session(&alice, spec()).await.expect("created");
+    await_ready(&old, &alice, &session.id).await;
+    report_usage(&adapter, 198_000, 200_000).await;
+    assert!(
+        until_logged(&old, &alice, &session.id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 198_000,
+                ..
+            }
+        ))
+        .await
+    );
+    drop(old);
+
+    let new = versioned_conversation_service(store, Arc::clone(&adapter), "runtime:2");
+    assert_eq!(new.reconcile().await.rotated_sessions, 1);
+    await_ready(&new, &alice, &session.id).await;
+    report_usage(&adapter, 42_100, 200_000).await;
+    assert!(
+        until_logged(&new, &alice, &session.id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 42_100,
+                ..
+            }
+        ))
+        .await
+    );
+
+    let events = new
+        .events_since(&alice, &session.id, None)
+        .await
+        .expect("log reads");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::ContextCompacted { .. })),
+        "readings from different runtimes must never be compared"
+    );
 }
 
 #[tokio::test]
