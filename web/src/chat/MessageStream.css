@@ -252,6 +252,15 @@
   font-size: var(--text-note);
 }
 
+/* A neutral boundary where the agent summarised the conversation, §13. */
+.context-compaction {
+  padding-block: var(--space-3);
+  color: var(--ink-3);
+  font-size: var(--text-note);
+  line-height: 20px;
+  border-top: 1px solid var(--rule);
+}
+
 /* ── Waiting for the first thing in a turn, §18.1 ────────────────────────
  *
  * The §8 pulse with a word, drawn only between the turn starting and anything
