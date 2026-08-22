@@ -157,12 +157,13 @@ data:
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:680fbde"
-  # What one session reserves, and therefore how many run at once.
+  # What a session reserves when its profile names no size: the deployment's
+  # own reservation.
   #
-  # The namespace carries a ResourceQuota, and these divide into it: at 2 CPU
-  # and 4Gi a quota of 20 CPU and 40Gi held nine sessions, and the tenth was
-  # refused by the admission controller while its owner watched it sit in
-  # "provisioning". At these figures the same quota holds twenty.
+  # The namespace carries a ResourceQuota, so dividing it by these figures is
+  # now a lower bound on capacity rather than an exact session count: a profile
+  # may ask for another reservation. Nothing bounds that per-session request
+  # yet; administrator-set bounds are the follow-up.
   #
   # Requests and limits are the same value at the provider, so this is a
   # reservation rather than a ceiling to burst against. Raising it costs

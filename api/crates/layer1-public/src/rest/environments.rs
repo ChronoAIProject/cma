@@ -59,7 +59,7 @@ async fn create(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Json(body): Json<ProfileRequest>,
 ) -> Result<(StatusCode, Json<ProfileView>), Problem> {
-    let profile = service.create(&caller, body.into()).await?;
+    let profile = service.create(&caller, body.try_into()?).await?;
     Ok((
         StatusCode::CREATED,
         Json(ProfileView::render(profile, &service)),
@@ -122,7 +122,7 @@ async fn replace(
     Json(body): Json<ProfileRequest>,
 ) -> Result<Json<ProfileView>, Problem> {
     let profile = service
-        .update(&caller, &EnvironmentProfileId(id), body.into())
+        .update(&caller, &EnvironmentProfileId(id), body.try_into()?)
         .await?;
     Ok(Json(ProfileView::render(profile, &service)))
 }
@@ -207,7 +207,7 @@ async fn skills(
 mod tests {
     use layer2_core::{
         CredentialMode, EnvironmentProfile, EnvironmentProfileSpec, EnvironmentVariable,
-        PermissionMode, ReasoningEffort, SkillId, SoftwarePackage,
+        PermissionMode, ReasoningEffort, SessionSize, SkillId, SoftwarePackage,
     };
 
     use super::*;
@@ -285,12 +285,16 @@ mod tests {
 
     #[test]
     fn a_view_tells_a_client_which_entries_it_may_not_remove() {
-        let view = ProfileView::render(profile(), &service());
+        let mut profile = profile();
+        profile.agent.size = Some(SessionSize::new(1_500, 3_072).expect("valid size"));
+        let view = ProfileView::render(profile, &service());
         let json = serde_json::to_value(&view).expect("serializes");
         assert_eq!(json["mandatory"]["packages"][0], "platform-cli");
         assert_eq!(json["mandatory"]["skills"][0], "mandatory-one");
         assert_eq!(json["id"], "envp_1");
         assert_eq!(json["packages"][0]["version"], "14");
+        assert_eq!(json["agent"]["size"]["cpu_millis"], 1_500);
+        assert_eq!(json["agent"]["size"]["memory_mib"], 3_072);
     }
 
     #[test]
@@ -324,7 +328,7 @@ mod tests {
                          "permission":"autonomous","credential":"own"}}"#,
         )
         .expect("parses");
-        let spec: EnvironmentProfileSpec = body.into();
+        let spec: EnvironmentProfileSpec = body.try_into().expect("a usable profile");
         assert_eq!(spec.name, "mine");
         assert_eq!(spec.variables.len(), 1);
         assert_eq!(spec.variables[0].key, "A");
@@ -339,12 +343,101 @@ mod tests {
     }
 
     #[test]
+    fn a_request_body_carries_its_size_into_the_core() {
+        let body: ProfileRequest = serde_json::from_str(
+            r#"{"name":"mine","agent":{"size":{"cpu_millis":1500,"memory_mib":3072}}}"#,
+        )
+        .expect("parses");
+        let spec: EnvironmentProfileSpec = body.try_into().expect("a usable profile");
+
+        assert_eq!(
+            spec.agent.size,
+            Some(SessionSize::new(1_500, 3_072).unwrap())
+        );
+    }
+
+    #[test]
+    fn a_request_body_without_a_size_uses_the_deployments_own() {
+        let body: ProfileRequest = serde_json::from_str(r#"{"name":"mine"}"#).expect("parses");
+        let spec: EnvironmentProfileSpec = body.try_into().expect("a usable profile");
+
+        assert_eq!(spec.agent.size, None);
+    }
+
+    #[tokio::test]
+    async fn a_zero_size_is_refused_before_the_profile_store_is_written() {
+        #[derive(Default)]
+        struct RecordingStore(std::sync::Mutex<Vec<EnvironmentProfile>>);
+
+        #[async_trait::async_trait]
+        impl EnvironmentProfileStore for RecordingStore {
+            async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError> {
+                self.0.lock().unwrap().push(profile.clone());
+                Ok(())
+            }
+
+            async fn get(
+                &self,
+                _id: &EnvironmentProfileId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn list_for(
+                &self,
+                _owner: &SubjectId,
+            ) -> Result<Vec<EnvironmentProfile>, StoreError> {
+                Ok(self.0.lock().unwrap().clone())
+            }
+
+            async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+                Ok(())
+            }
+        }
+
+        let store = Arc::new(RecordingStore::default());
+        let service = EnvironmentProfileService::new(
+            Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
+            Baseline::default(),
+            None,
+            None,
+            Default::default(),
+        );
+        let caller = layer2_core::Caller::new(
+            SubjectId("subject-a".into()),
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ManageOwnEnvironmentProfiles,
+            ]),
+        );
+        let body: ProfileRequest = serde_json::from_str(
+            r#"{"name":"mine","agent":{"size":{"cpu_millis":0,"memory_mib":512}}}"#,
+        )
+        .expect("parses");
+
+        let refusal = create(State(service), AuthenticatedCaller(caller), Json(body)).await;
+        let problem = match refusal {
+            Err(problem) => problem,
+            Ok(_) => panic!("a zero size must be refused"),
+        };
+        assert!(matches!(problem.0, CoreError::InvalidSessionSize(_)));
+        let response = problem.into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("problem documents are small");
+        let body: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("a problem document is json");
+        assert_eq!(body["code"], "invalid_session_size");
+        assert!(store.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn a_body_that_says_nothing_about_the_agent_gets_this_deployments_answer() {
         // A client that only wants to name some variables must not thereby
         // choose a model or how freely the agent may act. Absent means
         // "whatever is ordinary here", never "empty".
         let body: ProfileRequest = serde_json::from_str(r#"{"name":"mine"}"#).expect("parses");
-        let spec: EnvironmentProfileSpec = body.into();
+        let spec: EnvironmentProfileSpec = body.try_into().expect("a usable profile");
         // The kernel is the exception, and deliberately: this layer does not
         // know which kernels a deployment can start, so it leaves it unset and
         // the core settles it from configuration.

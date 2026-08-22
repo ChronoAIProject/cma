@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::{
-    KernelAdapter, RuntimeHandle, RuntimeOptions, RuntimePermission, RuntimeSpec, TermSize,
-    TerminalInput,
+    KernelAdapter, RuntimeCapacity, RuntimeHandle, RuntimeOptions, RuntimePermission, RuntimeSpec,
+    TermSize, TerminalInput,
 };
 use tokio::sync::{broadcast, Mutex};
 
@@ -32,6 +32,7 @@ use crate::options::{AgentOptions, PermissionMode};
 use crate::provision_failure::StartFailure;
 use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
 use crate::session::{ProvisioningStage, Session, SessionSpec, SessionStatus};
+use crate::size::SessionSize;
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How long a runtime may take to become usable.
@@ -267,6 +268,14 @@ impl SessionService {
         // Kept for redaction: a tool body must not carry a value the session
         // was handed, and these are exactly those values.
         let environment_values: Vec<String> = environment.variables.values().cloned().collect();
+        if let Some(size) = spec.options.size {
+            tracing::info!(
+                session_id = %id,
+                cpu_millis = size.cpu_millis(),
+                memory_mib = size.memory_mib(),
+                "provisioning at this session's own size"
+            );
+        }
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
@@ -274,7 +283,7 @@ impl SessionService {
                     cols: geometry.columns(),
                     rows: geometry.rows(),
                 },
-                capacity: None,
+                capacity: runtime_capacity(spec.options.size),
                 subject_credential: spec.runtime_credential.clone(),
                 options: options.clone(),
                 restore_from: restore.cloned(),
@@ -664,4 +673,17 @@ pub(crate) fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
         // reads the name from the record rather than from anything held here.
         resume_conversation: None,
     }
+}
+
+/// Translate the size a person asked for into what a runtime is given.
+///
+/// Beside `runtime_options` and for the same reason: the two vocabularies are
+/// separate on purpose, so this is the one place they meet. `None` crosses as
+/// `None` - the caller states nothing and the adapter shapes the runtime the
+/// way this deployment shapes every runtime.
+pub(crate) fn runtime_capacity(size: Option<SessionSize>) -> Option<RuntimeCapacity> {
+    size.map(|size| RuntimeCapacity {
+        cpu_millis: size.cpu_millis,
+        memory_mib: size.memory_mib,
+    })
 }

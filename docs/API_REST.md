@@ -77,8 +77,10 @@ They are now refused by name, which is why the list above is exact rather than
 aspirational.
 
 The profile is the whole description of the session — which agent, which model,
-how freely it acts, whose access it spends, and what it carries — so nothing
-else about the agent is sent here.
+how freely it acts, whose access it spends, what it carries, and how much CPU
+and memory it reserves — so nothing else about the agent is sent here. The size
+is the profile's: omitting `agent.size` takes the deployment's reservation, and
+the answer is frozen for the life of the session, including across a rotation.
 
 **A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
 
@@ -417,7 +419,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No such session, or not visible to this subject |
 | `409` | Conflicts with current state — turn in progress, session terminated |
-| `422` | Well-formed but semantically invalid — zero terminal dimension |
+| `422` | Well-formed but semantically invalid — zero terminal dimension or zero session-size figure |
 | `429` | Rate limited; observe `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
 | `503` | Control plane recovering or failing over; retry |
@@ -430,6 +432,7 @@ Starting a session against a service can fail for three different reasons, and a
 
 | `code` | Status | What it means | What to do |
 |---|---|---|---|
+| `invalid_session_size` | `422` | A session size was sent with a zero CPU or memory figure. | Send both figures non-zero. **Retrying unchanged will not help.** |
 | `service_not_granted` | `422` | The owner has not granted this service. `detail` names it. | Grant it in NyxID. **Retrying will not help.** |
 | `service_catalogue_unavailable` | `503` | The catalogue could not be asked. The owner's services are fine. | **Retry.** Nothing is wrong with the session or the profile. |
 | — | — | This deployment has no catalogue at all. | Nothing. It is not an error: profiles still store selections and sessions still honour them, there is simply nothing to choose from. |
