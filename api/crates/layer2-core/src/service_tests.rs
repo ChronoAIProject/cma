@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::terminal::{ScreenSnapshot, TerminalGeometry};
+use crate::terminal_io::spawn_relay;
 use crate::test_support::{spec, user, FakeAdapter, FakeStore};
 
 /// A screen model that records what it was fed, so the relay's behaviour

@@ -138,6 +138,7 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
                 kernel: KernelId::new("recording"),
                 ..Default::default()
             },
+            crate::test_support::unconfigured_settings(),
         ),
         crate::test_support::owned(),
     )

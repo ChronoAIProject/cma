@@ -24,8 +24,8 @@ use layer1_public::{
     rest::RestInterface, InterfaceProfile,
 };
 use layer2_core::{
-    ActivityService, Baseline, EnvironmentProfileService, ScreenModel, SessionService, SkillId,
-    SoftwarePackage, TerminalGeometry, UserDirectory,
+    ActivityService, Baseline, EnvironmentProfileService, PlatformSettingsService, ScreenModel,
+    SessionService, SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -220,6 +220,11 @@ async fn main() {
         );
     }
 
+    // The settings store itself belongs to #450 and does not exist in this
+    // composition root yet. Until it does, provisioning reads shipped policy
+    // through the same service and fallback path a temporarily unreadable
+    // store uses.
+    let settings = Arc::new(PlatformSettingsService::unconfigured());
     let environments = EnvironmentProfileService::new(
         profile_store,
         baseline,
@@ -228,6 +233,7 @@ async fn main() {
             .map(|c| c as Arc<dyn layer2_core::SkillCatalog>),
         service_picker,
         config.default_agent.clone(),
+        Arc::clone(&settings),
     );
     let service = SessionService::new(
         adapters,
@@ -242,6 +248,7 @@ async fn main() {
             skills: catalog
                 .clone()
                 .map(|c| c as Arc<dyn layer2_core::SkillSource>),
+            settings: Some(Arc::clone(&settings)),
         },
         Arc::clone(&environments),
         layer2_core::Deployment {
