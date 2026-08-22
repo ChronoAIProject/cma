@@ -29,6 +29,8 @@ pub mod inventory;
 mod lease;
 mod lifecycle;
 mod log;
+mod platform;
+pub mod platform_service;
 mod provision;
 mod provision_failure;
 mod reading;
@@ -109,6 +111,7 @@ pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
+pub use platform::{PlatformSettings, SessionBriefing};
 pub use reconcile::Reclaimed;
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
@@ -118,4 +121,5 @@ pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
     SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
 };
+pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
