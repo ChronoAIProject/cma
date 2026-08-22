@@ -6,6 +6,7 @@
 
 use crate::size::InvalidSessionSize;
 use crate::terminal::InvalidGeometry;
+use crate::OutOfBounds;
 
 /// Errors surfaced by the core.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -40,6 +41,15 @@ pub enum CoreError {
     /// A terminal geometry with a zero dimension was supplied.
     #[error("invalid geometry: {0}")]
     InvalidGeometry(#[from] InvalidGeometry),
+
+    /// A size this deployment will not provision.
+    ///
+    /// Distinct from `InvalidRequest`: the request is well formed and would be
+    /// honoured by a deployment whose administrator had set different bounds.
+    /// Distinct from `SessionLimitReached`: nothing is in conflict and stopping
+    /// something else does not help. Retrying unchanged never succeeds.
+    #[error("size out of bounds: {0}")]
+    SizeOutOfBounds(#[from] OutOfBounds),
 
     /// A session size with a zero figure was supplied.
     #[error("invalid session size: {0}")]
@@ -143,6 +153,7 @@ impl CoreError {
             Self::SessionTerminated => "session_terminated",
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
+            Self::SizeOutOfBounds(_) => "size_out_of_bounds",
             Self::InvalidSessionSize(_) => "invalid_session_size",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::RuntimeRefused(_) => "runtime_refused",
@@ -160,8 +171,8 @@ impl CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::size::SessionSize;
     use crate::terminal::TerminalGeometry;
+    use crate::{SessionSize, SizeDimension};
 
     /// Every variant, and the compiler is what says so.
     ///
@@ -183,6 +194,12 @@ mod tests {
             CoreError::SessionTerminated,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails")),
+            CoreError::SizeOutOfBounds(OutOfBounds {
+                dimension: SizeDimension::CpuMillis,
+                requested: 5_000,
+                minimum: 250,
+                maximum: 4_000,
+            }),
             CoreError::InvalidSessionSize(SessionSize::new(0, 512).expect_err("zero CPU fails")),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
@@ -205,6 +222,7 @@ mod tests {
                 | CoreError::SessionTerminated
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
+                | CoreError::SizeOutOfBounds(_)
                 | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)

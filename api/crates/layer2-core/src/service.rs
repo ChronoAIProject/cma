@@ -20,6 +20,7 @@ use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
 use crate::options::{AgentOptions, SessionMode};
+use crate::platform_service::PlatformSettingsService;
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
@@ -185,6 +186,8 @@ pub struct SessionService {
     pub(crate) adopts_untagged: bool,
     /// The environment profiles this service resolves sessions against.
     pub(crate) environments: Arc<EnvironmentProfileService>,
+    /// Deployment settings, always present so readers cannot skip the fallback.
+    pub(crate) settings: Arc<PlatformSettingsService>,
     /// The runtime version sessions are expected to be running.
     ///
     /// Held by the control plane rather than asked of each sandbox: this is
@@ -211,7 +214,7 @@ pub struct SessionService {
 ///
 /// Grouped rather than passed one by one: each is optional, each is a place
 /// this crate deliberately does not know the shape of, and a positional list
-/// of three `Option<Arc<dyn …>>` is one where two can be swapped without the
+/// of several `Option<Arc<…>>` values is one where two can be swapped without the
 /// compiler noticing.
 #[derive(Default)]
 pub struct SessionPorts {
@@ -221,6 +224,10 @@ pub struct SessionPorts {
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.
     pub skills: Option<Arc<dyn crate::store::SkillSource>>,
+    /// The deployment's own settings, when this process has a store for them.
+    ///
+    /// `None` becomes `unconfigured()`, so sessions still use shipped bounds.
+    pub settings: Option<Arc<PlatformSettingsService>>,
 }
 
 impl SessionService {
@@ -240,6 +247,7 @@ impl SessionService {
             context,
             credentials,
             skills,
+            settings,
         } = ports;
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
@@ -253,6 +261,7 @@ impl SessionService {
             context,
             credentials,
             environments,
+            settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
             runtime_version: deployment.runtime_version,
             identity: deployment.identity,
             adopts_untagged: deployment.adopts_untagged,
@@ -419,6 +428,14 @@ impl SessionService {
             .refuse_ungranted(caller, spec.caller_credential.as_deref(), &granted_services)
             .await?;
 
+        if let Some(size) = spec.options.size {
+            self.settings
+                .for_provisioning()
+                .await
+                .size_bounds
+                .check(size)?;
+        }
+
         let geometry = spec.geometry.unwrap_or_default();
         let id = SessionId::generate();
         let session = Session {
@@ -555,24 +572,6 @@ impl SessionService {
 /// tell a client their work was gone when it is merely unreachable.
 pub(crate) fn store_failed(e: StoreError) -> CoreError {
     CoreError::RuntimeUnavailable(format!("session store: {e}"))
-}
-
-/// Pump runtime output into the screen model and out to any live subscriber.
-pub(crate) fn spawn_relay(
-    id: SessionId,
-    mut output: mpsc::Receiver<Vec<u8>>,
-    screen: Arc<Mutex<Box<dyn ScreenModel>>>,
-    live: broadcast::Sender<Vec<u8>>,
-) {
-    tokio::spawn(async move {
-        while let Some(chunk) = output.recv().await {
-            screen.lock().await.apply(&chunk);
-            // A send with no subscribers is not an error: the session is simply
-            // detached, and the screen model has already absorbed the bytes.
-            let _ = live.send(chunk);
-        }
-        tracing::info!(session_id = %id, "runtime output ended");
-    });
 }
 
 #[cfg(test)]
