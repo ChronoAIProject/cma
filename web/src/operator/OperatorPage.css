@@ -48,7 +48,7 @@
 }
 
 /*
- * The four views as an underlined tablist at the interface size — §14:
+ * The five views as an underlined tablist at the interface size — §19:
  * selected by weight, accent ink, a 2px accent bottom border AND
  * aria-selected, so colour is never the only signal.
  */
