@@ -199,6 +199,16 @@ A stretch of conversation the runtime had to drop also arrives as a state patch,
 
 `snapshotAt` is the moment the conversation was captured, and it is where history stops being continuous: anything the agent did after it did not travel. Draw the boundary — a client that skips it silently leaves its reader to conclude the agent forgot something.
 
+**A lost runtime is appended to `/runtimeLosses/-`:**
+
+```json
+{ "delta": [ { "op": "add", "path": "/runtimeLosses/-", "value": {
+  "runtime": "runtime_01K35QJ0", "cause": "out_of_memory", "noticedAt": "2026-08-23T04:12:00Z"
+} } ] }
+```
+
+`cause` is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`, and is `null` where the service could establish no reason. `noticedAt` is when the service established that the runtime was lost, up to one reconciliation sweep after it actually stopped; it is not a claimed time of death. Do not draw the loss as the session having failed: a replacement runtime is started. The agent's conversation does **not** cross a runtime it lost, however, so it begins again from the terminal context that was captured rather than resuming that conversation.
+
 **The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
 
 ### `RUN_ERROR` covers two different things, and says which
