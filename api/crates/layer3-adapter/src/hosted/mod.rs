@@ -320,7 +320,7 @@ impl HostedKernel {
             self.install_prelude(
                 &sandbox.id,
                 &spec.skills,
-                &spec.reaches,
+                &spec.platform_briefing,
                 &spec.environment.agent_notes,
             )
             .await?;
@@ -329,67 +329,23 @@ impl HostedKernel {
         Ok(RuntimeHandle(sandbox.id))
     }
 
-    /// What this session is, in words its agent reads before doing anything.
-    ///
-    /// Written because nothing told it. A session holds a credential scoped to
-    /// a few services, and the platform CLI it is given is documented for a
-    /// person holding a whole account — so an agent asked to use a service
-    /// starts by establishing who it is, is refused because an agent key is
-    /// not a user, and follows the CLI's own advice to log in. Observed doing
-    /// exactly that: seven attempts at `login`, five at `doctor`, nine at a
-    /// listing it cannot read.
-    ///
-    /// The reach is stated because the alternative is discovery, and discovery
-    /// lies: it lists every service on the account — fifty, against the four
-    /// this key can use — so an agent picks a plausible one and collects a
-    /// refusal it cannot interpret.
-    fn agent_note(&self, reaches: &[String], owner_notes: &str) -> String {
-        let mut note = String::new();
-        note.push_str("# This session\n\n");
-        note.push_str(
-            "You are already authenticated. A credential was minted for this session alone and is\n\
-             attached to your requests automatically. You will never see its value and do not need it.\n\n",
-        );
-        note.push_str(
-            "**Do not run `nyxid login`.** There is nobody to log in as. The same goes for\n\
-             `nyxid whoami`, `nyxid status` and `nyxid service list`: they ask about a user account,\n\
-             this session is not one, and they will fail however many times they are tried.\n\n",
-        );
-        note.push_str("Reach a service with `nyxid proxy request <slug> <path>`.\n\n");
-
-        if reaches.is_empty() {
-            note.push_str(
-                "This session was granted no services, so every proxied call will be refused. That\n\
-                 is a property of how it was created and will not change while it runs.\n",
-            );
-        } else {
-            note.push_str("## What you can reach\n\n");
-            note.push_str(
-                "These slugs and no others. `nyxid proxy discover` lists everything on the account\n\
-                 rather than what this session was granted, so treat this list as the truth and that\n\
-                 one as a catalogue:\n\n",
-            );
-            for slug in reaches {
-                note.push_str(&format!("- `{slug}`\n"));
-            }
-            note.push_str(
-                "\nA call to anything else is refused for the life of this session. It is not worth\n\
-                 retrying.\n",
-            );
-        }
-
+    /// Compose two separately owned instruction sources without merging them.
+    fn agent_note(&self, platform_briefing: &str, owner_notes: &str) -> String {
+        let mut note = platform_briefing.to_string();
         /*
-         * The owner's own instructions, after ours and separated from them.
+         * The owner's own instructions, after the platform's and separated.
          *
-         * Appended rather than merged: everything above is what this session
-         * is, and an owner able to edit it could talk their agent out of
-         * knowing it is already authenticated — which costs the first minutes
-         * of every session rediscovering that badly. Below the rule they say
-         * whatever they like.
+         * Appended rather than merged: the two sources have different owners.
+         * An owner may contradict the platform in their prose, but they cannot
+         * remove or rewrite what the platform placed before it.
          */
         let owner_notes = owner_notes.trim();
         if !owner_notes.is_empty() {
-            note.push_str("\n---\n\n# From the owner of this session\n\n");
+            note.truncate(note.trim_end().len());
+            if !note.is_empty() {
+                note.push_str("\n\n---\n\n");
+            }
+            note.push_str("# From the owner of this session\n\n");
             note.push_str(owner_notes);
             note.push('\n');
         }
@@ -409,7 +365,7 @@ impl HostedKernel {
         &self,
         sandbox: &str,
         skills: &[SkillPackage],
-        reaches: &[String],
+        platform_briefing: &str,
         owner_notes: &str,
     ) -> Result<(), AdapterError> {
         let root = self.skills_root.trim();
@@ -434,7 +390,7 @@ impl HostedKernel {
         let mut bodies = Vec::new();
         let notes = self.agent_notes.trim();
         if !notes.is_empty() {
-            let body = self.agent_note(reaches, owner_notes).into_bytes();
+            let body = self.agent_note(platform_briefing, owner_notes).into_bytes();
             entries.push(serde_json::json!({ "path": notes, "len": body.len() }));
             bodies.push(body);
         }
@@ -462,7 +418,6 @@ impl HostedKernel {
         tracing::info!(
             %sandbox,
             skills = skills.len(),
-            reaches = reaches.len(),
             bytes,
             "wrote this session's skills and its standing instructions"
         );
