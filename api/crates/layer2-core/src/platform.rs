@@ -123,6 +123,42 @@ pub struct PlatformSettings {
     pub live_sessions: Option<NonZeroU32>,
 }
 
+impl PlatformSettings {
+    /// The names of the settings whose value differs from `previous`.
+    ///
+    /// Names are returned in declaration order. Keeping this comparison beside
+    /// the document means a field added to the settings has one explicit place
+    /// where its audit name must be chosen.
+    pub fn changed_from(&self, previous: &Self) -> Vec<&'static str> {
+        let Self {
+            briefing,
+            pricing,
+            size_bounds,
+            live_sessions,
+        } = self;
+        let Self {
+            briefing: previous_briefing,
+            pricing: previous_pricing,
+            size_bounds: previous_size_bounds,
+            live_sessions: previous_live_sessions,
+        } = previous;
+        let mut changed = Vec::new();
+        if briefing != previous_briefing {
+            changed.push("briefing");
+        }
+        if pricing != previous_pricing {
+            changed.push("pricing");
+        }
+        if size_bounds != previous_size_bounds {
+            changed.push("size_bounds");
+        }
+        if live_sessions != previous_live_sessions {
+            changed.push("live_sessions");
+        }
+        changed
+    }
+}
+
 impl Default for SessionBriefing {
     /// What the platform ships, and what a reset restores.
     ///
@@ -392,5 +428,27 @@ mod tests {
                 ..PlatformSettings::default()
             }
         );
+    }
+
+    #[test]
+    fn changed_settings_are_named_once_in_declaration_order() {
+        let previous = PlatformSettings::default();
+        let mut changed = previous.clone();
+        changed.briefing.before.push("Different prose".into());
+        changed.pricing = changed.pricing.appended(
+            crate::Rate {
+                cpu_micros_per_cpu_hour: 40_000,
+                memory_micros_per_gib_hour: 5_000,
+            },
+            "2026-08-23T01:00:00Z",
+        );
+        changed.size_bounds.max_cpu_millis = NonZeroU32::new(8_000).expect("non-zero");
+        changed.live_sessions = NonZeroU32::new(3);
+
+        assert_eq!(
+            changed.changed_from(&previous),
+            ["briefing", "pricing", "size_bounds", "live_sessions"]
+        );
+        assert!(changed.changed_from(&changed).is_empty());
     }
 }
