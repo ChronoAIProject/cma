@@ -5,11 +5,16 @@
 //! to every session created afterwards, and are changed by an explicit act of
 //! an administrator rather than by anybody's ordinary use.
 //!
-//! The module is deliberately a *set* of settings from the start, holding one.
-//! A second is coming — that is the shape a settings surface has — and a design
-//! that special-cases the first one has to be undone to accept the second.
+//! The module is deliberately a *set* of settings rather than a succession of
+//! special cases. Each setting remains independently named and typed as the set
+//! grows.
 
 use serde::{Deserialize, Serialize};
+
+// Re-exported so the split is a move rather than a rename: callers still read
+// deployment policy through `platform`, while the range has a file named for
+// the type and does not consume this settings file as more settings arrive.
+pub use crate::capacity_bounds::{CapacityBounds, OutOfBounds, SizeDimension};
 
 /// What a session is told about itself before its agent does anything.
 ///
@@ -37,23 +42,29 @@ pub struct SessionBriefing {
     /// deliberately: prose the platform cannot correct is worse than prose an
     /// administrator can get wrong. The surface offering it says what it costs
     /// and offers the shipped text back in one action.
+    #[serde(default = "SessionBriefing::default_before")]
     pub before: Vec<String>,
     /// What the reach section is called.
     ///
     /// Editable, because naming a section cannot break it. Blank falls back to
     /// the shipped heading rather than producing an unlabelled list.
+    #[serde(default = "SessionBriefing::default_reach_heading")]
     pub reach_heading: String,
     /// The sentences introducing the list, before the entries themselves.
+    #[serde(default = "SessionBriefing::default_reach_lead")]
     pub reach_lead: String,
     /// The sentences closing the reach section, after the entries.
+    #[serde(default = "SessionBriefing::default_reach_close")]
     pub reach_close: String,
     /// What is said instead when a session was granted nothing.
     ///
     /// Its own field rather than a special case of the lead, because it is a
     /// different sentence with a different job: the list version explains how
     /// to use what is there, and this one explains that there is nothing.
+    #[serde(default = "SessionBriefing::default_reach_none")]
     pub reach_none: String,
     /// Prose placed below the reach section, in order.
+    #[serde(default)]
     pub after: Vec<String>,
 }
 
@@ -64,7 +75,24 @@ pub struct SessionBriefing {
 /// ignored. The struct grows; nothing here is a map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlatformSettings {
+    #[serde(default)]
     pub briefing: SessionBriefing,
+    /// What a session on this deployment may ask for.
+    ///
+    /// Admin-editable at runtime rather than configuration, because a bound is
+    /// policy an operator changes while the service runs and a config key would
+    /// cost a rollout and create a second source of truth.
+    ///
+    /// Tightening a bound is not retroactive. It refuses new asks and stops
+    /// nothing already running. These bounds apply only to a size a session
+    /// states; an unnamed size uses the deployment's own reservation, which the
+    /// bounds do not govern.
+    ///
+    /// Named `size_bounds` rather than `capacity`: a later deployment-wide
+    /// ledger answers whether aggregate space exists, which is a different
+    /// setting and question from this per-request range.
+    #[serde(default)]
+    pub size_bounds: CapacityBounds,
 }
 
 impl Default for SessionBriefing {
@@ -110,6 +138,26 @@ impl Default for SessionBriefing {
 }
 
 impl SessionBriefing {
+    fn default_before() -> Vec<String> {
+        Self::default().before
+    }
+
+    fn default_reach_heading() -> String {
+        Self::default().reach_heading
+    }
+
+    fn default_reach_lead() -> String {
+        Self::default().reach_lead
+    }
+
+    fn default_reach_close() -> String {
+        Self::default().reach_close
+    }
+
+    fn default_reach_none() -> String {
+        Self::default().reach_none
+    }
+
     /// Render the document a session is handed, given what it may reach.
     ///
     /// The reach list is the caller's and never the setting's: it is a fact
@@ -295,6 +343,26 @@ mod tests {
         assert!(
             out.contains("- `ornn`"),
             "and the session still knows its reach"
+        );
+    }
+
+    #[test]
+    fn a_settings_document_written_before_a_field_existed_still_reads() {
+        let empty: PlatformSettings = serde_json::from_str("{}").expect("old empty settings read");
+        assert_eq!(empty, PlatformSettings::default());
+
+        let partial: PlatformSettings =
+            serde_json::from_str(r##"{"briefing":{"reach_heading":"# Different words"}}"##)
+                .expect("a partially written briefing reads");
+        assert_eq!(
+            partial,
+            PlatformSettings {
+                briefing: SessionBriefing {
+                    reach_heading: "# Different words".into(),
+                    ..SessionBriefing::default()
+                },
+                ..PlatformSettings::default()
+            }
         );
     }
 }
