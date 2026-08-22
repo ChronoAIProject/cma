@@ -468,6 +468,7 @@ impl SessionService {
              * that never finished.
              */
             granted_skills: None,
+            pricing: None,
             created_at: now_rfc3339(),
         };
 

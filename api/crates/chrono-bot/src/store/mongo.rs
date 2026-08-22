@@ -299,6 +299,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             granted_skills: d
                 .granted_skills
                 .map(|skills| skills.into_iter().map(StoredSkill::into_granted).collect()),
+            pricing: None,
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,

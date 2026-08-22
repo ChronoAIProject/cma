@@ -805,6 +805,7 @@ async fn create(
                 // This interface takes no plane, so the profile or the
                 // deployment decides — which is what it has always done.
                 requested_mode: None,
+                quoted_rate_card: None,
             },
         )
         .await?;
