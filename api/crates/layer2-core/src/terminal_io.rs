@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use layer3_adapter::{TermSize, TerminalInput};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::authz::Caller;
 use crate::capabilities::Capability;
@@ -16,7 +17,25 @@ use crate::event::EventKind;
 use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
-use crate::terminal::{ScreenSnapshot, TerminalGeometry};
+use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
+
+/// Pump runtime output into the screen model and out to any live subscriber.
+pub(crate) fn spawn_relay(
+    id: SessionId,
+    mut output: mpsc::Receiver<Vec<u8>>,
+    screen: Arc<Mutex<Box<dyn ScreenModel>>>,
+    live: broadcast::Sender<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        while let Some(chunk) = output.recv().await {
+            screen.lock().await.apply(&chunk);
+            // A send with no subscribers is not an error: the session is simply
+            // detached, and the screen model has already absorbed the bytes.
+            let _ = live.send(chunk);
+        }
+        tracing::info!(session_id = %id, "runtime output ended");
+    });
+}
 
 impl SessionService {
     /// Deliver input to the session's terminal.

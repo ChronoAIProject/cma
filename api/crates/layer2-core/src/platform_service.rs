@@ -229,6 +229,7 @@ mod tests {
                 before: vec!["# Read this first".into()],
                 ..SessionBriefing::default()
             },
+            ..PlatformSettings::default()
         }
     }
 
@@ -277,6 +278,24 @@ mod tests {
             Some(&changed()),
             "an overwrite must be recoverable in the moment"
         );
+    }
+
+    #[tokio::test]
+    async fn a_write_may_set_bounds_narrower_than_an_unnamed_session() {
+        // The service deliberately has no numeric version of the deployment's
+        // own reservation. Bounds govern only a size a caller states, so there
+        // is no deployment default to compare this write against.
+        let svc = PlatformSettingsService::new(Arc::new(FakeStore::default()));
+        let mut settings = PlatformSettings::default();
+        settings.size_bounds.max_memory_mib =
+            std::num::NonZeroU32::new(512).expect("the test maximum is non-zero");
+
+        let written = svc
+            .write(&admin(), 0, settings.clone())
+            .await
+            .expect("narrow bounds remain writable");
+
+        assert_eq!(written.settings, settings);
     }
 
     #[tokio::test]

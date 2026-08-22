@@ -21,7 +21,11 @@ use serde::{Deserialize, Serialize};
 
 mod events;
 mod operate;
+mod problems;
 mod tickets;
+
+pub(crate) use problems::problem_document;
+pub use problems::Problem;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::tickets::TerminalTickets;
@@ -513,118 +517,6 @@ async fn named(users: &UserDirectory, caller: &Caller, sessions: Vec<Session>) -
         .collect()
 }
 
-/// A core failure rendered as an RFC 9457 problem document.
-pub struct Problem(pub(crate) CoreError);
-
-impl IntoResponse for Problem {
-    fn into_response(self) -> Response {
-        // A caller who may not see a session is told it does not exist:
-        // confirming the id would itself leak information. The substitution
-        // happens once, here, and everything below renders the condition the
-        // caller is being told about rather than the one that occurred —
-        // matching the status while the body still says "forbidden" answers
-        // the very question the refusal exists to withhold.
-        let rendered = match &self.0 {
-            CoreError::Forbidden => &CoreError::SessionNotFound,
-            other => other,
-        };
-        let (status, slug) = match rendered {
-            CoreError::SessionNotFound | CoreError::Forbidden => {
-                (StatusCode::NOT_FOUND, "session-not-found")
-            }
-            CoreError::EnvironmentProfileNotFound => {
-                (StatusCode::NOT_FOUND, "environment-profile-not-found")
-            }
-            CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
-            CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
-            CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
-            CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
-            CoreError::InvalidSessionSize(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "invalid-session-size")
-            }
-            CoreError::RuntimeUnavailable(_) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
-            }
-            // 503 as well, and named apart. Both say "not now"; the difference
-            // is that this one came from a runtime that answered, so a caller
-            // reading the slug can tell a session that is gone from one that
-            // is there and would not.
-            CoreError::RuntimeRefused(_) => (StatusCode::SERVICE_UNAVAILABLE, "runtime-refused"),
-            CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
-            // 422 rather than 404: the route exists and the request is
-            // well-formed, and this session simply cannot honour it. A 404
-            // would send the caller looking for a spelling mistake.
-            CoreError::CapabilityUnsupported(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "capability-unsupported")
-            }
-            // 422 and never 503: retrying will not grant it. The request is
-            // well-formed and this owner has simply not given the service to
-            // anything — which is fixed in NyxID, not by trying again.
-            CoreError::ServiceNotGranted(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "service-not-granted")
-            }
-            // 503 and never 422: the owner's services are fine and we could
-            // not list them. Retrying is the correct thing to do, which is the
-            // whole reason this is a different answer from the one above.
-            CoreError::ServiceCatalogUnavailable(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "service-catalogue-unavailable",
-            ),
-            // 409 and not 422: the body was well formed and the caller was
-            // entitled. What went wrong is that somebody else wrote first, and
-            // the useful thing to say is "read it again", which is a different
-            // instruction from "fix what you sent".
-            CoreError::SettingsConflict(_) => (StatusCode::CONFLICT, "settings-conflict"),
-            // 503 for the same reason the catalogue is: nothing is wrong with
-            // the request and retrying is the correct response.
-            CoreError::SettingsUnavailable(_) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "settings-unavailable")
-            }
-        };
-        // The ability a session lacks, as a field rather than only as prose.
-        //
-        // CLAUDE.md §3 requires a refusal to name what is missing "in words a
-        // caller can act on". The name was reaching callers only inside
-        // `detail`, as the tail of "capability not supported: conversation",
-        // so acting on it meant parsing an English sentence — which every
-        // client would do slightly differently and which breaks the moment the
-        // wording is improved. The conversation projection already sends this
-        // as its own field; this makes the two interfaces agree.
-        let mut body = problem_document(status, slug, &rendered.to_string(), rendered.code());
-        if let CoreError::CapabilityUnsupported(name) = rendered {
-            // Inserted rather than always present and usually null: a field
-            // there on every failure invites a caller to branch on its
-            // emptiness instead of on the code, and the two disagree the first
-            // time a refusal arrives without a name.
-            if let Some(object) = body.as_object_mut() {
-                object.insert("capability".into(), serde_json::Value::String(name.clone()));
-            }
-        }
-        (status, Json(body)).into_response()
-    }
-}
-
-/// One RFC 9457 problem document, however the failure arose.
-///
-/// Shared so a request this interface could not read produces the same shape as
-/// one the core refused. A caller meeting two different error formats from one
-/// endpoint, depending on which half of their request was wrong, has to write
-/// two parsers to find out what happened.
-pub(crate) fn problem_document(
-    status: StatusCode,
-    slug: &str,
-    detail: &str,
-    code: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "type": format!("{PROBLEM_BASE}/{slug}"),
-        "title": slug.replace('-', " "),
-        "status": status.as_u16(),
-        "detail": detail,
-        "code": code,
-    })
-}
-
 /// Why a request did not succeed: the body could not be read, or the operation
 /// was refused.
 ///
@@ -708,12 +600,6 @@ impl IntoResponse for BodyProblem {
         let detail = self.0.body_text();
         let body = problem_document(status, slug, &detail, code);
         (status, Json(body)).into_response()
-    }
-}
-
-impl From<CoreError> for Problem {
-    fn from(e: CoreError) -> Self {
-        Self(e)
     }
 }
 

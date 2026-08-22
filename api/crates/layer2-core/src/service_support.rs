@@ -15,8 +15,79 @@ use crate::service::{Deployment, ScreenFactory, SessionService};
 
 use crate::ids::SessionId;
 use crate::test_support::{
-    kernel, no_environments, FakeAdapter, FakeStore, FixedCredential, NullScreen, RecordingScreen,
+    kernel, no_environments, unconfigured_settings, FakeAdapter, FakeStore, FixedCredential,
+    NullScreen, RecordingScreen,
 };
+
+/// A fixed settings document for a session-service fixture.
+struct StaticSettingsStore(crate::PlatformSettings);
+
+#[async_trait::async_trait]
+impl crate::store::PlatformSettingsStore for StaticSettingsStore {
+    async fn load(&self) -> Result<Option<crate::StoredSettings>, crate::store::StoreError> {
+        Ok(Some(crate::StoredSettings {
+            settings: self.0.clone(),
+            revision: 1,
+            previous: None,
+        }))
+    }
+
+    async fn save_if_unchanged(
+        &self,
+        _expected: u64,
+        _settings: &crate::PlatformSettings,
+    ) -> Result<Option<crate::StoredSettings>, crate::store::StoreError> {
+        Err(crate::store::StoreError::Unavailable(
+            "this session fixture exposes a fixed settings document".into(),
+        ))
+    }
+}
+
+/// A service over profiles and a concrete settings document.
+pub(crate) fn service_with_environments_and_settings(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    environments: Arc<crate::environment_service::EnvironmentProfileService>,
+    settings: crate::PlatformSettings,
+) -> Arc<SessionService> {
+    service_with_environments_and_settings_service(
+        store,
+        adapter,
+        environments,
+        Arc::new(crate::PlatformSettingsService::new(Arc::new(
+            StaticSettingsStore(settings),
+        ))),
+    )
+}
+
+/// The same fixture over a settings service whose failure modes a test owns.
+pub(crate) fn service_with_environments_and_settings_service(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    environments: Arc<crate::environment_service::EnvironmentProfileService>,
+    settings: Arc<crate::PlatformSettingsService>,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        crate::service::SessionPorts {
+            context: None,
+            credentials: None,
+            skills: None,
+            settings: Some(settings),
+        },
+        environments,
+        owned(),
+    );
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
 
 /// A service that stores transcripts, over a screen model that keeps them.
 pub(crate) fn service_with_context(
@@ -35,6 +106,7 @@ pub(crate) fn service_with_context(
             context: Some(context),
             credentials: None,
             skills: None,
+            settings: None,
         },
         no_environments(),
         owned(),
@@ -76,6 +148,7 @@ pub(crate) fn service_on_version_with_skills(
             kernel: kernel(),
             ..Default::default()
         },
+        unconfigured_settings(),
     );
     let service = SessionService::new(
         adapters,
@@ -113,6 +186,7 @@ pub(crate) fn service_on_version(
             context: None,
             credentials: None,
             skills: None,
+            settings: None,
         },
         no_environments(),
         Deployment {
@@ -173,6 +247,7 @@ pub(crate) fn service_with_credentials(
             context: None,
             credentials: Some(Arc::new(FixedCredential(credential.to_string()))),
             skills: None,
+            settings: None,
         },
         no_environments(),
         owned(),
@@ -216,6 +291,7 @@ pub(crate) fn service_as(
             context: None,
             credentials: None,
             skills: None,
+            settings: None,
         },
         no_environments(),
         deployment,
