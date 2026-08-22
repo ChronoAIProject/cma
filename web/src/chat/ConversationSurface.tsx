@@ -3,6 +3,7 @@ import { MessageStream } from './MessageStream';
 import { ApprovalCard } from './ApprovalCard';
 import { SignInCard } from './SignInCard';
 import { Composer } from './Composer';
+import { Context } from './Context';
 import { Usage } from './Usage';
 import { EMPTY, reduce, type Conversation } from './conversation';
 import { planeStateFor } from './planeState';
@@ -283,6 +284,7 @@ export function ConversationSurface({
             />
           )}
           <Usage granted={capabilities.usage} usage={conversation.usage} />
+          <Context granted={capabilities.usage} usage={conversation.usage} />
         </div>
       </div>
     </section>

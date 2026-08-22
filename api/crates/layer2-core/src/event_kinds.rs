@@ -149,6 +149,33 @@ pub enum EventKind {
         output_tokens: u64,
         /// How much of the model's context the conversation currently fills.
         context_used: u64,
+        /// How large the context is that `context_used` is drawn from, where
+        /// the runtime states one.
+        ///
+        /// `None` rather than zero, and the difference is the whole point: a
+        /// figure without its ceiling answers nothing, and a ceiling of zero
+        /// would draw a full bar on an empty conversation. Absent for every
+        /// report that does not state one, including a turn's own accounting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<u64>,
+    },
+    /// The conversation got smaller than it was.
+    ///
+    /// The agent summarised what it was holding to make room. Recorded rather
+    /// than left to be noticed, so the owner sees a boundary instead of an
+    /// agent that appears to have forgotten something.
+    ///
+    /// Written only where one runtime gave both readings. The protocol does
+    /// not say whether the agent acted on its own or its owner asked, so this
+    /// event deliberately claims neither.
+    ContextCompacted {
+        /// How full the context was at the previous reading, in tokens.
+        was: u64,
+        /// How full it is now.
+        now: u64,
+        /// The ceiling in force, where the runtime states one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<u64>,
     },
     /// The session's permission mode changed under its owner.
     ///
@@ -337,6 +364,7 @@ const KNOWN_TAGS: &[&str] = &[
     "tool_call_started",
     "tool_call_updated",
     "usage_reported",
+    "context_compacted",
     "mode_changed",
     "plan_set",
     "config_options_set",
