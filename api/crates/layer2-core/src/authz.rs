@@ -62,6 +62,28 @@ pub enum Capability {
     /// gains everyday use can never quietly acquire the ability to stop
     /// somebody else's work.
     ControlAnySession,
+    /// Create and revive sessions past the deployment's live-session limit.
+    ///
+    /// Its own capability rather than a reading of any existing one, and each
+    /// alternative is wrong in a way nobody would see:
+    ///
+    /// - Not `Authorization::is_privileged()`. That predicate is satisfied by
+    ///   read-only grants — `ReadAllSessions`, `ReadRuntimeInventory`,
+    ///   `ReadEventLog`, `ReadActivityLog`, `ReadUserDirectory` — so somebody
+    ///   handed a monitoring role purely to watch the service would silently
+    ///   acquire unlimited session creation.
+    /// - Not `ConfigurePlatform`. Authoring a policy is not standing outside it,
+    ///   and an administrator who sets a limit should still be measured against
+    ///   it unless somebody separately decided otherwise.
+    /// - Not part of a subject's own work. The limit is the deployment's, and
+    ///   who is excused from it is decided by whoever runs the service.
+    ///
+    /// Deliberately **not** in `is_privileged()`. By that predicate's own stated
+    /// meaning — whether this capability reaches past the caller's own work — it
+    /// does not qualify: it changes nothing about anybody else's sessions, sees
+    /// nothing across subjects, and stops nothing. It is an exemption from a
+    /// policy, not a reach into somebody else's work.
+    ExceedSessionLimit,
 }
 
 impl Capability {
@@ -71,7 +93,7 @@ impl Capability {
     /// rather than repeating it and drifting. The declared length constrains
     /// the literal, never the enum; `all_names_every_capability` is the guard,
     /// because its match is exhaustive.
-    pub const ALL: [Capability; 11] = [
+    pub const ALL: [Capability; 12] = [
         Self::CreateSession,
         Self::UseOwnSessions,
         Self::TerminateOwnSession,
@@ -83,6 +105,7 @@ impl Capability {
         Self::ReadUserDirectory,
         Self::ConfigurePlatform,
         Self::ControlAnySession,
+        Self::ExceedSessionLimit,
     ];
 
     /// Whether this capability reaches past the caller's own work.
@@ -98,7 +121,8 @@ impl Capability {
             Self::CreateSession
             | Self::UseOwnSessions
             | Self::TerminateOwnSession
-            | Self::ManageOwnEnvironmentProfiles => false,
+            | Self::ManageOwnEnvironmentProfiles
+            | Self::ExceedSessionLimit => false,
             Self::ReadAllSessions
             | Self::ReadRuntimeInventory
             | Self::ReadEventLog
@@ -281,7 +305,8 @@ mod tests {
                 | Capability::ReadActivityLog
                 | Capability::ReadUserDirectory
                 | Capability::ConfigurePlatform
-                | Capability::ControlAnySession => {}
+                | Capability::ControlAnySession
+                | Capability::ExceedSessionLimit => {}
             }
         }
 
@@ -329,6 +354,7 @@ mod tests {
             Capability::UseOwnSessions,
             Capability::TerminateOwnSession,
             Capability::ManageOwnEnvironmentProfiles,
+            Capability::ExceedSessionLimit,
         ];
         let privileged = [
             Capability::ReadAllSessions,
@@ -356,6 +382,20 @@ mod tests {
             ordinary.len() + privileged.len(),
             Capability::ALL.len(),
             "every capability must be classified by exactly one of these lists"
+        );
+    }
+
+    #[test]
+    fn an_exemption_is_not_a_reach_across_subjects() {
+        // The audit surface uses this predicate to enumerate cross-subject
+        // grants. Raising only the holder's own allowance must not appear there
+        // as permission to observe or act on somebody else's work.
+        assert!(!Capability::ExceedSessionLimit.is_privileged());
+
+        let authorization = Authorization::from_capabilities([Capability::ExceedSessionLimit]);
+        assert!(
+            !authorization.is_privileged(),
+            "an exemption from a deployment limit does not cross subjects"
         );
     }
 
