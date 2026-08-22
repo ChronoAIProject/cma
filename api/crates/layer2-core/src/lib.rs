@@ -24,6 +24,7 @@ pub mod environment_service;
 mod environment_values;
 pub mod error;
 pub mod event;
+mod event_kinds;
 pub mod ids;
 pub mod inventory;
 mod lease;
