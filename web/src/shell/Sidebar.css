@@ -108,6 +108,12 @@
   cursor: pointer;
 }
 
+.sidebar__brand:disabled,
+.sidebar__new:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /*
  * The wordmark, set the way the brand sets it — §21.
  *
@@ -196,7 +202,7 @@
   cursor: pointer;
 }
 
-.sidebar__new:hover {
+.sidebar__new:hover:not(:disabled) {
   background: var(--dsw-alias-button-floating-hover);
 }
 
@@ -211,7 +217,7 @@
   border-color: transparent;
 }
 
-.sidebar--collapsed .sidebar__new:hover {
+.sidebar--collapsed .sidebar__new:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
