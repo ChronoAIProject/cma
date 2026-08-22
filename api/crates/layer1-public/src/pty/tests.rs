@@ -182,6 +182,13 @@ fn each_remaining_failure_has_its_own_code() {
         error_code(&CoreError::PriceListNotAppendOnly("x".into())),
         "price_list_not_append_only"
     );
+    assert_eq!(
+        error_code(&CoreError::PriceChanged {
+            quoted: "rate_old".into(),
+            in_force: "rate_new".into(),
+        }),
+        "price_changed"
+    );
 }
 
 #[test]
