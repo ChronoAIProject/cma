@@ -126,8 +126,8 @@ pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInvent
 pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use platform::{
-    CapacityBounds, OutOfBounds, PlatformSettings, PriceList, PriceListViolation, Rate, RateCard,
-    RateCardId, SessionBriefing, SizeDimension, CURRENCY,
+    format_usd, CapacityBounds, OutOfBounds, PlatformSettings, PriceList, PriceListViolation,
+    Quote, Rate, RateCard, RateCardId, SessionBriefing, SessionPricing, SizeDimension, CURRENCY,
 };
 pub use platform_service::PlatformSettingsService;
 pub use reconcile::Reclaimed;

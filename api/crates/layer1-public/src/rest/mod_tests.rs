@@ -340,6 +340,7 @@ fn a_view_carries_geometry_as_plain_integers() {
         capabilities: Default::default(),
         granted_services: None,
         granted_skills: None,
+        pricing: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let view: SessionView = s.into();
@@ -387,6 +388,7 @@ fn a_view_carries_the_agent_configuration_a_client_draws() {
             id: layer2_core::SkillId::new("skl_nyxid"),
             version: Some("0.5".into()),
         }]),
+        pricing: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let json = serde_json::to_value(SessionView::from(s)).expect("serializes");
@@ -435,6 +437,7 @@ fn a_session_with_no_recorded_skills_carries_no_skills_field() {
         capabilities: Default::default(),
         granted_services: None,
         granted_skills: None,
+        pricing: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let unrecorded = serde_json::to_value(SessionView::from(s.clone())).expect("serializes");
@@ -503,6 +506,7 @@ mod reach {
     fn session_with(granted: Option<Vec<ServiceId>>) -> Session {
         Session {
             granted_skills: None,
+            pricing: None,
             id: SessionId("sesn_1".into()),
             owner: layer2_core::SubjectId("subject-a".into()),
             kernel: layer2_core::KernelId::new("example-runtime"),

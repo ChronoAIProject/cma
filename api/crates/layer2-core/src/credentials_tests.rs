@@ -173,6 +173,7 @@ async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
                 caller_credential: Some("first-token".into()),
                 runtime_credential: None,
                 requested_mode: None,
+                quoted_rate_card: None,
             },
         )
         .await
@@ -208,6 +209,7 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
                 caller_credential: Some("first-token".into()),
                 runtime_credential: None,
                 requested_mode: None,
+                quoted_rate_card: None,
             },
         )
         .await
@@ -254,6 +256,7 @@ async fn a_renewal_does_not_leak_across_subjects() {
             caller_credential: Some("a-token".into()),
             runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
         },
     )
     .await
@@ -285,6 +288,7 @@ async fn a_terminated_session_is_not_renewed() {
                 caller_credential: Some("token".into()),
                 runtime_credential: None,
                 requested_mode: None,
+                quoted_rate_card: None,
             },
         )
         .await
@@ -312,6 +316,7 @@ async fn a_session_is_minted_a_credential_even_when_the_caller_delegated_none() 
             caller_credential: None,
             runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
             options: Default::default(),
         },
     )
