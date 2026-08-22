@@ -123,7 +123,7 @@ async function failureOf(response: Response): Promise<ApiError> {
   if (code === SESSION_LIMIT_REACHED) {
     return new SessionLimitReached(response.status, detail, limit, live);
   }
-  return new ApiError(response.status, detail);
+  return new ApiError(response.status, detail, code);
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
