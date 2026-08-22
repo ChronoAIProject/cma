@@ -15,13 +15,17 @@ use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use crate::authz::{Caller, Capability};
 use crate::capabilities::{servable_modes, SessionCapabilities};
 use crate::clock::now_rfc3339;
+use crate::environment::AgentConfiguration;
 use crate::environment_service::EnvironmentProfileService;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
 use crate::options::{AgentOptions, SessionMode};
+use crate::platform::PlatformSettings;
 use crate::platform_service::PlatformSettingsService;
+use crate::pricing::{format_usd, Quote, SessionPricing, CURRENCY};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
+use crate::size::SessionSize;
 use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
@@ -319,6 +323,67 @@ impl SessionService {
         offerings
     }
 
+    /// Quote the size a new session will actually receive.
+    ///
+    /// `None` means this deployment has configured no price. A configured
+    /// price without a resolved size is refused rather than guessed: Layer 2
+    /// has no numeric representation of the deployment's opaque reservation.
+    pub async fn quote(
+        &self,
+        caller: &Caller,
+        profile: Option<&crate::ids::EnvironmentProfileId>,
+    ) -> Result<Option<Quote>, CoreError> {
+        caller.authorization.require(Capability::CreateSession)?;
+        let agent = self.environments.agent_for(caller, profile).await?;
+        let size = Self::resolve_size(&agent);
+        let settings = self.settings.for_provisioning().await;
+        Self::quote_from(&settings, size)
+    }
+
+    /// The one size resolution used by both quoting and creation.
+    ///
+    /// An authored profile size is the only typed size that exists today.
+    /// `None` remains the deployment's opaque reservation; this function does
+    /// not parse provider quantities or manufacture a default.
+    fn resolve_size(agent: &AgentConfiguration) -> Option<SessionSize> {
+        agent.size
+    }
+
+    fn quote_from(
+        settings: &PlatformSettings,
+        size: Option<SessionSize>,
+    ) -> Result<Option<Quote>, CoreError> {
+        let Some(card) = settings.pricing.in_force() else {
+            return Ok(None);
+        };
+        let Some(size) = size else {
+            return Err(CoreError::InvalidRequest(
+                "this priced session has no resolved size; an administrator must declare the deployment's assumed session size"
+                    .into(),
+            ));
+        };
+        let cpu_millis = size.cpu_millis();
+        let memory_mib = size.memory_mib();
+        let micros_per_hour = card
+            .rate
+            .micros_per_hour(cpu_millis, memory_mib)
+            .ok_or_else(|| {
+                CoreError::InvalidRequest(format!(
+                    "the configured rate for {cpu_millis}m CPU and {memory_mib} MiB exceeds the largest supported hourly price"
+                ))
+            })?;
+        Ok(Some(Quote {
+            rate_card: card.id.clone(),
+            rate: card.rate.clone(),
+            cpu_millis,
+            memory_mib,
+            micros_per_hour,
+            display: format_usd(micros_per_hour),
+            currency: CURRENCY,
+            quoted_at: now_rfc3339(),
+        }))
+    }
+
     /// Create a session and bring its runtime up in the background.
     ///
     /// Returns as soon as the session exists, before any runtime does. Bringing
@@ -352,6 +417,7 @@ impl SessionService {
             .environments
             .agent_for(caller, spec.environment_profile.as_ref())
             .await?;
+        let size = Self::resolve_size(&agent);
         let mut spec = spec;
         // Which plane a session is on is the exception, and only where no
         // profile was named.
@@ -382,7 +448,7 @@ impl SessionService {
             reasoning_effort: agent.reasoning_effort,
             permission: agent.permission,
             credential: agent.credential,
-            size: agent.size,
+            size,
             record_tool_bodies: agent.record_tool_bodies,
         };
 
@@ -427,8 +493,33 @@ impl SessionService {
             .refuse_ungranted(caller, spec.caller_credential.as_deref(), &granted_services)
             .await?;
 
-        let settings = self.settings.for_provisioning().await;
-        if let Some(size) = spec.options.size {
+        let (settings, settings_fallback) = self.settings.for_provisioning_observed().await;
+        if settings_fallback.is_none() {
+            if let Some(quoted) = spec.quoted_rate_card.as_ref() {
+                let in_force = settings.pricing.in_force().map(|card| &card.id);
+                if in_force != Some(quoted) {
+                    return Err(CoreError::PriceChanged {
+                        quoted: quoted.0.clone(),
+                        // A legitimate quote can only move to another card:
+                        // sealed history cannot become empty. This spelling
+                        // still gives a fabricated claim against an unpriced
+                        // deployment an actionable re-quote response.
+                        in_force: in_force
+                            .map(|id| id.0.clone())
+                            .unwrap_or_else(|| "unpriced".into()),
+                    });
+                }
+            }
+        }
+        let pricing = Self::quote_from(&settings, size)?.map(|quote| SessionPricing {
+            rate_card: quote.rate_card,
+            rate: quote.rate,
+            cpu_millis: quote.cpu_millis,
+            memory_mib: quote.memory_mib,
+            micros_per_hour: quote.micros_per_hour,
+            quoted_at: quote.quoted_at,
+        });
+        if let Some(size) = size {
             settings.size_bounds.check(size)?;
         }
         let limit_guard = self
@@ -468,7 +559,7 @@ impl SessionService {
              * that never finished.
              */
             granted_skills: None,
-            pricing: None,
+            pricing,
             created_at: now_rfc3339(),
         };
 
@@ -480,6 +571,13 @@ impl SessionService {
         let first = self.sequences.take(&id, 0, 3);
         record.session.last_seq = first + 2;
         self.store.upsert(&record).await.map_err(store_failed)?;
+        if let Some(error) = settings_fallback.as_ref() {
+            tracing::error!(
+                session_id = %id,
+                error = %error,
+                "the session was permanently recorded unpriced because platform settings could not be read"
+            );
+        }
         limit_guard.record_written(self.store.as_ref()).await;
         self.append_durably(
             &id,
