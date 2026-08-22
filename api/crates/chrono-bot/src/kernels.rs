@@ -187,6 +187,23 @@ mod tests {
     }
 
     #[test]
+    fn only_codex_declares_a_standing_instructions_file() {
+        // Shipping the setting before the other kernels read an instruction
+        // file was an explicit product decision. An empty path is the adapter's
+        // positive statement that no file is written for that kernel.
+        let mut codex = CodexSandboxSpec::default().deployment;
+        let mut claude_code = ClaudeCodeSandboxSpec::default().deployment;
+        let mut dsh = DshSandboxSpec::default().deployment;
+        for deployment in [&mut codex, &mut claude_code, &mut dsh] {
+            deploy(&deployment_config(), deployment);
+        }
+
+        assert_eq!(codex.agent_notes, "AGENTS.md");
+        assert!(claude_code.agent_notes.is_empty());
+        assert!(dsh.agent_notes.is_empty());
+    }
+
+    #[test]
     fn no_two_kernels_share_a_bridge() {
         // If they did, one kernel's sandbox would run the other's program, and
         // nothing would say so until a session failed to answer.

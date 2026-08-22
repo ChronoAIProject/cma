@@ -27,6 +27,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
         restore_from: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
