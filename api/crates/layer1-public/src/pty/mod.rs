@@ -269,6 +269,7 @@ fn error_code(err: &CoreError) -> &'static str {
         // size refusal cannot arise here. Named so a new core variant cannot
         // quietly become the wrong terminal frame.
         CoreError::SizeOutOfBounds(_) => "size_out_of_bounds",
+        CoreError::SessionLimitReached { .. } => "session_limit_reached",
         CoreError::InvalidSessionSize(_) => "invalid_session_size",
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
         CoreError::RuntimeRefused(_) => "runtime_refused",
