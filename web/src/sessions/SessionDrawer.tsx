@@ -14,6 +14,7 @@ import { StateDot } from '../ui/StateDot';
 import { CreatorFace, Fact, Facts, ReachList, Section, SkillList, Unknown } from './SessionFacts';
 import './SessionDrawer.css';
 import { IconCloseOutline16 } from '../ui/icons';
+import type { SessionSpend } from '../sdk';
 
 /**
  * What is known about the open session — `docs/Web_Style.md` §17.
@@ -37,11 +38,18 @@ interface SessionDrawerProps {
   readonly onClose: () => void;
   /** Why the session ended, when it ended badly. */
   readonly ending?: string;
+  /** Read this session's reserved-capacity spend from the public REST API. */
+  readonly readSpend?: (id: string) => Promise<SessionSpend>;
 }
 
-export function SessionDrawer({ session, onClose, ending }: SessionDrawerProps) {
+export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDrawerProps) {
   const can = abilitiesFor(session);
   const [copied, setCopied] = useState(false);
+  const [spendRead, setSpendRead] = useState<{
+    readonly session: string;
+    readonly spend?: SessionSpend;
+    readonly failed: boolean;
+  }>();
   const tone = toneFor(session.lifecycle);
   const dot = stateDotFor(tone);
   const agent = session.agent;
@@ -57,6 +65,30 @@ export function SessionDrawer({ session, onClose, ending }: SessionDrawerProps) 
       window.clearTimeout(timer);
     };
   }, [copied]);
+
+  useEffect(() => {
+    if (readSpend === undefined) {
+      return;
+    }
+    let live = true;
+    void readSpend(session.id)
+      .then((next) => {
+        if (live) {
+          setSpendRead({ session: session.id, spend: next, failed: false });
+        }
+      })
+      .catch(() => {
+        if (live) {
+          setSpendRead({ session: session.id, failed: true });
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [readSpend, session.id]);
+
+  const currentSpend = spendRead?.session === session.id ? spendRead.spend : undefined;
+  const spendFailed = spendRead?.session === session.id && spendRead.failed;
 
   const copyIdentifier = () => {
     /*
@@ -145,6 +177,9 @@ export function SessionDrawer({ session, onClose, ending }: SessionDrawerProps) 
             </Fact>
             <Permission mode={agent?.permission} />
             <Credential mode={agent?.credential} />
+            {readSpend === undefined ? null : (
+              <CapacitySpend spend={currentSpend} failed={spendFailed} />
+            )}
           </Facts>
         </Section>
 
@@ -286,6 +321,48 @@ function Credential({ mode }: { readonly mode?: CredentialMode }) {
   return (
     <Fact label="Billed to" note={words.note}>
       {words.name}
+    </Fact>
+  );
+}
+
+/** The deployment's capacity charge, kept distinct from model-vendor billing. */
+function CapacitySpend({
+  spend,
+  failed,
+}: {
+  readonly spend?: SessionSpend;
+  readonly failed: boolean;
+}) {
+  if (failed) {
+    return (
+      <Fact label="Capacity spend">
+        <Unknown>Could not be read</Unknown>
+      </Fact>
+    );
+  }
+  if (spend === undefined) {
+    return (
+      <Fact label="Capacity spend">
+        <Unknown>Reading</Unknown>
+      </Fact>
+    );
+  }
+  if (!spend.priced) {
+    return (
+      <Fact label="Capacity spend">
+        <Unknown>Not priced</Unknown>
+      </Fact>
+    );
+  }
+
+  const coverage =
+    spend.unboundedIntervals > 0 ? ' This figure covers less than the session’s whole life.' : '';
+  const note = spend.accruing
+    ? `Accruing while this session is running.${coverage}`
+    : `Final reserved-capacity charge.${coverage}`;
+  return (
+    <Fact label="Capacity spend" note={note}>
+      {spend.display}
     </Fact>
   );
 }
