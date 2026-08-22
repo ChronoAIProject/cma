@@ -62,3 +62,22 @@ export class CapabilityRefused extends ApiError {
     this.name = 'CapabilityRefused';
   }
 }
+
+/**
+ * This owner already holds as many live sessions as the deployment permits.
+ *
+ * The numbers remain fields rather than being recovered from `message`: the
+ * service deliberately gives over-limit owners a different sentence, and a
+ * client should never have to parse either one to act on the refusal.
+ */
+export class SessionLimitReached extends ApiError {
+  constructor(
+    status: number,
+    message: string,
+    readonly limit?: number,
+    readonly live?: number,
+  ) {
+    super(status, message);
+    this.name = 'SessionLimitReached';
+  }
+}

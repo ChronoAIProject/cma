@@ -47,7 +47,7 @@
 
 export { Cma, createClient } from './client';
 export { resolveConfig, type ClientConfig, type Credential, type ResolvedConfig } from './config';
-export { ApiError, CapabilityRefused } from './errors';
+export { ApiError, CapabilityRefused, SessionLimitReached } from './errors';
 export { request, type RequestOptions } from './http';
 export {
   changePlane,
@@ -56,12 +56,14 @@ export {
   fetchTranscript,
   listKernels,
   listSessions,
+  readAllowance,
   readSession,
   reviveSession,
   stopSession,
   terminateSession,
   toSession,
   type CreateSession,
+  type SessionAllowance,
 } from './sessions';
 export type {
   Kernel,
