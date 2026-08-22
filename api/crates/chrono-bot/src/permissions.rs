@@ -39,6 +39,14 @@ pub mod permission {
     /// is the only one of these that changes anything. A role handed out so
     /// somebody can watch the service should not also let them stop it.
     pub const ADMIN_CONTROL: &str = "chrono-bot:admin:control";
+    /// Read and change settings that apply to the whole deployment.
+    ///
+    /// Separate from `ADMIN_CONTROL` for the same reason that one is separate
+    /// from the monitoring set, and further still: stopping a session affects
+    /// the session stopped, while changing a platform setting affects every
+    /// session created afterwards, including ones belonging to people who
+    /// will never meet whoever changed it.
+    pub const ADMIN_SETTINGS: &str = "chrono-bot:admin:settings";
 }
 
 /// Wildcard the provider issues across everything it serves.
@@ -66,6 +74,23 @@ const OWN_WORK: [Capability; 4] = [
     Capability::UseOwnSessions,
     Capability::TerminateOwnSession,
     Capability::ManageOwnEnvironmentProfiles,
+];
+
+/// What a grant naming this product reaches, beyond the caller's own work.
+///
+/// A named array with a length rather than an inline list, and the length is
+/// the point: `OWN_WORK` above has one and this did not, so a capability added
+/// to the core was a compile error in one place and a silent omission in the
+/// other. A capability missing from here is a wildcard that quietly stops
+/// meaning everything, which is the failure nobody would see.
+const EVERYTHING_HERE: [Capability; 7] = [
+    Capability::ReadAllSessions,
+    Capability::ReadRuntimeInventory,
+    Capability::ReadEventLog,
+    Capability::ReadActivityLog,
+    Capability::ReadUserDirectory,
+    Capability::ControlAnySession,
+    Capability::ConfigurePlatform,
 ];
 
 /// Translate provider permissions into the capabilities the core enforces.
@@ -112,6 +137,7 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::ADMIN_ACTIVITY => granted.push(Capability::ReadActivityLog),
             permission::ADMIN_USERS => granted.push(Capability::ReadUserDirectory),
             permission::ADMIN_CONTROL => granted.push(Capability::ControlAnySession),
+            permission::ADMIN_SETTINGS => granted.push(Capability::ConfigurePlatform),
             _ => {}
         }
     }
@@ -125,14 +151,7 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
     // without saying which capability it means.
     if everything {
         granted.extend(OWN_WORK);
-        granted.extend([
-            Capability::ReadAllSessions,
-            Capability::ReadRuntimeInventory,
-            Capability::ReadEventLog,
-            Capability::ReadActivityLog,
-            Capability::ReadUserDirectory,
-            Capability::ControlAnySession,
-        ]);
+        granted.extend(EVERYTHING_HERE);
     }
 
     Authorization::from_capabilities(granted)
@@ -295,9 +314,55 @@ mod tests {
             Capability::ReadActivityLog,
             Capability::ReadUserDirectory,
             Capability::ControlAnySession,
+            Capability::ConfigurePlatform,
         ] {
             assert!(a.allows(c), "the product wildcard must grant {c:?}");
         }
+        assert_eq!(
+            a.capabilities().count(),
+            OWN_WORK.len() + EVERYTHING_HERE.len(),
+            "the wildcard must grant every capability this product has and no more"
+        );
+    }
+
+    #[test]
+    fn changing_the_platform_needs_a_permission_that_names_it() {
+        // The blast radius is what makes this worth its own test: this is the
+        // one capability that changes what every session created afterwards is
+        // told, including sessions belonging to people who will never meet
+        // whoever changed it.
+        let named = capabilities_from_permissions([permission::ADMIN_SETTINGS]);
+        assert!(named.allows(Capability::ConfigurePlatform));
+        assert!(
+            named.capabilities().count() == 1,
+            "naming one permission grants one capability, not a bundle"
+        );
+
+        // Everything a caller could plausibly hold that is not it.
+        for held in [
+            vec![permission::ADMIN_SESSIONS],
+            vec![permission::ADMIN_CONTROL],
+            vec![permission::ADMIN_ACTIVITY],
+            vec![permission::ADMIN_USERS],
+            vec![permission::SESSION_CREATE, permission::SESSION_USE],
+            // Entitled on the shared provider, which says nothing about here.
+            vec!["*"],
+            vec![],
+        ] {
+            let a = capabilities_from_permissions(held.clone());
+            assert!(
+                !a.allows(Capability::ConfigurePlatform),
+                "{held:?} must not reach the platform's own settings"
+            );
+        }
+    }
+
+    #[test]
+    fn configuring_the_platform_is_privileged() {
+        // `is_privileged` has no production caller: it is the catch-all two
+        // other tests lean on to notice a capability that reaches past its
+        // caller's own work. A new one left out of it disarms them silently.
+        assert!(Capability::ConfigurePlatform.is_privileged());
     }
 
     #[test]
