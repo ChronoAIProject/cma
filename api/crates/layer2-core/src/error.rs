@@ -177,6 +177,18 @@ impl CoreError {
     }
 }
 
+fn session_limit_message(limit: u32, live: u32) -> String {
+    if live == limit {
+        format!(
+            "{live} of {limit} sessions are already running for this owner; stop one before starting another"
+        )
+    } else {
+        format!(
+            "{live} sessions are already running for this owner and the limit is {limit}; nothing new starts until fewer than {limit} are running"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,17 +322,5 @@ mod tests {
             CoreError::SessionLimitReached { limit: 3, live: 4 }.to_string(),
             "4 sessions are already running for this owner and the limit is 3; nothing new starts until fewer than 3 are running"
         );
-    }
-}
-
-fn session_limit_message(limit: u32, live: u32) -> String {
-    if live == limit {
-        format!(
-            "{live} of {limit} sessions are already running for this owner; stop one before starting another"
-        )
-    } else {
-        format!(
-            "{live} sessions are already running for this owner and the limit is {limit}; nothing new starts until fewer than {limit} are running"
-        )
     }
 }

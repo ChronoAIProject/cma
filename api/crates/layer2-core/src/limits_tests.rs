@@ -138,8 +138,10 @@ impl PlatformSettingsStore for FixedSettings {
 }
 
 fn settings(limit: Option<u32>) -> Arc<PlatformSettingsService> {
-    let mut settings = PlatformSettings::default();
-    settings.live_sessions = limit.map(|value| NonZeroU32::new(value).expect("non-zero limit"));
+    let settings = PlatformSettings {
+        live_sessions: limit.map(|value| NonZeroU32::new(value).expect("non-zero limit")),
+        ..PlatformSettings::default()
+    };
     Arc::new(PlatformSettingsService::new(Arc::new(FixedSettings {
         settings,
         broken: false,
