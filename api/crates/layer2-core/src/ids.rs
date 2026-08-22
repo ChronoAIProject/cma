@@ -71,6 +71,32 @@ impl std::fmt::Display for EnvironmentProfileId {
     }
 }
 
+/// Identifier of one sealed price card.
+///
+/// Minted before storage for the same reason as an environment profile id: a
+/// mis-routed identifier is obvious in a log rather than becoming a lookup in
+/// the wrong collection.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RateCardId(pub String);
+
+impl RateCardId {
+    /// Mint a fresh identifier.
+    pub fn generate() -> Self {
+        Self(format!("rate_{}", uuid::Uuid::new_v4().simple()))
+    }
+
+    /// Borrow the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RateCardId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Selects which runtime implementation backs a session.
 ///
 /// Deliberately opaque: the core stores and forwards this value but never
@@ -132,5 +158,13 @@ mod tests {
         let b = EnvironmentProfileId::generate();
         assert_ne!(a, b, "two generated ids must differ");
         assert!(a.as_str().starts_with("envp_"), "got {a}");
+    }
+
+    #[test]
+    fn generated_rate_card_ids_are_unique_and_prefixed() {
+        let a = RateCardId::generate();
+        let b = RateCardId::generate();
+        assert_ne!(a, b, "two generated ids must differ");
+        assert!(a.as_str().starts_with("rate_"), "got {a}");
     }
 }
