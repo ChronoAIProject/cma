@@ -550,6 +550,7 @@ mod reach {
             None,
             Some(Arc::new(catalogue)),
             Default::default(),
+            Arc::new(layer2_core::PlatformSettingsService::unconfigured()),
         )
     }
 
