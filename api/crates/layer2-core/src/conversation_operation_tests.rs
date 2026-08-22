@@ -52,6 +52,29 @@ async fn interrupting_cancels_the_turn_rather_than_the_session() {
 }
 
 #[tokio::test]
+async fn an_undeliverable_interrupt_is_runtime_unavailable() {
+    let (svc, alice, id, _adapter) = conversation().await;
+    let input = layer3_adapter::ConversationInputSender::spawn(1, |_input| async {
+        Err(layer3_adapter::AdapterError::Unavailable(
+            "the runtime link is gone".to_string(),
+        ))
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(input);
+
+    assert_eq!(
+        svc.interrupt_turn(&alice, &id).await,
+        Err(crate::error::CoreError::RuntimeUnavailable(
+            "the runtime link is gone".to_string()
+        ))
+    );
+}
+
+#[tokio::test]
 async fn a_terminal_session_cannot_be_prompted() {
     // The declared-subset rule: a session without the conversation capability
     // is refused by name rather than accepted and quietly ignored.
