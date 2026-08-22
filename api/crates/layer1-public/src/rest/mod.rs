@@ -88,6 +88,7 @@ impl InterfaceProfile for RestInterface {
             Operation::ResizeTerminal,
             Operation::ScreenSnapshot,
             Operation::GetUsage,
+            Operation::GetSpend,
             Operation::ChangePlane,
         ]
     }
@@ -834,6 +835,7 @@ pub fn router(state: SessionsState) -> Router {
             post(operate::resolve_approval),
         )
         .route("/api/v1/sessions/{id}/usage", get(operate::usage))
+        .route("/api/v1/sessions/{id}/spend", get(operate::spend))
         .route("/api/v1/sessions/{id}/screen", get(screen))
         // What the session has shown, for one that has no runtime to attach
         // to. Reading stopped work is not the same as resuming it.

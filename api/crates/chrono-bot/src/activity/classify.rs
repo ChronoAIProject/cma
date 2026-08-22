@@ -132,7 +132,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         ["api", "v1", "admin", "sessions"] => Some(Classified::new(Action::SessionList)),
         ["api", "v1", "admin", "settings"] => match *method {
             Method::GET => Some(Classified::new(Action::PlatformSettingsRead)),
-            Method::PATCH => Some(Classified::new(Action::PlatformSettingsChange)),
+            Method::PUT | Method::PATCH => Some(Classified::new(Action::PlatformSettingsWrite)),
             _ => None,
         },
         ["api", "v1", "admin", "settings", "reset"] if method == Method::POST => {

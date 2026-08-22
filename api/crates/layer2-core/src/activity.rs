@@ -123,8 +123,10 @@ pub enum ActivityAction {
     ActivityLogRead,
     /// The deployment's settings were read.
     PlatformSettingsRead,
-    /// One or more deployment settings were changed.
-    PlatformSettingsChange,
+    /// One or more deployment settings were written.
+    ///
+    /// Which settings changed is recorded separately; their values are not.
+    PlatformSettingsWrite,
     /// The session briefing was restored to its shipped text.
     PlatformSettingsReset,
 }
