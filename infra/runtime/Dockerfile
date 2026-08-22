@@ -111,10 +111,10 @@ RUN set -eux; \
 # removable either: a coding agent working in a sandbox on a Node project needs
 # one.
 #
-# So it is upgraded to a pinned newer npm, which fixes most of them, and the
-# ones its bundle still carries are replaced the way any other pinned
-# dependency is — the patched release of the same major, fetched into a scratch
-# directory and moved into place so nothing else in that tree moves.
+# So it is upgraded to a pinned newer npm, which fixes most of them, and the two
+# its bundle still carries are replaced the way any other pinned dependency is —
+# the patched release of the same major, fetched into a scratch directory and
+# moved into place so nothing else in that tree moves.
 #
 # This block is maintenance and shrinks as npm moves. The scan is what says when
 # a line in it has become redundant, and the gate is what stops it being skipped
@@ -122,15 +122,13 @@ RUN set -eux; \
 ARG NPM_VERSION=12.0.2
 ARG BRACE_EXPANSION_VERSION=5.0.9
 ARG IP_ADDRESS_VERSION=10.3.1
-ARG TAR_VERSION=7.5.21
 RUN set -eux; \
     npm install -g "npm@${NPM_VERSION}"; \
     bundled=/usr/local/lib/node_modules/npm/node_modules; \
     npm install --no-save --prefix /tmp/npmfix \
         "brace-expansion@${BRACE_EXPANSION_VERSION}" \
-        "ip-address@${IP_ADDRESS_VERSION}" \
-        "tar@${TAR_VERSION}"; \
-    for pkg in brace-expansion ip-address tar; do \
+        "ip-address@${IP_ADDRESS_VERSION}"; \
+    for pkg in brace-expansion ip-address; do \
       rm -rf "$bundled/$pkg"; \
       mv "/tmp/npmfix/node_modules/$pkg" "$bundled/$pkg"; \
     done; \
@@ -197,7 +195,7 @@ COPY <<JSON /opt/dsh-install/package.json
   "private": true,
   "dependencies": { "@deepseek-ai/dsh": "${DSH_VERSION}" },
   "overrides": {
-    "tar": "7.5.21",
+    "tar": "7.5.19",
     "undici": "6.27.0",
     "brace-expansion": "5.0.9",
     "ip-address": "10.3.1"
@@ -213,6 +211,23 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     ln -s /opt/dsh-install/node_modules/.bin/dsh /usr/local/bin/dsh; \
     dsh --version
+
+# npm and the harness both carry node-tar 7.5.19, which is vulnerable to
+# CVE-2026-73566. Keep their known-good dependency resolutions intact, then
+# replace only that package with the fixed release. Both trees already carry
+# the same dependency shape required by 7.5.21.
+ARG TAR_VERSION=7.5.21
+RUN set -eux; \
+    npm install --no-save --prefix /tmp/tarfix "tar@${TAR_VERSION}"; \
+    for target in \
+        /usr/local/lib/node_modules/npm/node_modules/tar \
+        /opt/dsh-install/node_modules/tar; do \
+      rm -rf "$target"; \
+      cp -a /tmp/tarfix/node_modules/tar "$target"; \
+      test "$(node -p "require('$target/package.json').version")" = "${TAR_VERSION}"; \
+    done; \
+    rm -rf /tmp/tarfix; \
+    npm cache clean --force
 
 # Install the platform CLI from its published release. The checksum is verified
 # rather than trusted: this binary acts on the owner's behalf.
