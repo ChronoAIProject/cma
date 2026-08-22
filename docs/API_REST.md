@@ -419,7 +419,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No such session, or not visible to this subject |
 | `409` | Conflicts with current state — turn in progress, session terminated |
-| `422` | Well-formed but semantically invalid — zero terminal dimension or zero session-size figure |
+| `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |
 | `429` | Rate limited; observe `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
 | `503` | Control plane recovering or failing over; retry |
@@ -446,6 +446,23 @@ Told apart by `code` and by status, never by prose — a client matching on a se
 **A catalogue that cannot be asked refuses nothing.** What a session may reach is recorded on the profile; the catalogue exists to help choose, not to authorise. Blocking session creation on NyxID being reachable would take the service down with it, and would do so for selections settled days ago.
 
 See `docs/Services.md` for the whole path.
+
+### Size-bound refusal
+
+`size_out_of_bounds` is a `422` response with problem type `size-out-of-bounds`. The request is well formed, but this deployment will not provision the size it states. Retrying the same request unchanged will not help.
+
+The problem document carries the refusal as top-level fields so a client never has to parse `detail`:
+
+| Field | Meaning |
+|---|---|
+| `dimension` | `cpu_millis` or `memory_mib`; the name includes the unit used by the three figures |
+| `requested` | The figure the profile asked for |
+| `minimum` | The inclusive lower bound currently configured for that dimension |
+| `maximum` | The inclusive upper bound currently configured for that dimension |
+
+The refusal happens when a session is created, before an identifier or record exists, not when its environment profile is saved. Bounds can change after a profile was authored, so an out-of-bounds profile remains writable and is logged as a warning; starting a session from it is the operation refused.
+
+These bounds apply only to a size the profile explicitly states. A profile with no `agent.size`, and a creation naming no profile, use this deployment's own sandbox reservation without being measured against the bounds. That reservation may lie outside the range an administrator has configured: the range governs what a caller may ask for, not the unnamed deployment default.
 
 ---
 
