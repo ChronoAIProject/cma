@@ -256,6 +256,9 @@ pub struct AgentView {
     reasoning_effort: layer2_core::ReasoningEffort,
     /// Whose account the model calls are spent against.
     credential: layer2_core::CredentialMode,
+    /// How much this session reserves, or absent for the deployment's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<layer2_core::SessionSize>,
     /// The skills this session was given, or absent where none was recorded.
     ///
     /// Absent and empty are different answers and stay that way: a session
@@ -330,6 +333,7 @@ impl From<Session> for SessionView {
                 permission: s.options.permission,
                 reasoning_effort: s.options.reasoning_effort,
                 credential: s.options.credential,
+                size: s.options.size,
                 // Absent and empty are different answers: absent means the
                 // grant predates the field, empty means the session was given
                 // none. A client draws them differently.
