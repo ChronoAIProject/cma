@@ -94,10 +94,9 @@ pub struct RuntimeEnvironment {
     pub skills: Vec<String>,
     /// Standing instructions the session's owner wrote for their own sessions.
     ///
-    /// Appended to what this layer tells the agent about itself, never merged
-    /// into it: an owner adds to what a session is told and cannot edit it,
-    /// because a session talked out of knowing it is already authenticated
-    /// spends its first minutes rediscovering that badly.
+    /// Appended to `RuntimeSpec::platform_briefing`, never merged into it: the
+    /// two sources have different owners and neither may silently overwrite
+    /// the other.
     pub agent_notes: String,
 }
 
@@ -180,6 +179,13 @@ pub struct RuntimeSpec {
     /// Where they land is composed here, from the kernel's own root — the
     /// pod is told paths and writes them, and never learns what a skill is.
     pub skills: Vec<SkillPackage>,
+    /// The deployment's standing instructions, already rendered for this
+    /// session by the core that owns both the setting and its recorded grants.
+    ///
+    /// Distinct from `environment.agent_notes`: an administrator controls this
+    /// document and the session's owner controls those notes. The adapter may
+    /// compose them, but must never make one authority overwrite the other.
+    pub platform_briefing: String,
     /// What the runtime should already carry when the agent starts.
     pub environment: RuntimeEnvironment,
     /// What this session's credential may reach, by name.

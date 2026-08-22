@@ -11,8 +11,7 @@ import type { ProfileDraft } from './types';
  * What a session is told about itself has two authors and only one of them is
  * here. The platform's half — that the session is already signed in, which
  * services it may reach, which commands will refuse it — is composed when the
- * session starts and is not editable, because a session talked out of knowing
- * it spends its first minutes finding out the hard way.
+ * session starts and controlled separately by a platform administrator.
  */
 function editor(draft: ProfileDraft, onChange = vi.fn()) {
   render(
@@ -53,12 +52,13 @@ describe('standing instructions', () => {
     );
   });
 
-  it('says plainly that the platform adds a part the owner cannot edit', () => {
+  it('says plainly that platform administrators control the platform section', () => {
     // Without this the field reads as the whole of what a session is told, and
     // somebody would reasonably write the platform's half themselves.
     editor(emptyDraft());
     const hint = screen.getByText(/the platform adds its own section/i);
     expect(hint).toBeInTheDocument();
-    expect(hint.textContent).toMatch(/not editable/i);
+    expect(hint.textContent).toMatch(/platform administrators control/i);
+    expect(hint.textContent).toMatch(/only your instructions/i);
   });
 });

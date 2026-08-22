@@ -264,8 +264,8 @@ export function ProfileEditor({
         <p className="field__hint">
           Written into every session started from this profile, before the agent does anything.
           Yours alone — the platform adds its own section above this one, telling the session it is
-          already signed in and which services it may reach. That part is not editable, because a
-          session talked out of knowing it spends its first minutes finding out the hard way.
+          already signed in and which services it may reach. Platform administrators control that
+          section separately; this profile changes only your instructions.
         </p>
         <textarea
           id={notesId}
