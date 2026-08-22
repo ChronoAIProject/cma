@@ -282,17 +282,40 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             input_tokens,
             output_tokens,
             context_used,
-        } => Projected {
-            events: vec![make(
-                "STATE_DELTA",
-                serde_json::json!({ "delta": [
-                    { "op": "replace", "path": "/usage/inputTokens", "value": input_tokens },
-                    { "op": "replace", "path": "/usage/outputTokens", "value": output_tokens },
-                    { "op": "replace", "path": "/usage/contextUsed", "value": context_used },
-                ]}),
-            )],
-            ending: None,
-        },
+            context_window,
+        } => {
+            let mut delta = vec![
+                serde_json::json!({ "op": "replace", "path": "/usage/inputTokens", "value": input_tokens }),
+                serde_json::json!({ "op": "replace", "path": "/usage/outputTokens", "value": output_tokens }),
+                serde_json::json!({ "op": "replace", "path": "/usage/contextUsed", "value": context_used }),
+            ];
+            if let Some(window) = context_window {
+                delta.push(serde_json::json!({
+                    "op": "replace",
+                    "path": "/usage/contextWindow",
+                    "value": window,
+                }));
+            }
+            Projected {
+                events: vec![make("STATE_DELTA", serde_json::json!({ "delta": delta }))],
+                ending: None,
+            }
+        }
+        EventKind::ContextCompacted { was, now, window } => {
+            let value = match window {
+                Some(window) => serde_json::json!({ "was": was, "now": now, "window": window }),
+                None => serde_json::json!({ "was": was, "now": now }),
+            };
+            Projected {
+                events: vec![make(
+                    "STATE_DELTA",
+                    serde_json::json!({ "delta": [
+                        { "op": "add", "path": "/contextCompactions/-", "value": value },
+                    ]}),
+                )],
+                ending: None,
+            }
+        }
         // A permission-mode change is a safety matter and is surfaced as state,
         // not as prose: the surface draws the new mode as a fact about the
         // session rather than as something the agent said.

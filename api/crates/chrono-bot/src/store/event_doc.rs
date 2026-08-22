@@ -46,7 +46,18 @@ pub(super) fn to_document(event: &Event) -> Result<Document, StoreError> {
 }
 
 /// Read one stored event back, tolerating a vocabulary this build predates.
-pub(super) fn from_document(mut doc: Document) -> Result<StoredEvent, StoreError> {
+pub(super) fn from_document(doc: Document) -> Result<StoredEvent, StoreError> {
+    from_document_recognizing(doc, EventKind::recognizes_tag)
+}
+
+/// Read with the vocabulary a particular build knows.
+///
+/// Separate from the public reader so compatibility tests can exercise an
+/// older build's exact decision without maintaining a second deserializer.
+fn from_document_recognizing(
+    mut doc: Document,
+    recognizes_tag: impl Fn(&str) -> bool,
+) -> Result<StoredEvent, StoreError> {
     let session_id = match doc.remove("session_id") {
         Some(Bson::String(value)) => value,
         _ => return Err(malformed("session_id must be a string")),
@@ -74,7 +85,7 @@ pub(super) fn from_document(mut doc: Document) -> Result<StoredEvent, StoreError
         .map(str::to_owned)
         .map_err(|_| malformed("kind.type must be a string"))?;
 
-    let kind = if EventKind::recognizes_tag(&tag) {
+    let kind = if recognizes_tag(&tag) {
         // Strict for everything this build owns: a payload we can name and
         // cannot read is damage, and hiding it here would let it spread.
         StoredEventKind::Known(
@@ -101,6 +112,15 @@ pub(super) fn from_document(mut doc: Document) -> Result<StoredEvent, StoreError
         seq,
         appended_at,
         kind,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn from_document_before_context_compaction(
+    doc: Document,
+) -> Result<StoredEvent, StoreError> {
+    from_document_recognizing(doc, |tag| {
+        tag != "context_compacted" && EventKind::recognizes_tag(tag)
     })
 }
 
