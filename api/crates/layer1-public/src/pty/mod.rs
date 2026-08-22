@@ -265,6 +265,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::AlreadyAttached => "already_attached",
         CoreError::SessionTerminated => "session_terminated",
         CoreError::InvalidGeometry(_) => "invalid_geometry",
+        CoreError::InvalidSessionSize(_) => "invalid_session_size",
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
         CoreError::RuntimeRefused(_) => "runtime_refused",
         CoreError::InvalidState => "invalid_state",
