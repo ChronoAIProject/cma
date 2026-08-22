@@ -12,7 +12,7 @@
 
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config';
 import * as sessions from './sessions';
-import type { CreateSession, SessionAllowance } from './sessions';
+import type { CreateSession, PricingQuote, SessionAllowance, SessionSpend } from './sessions';
 import type { KernelOffer, Session, SessionPlane } from './types';
 
 /**
@@ -66,6 +66,16 @@ export class Cma {
   /** Provision a session. */
   createSession(options: CreateSession): Promise<Session> {
     return sessions.createSession(this.#config, options);
+  }
+
+  /** Quote the exact hourly rate a new session would pin. */
+  quoteSession(environmentProfile?: string | null): Promise<PricingQuote> {
+    return sessions.quoteSession(this.#config, environmentProfile);
+  }
+
+  /** Read one session's reserved-capacity spend. */
+  readSpend(id: string): Promise<SessionSpend> {
+    return sessions.readSpend(this.#config, id);
   }
 
   /** Move a session onto the other plane. A rotation; see `changePlane`. */
