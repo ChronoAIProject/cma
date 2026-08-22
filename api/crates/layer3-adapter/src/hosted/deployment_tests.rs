@@ -16,6 +16,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
             cols: 120,
             rows: 40,
         },
+        capacity: None,
         subject_credential: None,
         options: Default::default(),
     }
