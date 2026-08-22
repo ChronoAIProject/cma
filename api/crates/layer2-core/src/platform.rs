@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 // deployment policy through `platform`, while the range has a file named for
 // the type and does not consume this settings file as more settings arrive.
 pub use crate::capacity_bounds::{CapacityBounds, OutOfBounds, SizeDimension};
+pub use crate::pricing::{PriceList, PriceListViolation, Rate, RateCard, RateCardId, CURRENCY};
 
 /// What a session is told about itself before its agent does anything.
 ///
@@ -79,6 +80,13 @@ pub struct SessionBriefing {
 pub struct PlatformSettings {
     #[serde(default)]
     pub briefing: SessionBriefing,
+    /// Every rate this deployment has ever charged, newest last.
+    ///
+    /// An empty list means no price has been configured. Sessions remain fully
+    /// usable and are recorded unpriced; absence is not silently turned into a
+    /// zero rate, and it does not make an unconfigured deployment unusable.
+    #[serde(default)]
+    pub pricing: PriceList,
     /// What a session on this deployment may ask for.
     ///
     /// Admin-editable at runtime rather than configuration, because a bound is
