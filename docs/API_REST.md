@@ -552,6 +552,7 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 | `chrono-bot:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
 | `chrono-bot:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
 | `chrono-bot:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
+| `chrono-bot:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
 
@@ -564,6 +565,225 @@ Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the 
 **No read is unbounded.** `GET /api/v1/admin/users` and `GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default to 100.
 
 **Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists. That `404` is byte-for-byte the one a session that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
+
+### Platform settings
+
+```http
+GET   /api/v1/admin/settings
+PATCH /api/v1/admin/settings
+POST  /api/v1/admin/settings/reset
+```
+
+All three routes require `chrono-bot:admin:settings`, which appears to clients
+as the `configure_platform` capability. The product wildcard `chrono-bot:*`
+grants it. A signed-in caller without it receives `403` with a problem type
+ending `/not-an-operator`; these routes name no protected identifier, so they
+never disguise that refusal as `404`.
+
+`GET` returns the complete current object, the revision a later write must
+name, and the complete object replaced by the most recent write when one
+exists:
+
+```json
+{
+  "revision": 12,
+  "settings": {
+    "briefing": {
+      "before": [
+        "# Working in this session",
+        "This session is already authenticated. Do not run `nyxid login`."
+      ],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": ["Continue with the owner's standing instructions."]
+    },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 4
+  },
+  "previous": {
+    "briefing": {
+      "before": ["# Working in this session"],
+      "reach_heading": "## Granted services",
+      "reach_lead": "The following service slugs are available.",
+      "reach_close": "Other services remain unavailable.",
+      "reach_none": "No services are available to this session.",
+      "after": []
+    },
+    "size_bounds": {
+      "min_cpu_millis": 500,
+      "max_cpu_millis": 3000,
+      "min_memory_mib": 512,
+      "max_memory_mib": 4096
+    },
+    "live_sessions": 3
+  }
+}
+```
+
+An untouched deployment answers at revision `0` with the shipped settings and
+omits `previous`. `previous` has no revision of its own and is not an automatic
+rollback: it is the full object available for inspection or recovery. To
+restore it, send its values in a PATCH together with the current revision.
+
+`PATCH` is conditional and setting-granular. Every request includes
+`expected_revision` and at least one setting. A setting that is omitted stays
+unchanged; one that is present replaces that setting as a whole.
+
+```http
+PATCH /api/v1/admin/settings
+Content-Type: application/json
+
+{
+  "expected_revision": 12,
+  "briefing": {
+    "before": [
+      "# Working in this session",
+      "This session is already authenticated. Do not run `nyxid login`."
+    ],
+    "reach_heading": "## What you can reach",
+    "reach_lead": "Use only the service slugs granted below.",
+    "reach_close": "Calls to every other service are refused.",
+    "reach_none": "No services were granted to this session.",
+    "after": ["Continue with the owner's standing instructions."]
+  },
+  "size_bounds": {
+    "min_cpu_millis": 250,
+    "max_cpu_millis": 4000,
+    "min_memory_mib": 256,
+    "max_memory_mib": 8192
+  },
+  "live_sessions": 5
+}
+```
+
+A successful write increments the revision and returns the same complete shape
+as `GET`. The object it replaced becomes `previous`:
+
+```json
+{
+  "revision": 13,
+  "settings": {
+    "briefing": {
+      "before": [
+        "# Working in this session",
+        "This session is already authenticated. Do not run `nyxid login`."
+      ],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": ["Continue with the owner's standing instructions."]
+    },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 5
+  },
+  "previous": {
+    "briefing": {
+      "before": [
+        "# Working in this session",
+        "This session is already authenticated. Do not run `nyxid login`."
+      ],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": ["Continue with the owner's standing instructions."]
+    },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 4
+  }
+}
+```
+
+The three settings have distinct replacement rules:
+
+| Setting         | PATCH rule                                                                                                                                                                                                                                                                       |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `briefing`      | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose.                                  |
+| `size_bounds`   | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
+| `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation.                                      |
+
+For example, this removes only the live-session limit and preserves the
+briefing and size bounds:
+
+```json
+{ "expected_revision": 13, "live_sessions": null }
+```
+
+The granted-services list is deliberately absent from every settings payload.
+When grants exist it is generated from the session's actual grants and inserted
+between `reach_lead` and `reach_close` while the briefing is rendered. With no
+grants, `reach_none` is rendered instead. A request cannot remove, replace, or
+forge the generated list; it controls only the prose around it.
+
+Only Codex currently reads the briefing document. Claude Code and the DeepSeek
+Harness do not receive it. The setting is read when a runtime is provisioned;
+changing it does not rewrite a runtime that is already running. Clearing the
+prose is permitted, but doing so removes the guidance that the session is
+already authenticated and that `nyxid login` will fail.
+
+The empty body below is not a valid no-op and returns `422 invalid_request`:
+
+```json
+{ "expected_revision": 12 }
+```
+
+Unknown fields are also refused. A malformed settings body never echoes the
+administrator's prose in its problem response.
+
+Every write is optimistic. A PATCH or reset whose `expected_revision` is no
+longer current changes nothing and returns:
+
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
+
+{
+  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/settings-conflict",
+  "title": "settings conflict",
+  "status": 409,
+  "detail": "the platform's settings changed since they were read: these settings were changed by somebody else since you read them",
+  "code": "settings_conflict"
+}
+```
+
+On `settings_conflict`, read again and let the operator choose whether to load
+the current values or retain their draft and explicitly repeat the write
+against the new revision. A client must not silently retry with last-write-wins
+semantics.
+
+Reset restores only the shipped briefing. It preserves the current size bounds
+and live-session limit, increments the revision, and records the complete
+pre-reset object as `previous`:
+
+```http
+POST /api/v1/admin/settings/reset
+Content-Type: application/json
+
+{ "expected_revision": 13 }
+```
+
+Its successful response has the same complete `revision`, `settings`, and
+`previous` shape as GET and PATCH. It is conditional in exactly the same way
+and returns `409 settings_conflict` rather than resetting a revision the caller
+did not inspect.
 
 ### Registered users
 
@@ -638,7 +858,8 @@ A browser client asks who it is at `GET /auth/session`, and the answer says what
 ```json
 { "authenticated": true, "subject": "76fe9d91",
   "display_name": "Ada Lovelace", "email": "ada@example.com",
-  "capabilities": ["read_all_sessions", "read_user_directory", "control_any_session"] }
+  "capabilities": ["read_all_sessions", "read_user_directory", "control_any_session",
+                   "configure_platform"] }
 ```
 
 The names are the core's capabilities, not the identity provider's permissions: a client is never given the provider's vocabulary, because role names, their nesting and their wildcards belong to whoever issues them and change without this service moving. An unauthenticated caller gets `401` with `{"authenticated": false}` and no `capabilities` key at all — there is no identity to have an entitlement.
