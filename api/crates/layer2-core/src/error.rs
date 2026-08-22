@@ -156,27 +156,70 @@ mod tests {
     use super::*;
     use crate::terminal::TerminalGeometry;
 
+    /// Every variant, and the compiler is what says so.
+    ///
+    /// The list below used to be maintained by hand and was already three
+    /// variants short — `RuntimeRefused` and both settings failures were
+    /// missing, so the uniqueness test passed while covering twelve of
+    /// fifteen. A test that looks like a guard and is not one is worse than no
+    /// test: it is the reason nobody checked.
+    ///
+    /// This match exists to fail compilation. A variant added to `CoreError`
+    /// cannot reach `main` until somebody has come here and given it a sample,
+    /// which is the same trick `wire_name` uses in `entitlements.rs` and for
+    /// the same reason.
+    fn every_variant() -> Vec<CoreError> {
+        let all = vec![
+            CoreError::SessionNotFound,
+            CoreError::EnvironmentProfileNotFound,
+            CoreError::Forbidden,
+            CoreError::SessionTerminated,
+            CoreError::AlreadyAttached,
+            CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails")),
+            CoreError::RuntimeUnavailable("x".into()),
+            CoreError::RuntimeRefused("x".into()),
+            CoreError::InvalidState,
+            CoreError::CapabilityUnsupported("terminal".into()),
+            CoreError::InvalidRequest("x".into()),
+            CoreError::ServiceNotGranted("api-github".into()),
+            CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::SettingsConflict("x".into()),
+            CoreError::SettingsUnavailable("x".into()),
+        ];
+        // Exhaustive on purpose. Adding a variant to `CoreError` breaks this
+        // match, and the fix is to add it to the list above — which is the
+        // whole point.
+        for e in &all {
+            match e {
+                CoreError::SessionNotFound
+                | CoreError::EnvironmentProfileNotFound
+                | CoreError::Forbidden
+                | CoreError::SessionTerminated
+                | CoreError::AlreadyAttached
+                | CoreError::InvalidGeometry(_)
+                | CoreError::RuntimeUnavailable(_)
+                | CoreError::RuntimeRefused(_)
+                | CoreError::InvalidState
+                | CoreError::CapabilityUnsupported(_)
+                | CoreError::InvalidRequest(_)
+                | CoreError::ServiceNotGranted(_)
+                | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::SettingsConflict(_)
+                | CoreError::SettingsUnavailable(_) => {}
+            }
+        }
+        all
+    }
+
     #[test]
     fn every_variant_has_a_distinct_code() {
-        let codes = [
-            CoreError::SessionNotFound.code(),
-            CoreError::EnvironmentProfileNotFound.code(),
-            CoreError::Forbidden.code(),
-            CoreError::SessionTerminated.code(),
-            CoreError::AlreadyAttached.code(),
-            CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails"))
-                .code(),
-            CoreError::RuntimeUnavailable("x".into()).code(),
-            CoreError::InvalidState.code(),
-            CoreError::CapabilityUnsupported("terminal".into()).code(),
-            CoreError::InvalidRequest("x".into()).code(),
-            CoreError::ServiceNotGranted("api-github".into()).code(),
-            CoreError::ServiceCatalogUnavailable("down".into()).code(),
-        ];
-        let mut sorted = codes.to_vec();
+        let codes: Vec<&'static str> = every_variant().iter().map(CoreError::code).collect();
+        let mut sorted = codes.clone();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), codes.len(), "codes must be unique: {codes:?}");
+        // And none of them blank, which a hand-written arm can silently be.
+        assert!(codes.iter().all(|c| !c.is_empty()), "{codes:?}");
     }
 
     #[test]
