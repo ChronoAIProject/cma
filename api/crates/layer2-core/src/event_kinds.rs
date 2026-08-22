@@ -289,6 +289,28 @@ pub enum EventKind {
         /// Whether the action was permitted.
         allowed: bool,
     },
+    /// The session's runtime is gone, and the service has established it.
+    ///
+    /// Written where reconciliation finds out, not where a replacement is
+    /// started, and not only where this process happened to be serving the
+    /// session. A control plane that has just restarted holds no memory of any
+    /// session, which is precisely the case a lost runtime is most likely to
+    /// be found in.
+    ///
+    /// It records that the runtime died. It does not record that anything was
+    /// carried across: a conversation is captured by asking the runtime for
+    /// it, and this one cannot be asked.
+    RuntimeLost {
+        /// The runtime that is gone, as the provider named it. Opaque here.
+        runtime_id: String,
+        /// Why, where that could be established at all.
+        ///
+        /// Absent when nothing said. A sandbox that vanished from the
+        /// provider's list entirely leaves no verdict behind, and an invented
+        /// one would be worse than the silence.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cause: Option<crate::session::RuntimeLossCause>,
+    },
 }
 
 /// What a tool call was asked to do, or what it produced.
@@ -375,6 +397,7 @@ const KNOWN_TAGS: &[&str] = &[
     "terminal_resized",
     "approval_requested",
     "approval_resolved",
+    "runtime_lost",
     "plane_changed",
     "sign_in_required",
 ];
