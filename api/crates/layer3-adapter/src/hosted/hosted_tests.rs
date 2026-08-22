@@ -13,8 +13,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::*;
 use crate::supervisor;
-use crate::{RuntimeSpec, TermSize};
-use std::sync::Arc;
+use crate::{RuntimeCapacity, RuntimeSpec, TermSize};
+use std::{num::NonZeroU32, sync::Arc};
 
 /// A hosted kernel talking to a provider at `base`.
 fn hosted(base: &str) -> HostedKernel {
@@ -37,8 +37,16 @@ fn spec() -> RuntimeSpec {
         environment: Default::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: Default::default(),
+    }
+}
+
+fn capacity() -> RuntimeCapacity {
+    RuntimeCapacity {
+        cpu_millis: NonZeroU32::new(1500).expect("the test capacity is non-zero"),
+        memory_mib: NonZeroU32::new(3072).expect("the test capacity is non-zero"),
     }
 }
 
@@ -97,6 +105,53 @@ fn the_default_shape_requests_a_real_workload_size() {
 }
 
 #[test]
+fn a_runtime_that_states_no_capacity_gets_the_deployment_shape() {
+    let shape = SandboxShape::default();
+    assert_eq!(shape.limits_for(None), shape.resource_limits);
+}
+
+#[test]
+fn a_stated_capacity_becomes_the_provider_quantities() {
+    assert_eq!(
+        SandboxShape::default().limits_for(Some(capacity())),
+        BTreeMap::from([
+            ("cpu".to_string(), "1500m".to_string()),
+            ("memory".to_string(), "3072Mi".to_string()),
+        ])
+    );
+}
+
+#[test]
+fn a_stated_capacity_replaces_the_shape_rather_than_merging_with_it() {
+    let mut shape = SandboxShape::default();
+    shape
+        .resource_limits
+        .insert("ephemeral-storage".to_string(), "5Gi".to_string());
+
+    let rendered = shape.limits_for(Some(capacity()));
+    assert_eq!(rendered.len(), 2);
+    assert!(!rendered.contains_key("ephemeral-storage"));
+}
+
+#[test]
+fn two_differently_shaped_kernels_asked_for_one_size_reserve_the_same_thing() {
+    let first = SandboxShape::default();
+    let second = SandboxShape {
+        image: "a-different-runtime:latest".to_string(),
+        resource_limits: BTreeMap::from([
+            ("cpu".to_string(), "8".to_string()),
+            ("memory".to_string(), "64Gi".to_string()),
+        ]),
+        ..SandboxShape::default()
+    };
+
+    assert_eq!(
+        first.limits_for(Some(capacity())),
+        second.limits_for(Some(capacity()))
+    );
+}
+
+#[test]
 fn sandboxes_do_not_expire_on_a_timer() {
     // A session is someone's working terminal. Expiring it on a timer ends
     // live work mid-turn, and a timer cannot tell an idle session from one
@@ -112,8 +167,10 @@ async fn provisioning_against_a_dead_provider_reports_unavailable() {
     // Port 1 is reserved and never listening, so this exercises the failure
     // path deterministically without a fixture server.
     let k = hosted("http://127.0.0.1:1");
+    let mut request = spec();
+    request.capacity = Some(capacity());
     let err = k
-        .provision(&spec(), BTreeMap::new())
+        .provision(&request, BTreeMap::new())
         .await
         .expect_err("must fail against a dead provider");
     assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");

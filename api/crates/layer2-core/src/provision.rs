@@ -274,6 +274,7 @@ impl SessionService {
                     cols: geometry.columns(),
                     rows: geometry.rows(),
                 },
+                capacity: None,
                 subject_credential: spec.runtime_credential.clone(),
                 options: options.clone(),
                 restore_from: restore.cloned(),
