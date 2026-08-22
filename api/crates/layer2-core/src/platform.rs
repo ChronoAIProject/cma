@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 // the type and does not consume this settings file as more settings arrive.
 pub use crate::capacity_bounds::{CapacityBounds, OutOfBounds, SizeDimension};
 pub use crate::pricing::{
-    format_usd, PriceList, PriceListViolation, Quote, Rate, RateCard, RateCardId, SessionPricing,
-    CURRENCY,
+    accrue, format_usd, Accrual, PriceList, PriceListViolation, Quote, Rate, RateCard, RateCardId,
+    SessionPricing, CURRENCY,
 };
 
 /// What a session is told about itself before its agent does anything.
