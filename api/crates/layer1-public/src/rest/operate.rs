@@ -32,8 +32,8 @@ use axum::{
     Json,
 };
 use layer2_core::{
-    ApprovalDecision, CoreError, SessionCapability, SessionId, SessionService, TerminalGeometry,
-    Usage,
+    format_usd, ApprovalDecision, CoreError, SessionCapability, SessionId, SessionService, Spend,
+    TerminalGeometry, Usage, CURRENCY,
 };
 use serde::{Deserialize, Serialize};
 
@@ -118,6 +118,44 @@ impl From<Usage> for UsageView {
             output_tokens: usage.output_tokens,
             context_used: usage.context_used,
             context_window: usage.context_window,
+        }
+    }
+}
+
+/// Reserved-capacity spend derived from one session's durable history.
+#[derive(Debug, Serialize)]
+pub(super) struct SpendView {
+    priced: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_card: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    currency: Option<&'static str>,
+    /// Decimal strings keep monetary integers out of JavaScript numbers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    micros_per_hour: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accrued_micros: Option<String>,
+    /// Rendered by the same integer formatter used for the quoted rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    billable_seconds: Option<u64>,
+    accruing: bool,
+    unbounded_intervals: u32,
+}
+
+impl From<Spend> for SpendView {
+    fn from(spend: Spend) -> Self {
+        Self {
+            currency: spend.priced.then_some(CURRENCY),
+            rate_card: spend.rate_card.map(|id| id.0),
+            micros_per_hour: spend.micros_per_hour.map(|value| value.to_string()),
+            accrued_micros: spend.accrued_micros.map(|value| value.to_string()),
+            display: spend.accrued_micros.map(format_usd),
+            billable_seconds: spend.billable_seconds,
+            priced: spend.priced,
+            accruing: spend.accruing,
+            unbounded_intervals: spend.unbounded_intervals,
         }
     }
 }
@@ -233,6 +271,16 @@ pub(super) async fn usage(
 ) -> Result<Json<UsageView>, Problem> {
     let usage = service.get_usage(&caller, &SessionId(id)).await?;
     Ok(Json(usage.into()))
+}
+
+/// What this session has accrued for reserved capacity.
+pub(super) async fn spend(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Json<SpendView>, Problem> {
+    let spend = service.get_spend(&caller, &SessionId(id)).await?;
+    Ok(Json(spend.into()))
 }
 
 /// Redirect a turn already in progress.

@@ -16,7 +16,7 @@ pub mod pty;
 pub mod rest;
 pub mod tickets;
 
-pub use auth::{ActedUpon, AuthenticatedSubject};
+pub use auth::{ActedUpon, AuthenticatedSubject, SettingsTouched};
 
 /// A semantic operation on the core session model. Each interface declares the
 /// subset it projects.
@@ -40,6 +40,8 @@ pub enum Operation {
     ScreenSnapshot,
     /// Read usage for a session.
     GetUsage,
+    /// Read reserved-capacity spend for a session.
+    GetSpend,
     /// Move a session onto the other plane.
     ///
     /// Administration rather than conversation, which is why not every

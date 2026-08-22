@@ -66,6 +66,10 @@ pub enum DetailKey {
     /// surface a session is driven on is exactly what a reader of this record
     /// needs to make sense of a handover somebody asked for.
     Plane,
+    /// Which deployment settings actually changed.
+    Setting,
+    /// The sealed rate card appended by a pricing change.
+    RateCard,
 }
 
 impl DetailKey {
@@ -86,6 +90,8 @@ impl DetailKey {
             Self::Limit => "limit",
             Self::Subject => "subject",
             Self::Plane => "plane",
+            Self::Setting => "setting",
+            Self::RateCard => "rate_card",
         }
     }
 
@@ -110,6 +116,8 @@ impl DetailKey {
             Self::Limit,
             Self::Subject,
             Self::Plane,
+            Self::Setting,
+            Self::RateCard,
         ]
         .into_iter()
         .find(|k| k.as_str() == code)
@@ -218,6 +226,9 @@ mod tests {
             DetailKey::Cursor,
             DetailKey::Limit,
             DetailKey::Subject,
+            DetailKey::Plane,
+            DetailKey::Setting,
+            DetailKey::RateCard,
         ] {
             assert_eq!(
                 DetailKey::from_code(key.as_str()),

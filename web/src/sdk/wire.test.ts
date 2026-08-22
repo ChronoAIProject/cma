@@ -41,6 +41,7 @@ describe('pricing uses the names declared by the REST contract', () => {
   it('pins the quote, create claim, and session projection in one vocabulary', () => {
     expect(PRICING_WIRE).toEqual({
       quotePath: '/api/v1/pricing/quote',
+      spend: 'spend',
       environmentProfile: 'environment_profile',
       quotedRateCard: 'quoted_rate_card',
       pricing: 'pricing',
@@ -50,7 +51,11 @@ describe('pricing uses the names declared by the REST contract', () => {
       cpuMillis: 'cpu_millis',
       memoryMib: 'memory_mib',
       microsPerHour: 'micros_per_hour',
+      accruedMicros: 'accrued_micros',
       display: 'display',
+      billableSeconds: 'billable_seconds',
+      accruing: 'accruing',
+      unboundedIntervals: 'unbounded_intervals',
       per: 'per',
       quotedAt: 'quoted_at',
     });

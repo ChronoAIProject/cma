@@ -9,6 +9,7 @@ import { SessionActions } from './SessionActions';
 import { abilitiesFor } from './availability';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '../agui';
+import type { SessionSpend } from '../sdk';
 
 /**
  * The session header and the details drawer — docs/Web_Style.md §12 and §11.
@@ -42,8 +43,14 @@ function renderActions(
   );
 }
 
-function renderDrawer(lifecycle: SessionLifecycle, extra: Partial<Session> = {}) {
-  return render(<SessionDrawer session={session(lifecycle, extra)} onClose={vi.fn()} />);
+function renderDrawer(
+  lifecycle: SessionLifecycle,
+  extra: Partial<Session> = {},
+  readSpend?: (id: string) => Promise<SessionSpend>,
+) {
+  return render(
+    <SessionDrawer session={session(lifecycle, extra)} onClose={vi.fn()} readSpend={readSpend} />,
+  );
 }
 
 describe('the session header', () => {
@@ -407,6 +414,56 @@ describe('how a session is configured', () => {
     const own = renderDrawer('running', { agent: { credential: 'own' } });
     expect(own.container.textContent).toContain('Your own account');
     expect(own.container.textContent).toContain('with the model vendor');
+  });
+
+  it('shows an accruing capacity figure beside who pays for the model', async () => {
+    const readSpend = vi.fn().mockResolvedValue({
+      priced: true,
+      rateCard: 'rate_current',
+      currency: 'USD',
+      microsPerHour: '45000',
+      accruedMicros: '45000',
+      display: '$0.045',
+      billableSeconds: 3600,
+      accruing: true,
+      unboundedIntervals: 0,
+    } satisfies SessionSpend);
+    renderDrawer('running', { agent: { credential: 'delegated' } }, readSpend);
+
+    expect(await screen.findByText('$0.045')).toBeInTheDocument();
+    expect(screen.getByText(/Accruing while this session is running/)).toBeInTheDocument();
+    expect(readSpend).toHaveBeenCalledWith('ses_test');
+  });
+
+  it('marks a stopped figure final and says when its coverage is incomplete', async () => {
+    const readSpend = vi.fn().mockResolvedValue({
+      priced: true,
+      rateCard: 'rate_current',
+      currency: 'USD',
+      microsPerHour: '45000',
+      accruedMicros: '90000',
+      display: '$0.09',
+      billableSeconds: 7200,
+      accruing: false,
+      unboundedIntervals: 1,
+    } satisfies SessionSpend);
+    renderDrawer('idle', {}, readSpend);
+
+    expect(await screen.findByText('$0.09')).toBeInTheDocument();
+    expect(screen.getByText(/Final reserved-capacity charge/)).toBeInTheDocument();
+    expect(screen.getByText(/covers less than the session’s whole life/)).toBeInTheDocument();
+  });
+
+  it('renders an absent price as not priced and never as zero', async () => {
+    const readSpend = vi.fn().mockResolvedValue({
+      priced: false,
+      accruing: false,
+      unboundedIntervals: 0,
+    } satisfies SessionSpend);
+    const { container } = renderDrawer('running', {}, readSpend);
+
+    expect(await screen.findByText('Not priced')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('$0.00');
   });
 
   it('says a control plane that reported nothing said nothing', () => {

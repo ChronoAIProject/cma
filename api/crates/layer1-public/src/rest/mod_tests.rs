@@ -10,7 +10,7 @@ fn rest_projects_every_core_operation() {
     // REST has no structural constraint, so a missing operation here means
     // the facade has drifted from the core rather than that the protocol
     // cannot express it.
-    assert_eq!(RestInterface.operations().len(), 10);
+    assert_eq!(RestInterface.operations().len(), 11);
 }
 
 /// Everything a client can observe about a refusal.
