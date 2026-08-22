@@ -535,6 +535,9 @@ impl IntoResponse for Problem {
             CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
             CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
             CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
+            CoreError::InvalidSessionSize(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "invalid-session-size")
+            }
             CoreError::RuntimeUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
             }
