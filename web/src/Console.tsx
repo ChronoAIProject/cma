@@ -24,7 +24,15 @@ import { ProfileMenu } from './profile/ProfileMenu';
 import { CommandBar } from './shell/CommandBar';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
-import { ApiError, followSession, listKernels, listSessions, readAllowance } from './api/client';
+import {
+  ApiError,
+  followSession,
+  listKernels,
+  listSessions,
+  quoteSession,
+  readAllowance,
+  readSessionSpend,
+} from './api/client';
 import {
   abilitiesFor,
   creationAbilityFor,
@@ -564,6 +572,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           <SessionDrawer
             session={active}
             ending={endings[active.id]}
+            readSpend={readSessionSpend}
             onClose={() => {
               setDetailsOpen(false);
             }}
@@ -793,6 +802,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             profiles={profiles}
             kernels={kernels}
             store={profileStore}
+            quote={quoteSession}
             onCancel={() => {
               setChoosing(false);
             }}
@@ -802,9 +812,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               // the dialog will be given again.
               setProfiles((previous) => [created, ...previous]);
             }}
-            onStart={(environmentProfile) => {
+            onStart={async (environmentProfile, quotedRateCard) => {
+              await start(environmentProfile, quotedRateCard);
               setChoosing(false);
-              void start(environmentProfile);
             }}
           />
 
