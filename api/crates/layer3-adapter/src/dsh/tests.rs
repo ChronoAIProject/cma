@@ -26,6 +26,7 @@ fn conversation() -> RuntimeSpec {
         environment: RuntimeEnvironment::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             mode: RuntimeMode::Conversation,
