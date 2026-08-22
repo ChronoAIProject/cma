@@ -286,6 +286,7 @@ fn error_code(err: &CoreError) -> &'static str {
         // or writes: it drives an existing session's terminal. Named for the
         // reason above — so a variant added to the core is a compile error
         // here rather than a frame that quietly says the wrong thing.
+        CoreError::PriceListNotAppendOnly(_) => "price_list_not_append_only",
         CoreError::SettingsConflict(_) => "settings_conflict",
         CoreError::SettingsUnavailable(_) => "settings_unavailable",
     }

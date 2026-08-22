@@ -127,6 +127,15 @@ pub enum CoreError {
     #[error("service catalogue unavailable: {0}")]
     ServiceCatalogUnavailable(String),
 
+    /// A settings save would have edited or removed a rate that has already
+    /// priced something.
+    ///
+    /// Distinct from `SettingsConflict`: reading the current revision and
+    /// retrying the same edit will not make a sealed card mutable. The detail
+    /// names the card and the part of its history the request tried to change.
+    #[error("the price list is append-only: {0}")]
+    PriceListNotAppendOnly(String),
+
     /// The platform's settings were changed by somebody else since this
     /// caller read them.
     ///
@@ -171,6 +180,7 @@ impl CoreError {
             Self::InvalidRequest(_) => "invalid_request",
             Self::ServiceNotGranted(_) => "service_not_granted",
             Self::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+            Self::PriceListNotAppendOnly(_) => "price_list_not_append_only",
             Self::SettingsConflict(_) => "settings_conflict",
             Self::SettingsUnavailable(_) => "settings_unavailable",
         }
@@ -230,6 +240,7 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("api-github".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::PriceListNotAppendOnly("card rate_example changed field 'rate'".into()),
             CoreError::SettingsConflict("x".into()),
             CoreError::SettingsUnavailable("x".into()),
         ];
@@ -254,6 +265,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
                 | CoreError::SettingsUnavailable(_) => {}
             }
@@ -270,6 +282,16 @@ mod tests {
         assert_eq!(sorted.len(), codes.len(), "codes must be unique: {codes:?}");
         // And none of them blank, which a hand-written arm can silently be.
         assert!(codes.iter().all(|c| !c.is_empty()), "{codes:?}");
+    }
+
+    #[test]
+    fn a_price_list_refusal_names_the_card_and_field_that_changed() {
+        let error = CoreError::PriceListNotAppendOnly(
+            "card rate_example changed field 'effective_from'".into(),
+        );
+        let rendered = error.to_string();
+        assert!(rendered.contains("rate_example"), "got {rendered}");
+        assert!(rendered.contains("effective_from"), "got {rendered}");
     }
 
     #[test]

@@ -170,11 +170,21 @@ impl PriceList {
         }
 
         let mut in_force = self.cards.iter().filter(|card| card.retired_at.is_none());
-        if let (Some(first), Some(second)) = (in_force.next(), in_force.next()) {
-            return Err(PriceListViolation::SeveralInForce {
-                first: first.id.clone(),
-                second: second.id.clone(),
-            });
+        match (in_force.next(), in_force.next()) {
+            (Some(first), Some(second)) => {
+                return Err(PriceListViolation::SeveralInForce {
+                    first: first.id.clone(),
+                    second: second.id.clone(),
+                });
+            }
+            (None, None) if !self.cards.is_empty() => {
+                let last = self.cards.last().expect("the list is not empty");
+                return Err(PriceListViolation::CardChanged {
+                    id: last.id.clone(),
+                    field: "retired_at",
+                });
+            }
+            _ => {}
         }
 
         Ok(())
@@ -352,6 +362,21 @@ mod tests {
             Err(PriceListViolation::SeveralInForce {
                 first: previous.cards[0].id.clone(),
                 second: RateCardId("rate_second".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn sealed_against_refuses_a_nonempty_list_with_no_card_in_force() {
+        let previous = first_card();
+        let mut changed = previous.clone();
+        changed.cards[0].retired_at = Some("2026-08-23T02:00:00Z".into());
+
+        assert_eq!(
+            changed.sealed_against(&previous),
+            Err(PriceListViolation::CardChanged {
+                id: previous.cards[0].id.clone(),
+                field: "retired_at",
             })
         );
     }
