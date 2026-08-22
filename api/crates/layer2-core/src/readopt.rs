@@ -329,6 +329,7 @@ impl SessionService {
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),
             assembling: None,
+            context_reading: None,
             attached: None,
             attachments_issued: 0,
             context_ref: record.context_ref.clone(),

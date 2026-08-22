@@ -295,10 +295,10 @@ function upsertMessage(state: Conversation, message: MessageEntry): Conversation
 /**
  * Apply the patches a `STATE_DELTA` carries.
  *
- * Three paths matter to this surface and the rest are ignored rather than
- * guessed at: `/usage` is what a session has cost (§18.5), `/gaps` is where a
- * stretch of lost conversation lands, and `/planeChanges` is where a session
- * moved between planes says so (§18.6).
+ * Four groups matter to this surface and the rest are ignored rather than
+ * guessed at: `/usage` carries reported counts, `/contextCompactions` records
+ * a conversation being summarised to make room, `/gaps` carries a stretch of
+ * lost conversation, and `/planeChanges` records a move between planes.
  */
 function applyPatches(
   state: Conversation,
@@ -309,9 +309,10 @@ function applyPatches(
     /*
      * The paths the service actually writes, from sdk/wire.ts. These were
      * spelled here as `/usage/tokens` and `/usage/cost` while the service
-     * writes `/usage/inputTokens`, `/usage/outputTokens` and
-     * `/usage/contextUsed` — so every patch fell through to the ignored
-     * branch and no session ever reported what it had spent.
+     * writes `/usage/inputTokens`, `/usage/outputTokens`,
+     * `/usage/contextUsed` and `/usage/contextWindow` — so every patch fell
+     * through to the ignored branch and no session ever reported what it had
+     * spent.
      *
      * Tokens are summed rather than shown apart: §18.5 asks for the count and
      * the cost, and a reader watching a turn wants what it consumed, not a
@@ -335,8 +336,20 @@ function applyPatches(
           tokens: totalOf(next.usage?.inputTokens, patch.value),
         },
       };
-    } else if (patch.path === PATHS.contextUsed && typeof patch.value === 'number') {
+    } else if (
+      patch.path === PATHS.contextUsed &&
+      typeof patch.value === 'number' &&
+      patch.value > 0
+    ) {
+      // Turn accounting writes zero when it has no reading. Preserve the last
+      // real reading just as the core fold does; zero is absence, not a reset.
       next = { ...next, usage: { ...next.usage, contextUsed: patch.value } };
+    } else if (
+      patch.path === PATHS.contextWindow &&
+      typeof patch.value === 'number' &&
+      patch.value > 0
+    ) {
+      next = { ...next, usage: { ...next.usage, contextWindow: patch.value } };
     } else if (patch.path === PATHS.signIn && typeof patch.value === 'object') {
       /*
        * The agent is waiting for its owner to sign in somewhere else.
@@ -406,6 +419,26 @@ function applyPatches(
           return name === '' ? [] : [{ name, description }];
         }),
       };
+    } else if (patch.path === PATHS.contextCompactions) {
+      const value = (
+        typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
+      ) as Record<string, unknown>;
+      const was = typeof value.was === 'number' ? value.was : undefined;
+      const now = typeof value.now === 'number' ? value.now : undefined;
+      // A boundary without either side of the fall explains nothing, so a
+      // malformed projection is dropped rather than drawn as a partial fact.
+      if (was !== undefined && now !== undefined) {
+        const window =
+          typeof value.window === 'number' && value.window > 0 ? value.window : undefined;
+        next = append(next, {
+          kind: 'contextCompaction',
+          id: `context-compaction-${String(event.seq)}`,
+          was,
+          now,
+          window,
+          seq: event.seq,
+        });
+      }
     } else if (patch.path.startsWith('/planeChanges')) {
       /*
        * §18.6: drawn as a rule across the stream at the snapshot moment, not
