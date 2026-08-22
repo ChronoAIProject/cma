@@ -229,6 +229,7 @@ mod tests {
                 before: vec!["# Read this first".into()],
                 ..SessionBriefing::default()
             },
+            ..PlatformSettings::default()
         }
     }
 

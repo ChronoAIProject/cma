@@ -13,6 +13,7 @@ pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
 pub mod capabilities;
+mod capacity_bounds;
 pub mod clock;
 pub mod conversation;
 mod conversation_log;
@@ -113,7 +114,8 @@ pub use ids::EnvironmentProfileId;
 pub use ids::{KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
-pub use platform::{PlatformSettings, SessionBriefing};
+pub use platform::{CapacityBounds, OutOfBounds, PlatformSettings, SessionBriefing, SizeDimension};
+pub use platform_service::PlatformSettingsService;
 pub use reconcile::Reclaimed;
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
