@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { CommandBar } from './CommandBar';
@@ -29,6 +29,7 @@ function renderBar(props: Partial<Parameters<typeof CommandBar>[0]> = {}) {
   const result = render(
     <CommandBar
       sessions={[SESSION]}
+      creation={{ canCreate: true }}
       onClose={onClose}
       onSelectSession={onSelectSession}
       onArrange={onArrange}
@@ -99,6 +100,27 @@ describe('the command bar', () => {
 
     expect(onNewSession).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('keeps a refused new-session entry listed with its reason and cannot run it', async () => {
+    const user = userEvent.setup();
+    const reason = 'You have 3 of 3 sessions running. Pause or end one to start another.';
+    const { onNewSession, onClose } = renderBar({
+      creation: { canCreate: false, reason },
+    });
+    const row = screen
+      .getAllByRole('option')
+      .find((option) => option.textContent?.includes('New session'));
+    expect(row).toBeDefined();
+    expect(row).toHaveTextContent(reason);
+
+    const command = within(row as HTMLElement).getByRole('button');
+    expect(command).toBeDisabled();
+    await user.click(command);
+    await user.type(screen.getByRole('textbox'), 'new session');
+    await user.keyboard('{Enter}');
+    expect(onNewSession).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('closes on Escape and returns focus to the trigger', async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SessionRail } from './sessions/SessionRail';
 import { SessionDrawer } from './sessions/SessionDrawer';
 import { AppFrame } from './shell/AppFrame';
@@ -24,9 +24,15 @@ import { ProfileMenu } from './profile/ProfileMenu';
 import { CommandBar } from './shell/CommandBar';
 import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
-import { ApiError, followSession, listKernels, listSessions, readSession } from './api/client';
-import { abilitiesFor, listable } from './sessions/availability';
+import { ApiError, followSession, listKernels, listSessions, readAllowance } from './api/client';
+import {
+  abilitiesFor,
+  creationAbilityFor,
+  listable,
+  type Allowance,
+} from './sessions/availability';
 import { useSessionActions, type FailureNotice } from './sessions/useSessionActions';
+import { useSessionRefresh } from './sessions/useSessionRefresh';
 import { EnvironmentProfiles } from './environment/EnvironmentProfiles';
 import { createRestProfileStore } from './environment/rest';
 import type { EnvironmentProfile, EnvironmentProfileStore } from './environment/types';
@@ -85,6 +91,8 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   const [openingForId, setOpeningForId] = useState<string | null>(null);
 
   const [sessions, setSessions] = useState<readonly Session[]>([]);
+  const [allowance, setAllowance] = useState<Allowance | undefined>(undefined);
+  const allowanceRead = useRef(0);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [notice, setNotice] = useState<FailureNotice | null>(null);
   /*
@@ -262,34 +270,21 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, lifecycle } : s)));
   }, []);
 
-  /*
-   * Take the whole session again, rather than patching the one field that
-   * changed.
-   *
-   * A session's record is not complete when it is created. Which skills were
-   * actually installed and which runtime version it landed on are settled
-   * during provisioning, and provisioning is their only writer — so the object
-   * this client got back from `POST /sessions` is the answer from before any
-   * of it happened, and patching `lifecycle` onto it leaves every other field
-   * frozen at that moment for as long as the tab is open.
-   *
-   * The symptom was a session whose details said its skills were "not recorded"
-   * while the agent was visibly using them.
-   *
-   * Merged rather than replaced wholesale: `capabilities` and the plane are
-   * read once at the boundary and the surfaces hold them, so re-reading is
-   * about the fields provisioning fills, not about discarding what is already
-   * correct. A read that fails changes nothing — the session is running either
-   * way, and a failed refresh must not empty a panel somebody is looking at.
-   */
-  const refreshSession = useCallback((id: string) => {
-    void readSession(id)
-      .then((fresh) => {
-        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...fresh } : s)));
+  const refreshSession = useSessionRefresh(setSessions);
+
+  const refreshAllowance = useCallback(() => {
+    const read = ++allowanceRead.current;
+    void readAllowance()
+      .then((current) => {
+        if (read === allowanceRead.current) {
+          setAllowance(current);
+        }
       })
       .catch(() => {
-        // Deliberately quiet. Nothing is broken: the client keeps what it had,
-        // and the next settle or reload asks again.
+        if (read === allowanceRead.current) {
+          // Advisory only. A failed read leaves creation enabled.
+          setAllowance(undefined);
+        }
       });
   }, []);
 
@@ -318,6 +313,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         }
       } finally {
         if (!cancelled) {
+          refreshAllowance();
           setLoading(false);
         }
       }
@@ -342,6 +338,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       report,
       applyLifecycle,
       setFocusHistory,
+      refreshAllowance,
     });
 
   /*
@@ -487,6 +484,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     const count = `${String(listed.length)} session${listed.length === 1 ? '' : 's'}`;
     return `${count} · ${String(liveCount)} live`;
   }, [view, loading, listed, liveCount]);
+  const creation = useMemo(() => creationAbilityFor(allowance), [allowance]);
 
   return (
     <AppFrame
@@ -495,6 +493,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       sidebar={
         <Sidebar
           collapsed={railCollapsed}
+          creation={creation}
           onToggleCollapsed={toggleRail}
           onCreate={() => {
             setChoosing(true);
@@ -771,6 +770,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
           {commandOpen ? (
             <CommandBar
               sessions={listed}
+              creation={creation}
               canvasAvailable
               onClose={() => {
                 setCommandOpen(false);

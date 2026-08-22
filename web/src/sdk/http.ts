@@ -12,7 +12,7 @@
  */
 
 import { headersFor, urlOf, type ResolvedConfig } from './config';
-import { ApiError, CapabilityRefused } from './errors';
+import { ApiError, CapabilityRefused, SessionLimitReached } from './errors';
 
 /** What a caller may vary about one request. */
 export interface RequestOptions {
@@ -71,6 +71,7 @@ export async function request(
  * retrying, the other never succeeds however many times it is sent.
  */
 const CAPABILITY_UNSUPPORTED = 'capability_unsupported';
+const SESSION_LIMIT_REACHED = 'session_limit_reached';
 
 /**
  * Turn a failed response into the most specific error it justifies.
@@ -85,12 +86,16 @@ async function failureOf(response: Response): Promise<ApiError> {
   let detail = `request failed with ${response.status}`;
   let code: string | undefined;
   let capability: string | undefined;
+  let limit: number | undefined;
+  let live: number | undefined;
   try {
     const body = (await response.json()) as {
       detail?: unknown;
       title?: unknown;
       code?: unknown;
       capability?: unknown;
+      limit?: unknown;
+      live?: unknown;
     };
     const text = body?.detail ?? body?.title;
     if (typeof text === 'string' && text !== '') {
@@ -102,11 +107,25 @@ async function failureOf(response: Response): Promise<ApiError> {
     if (typeof body?.capability === 'string' && body.capability !== '') {
       capability = body.capability;
     }
+    if (isNonNegativeInteger(body?.limit)) {
+      limit = body.limit;
+    }
+    if (isNonNegativeInteger(body?.live)) {
+      live = body.live;
+    }
   } catch {
     // A body that is not a problem document tells us nothing the status line
     // did not already, and failing to parse it is not itself worth reporting.
   }
-  return code === CAPABILITY_UNSUPPORTED
-    ? new CapabilityRefused(response.status, detail, capability)
-    : new ApiError(response.status, detail);
+  if (code === CAPABILITY_UNSUPPORTED) {
+    return new CapabilityRefused(response.status, detail, capability);
+  }
+  if (code === SESSION_LIMIT_REACHED) {
+    return new SessionLimitReached(response.status, detail, limit, live);
+  }
+  return new ApiError(response.status, detail);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
