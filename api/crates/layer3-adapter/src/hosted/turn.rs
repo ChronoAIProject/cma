@@ -18,9 +18,11 @@ impl Bridge {
         &self,
         input: ConversationInput,
         updates: &mpsc::Sender<ConversationUpdate>,
-    ) {
+    ) -> Result<(), crate::AdapterError> {
         let Some(session) = self.session.lock().await.clone() else {
-            return;
+            return Err(crate::AdapterError::Unavailable(
+                "the runtime holds no open conversation".to_string(),
+            ));
         };
         match input {
             ConversationInput::Prompt(content) => {
@@ -33,7 +35,7 @@ impl Bridge {
                 // bridge something: that one waits under a deadline meant for a
                 // question with a quick answer, and a prompt takes as long as
                 // the model takes.
-                match self.begin("session/prompt", params) {
+                match self.begin("session/prompt", params).await {
                     Ok(waiting) => {
                         tokio::spawn(async move {
                             let answered = tokio::time::timeout(TURN_DEADLINE, waiting).await;
@@ -61,6 +63,7 @@ impl Bridge {
                             };
                             let _ = updates.send(outcome.into_update()).await;
                         });
+                        Ok(())
                     }
                     // A prompt that could not even be sent is a failed turn,
                     // not a silent no-op: the caller is waiting on an answer
@@ -73,6 +76,7 @@ impl Bridge {
                                 capability: None,
                             })
                             .await;
+                        Err(e)
                     }
                 }
             }
@@ -83,7 +87,9 @@ impl Bridge {
                     // was cancelled, or a runtime that went away. Nothing to
                     // send, and saying so beats a frame nothing will read.
                     tracing::info!(request = %id, "nothing is waiting for this answer any more");
-                    return;
+                    return Err(crate::AdapterError::Rejected(
+                        "nothing is waiting for this permission answer".to_string(),
+                    ));
                 };
                 let outcome = outcome_for(decision, &held.options);
                 let answer = serde_json::json!({
@@ -91,9 +97,7 @@ impl Bridge {
                     "id": held.call,
                     "result": { "outcome": outcome },
                 });
-                if let Err(e) = self.send(&answer).await {
-                    tracing::warn!(error = %e, "could not answer a permission request");
-                }
+                self.send(&answer).await
             }
             ConversationInput::Cancel => {
                 let notice = serde_json::json!({
@@ -101,9 +105,7 @@ impl Bridge {
                     "method": "session/cancel",
                     "params": { "sessionId": session },
                 });
-                if let Err(e) = self.send(&notice).await {
-                    tracing::warn!(error = %e, "could not cancel the turn");
-                }
+                self.send(&notice).await
             }
         }
     }

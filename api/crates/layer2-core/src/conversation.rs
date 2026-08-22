@@ -29,8 +29,9 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{ContentBlock, ConversationInput, PermissionDecision};
-use tokio::sync::mpsc;
+use layer3_adapter::{
+    AdapterError, ContentBlock, ConversationInput, ConversationInputSender, PermissionDecision,
+};
 
 use crate::authz::Caller;
 use crate::capabilities::Capability;
@@ -270,7 +271,7 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
         capability: Capability,
-    ) -> Result<mpsc::Sender<ConversationInput>, CoreError> {
+    ) -> Result<ConversationInputSender, CoreError> {
         // Read from the record rather than from what this process happens to
         // hold, because after a restart it holds nothing — and a session it has
         // never seen is not a session that does not exist.
@@ -296,12 +297,17 @@ impl SessionService {
     async fn toward_runtime(
         &self,
         id: &SessionId,
-        input: &mpsc::Sender<ConversationInput>,
+        input: &ConversationInputSender,
         message: ConversationInput,
     ) -> Result<(), CoreError> {
-        input.send(message).await.map_err(|_| {
-            tracing::warn!(session_id = %id, "the conversation channel closed");
-            CoreError::RuntimeUnavailable("this session's conversation has ended".into())
+        input.send(message).await.map_err(|error| {
+            tracing::warn!(session_id = %id, %error, "conversation input was not delivered");
+            match error {
+                AdapterError::Unavailable(detail) => CoreError::RuntimeUnavailable(detail),
+                AdapterError::Rejected(detail) | AdapterError::Unsupported(detail) => {
+                    CoreError::RuntimeRefused(detail)
+                }
+            }
         })
     }
 }
