@@ -11,6 +11,7 @@
 //! given.
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
 use tokio::sync::mpsc;
 
@@ -21,6 +22,23 @@ pub struct TermSize {
     pub cols: u16,
     /// Rows.
     pub rows: u16,
+}
+
+/// How much a runtime reserves from its provider.
+///
+/// Declared here rather than taken from the core for the reason everything in
+/// this file is (see the module doc): the dependency runs the other way, and
+/// the caller maps between the two vocabularies.
+///
+/// Numbers, never a provider's quantity syntax. Rendering these into the
+/// strings a particular provider understands happens in exactly one place, in
+/// the hosted kernel, which is the only code here that owns those words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeCapacity {
+    /// Processor time, in thousandths of one core.
+    pub cpu_millis: NonZeroU32,
+    /// Working memory, in mebibytes.
+    pub memory_mib: NonZeroU32,
 }
 
 /// One runtime the provider is running, as it describes it.
@@ -113,6 +131,19 @@ pub struct RuntimeSpec {
     pub session_id: String,
     /// Geometry to allocate the terminal at.
     pub size: TermSize,
+    /// How much this runtime should reserve, or `None` for the deployment's.
+    ///
+    /// **Not `size`.** That is the terminal's geometry, immediately above, and
+    /// was here first. This is how large the box is; that is how large the
+    /// screen inside it is, and conflating them would be a resize that changed
+    /// somebody's bill.
+    ///
+    /// `None` is not zero and not a default invented here: it means this
+    /// caller stated nothing about capacity, and the sandbox is shaped the way
+    /// this deployment shapes every sandbox. That is what every caller sent
+    /// before this field existed, so `None` reproduces today's behaviour
+    /// exactly.
+    pub capacity: Option<RuntimeCapacity>,
     /// Credential the runtime should present when calling out on the owner's
     /// behalf, if the caller has one to delegate.
     ///

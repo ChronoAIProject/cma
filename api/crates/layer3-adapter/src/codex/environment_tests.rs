@@ -23,6 +23,7 @@ fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
         environment,
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: Default::default(),
     }
@@ -70,6 +71,7 @@ async fn permission_intent_reaches_this_kernel_through_the_file_it_reads() {
             environment: Default::default(),
             session_id: "sesn_x".into(),
             size: TermSize { cols: 80, rows: 24 },
+            capacity: None,
             subject_credential: None,
             options: RuntimeOptions {
                 permission,
@@ -115,6 +117,7 @@ async fn a_session_model_overrides_the_deployment_default() {
         environment: Default::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             model: Some("a-chosen-model".into()),
@@ -149,6 +152,7 @@ async fn an_own_account_session_is_given_no_upstream_of_ours() {
         environment: Default::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             own_credential: true,
@@ -184,6 +188,7 @@ async fn the_delegated_credential_provisions_exactly_as_before() {
             environment: Default::default(),
             session_id: "sesn_x".into(),
             size: TermSize { cols: 80, rows: 24 },
+            capacity: None,
             subject_credential: None,
             options: Default::default(),
         })
@@ -207,6 +212,7 @@ fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
         environment: Default::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             own_credential: true,

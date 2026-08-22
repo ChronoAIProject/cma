@@ -29,7 +29,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
-    AdapterError, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage, TerminalInput,
+    AdapterError, RuntimeCapacity, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage,
+    TerminalInput,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -122,6 +123,36 @@ pub struct SandboxShape {
     pub timeout_seconds: Option<u64>,
     /// Directory the agent works in, inside its sandbox.
     pub workspace: String,
+}
+
+impl SandboxShape {
+    /// What the provider is asked to reserve for one sandbox.
+    ///
+    /// The only place in this service where a provider's quantity syntax is
+    /// written. The core holds numbers and this derives the strings, so
+    /// nothing ever parses one back -- which is what lets the figure a session
+    /// was quoted and the figure it was provisioned at be the same object
+    /// rather than two things kept in step.
+    ///
+    /// A stated capacity replaces the shape's map **whole**, never key by
+    /// key. Merging would let a session run at its own memory and the
+    /// deployment's CPU, which is a shape nobody asked for; and it would let
+    /// any other key a deployment ever puts in the shape survive beside a
+    /// per-session figure. Stating a capacity is stating both figures,
+    /// because `RuntimeCapacity` cannot express half of one.
+    ///
+    /// CPU is rendered in millicores rather than reduced to whole cores:
+    /// `1500m` needs no division and has no remainder case, and the provider
+    /// reads `1000m` and `1` as the same reservation.
+    pub(crate) fn limits_for(&self, capacity: Option<RuntimeCapacity>) -> BTreeMap<String, String> {
+        match capacity {
+            Some(capacity) => BTreeMap::from([
+                ("cpu".to_string(), format!("{}m", capacity.cpu_millis)),
+                ("memory".to_string(), format!("{}Mi", capacity.memory_mib)),
+            ]),
+            None => self.resource_limits.clone(),
+        }
+    }
 }
 
 impl Default for SandboxShape {
@@ -235,13 +266,14 @@ impl HostedKernel {
         spec: &RuntimeSpec,
         env: BTreeMap<String, String>,
     ) -> Result<RuntimeHandle, AdapterError> {
+        let resource_limits = self.shape.limits_for(spec.capacity);
         let request = SandboxRequest {
             image: ImageSpec {
                 uri: self.shape.image.clone(),
             },
             entrypoint: self.shape.entrypoint.clone(),
             env,
-            resource_limits: self.shape.resource_limits.clone(),
+            resource_limits: resource_limits.clone(),
             timeout: self.shape.timeout_seconds,
             // Correlates a sandbox back to the session that owns it, so an
             // orphan can be found and reclaimed.
@@ -263,6 +295,8 @@ impl HostedKernel {
             sandbox = %sandbox.id,
             kernel = self.kernel,
             image = %self.shape.image,
+            cpu = resource_limits.get("cpu").map(String::as_str).unwrap_or("-"),
+            memory = resource_limits.get("memory").map(String::as_str).unwrap_or("-"),
             "sandbox provisioned"
         );
         let sandbox = self.await_running(&sandbox.id).await?;
