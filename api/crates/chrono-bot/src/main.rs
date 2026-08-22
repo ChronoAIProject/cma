@@ -296,6 +296,7 @@ async fn main() {
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
+            axum::http::Method::PATCH,
             axum::http::Method::DELETE,
         ]);
 
