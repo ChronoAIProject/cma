@@ -273,6 +273,43 @@ export async function listSessions(config: ResolvedConfig): Promise<readonly Ses
   return items.map(toSession);
 }
 
+/** The authenticated subject's current live-session allowance. */
+export interface SessionAllowance {
+  /** Absent when the deployment has configured no limit. */
+  readonly limit?: number;
+  readonly live: number;
+  readonly exempt: boolean;
+}
+
+/**
+ * Read the authenticated subject's advisory live-session allowance.
+ *
+ * Invalid fields fall in the permissive direction because the create or
+ * revive request remains authoritative. An older or malformed advisory
+ * response must not disable the only way to start work.
+ */
+export async function readAllowance(config: ResolvedConfig): Promise<SessionAllowance> {
+  const body = (await request(config, '/api/v1/sessions/allowance')) as {
+    limit?: unknown;
+    live?: unknown;
+    exempt?: unknown;
+  } | null;
+  const limit = positiveInteger(body?.limit);
+  return {
+    ...(limit === undefined ? {} : { limit }),
+    live: nonNegativeInteger(body?.live) ?? 0,
+    exempt: body?.exempt === true,
+  };
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 /**
  * The runtimes this deployment can start a session on, and what each can be.
  *

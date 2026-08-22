@@ -22,11 +22,18 @@
  */
 
 import { createClient, type CreateSession } from '../sdk';
-import type { KernelOffer, Session, SessionLifecycle, SessionPlane } from '../sdk';
+import type {
+  KernelOffer,
+  Session,
+  SessionAllowance,
+  SessionLifecycle,
+  SessionPlane,
+} from '../sdk';
 import { isStage, type Stage } from '../sessions/progress';
 import type { SignIn } from '../chat/conversationModel';
 
-export { ApiError, CapabilityRefused, toSession } from '../sdk';
+export { ApiError, CapabilityRefused, SessionLimitReached, toSession } from '../sdk';
+export type { SessionAllowance } from '../sdk';
 
 /**
  * The one client this app holds.
@@ -40,6 +47,11 @@ const bot = createClient();
 /** Sessions belonging to the signed-in subject, newest first. */
 export function listSessions(): Promise<readonly Session[]> {
   return bot.listSessions();
+}
+
+/** The signed-in subject's advisory live-session allowance. */
+export function readAllowance(): Promise<SessionAllowance> {
+  return bot.readAllowance();
 }
 
 /**
