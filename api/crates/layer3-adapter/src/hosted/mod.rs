@@ -21,6 +21,7 @@ mod deployment;
 mod handshake;
 mod inbound;
 mod link;
+mod loss;
 pub(super) mod turn;
 
 use std::collections::BTreeMap;
@@ -473,6 +474,10 @@ impl HostedKernel {
                 // this listing used to drop it, which is what let a dead
                 // sandbox count as a live one.
                 serving: s.is_running(),
+                // Read at the same moment liveness is, from the same object.
+                // Asking later would mean asking the provider again about a
+                // sandbox it may by then have collected.
+                lost_because: loss::loss_reason(&s),
                 handle: RuntimeHandle(s.id),
             })
             .collect())
