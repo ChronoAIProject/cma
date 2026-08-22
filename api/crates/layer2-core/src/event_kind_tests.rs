@@ -72,6 +72,12 @@ fn one_of_every_kind() -> Vec<EventKind> {
             input_tokens: 1234,
             output_tokens: 56,
             context_used: 1290,
+            context_window: Some(258_400),
+        },
+        EventKind::ContextCompacted {
+            was: 198_000,
+            now: 42_100,
+            window: Some(200_000),
         },
         EventKind::ModeChanged {
             mode: "autonomous".into(),
@@ -138,6 +144,7 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::ToolCallStarted { .. }
             | EventKind::ToolCallUpdated { .. }
             | EventKind::UsageReported { .. }
+            | EventKind::ContextCompacted { .. }
             | EventKind::ModeChanged { .. }
             | EventKind::PlanSet { .. }
             | EventKind::ConfigOptionsSet { .. }

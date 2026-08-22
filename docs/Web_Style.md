@@ -410,6 +410,27 @@ then scrolling inside itself. Its send control is a 34px circle on the business 
 runs it becomes _stop_. There is no separate interrupt button — the same seat, two meanings, which is
 the one place in the product where a control changes what it does.
 
+### Context fullness and summaries
+
+Context fullness is a quiet reading below the composer, beside usage: centred, tabular, at 12/20 in
+tertiary label ink. Absence is a fact and is never drawn as zero. A session with no `usage` grant
+draws no context reading at all, because the usage line beside it already says reporting is absent. A
+granted session with no reading yet says **Context · waiting**. A reading whose runtime stated no
+ceiling says **42.1K in context**, with no track. A reading with a ceiling says **42.1K / 200K
+context**.
+
+Only the bounded form carries a track: a neutral 2px hairline, no wider than 240px, with the rule as
+its ground and tertiary ink as its fill. A track without a ceiling would invent a limit the runtime
+never stated. The track is a `progressbar` with an accessible label and `aria-valuemin`,
+`aria-valuenow`, and `aria-valuemax`; neither length nor colour is its only account of the figure.
+
+When the agent summarises the conversation to make room, the transcript draws a neutral boundary at
+that point. With a known ceiling it says: **The agent summarised the conversation to make room. It
+was holding 198K; it now holds 42.1K of 200K.** Without one, the sentence ends after **it now holds
+42.1K.** Both readings are always present, and the bare word "compaction" is never the explanation.
+This boundary uses the ordinary rule and metadata ink, never warning, failure, or session-state
+colour: making room is a conversation fact, not a fault.
+
 ---
 
 ## 14. The terminal plane
@@ -872,3 +893,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-21 | Added a one-line caption under a band title in §17, and put it on Reaches only. The band lists slugs like `api-github-pat`; its count answers "how many" and its entries answer "which", and nothing answered "of what" — a reader had no way to tell that those were services on the identity platform rather than something this product invented. Set at `--text-meta` below the title and above the content so it reads as a caption on the band rather than as its first entry, and stated the rule that most bands do not get one, because a caption on every band is a caption nobody reads. Also corrected §17's claim that band titles are `--ink-3`: nothing in the drawer sits on that token, for the contrast reason recorded on 2026-08-21 and tracked in #441. |
 | 2026-08-21 | Let the signed-out mark bob once it has finished drawing, and carved the exception into §14a rather than leaving the sheet contradicting the rule. §14a said motion is for saying a surface changed and saying a surface is working, and that neither decorates — a looping bob is decoration, so the doc had to change deliberately or the code would have been quietly wrong. The reasoning recorded: that rule is about a working interface, where motion meaning nothing competes with motion that means something, and the signed-out screen has no state to report, nothing running and one object on it. Bounded so it does not become a licence — signed-out mark only, up and down and nothing else, never before the drawing finishes, stopping at rest under reduced motion, and on the one curve from the tokens. Put the animation on the crop rather than the artwork, because moving the artwork inside a wrapper that clips it shears the arc's apex off at the peak of every bounce; moving the wrapper takes the window and its contents together, measured at 14.2px of travel with the arc's clearance constant throughout. The lens highlight is unchanged. |
 | 2026-08-21 | Made each skill in §17's Skills band a link to its own page in the registry, opened in a new tab and labelled `name@version`. A session is a live thing somebody is working in, so the link opens away from it rather than navigating it off the surface they were using, and `target="_blank"` carries `rel="noreferrer noopener"` so the opened page holds no handle back. The version sits with the name as one label — "this session has nyxid" is not actionable without knowing which nyxid — and is omitted rather than drawn as an empty `@` when the registry reported none. Underlined on hover only, so a band of entries does not read as a paragraph of links, and the version is tabular and quieter than the name so a column of them lines up. |
+| 2026-08-22 | Added §13's context fullness and summary boundaries. The footer now distinguishes four facts instead of turning absence into zero: no context line where usage was never granted, `Context · waiting` before a granted session reports, a bare reading with no track where no ceiling was stated, and a reading against its stated ceiling with a neutral 2px progress hairline and complete progressbar semantics. Fixed the track at no more than 240px so the bounded reading stays a quiet instrument beneath the 748px conversation column rather than becoming a second page-width progress surface. A fall in the reading is now drawn where it happened as a neutral transcript boundary, in a sentence that says the agent summarised the conversation to make room and always carries both the previous and current readings; the ceiling is included only where known. Reserved warning, failure, and session-state colours from that boundary because making room is not a fault, and prohibited the bare internal word "compaction" as an explanation to the owner. |
