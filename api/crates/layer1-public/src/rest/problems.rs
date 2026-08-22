@@ -69,6 +69,13 @@ impl IntoResponse for Problem {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service-catalogue-unavailable",
             ),
+            // The document is well formed, but a sealed historical price is
+            // not something this service will rewrite. Re-reading does not
+            // make the same edit valid, so this is not a settings conflict.
+            CoreError::PriceListNotAppendOnly(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "price-list-not-append-only",
+            ),
             // Somebody else wrote first. Re-reading is the useful response,
             // which makes this a conflict rather than an invalid document.
             CoreError::SettingsConflict(_) => (StatusCode::CONFLICT, "settings-conflict"),
@@ -172,6 +179,7 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("service".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::PriceListNotAppendOnly("card rate_example changed field 'rate'".into()),
             CoreError::SettingsConflict("x".into()),
             CoreError::SettingsUnavailable("x".into()),
         ];
@@ -193,6 +201,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
                 | CoreError::SettingsUnavailable(_) => {}
             }
@@ -220,6 +229,22 @@ mod tests {
         assert_eq!(body["requested"], 8_193);
         assert_eq!(body["minimum"], 256);
         assert_eq!(body["maximum"], 8_192);
+    }
+
+    #[tokio::test]
+    async fn rewriting_a_sealed_price_is_unprocessable_and_not_a_conflict() {
+        let (status, body) = rendered(CoreError::PriceListNotAppendOnly(
+            "card rate_example changed field 'rate'".into(),
+        ))
+        .await;
+
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(body["type"]
+            .as_str()
+            .unwrap()
+            .ends_with("/price-list-not-append-only"));
+        assert_eq!(body["code"], "price_list_not_append_only");
+        assert!(body["detail"].as_str().unwrap().contains("rate_example"));
     }
 
     #[tokio::test]

@@ -88,6 +88,13 @@ impl PlatformSettingsService {
                 "this deployment stores no platform settings, so they cannot be changed".into(),
             ));
         };
+        let current = self.current().await?;
+        if current.revision == expected {
+            settings
+                .pricing
+                .sealed_against(&current.settings.pricing)
+                .map_err(|violation| CoreError::PriceListNotAppendOnly(violation.to_string()))?;
+        }
         match store.save_if_unchanged(expected, &settings).await {
             Ok(Some(stored)) => {
                 tracing::info!(
@@ -166,6 +173,7 @@ mod tests {
     use crate::ids::SubjectId;
     use crate::platform::SessionBriefing;
     use crate::store::StoreError;
+    use crate::Rate;
     use std::sync::Mutex;
 
     /// A store that holds one record, the way the real one does.
@@ -240,6 +248,13 @@ mod tests {
         }
     }
 
+    fn rate() -> Rate {
+        Rate {
+            cpu_micros_per_cpu_hour: 40_000,
+            memory_micros_per_gib_hour: 5_000,
+        }
+    }
+
     #[tokio::test]
     async fn an_unconfigured_deployment_reads_the_shipped_words() {
         // The common case, and it must not look like a failure: a deployment
@@ -285,6 +300,62 @@ mod tests {
             Some(&changed()),
             "an overwrite must be recoverable in the moment"
         );
+    }
+
+    #[tokio::test]
+    async fn an_administrator_can_add_a_rate_but_not_change_one() {
+        let store = Arc::new(FakeStore::default());
+        let svc =
+            PlatformSettingsService::new(Arc::clone(&store) as Arc<dyn PlatformSettingsStore>);
+        let mut priced = PlatformSettings::default();
+        priced.pricing = priced.pricing.appended(rate(), "2026-08-23T01:00:00Z");
+        let written = svc
+            .write(&admin(), 0, priced.clone())
+            .await
+            .expect("a first card may be appended");
+
+        let mut doctored = written.settings.clone();
+        doctored.pricing.cards[0].rate.cpu_micros_per_cpu_hour += 1;
+        let refused = svc.write(&admin(), written.revision, doctored).await;
+        let Err(CoreError::PriceListNotAppendOnly(detail)) = refused else {
+            panic!("a rewritten rate must be refused, got {refused:?}");
+        };
+        assert!(detail.contains(written.settings.pricing.cards[0].id.as_str()));
+        assert!(detail.contains("rate"));
+
+        let current = svc.read(&admin()).await.expect("the original still reads");
+        assert_eq!(current.settings.pricing, priced.pricing);
+        assert_eq!(current.revision, written.revision);
+    }
+
+    #[tokio::test]
+    async fn a_deployment_that_configures_no_price_still_reads_and_still_serves() {
+        let svc = PlatformSettingsService::unconfigured();
+        let configured = svc.read(&admin()).await.expect("defaults are readable");
+        let provisioning = svc.for_provisioning().await;
+
+        assert!(configured.settings.pricing.cards.is_empty());
+        assert!(provisioning.pricing.cards.is_empty());
+    }
+
+    #[tokio::test]
+    async fn changing_the_briefing_does_not_disturb_the_price_list() {
+        let svc = PlatformSettingsService::new(Arc::new(FakeStore::default()));
+        let mut priced = PlatformSettings::default();
+        priced.pricing = priced.pricing.appended(rate(), "2026-08-23T01:00:00Z");
+        let first = svc
+            .write(&admin(), 0, priced)
+            .await
+            .expect("the price is written");
+
+        let mut prose_changed = first.settings.clone();
+        prose_changed.briefing = changed().briefing;
+        let second = svc
+            .write(&admin(), first.revision, prose_changed)
+            .await
+            .expect("prose alone remains writable");
+
+        assert_eq!(second.settings.pricing, first.settings.pricing);
     }
 
     #[tokio::test]
