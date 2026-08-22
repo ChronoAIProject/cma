@@ -99,8 +99,8 @@ describe('one durable event may project to several frames', () => {
 describe('the paths match what the service emits', () => {
   /*
    * The list on the right was read out of `api/crates/layer1-public/src/agui/`
-   * on 2026-08-19 by listing every `"path"` the projection writes. It is the
-   * whole set, so this catches both halves of the drift that caused the
+   * on 2026-08-19, and checked again on 2026-08-23, by listing every `"path"`
+   * the projection writes. It is the whole set, so this catches both halves of the drift that caused the
    * original defect: a path declared here that nothing writes, and a path the
    * service writes that nothing here reads.
    *
@@ -115,6 +115,7 @@ describe('the paths match what the service emits', () => {
     '/mode',
     '/plan',
     '/planeChanges/-',
+    '/runtimeLosses/-',
     '/signIn',
     '/usage/contextUsed',
     '/usage/contextWindow',
