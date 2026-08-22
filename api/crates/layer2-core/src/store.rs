@@ -306,6 +306,7 @@ mod tests {
             capabilities: Default::default(),
             granted_services: None,
             granted_skills: None,
+            pricing: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }
     }

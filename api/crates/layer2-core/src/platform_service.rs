@@ -61,14 +61,23 @@ impl PlatformSettingsService {
     /// because a settings document could not be fetched would be a far worse
     /// outcome than one briefly reading the shipped words.
     pub async fn for_provisioning(&self) -> PlatformSettings {
+        self.for_provisioning_observed().await.0
+    }
+
+    /// Provisioning settings together with the failure that caused fallback.
+    ///
+    /// Kept crate-private because only creation needs to record the permanent
+    /// consequence of a transient read failure. Other provisioning readers
+    /// need only the never-failing settings value above.
+    pub(crate) async fn for_provisioning_observed(&self) -> (PlatformSettings, Option<CoreError>) {
         match self.current().await {
-            Ok(stored) => stored.settings,
+            Ok(stored) => (stored.settings, None),
             Err(e) => {
                 tracing::warn!(
                     error = %e,
                     "the platform's settings could not be read; this session gets the shipped defaults"
                 );
-                PlatformSettings::default()
+                (PlatformSettings::default(), Some(e))
             }
         }
     }

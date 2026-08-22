@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PATHS, STATE_DELTA_PATCHES, frameKey } from './wire';
+import { PATHS, PRICING_WIRE, STATE_DELTA_PATCHES, frameKey } from './wire';
 import { toEvent } from '../agui/events';
 import { toSession } from './sessions';
 import { EMPTY, reduce } from '../chat/conversation';
@@ -34,6 +34,26 @@ describe('a STATE_DELTA carries its patches under the name the service uses', ()
       return;
     }
     expect(event.patch).toHaveLength(1);
+  });
+});
+
+describe('pricing uses the names declared by the REST contract', () => {
+  it('pins the quote, create claim, and session projection in one vocabulary', () => {
+    expect(PRICING_WIRE).toEqual({
+      quotePath: '/api/v1/pricing/quote',
+      environmentProfile: 'environment_profile',
+      quotedRateCard: 'quoted_rate_card',
+      pricing: 'pricing',
+      priced: 'priced',
+      rateCard: 'rate_card',
+      currency: 'currency',
+      cpuMillis: 'cpu_millis',
+      memoryMib: 'memory_mib',
+      microsPerHour: 'micros_per_hour',
+      display: 'display',
+      per: 'per',
+      quotedAt: 'quoted_at',
+    });
   });
 });
 

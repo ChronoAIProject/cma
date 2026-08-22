@@ -1,5 +1,88 @@
 use super::*;
-use layer2_core::{RecoveryState, SessionStatus, StopReason};
+use layer2_core::{
+    AgentOptions, KernelId, Rate, RateCardId, RecoveryState, Session, SessionId, SessionPricing,
+    SessionRecord, SessionStatus, StopReason, SubjectId, TerminalGeometry,
+};
+
+fn record_with(pricing: Option<SessionPricing>) -> SessionRecord {
+    SessionRecord::new(Session {
+        id: SessionId("sesn_priced".into()),
+        owner: SubjectId("subject-priced".into()),
+        kernel: KernelId::new("example-runtime"),
+        status: SessionStatus::Ready,
+        recovery_state: RecoveryState::Normal,
+        stop_reason: None,
+        options: AgentOptions::default(),
+        environment_profile: None,
+        geometry: TerminalGeometry::default(),
+        last_seq: 7,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: None,
+        pricing,
+        created_at: "2026-08-23T04:00:00Z".into(),
+    })
+}
+
+fn pricing() -> SessionPricing {
+    SessionPricing {
+        rate_card: RateCardId("rate_exact".into()),
+        rate: Rate {
+            cpu_micros_per_cpu_hour: 40_000,
+            memory_micros_per_gib_hour: 5_000,
+        },
+        cpu_millis: 1_500,
+        memory_mib: 3_072,
+        micros_per_hour: 75_000,
+        quoted_at: "2026-08-23T03:59:59Z".into(),
+    }
+}
+
+#[test]
+fn session_pricing_round_trips_exactly() {
+    let expected = pricing();
+    let stored = to_doc(&record_with(Some(expected.clone()))).expect("price can be stored");
+    let read = from_doc(stored).expect("price can be read");
+
+    assert_eq!(read.session.pricing, Some(expected));
+}
+
+#[test]
+fn a_document_without_pricing_reads_as_unpriced() {
+    let stored = to_doc(&record_with(Some(pricing()))).expect("price can be stored");
+    let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
+    assert!(document.remove("pricing").is_some());
+    let old: SessionDoc = mongodb::bson::deserialize_from_bson(document.into()).expect("doc reads");
+
+    assert_eq!(from_doc(old).expect("old doc reads").session.pricing, None);
+}
+
+#[test]
+fn a_price_above_bson_i64_is_refused_instead_of_clamped() {
+    let mut too_large = pricing();
+    too_large.rate.cpu_micros_per_cpu_hour = i64::MAX as u64 + 1;
+
+    let error = to_doc(&record_with(Some(too_large))).expect_err("overflow must fail");
+    assert!(matches!(error, StoreError::Malformed(_)));
+    assert!(error.to_string().contains("cannot be stored"));
+}
+
+#[test]
+fn a_negative_stored_price_is_refused_instead_of_guessed() {
+    let mut stored = to_doc(&record_with(Some(pricing()))).expect("price can be stored");
+    stored
+        .pricing
+        .as_mut()
+        .expect("price is present")
+        .micros_per_hour = -1;
+
+    let error = from_doc(stored).expect_err("negative price must fail");
+    assert!(matches!(error, StoreError::Malformed(_)));
+    assert!(error.to_string().contains("stored price of -1"));
+}
 
 #[test]
 fn enums_round_trip_through_their_serde_representation() {

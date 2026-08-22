@@ -93,6 +93,7 @@ impl SessionService {
             caller_credential: None,
             runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
         };
 
         self.begin_start(id).await;
