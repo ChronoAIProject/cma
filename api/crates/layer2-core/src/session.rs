@@ -294,6 +294,12 @@ pub struct SessionSpec {
     /// way to say sends.
     #[serde(default)]
     pub requested_mode: Option<crate::options::SessionMode>,
+    /// The rate card the caller was quoted against, when they were quoted.
+    ///
+    /// `None` means the caller made no claim about a price and is not refused
+    /// for one. Clients written before pricing existed therefore keep working.
+    #[serde(default)]
+    pub quoted_rate_card: Option<crate::RateCardId>,
 }
 
 /// A session and everything the core knows about it.
@@ -398,6 +404,19 @@ pub struct Session {
     /// `None` means the grant predates this field, not that the session has no
     /// skills; the two are told apart everywhere this is read.
     pub granted_skills: Option<Vec<crate::environment::GrantedSkill>>,
+    /// What this session was priced at, settled when it was created.
+    ///
+    /// `None` is not zero and not free. It means this session was never priced,
+    /// either because it predates pricing or because its deployment had no
+    /// price list. That is a different fact from a rate of nothing, and the two
+    /// are told apart everywhere this is read.
+    ///
+    /// The card id makes the charge auditable against the list; the copied rate
+    /// makes it explainable when the list cannot be read. The list is platform
+    /// state a migration can lose; this record is what the owner is billed
+    /// against, so it carries both.
+    #[serde(default)]
+    pub pricing: Option<crate::SessionPricing>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
@@ -490,6 +509,7 @@ mod tests {
             capabilities: Default::default(),
             granted_services: None,
             granted_skills: None,
+            pricing: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
         assert!(session.is_owned_by(&owner));

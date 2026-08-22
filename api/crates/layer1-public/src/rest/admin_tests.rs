@@ -160,6 +160,7 @@ fn a_session_renders_with_its_owner_named_where_the_directory_knows_one() {
         capabilities: Default::default(),
         granted_services: None,
         granted_skills: None,
+        pricing: None,
         created_at: "2026-08-14T00:00:00Z".into(),
     };
 

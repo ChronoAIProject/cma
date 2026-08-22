@@ -7,15 +7,15 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{FromRef, Path, State},
+    extract::{FromRef, Path, Query, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, EnvironmentProfileService, PublicIdentity, Session, SessionCapabilities,
-    SessionId, SessionService, SessionSpec, TerminalGeometry, UserDirectory,
+    Caller, CoreError, EnvironmentProfileService, PublicIdentity, Quote, Session,
+    SessionCapabilities, SessionId, SessionService, SessionSpec, TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
@@ -135,6 +135,12 @@ pub struct CreateSessionRequest {
     /// the same as a bare one.
     #[serde(default)]
     environment_profile: Option<String>,
+    /// The sealed rate card returned by the quote the caller accepted.
+    ///
+    /// Optional for clients written before quoting existed. When present, the
+    /// core refuses creation if another card has come into force.
+    #[serde(default)]
+    quoted_rate_card: Option<String>,
 }
 
 /// What a create request means, once it has been checked.
@@ -142,6 +148,7 @@ pub struct CreateSessionRequest {
 pub struct CreateSessionParts {
     pub geometry: Option<TerminalGeometry>,
     pub environment_profile: Option<String>,
+    pub quoted_rate_card: Option<String>,
 }
 
 impl CreateSessionRequest {
@@ -182,7 +189,55 @@ impl CreateSessionRequest {
         Ok(CreateSessionParts {
             geometry,
             environment_profile: self.environment_profile,
+            quoted_rate_card: self.quoted_rate_card,
         })
+    }
+}
+
+/// Query parameters for pricing the deployment default or one profile.
+#[derive(Debug, Deserialize)]
+struct PricingQuoteParams {
+    #[serde(default)]
+    environment_profile: Option<String>,
+}
+
+/// A quote response, including the deliberate absence of a configured price.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum PricingQuoteView {
+    Priced(PricedQuoteView),
+    Unpriced { priced: bool },
+}
+
+#[derive(Debug, Serialize)]
+struct PricedQuoteView {
+    rate_card: String,
+    currency: &'static str,
+    cpu_millis: u32,
+    memory_mib: u32,
+    /// Decimal string so a browser never coerces money through a float.
+    micros_per_hour: String,
+    /// Rendered by the core. Clients display this verbatim.
+    display: String,
+    per: &'static str,
+    quoted_at: String,
+}
+
+impl From<Option<Quote>> for PricingQuoteView {
+    fn from(quote: Option<Quote>) -> Self {
+        match quote {
+            Some(quote) => Self::Priced(PricedQuoteView {
+                rate_card: quote.rate_card.0,
+                currency: quote.currency,
+                cpu_millis: quote.cpu_millis,
+                memory_mib: quote.memory_mib,
+                micros_per_hour: quote.micros_per_hour.to_string(),
+                display: quote.display,
+                per: "hour",
+                quoted_at: quote.quoted_at,
+            }),
+            None => Self::Unpriced { priced: false },
+        }
     }
 }
 
@@ -243,6 +298,22 @@ pub struct SessionView {
     /// it was provisioned with, so reading the profile would give the wrong
     /// answer exactly when somebody has changed one.
     reach: Vec<ReachView>,
+    /// What this session was priced at when it was created.
+    ///
+    /// Absent is not zero. It means no price was recorded, so the field is
+    /// omitted rather than inviting a client to draw a free session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pricing: Option<SessionPricingView>,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionPricingView {
+    rate_card: String,
+    currency: &'static str,
+    /// Decimal string so the full micro-USD integer survives JavaScript.
+    micros_per_hour: String,
+    display: String,
+    quoted_at: String,
 }
 
 /// How a session's agent is configured, as this interface renders it.
@@ -367,6 +438,13 @@ impl From<Session> for SessionView {
             // Empty here rather than absent: a view built without them reports
             // nothing rather than claiming a session reaches nothing.
             reach: Vec::new(),
+            pricing: s.pricing.map(|pricing| SessionPricingView {
+                rate_card: pricing.rate_card.0,
+                currency: layer2_core::CURRENCY,
+                micros_per_hour: pricing.micros_per_hour.to_string(),
+                display: layer2_core::format_usd(pricing.micros_per_hour),
+                quoted_at: pricing.quoted_at,
+            }),
         }
     }
 }
@@ -714,6 +792,7 @@ impl FromRef<SessionsState> for Arc<EnvironmentProfileService> {
 /// Routes this interface contributes.
 pub fn router(state: SessionsState) -> Router {
     Router::new()
+        .route("/api/v1/pricing/quote", get(pricing_quote))
         .route("/api/v1/sessions", post(create).get(list))
         .route("/api/v1/sessions/allowance", get(allowance::read))
         .route("/api/v1/sessions/{id}", get(read))
@@ -767,6 +846,18 @@ pub fn router(state: SessionsState) -> Router {
         .with_state(state)
 }
 
+async fn pricing_quote(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Query(params): Query<PricingQuoteParams>,
+) -> Result<Json<PricingQuoteView>, Problem> {
+    let profile = params
+        .environment_profile
+        .map(layer2_core::EnvironmentProfileId);
+    let quote = service.quote(&caller, profile.as_ref()).await?;
+    Ok(Json(quote.into()))
+}
+
 async fn create(
     State(service): State<Arc<SessionService>>,
     State(environments): State<Arc<EnvironmentProfileService>>,
@@ -805,6 +896,7 @@ async fn create(
                 // This interface takes no plane, so the profile or the
                 // deployment decides — which is what it has always done.
                 requested_mode: None,
+                quoted_rate_card: parts.quoted_rate_card.map(layer2_core::RateCardId),
             },
         )
         .await?;

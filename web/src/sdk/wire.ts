@@ -17,6 +17,30 @@
 export const STATE_DELTA_PATCHES = 'delta';
 
 /**
+ * Pricing names on the REST wire — `docs/API_REST.md` §7.
+ *
+ * Kept together before the SDK starts consuming the quote in the confirmation
+ * flow: the create claim, quote response, and pinned session projection share
+ * names, and spelling any of them locally recreates the drift this file exists
+ * to prevent.
+ */
+export const PRICING_WIRE = {
+  quotePath: '/api/v1/pricing/quote',
+  environmentProfile: 'environment_profile',
+  quotedRateCard: 'quoted_rate_card',
+  pricing: 'pricing',
+  priced: 'priced',
+  rateCard: 'rate_card',
+  currency: 'currency',
+  cpuMillis: 'cpu_millis',
+  memoryMib: 'memory_mib',
+  microsPerHour: 'micros_per_hour',
+  display: 'display',
+  per: 'per',
+  quotedAt: 'quoted_at',
+} as const;
+
+/**
  * The JSON-Pointer paths a `STATE_DELTA` writes, as the service writes them.
  *
  * `docs/API_AGUI.md`: token counts arrive as patches against `/usage`, a

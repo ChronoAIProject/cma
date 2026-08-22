@@ -21,6 +21,57 @@ pub struct Rate {
     pub memory_micros_per_gib_hour: u64,
 }
 
+impl Rate {
+    /// Price one hour of a reservation, in micro-USD.
+    ///
+    /// Memory is measured in MiB on the session and billed per GiB, so 1,024
+    /// MiB is one billed unit. Multiplication happens before division to keep
+    /// fractional cores and GiB exact; `u128` intermediates prevent a wrapped
+    /// result from becoming a plausible but wrong price.
+    pub fn micros_per_hour(&self, cpu_millis: u32, memory_mib: u32) -> Option<u64> {
+        let cpu = self.cpu_micros_per_cpu_hour as u128 * cpu_millis as u128 / 1_000;
+        let mem = self.memory_micros_per_gib_hour as u128 * memory_mib as u128 / 1_024;
+        u64::try_from(cpu + mem).ok()
+    }
+}
+
+/// A service-computed price for the size a new session will actually receive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quote {
+    pub rate_card: RateCardId,
+    pub rate: Rate,
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+    pub micros_per_hour: u64,
+    /// What a person is shown. Rendered here so no client rounds.
+    pub display: String,
+    pub currency: &'static str,
+    /// RFC 3339 in UTC.
+    pub quoted_at: String,
+}
+
+/// What a session was priced at, settled once when it was created.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionPricing {
+    pub rate_card: RateCardId,
+    pub rate: Rate,
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+    pub micros_per_hour: u64,
+    /// RFC 3339 in UTC.
+    pub quoted_at: String,
+}
+
+/// Micro-USD as the lossless string a person is shown.
+pub fn format_usd(micros: u64) -> String {
+    let dollars = micros / 1_000_000;
+    let mut fraction = format!("{:06}", micros % 1_000_000);
+    while fraction.len() > 2 && fraction.ends_with('0') {
+        fraction.pop();
+    }
+    format!("${dollars}.{fraction}")
+}
+
 /// One rate the deployment has charged under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RateCard {
@@ -204,6 +255,53 @@ mod tests {
 
     fn first_card() -> PriceList {
         PriceList::default().appended(rate(40_000, 5_000), "2026-08-23T01:00:00Z")
+    }
+
+    fn parse_display(display: &str) -> u64 {
+        let (dollars, fraction) = display
+            .strip_prefix('$')
+            .and_then(|amount| amount.split_once('.'))
+            .expect("the display is a dollar amount");
+        let padded = format!("{fraction:0<6}");
+        dollars.parse::<u64>().expect("whole dollars fit") * 1_000_000
+            + padded.parse::<u64>().expect("micro-dollars fit")
+    }
+
+    #[test]
+    fn fractional_capacity_is_priced_after_multiplication() {
+        assert_eq!(rate(40_000, 0).micros_per_hour(250, 1), Some(10_000));
+    }
+
+    #[test]
+    fn cpu_and_binary_memory_prices_are_added_exactly() {
+        assert_eq!(
+            rate(40_000, 5_000).micros_per_hour(1_000, 1_024),
+            Some(45_000)
+        );
+    }
+
+    #[test]
+    fn a_price_larger_than_u64_is_refused() {
+        assert_eq!(
+            rate(u64::MAX, u64::MAX).micros_per_hour(u32::MAX, u32::MAX),
+            None
+        );
+    }
+
+    #[test]
+    fn display_is_lossless_for_the_full_required_range() {
+        for micros in [0, 1, 45_000, 1_250_000, 40_000_000, u64::MAX] {
+            let display = format_usd(micros);
+            assert_eq!(parse_display(&display), micros, "display was {display}");
+        }
+    }
+
+    #[test]
+    fn display_keeps_two_places_without_rounding_away_micro_dollars() {
+        assert_eq!(format_usd(45_000), "$0.045");
+        assert_eq!(format_usd(1_250_000), "$1.25");
+        assert_eq!(format_usd(40_000_000), "$40.00");
+        assert_eq!(format_usd(1), "$0.000001");
     }
 
     #[test]

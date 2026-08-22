@@ -156,6 +156,7 @@ pub(super) async fn run(
                         // deployment defaulting to terminal, then refused it
                         // for lacking the ability it had just asked for.
                         requested_mode: Some(layer2_core::SessionMode::Conversation),
+                        quoted_rate_card: None,
                         // The caller's own token, for asking the platform as them. It
                         // is never what the session runs on: the core mints that.
                         caller_credential: credential.map(|axum::Extension(c)| c.0),
