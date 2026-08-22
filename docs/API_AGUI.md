@@ -183,7 +183,11 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
-**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A stretch of conversation the runtime had to drop arrives the same way, appended to `/gaps` — shown as a boundary rather than a stream that silently skips.
+**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. The current reading is written at `/usage/contextUsed`; the ceiling it is drawn from is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
+
+When the agent summarises the conversation to make room, a patch is appended to `/contextCompactions/-` with `was`, `now`, and `window` where a ceiling was stated. `window` is omitted rather than null where none is known. This is a durable boundary and precedes the lower `/usage/contextUsed` reading that revealed it, so a replay explains why the conversation became smaller instead of leaving its reader to infer that from the figures.
+
+A stretch of conversation the runtime had to drop also arrives as a state patch, appended to `/gaps` — shown as a boundary rather than a stream that silently skips.
 
 **A plane change lands there too**, appended to `/planeChanges`:
 

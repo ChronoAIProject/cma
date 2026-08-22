@@ -164,12 +164,48 @@ fn usage_arrives_as_a_state_patch_rather_than_a_call() {
         input_tokens: 412,
         output_tokens: 9,
         context_used: 1024,
+        context_window: Some(200_000),
     });
     assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
     let delta = p.events[0].body["delta"].as_array().expect("a patch list");
-    assert_eq!(delta.len(), 3);
+    assert_eq!(delta.len(), 4);
     assert_eq!(delta[0]["path"], "/usage/inputTokens");
     assert_eq!(delta[0]["value"], 412);
+    assert_eq!(delta[3]["path"], "/usage/contextWindow");
+    assert_eq!(delta[3]["value"], 200_000);
+}
+
+#[test]
+fn a_usage_report_without_a_window_does_not_erase_one() {
+    let p = projected(EventKind::UsageReported {
+        input_tokens: 412,
+        output_tokens: 9,
+        context_used: 1024,
+        context_window: None,
+    });
+    let delta = p.events[0].body["delta"].as_array().expect("a patch list");
+
+    assert_eq!(delta.len(), 3);
+    assert!(delta
+        .iter()
+        .all(|patch| patch["path"] != "/usage/contextWindow"));
+}
+
+#[test]
+fn a_context_compaction_is_appended_to_state_without_an_invented_event_kind() {
+    let p = projected(EventKind::ContextCompacted {
+        was: 198_000,
+        now: 42_100,
+        window: None,
+    });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    let patch = &p.events[0].body["delta"][0];
+    assert_eq!(patch["op"], "add");
+    assert_eq!(patch["path"], "/contextCompactions/-");
+    assert_eq!(patch["value"]["was"], 198_000);
+    assert_eq!(patch["value"]["now"], 42_100);
+    assert!(patch["value"].get("window").is_none());
 }
 
 #[test]

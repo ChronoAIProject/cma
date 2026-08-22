@@ -30,6 +30,8 @@ export const PATHS = {
   outputTokens: '/usage/outputTokens',
   /** How full the context is, as the runtime reports it. */
   contextUsed: '/usage/contextUsed',
+  /** The size of the context the reading is drawn from, where the runtime says. */
+  contextWindow: '/usage/contextWindow',
   /**
    * What the session has spent.
    *
@@ -66,6 +68,8 @@ export const PATHS = {
   planeChanges: '/planeChanges/-',
   /** Where a stretch of lost conversation is appended. */
   gaps: '/gaps/-',
+  /** Where a conversation being summarised to make room is appended. */
+  contextCompactions: '/contextCompactions/-',
 } as const;
 
 /**

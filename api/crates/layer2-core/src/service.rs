@@ -92,6 +92,17 @@ pub(crate) struct SessionEntry {
     /// Held here so the finished message can be committed at that moment
     /// rather than each piece being written down as though it were history.
     pub(crate) assembling: Option<(Option<String>, String)>,
+    /// The last context reading this runtime gave, if it has given one.
+    ///
+    /// Held per entry rather than per session on purpose: an entry is built
+    /// afresh whenever a runtime is replaced, so readings compared here come
+    /// from one runtime. A replacement counting afresh cannot be mistaken for
+    /// a conversation that got smaller.
+    ///
+    /// A control-plane restart also starts with no reading. A compaction that
+    /// spans that restart is therefore not recorded; closing that narrow gap
+    /// would require reading every session's complete event history on boot.
+    pub(crate) context_reading: Option<u64>,
     /// Decisions the runtime is blocked on, by the identifier that answers one.
     ///
     /// Held so an answer to something nothing is waiting for is refused rather
