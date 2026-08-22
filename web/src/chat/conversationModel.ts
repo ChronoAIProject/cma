@@ -154,6 +154,16 @@ export interface PendingApproval extends Interrupt {
   readonly askedAt?: string;
 }
 
+/** A runtime this session lost, as the service established it. */
+export interface RuntimeLoss {
+  readonly runtime: string;
+  /** As the service spells it, or undefined where it could establish none. */
+  readonly cause?: string;
+  /** When the service noticed — not when the runtime stopped. */
+  readonly noticedAt?: string;
+  readonly seq: number;
+}
+
 /** Everything a surface needs to draw the conversation. */
 export interface Conversation {
   readonly entries: readonly Entry[];
@@ -185,6 +195,8 @@ export interface Conversation {
    * waiting on a code its owner can no longer read.
    */
   readonly signIn?: SignIn;
+  /** The most recent runtime this session lost. */
+  readonly runtimeLoss?: RuntimeLoss;
   /** Why the last run failed, when one did. */
   readonly error?: { readonly message: string; readonly capability?: string };
   /**
@@ -289,4 +301,8 @@ export interface AvailableCommand {
   readonly description: string;
 }
 
-export const EMPTY: Conversation = { entries: [], turnInFlight: false };
+export const EMPTY: Conversation = {
+  entries: [],
+  turnInFlight: false,
+  runtimeLoss: undefined,
+};
