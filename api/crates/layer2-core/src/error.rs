@@ -103,6 +103,26 @@ pub enum CoreError {
     /// with one.
     #[error("service catalogue unavailable: {0}")]
     ServiceCatalogUnavailable(String),
+
+    /// The platform's settings were changed by somebody else since this
+    /// caller read them.
+    ///
+    /// Not a failure of theirs and not a failure of the service. Two people
+    /// with the settings page open is the ordinary case for a value that
+    /// changes rarely and is opened by whoever is asking about it, and a
+    /// last-write-wins save would discard one of them silently. Its own
+    /// variant so a client can tell "re-read and try again" from "this will
+    /// not work", which are different things to say to somebody.
+    #[error("the platform's settings changed since they were read: {0}")]
+    SettingsConflict(String),
+
+    /// The platform's settings could not be read or written.
+    ///
+    /// Distinct from a refusal: the caller may well be entitled and the
+    /// service simply cannot answer. Retrying is the right response, which is
+    /// why it is not conflated with anything that means "stop".
+    #[error("the platform's settings are unavailable: {0}")]
+    SettingsUnavailable(String),
 }
 
 impl CoreError {
@@ -125,6 +145,8 @@ impl CoreError {
             Self::InvalidRequest(_) => "invalid_request",
             Self::ServiceNotGranted(_) => "service_not_granted",
             Self::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+            Self::SettingsConflict(_) => "settings_conflict",
+            Self::SettingsUnavailable(_) => "settings_unavailable",
         }
     }
 }
@@ -134,27 +156,70 @@ mod tests {
     use super::*;
     use crate::terminal::TerminalGeometry;
 
+    /// Every variant, and the compiler is what says so.
+    ///
+    /// The list below used to be maintained by hand and was already three
+    /// variants short — `RuntimeRefused` and both settings failures were
+    /// missing, so the uniqueness test passed while covering twelve of
+    /// fifteen. A test that looks like a guard and is not one is worse than no
+    /// test: it is the reason nobody checked.
+    ///
+    /// This match exists to fail compilation. A variant added to `CoreError`
+    /// cannot reach `main` until somebody has come here and given it a sample,
+    /// which is the same trick `wire_name` uses in `entitlements.rs` and for
+    /// the same reason.
+    fn every_variant() -> Vec<CoreError> {
+        let all = vec![
+            CoreError::SessionNotFound,
+            CoreError::EnvironmentProfileNotFound,
+            CoreError::Forbidden,
+            CoreError::SessionTerminated,
+            CoreError::AlreadyAttached,
+            CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails")),
+            CoreError::RuntimeUnavailable("x".into()),
+            CoreError::RuntimeRefused("x".into()),
+            CoreError::InvalidState,
+            CoreError::CapabilityUnsupported("terminal".into()),
+            CoreError::InvalidRequest("x".into()),
+            CoreError::ServiceNotGranted("api-github".into()),
+            CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::SettingsConflict("x".into()),
+            CoreError::SettingsUnavailable("x".into()),
+        ];
+        // Exhaustive on purpose. Adding a variant to `CoreError` breaks this
+        // match, and the fix is to add it to the list above — which is the
+        // whole point.
+        for e in &all {
+            match e {
+                CoreError::SessionNotFound
+                | CoreError::EnvironmentProfileNotFound
+                | CoreError::Forbidden
+                | CoreError::SessionTerminated
+                | CoreError::AlreadyAttached
+                | CoreError::InvalidGeometry(_)
+                | CoreError::RuntimeUnavailable(_)
+                | CoreError::RuntimeRefused(_)
+                | CoreError::InvalidState
+                | CoreError::CapabilityUnsupported(_)
+                | CoreError::InvalidRequest(_)
+                | CoreError::ServiceNotGranted(_)
+                | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::SettingsConflict(_)
+                | CoreError::SettingsUnavailable(_) => {}
+            }
+        }
+        all
+    }
+
     #[test]
     fn every_variant_has_a_distinct_code() {
-        let codes = [
-            CoreError::SessionNotFound.code(),
-            CoreError::EnvironmentProfileNotFound.code(),
-            CoreError::Forbidden.code(),
-            CoreError::SessionTerminated.code(),
-            CoreError::AlreadyAttached.code(),
-            CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails"))
-                .code(),
-            CoreError::RuntimeUnavailable("x".into()).code(),
-            CoreError::InvalidState.code(),
-            CoreError::CapabilityUnsupported("terminal".into()).code(),
-            CoreError::InvalidRequest("x".into()).code(),
-            CoreError::ServiceNotGranted("api-github".into()).code(),
-            CoreError::ServiceCatalogUnavailable("down".into()).code(),
-        ];
-        let mut sorted = codes.to_vec();
+        let codes: Vec<&'static str> = every_variant().iter().map(CoreError::code).collect();
+        let mut sorted = codes.clone();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), codes.len(), "codes must be unique: {codes:?}");
+        // And none of them blank, which a hand-written arm can silently be.
+        assert!(codes.iter().all(|c| !c.is_empty()), "{codes:?}");
     }
 
     #[test]
