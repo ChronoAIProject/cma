@@ -8,12 +8,13 @@
 
 #![allow(clippy::items_after_test_module)]
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::*;
 use crate::supervisor;
-use crate::{RuntimeCapacity, RuntimeSpec, TermSize};
+use crate::{RuntimeCapacity, RuntimeLossReason, RuntimeSpec, TermSize};
 use std::{num::NonZeroU32, sync::Arc};
 
 /// A hosted kernel talking to a provider at `base`.
@@ -25,6 +26,36 @@ fn hosted(base: &str) -> HostedKernel {
         ".codex/skills",
         "AGENTS.md",
     )
+}
+
+/// Serve one provider listing response and then stop.
+async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the provider fixture binds");
+    let address = listener.local_addr().expect("the fixture has an address");
+    let body = body.to_string();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("the fixture accepts");
+        let mut request = Vec::new();
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let mut chunk = [0_u8; 1024];
+            let read = stream.read(&mut chunk).await.expect("the fixture reads");
+            assert!(read > 0, "the client sent complete request headers");
+            request.extend_from_slice(&chunk[..read]);
+        }
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("the fixture responds");
+        stream.shutdown().await.expect("the fixture closes");
+    });
+    (format!("http://{address}"), server)
 }
 
 /// A provisioning request for a session with nothing carried into it.
@@ -175,6 +206,38 @@ async fn provisioning_against_a_dead_provider_reports_unavailable() {
         .await
         .expect_err("must fail against a dead provider");
     assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
+    let (base, server) = listing_provider(serde_json::json!({
+        "items": [{
+            "id": "sbx-stopped",
+            "status": {"state": "Failed", "reason": "Error"},
+            "metadata": {
+                "chrono-bot/session": "sesn_x",
+                "chrono-bot/control-plane": "test-plane"
+            }
+        }],
+        "pagination": {
+            "page": 1,
+            "pageSize": 100,
+            "totalItems": 1,
+            "totalPages": 1,
+            "hasNextPage": false
+        }
+    }))
+    .await;
+
+    let listed = hosted(&base)
+        .list_runtimes()
+        .await
+        .expect("the provider listing is usable");
+    server.await.expect("the provider fixture completes");
+
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].serving);
+    assert_eq!(listed[0].lost_because, Some(RuntimeLossReason::Failed));
 }
 
 #[tokio::test]
