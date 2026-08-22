@@ -69,6 +69,9 @@ impl IntoResponse for Problem {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service-catalogue-unavailable",
             ),
+            // The same request succeeds after the caller re-quotes. Time alone
+            // does not clear it, so this is a conflict rather than a rate limit.
+            CoreError::PriceChanged { .. } => (StatusCode::CONFLICT, "price-changed"),
             // The document is well formed, but a sealed historical price is
             // not something this service will rewrite. Re-reading does not
             // make the same edit valid, so this is not a settings conflict.
@@ -100,6 +103,10 @@ impl IntoResponse for Problem {
                 CoreError::SessionLimitReached { limit, live } => {
                     object.insert("limit".into(), (*limit).into());
                     object.insert("live".into(), (*live).into());
+                }
+                CoreError::PriceChanged { quoted, in_force } => {
+                    object.insert("quoted_rate_card".into(), quoted.clone().into());
+                    object.insert("rate_card".into(), in_force.clone().into());
                 }
                 _ => {}
             }
@@ -179,6 +186,10 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("service".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::PriceChanged {
+                quoted: "rate_old".into(),
+                in_force: "rate_new".into(),
+            },
             CoreError::PriceListNotAppendOnly("card rate_example changed field 'rate'".into()),
             CoreError::SettingsConflict("x".into()),
             CoreError::SettingsUnavailable("x".into()),
@@ -201,6 +212,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
                 | CoreError::SettingsUnavailable(_) => {}
@@ -245,6 +257,34 @@ mod tests {
             .ends_with("/price-list-not-append-only"));
         assert_eq!(body["code"], "price_list_not_append_only");
         assert!(body["detail"].as_str().unwrap().contains("rate_example"));
+    }
+
+    #[tokio::test]
+    async fn a_changed_price_is_a_conflict_with_both_card_ids() {
+        let (status, body) = rendered(CoreError::PriceChanged {
+            quoted: "rate_old".into(),
+            in_force: "rate_new".into(),
+        })
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["type"].as_str().unwrap().ends_with("/price-changed"));
+        assert_eq!(body["code"], "price_changed");
+        assert_eq!(body["quoted_rate_card"], "rate_old");
+        assert_eq!(body["rate_card"], "rate_new");
+    }
+
+    #[tokio::test]
+    async fn price_card_fields_are_absent_from_every_other_problem() {
+        for error in every_variant() {
+            if matches!(error, CoreError::PriceChanged { .. }) {
+                continue;
+            }
+            let (_, body) = rendered(error).await;
+            for field in ["quoted_rate_card", "rate_card"] {
+                assert!(body.get(field).is_none(), "unexpected {field} in {body}");
+            }
+        }
     }
 
     #[tokio::test]
