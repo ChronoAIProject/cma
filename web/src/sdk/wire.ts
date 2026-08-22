@@ -26,6 +26,7 @@ export const STATE_DELTA_PATCHES = 'delta';
  */
 export const PRICING_WIRE = {
   quotePath: '/api/v1/pricing/quote',
+  spend: 'spend',
   environmentProfile: 'environment_profile',
   quotedRateCard: 'quoted_rate_card',
   pricing: 'pricing',
@@ -35,7 +36,11 @@ export const PRICING_WIRE = {
   cpuMillis: 'cpu_millis',
   memoryMib: 'memory_mib',
   microsPerHour: 'micros_per_hour',
+  accruedMicros: 'accrued_micros',
   display: 'display',
+  billableSeconds: 'billable_seconds',
+  accruing: 'accruing',
+  unboundedIntervals: 'unbounded_intervals',
   per: 'per',
   quotedAt: 'quoted_at',
 } as const;
