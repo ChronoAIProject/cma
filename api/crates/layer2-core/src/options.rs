@@ -145,6 +145,13 @@ pub struct AgentOptions {
     pub permission: PermissionMode,
     #[serde(default)]
     pub credential: CredentialMode,
+    /// How much this session reserves.
+    ///
+    /// `None` means this deployment's own reservation. The value is copied
+    /// from the profile at creation and stays on the session so profile edits
+    /// cannot resize it during a revive or rotation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<crate::size::SessionSize>,
     /// Whether a session's tool bodies — the arguments and results a tool call
     /// carries — are recorded in its durable log.
     ///
@@ -250,6 +257,7 @@ mod tests {
             reasoning_effort: ReasoningEffort::High,
             permission: PermissionMode::Unrestricted,
             credential: CredentialMode::Own,
+            size: Some(crate::size::SessionSize::new(1_500, 3_072).unwrap()),
             record_tool_bodies: true,
         };
         let json = serde_json::to_string(&o).expect("serialises");

@@ -372,6 +372,7 @@ fn a_view_carries_the_agent_configuration_a_client_draws() {
             reasoning_effort: layer2_core::ReasoningEffort::XHigh,
             permission: layer2_core::PermissionMode::Unrestricted,
             credential: layer2_core::CredentialMode::Own,
+            size: Some(layer2_core::SessionSize::new(1_500, 3_072).expect("valid size")),
             ..Default::default()
         },
         environment_profile: None,
@@ -396,6 +397,8 @@ fn a_view_carries_the_agent_configuration_a_client_draws() {
     assert_eq!(json["agent"]["reasoning_effort"], "x_high");
     assert_eq!(json["agent"]["permission"], "unrestricted");
     assert_eq!(json["agent"]["credential"], "own");
+    assert_eq!(json["agent"]["size"]["cpu_millis"], 1_500);
+    assert_eq!(json["agent"]["size"]["memory_mib"], 3_072);
     assert_eq!(json["agent"]["skills"][0]["id"], "skl_nyxid");
     // The version that arrived, recorded when the pack was fetched. Asking the
     // registry now would answer with whatever is current, which is a different

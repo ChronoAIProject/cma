@@ -23,14 +23,14 @@ pub struct Config {
     pub sandbox_api_key: String,
     /// Image each sandbox runs.
     pub sandbox_image: String,
-    /// CPU each sandbox reserves, in Kubernetes quantity form.
+    /// CPU a sandbox reserves when its session names no size, in Kubernetes quantity form.
     ///
     /// Configuration rather than a constant because it decides how many
     /// sessions a deployment can run at once: the namespace has a quota, and
     /// this figure divides into it. Sizing that from a rebuild means a session
     /// nobody can start until an image ships.
     pub sandbox_cpu: String,
-    /// Memory each sandbox reserves, in Kubernetes quantity form.
+    /// Memory a sandbox reserves when its session names no size, in Kubernetes quantity form.
     ///
     /// The tighter of the two in practice. The agent is what runs here, and
     /// an allowance it cannot work within is not a smaller session but a
@@ -154,10 +154,10 @@ impl Config {
             "http://example-host-02.example-namespace.svc.cluster.local",
         );
         let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
-        // What one session costs the namespace quota. Read as opaque strings
-        // and handed to the provider unchanged: these are Kubernetes
-        // quantities, and parsing them here would only add a way to be wrong
-        // about a syntax this service does not own.
+        // What a sandbox costs the namespace quota when its session names no
+        // size. Read as opaque strings and handed to the provider unchanged:
+        // these are Kubernetes quantities, and parsing them here would only
+        // add a way to be wrong about a syntax this service does not own.
         let sandbox_cpu = var_or("CHRONO_SANDBOX_CPU", "1");
         let sandbox_memory = var_or("CHRONO_SANDBOX_MEMORY", "1Gi");
         // How the agent is told to continue a conversation rather than start
@@ -194,6 +194,11 @@ impl Config {
             reasoning_effort: parse_enum("CHRONO_DEFAULT_AGENT_EFFORT", "high")?,
             permission: parse_enum("CHRONO_DEFAULT_AGENT_PERMISSION", "guarded")?,
             credential: parse_enum("CHRONO_DEFAULT_AGENT_CREDENTIAL", "delegated")?,
+            // No key for this, deliberately. `None` already means
+            // CHRONO_SANDBOX_CPU / CHRONO_SANDBOX_MEMORY, so a
+            // CHRONO_DEFAULT_AGENT_SIZE would be a second way to say the same
+            // thing that could disagree with the first.
+            size: None,
             record_tool_bodies: false,
             // The baseline skills are what every session carries anyway, so a
             // profile-less session carries exactly them and nothing else.
