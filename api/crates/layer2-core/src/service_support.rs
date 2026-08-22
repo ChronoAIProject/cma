@@ -126,6 +126,36 @@ pub(crate) fn service_on_version(
     service
 }
 
+/// A versioned service over a particular set of environment profiles.
+///
+/// Used where an upgrade must prove it carries a choice frozen from a profile
+/// rather than resolving that profile again on the replacement runtime.
+pub(crate) fn service_with_environments_on_version(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    environments: Arc<crate::environment_service::EnvironmentProfileService>,
+    version: &str,
+) -> Arc<SessionService> {
+    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        crate::service::SessionPorts::default(),
+        environments,
+        Deployment {
+            runtime_version: Some(version.to_string()),
+            ..owned()
+        },
+    );
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
 /// A service that can supply an owner's credential without the owner present.
 pub(crate) fn service_with_credentials(
     store: Arc<FakeStore>,

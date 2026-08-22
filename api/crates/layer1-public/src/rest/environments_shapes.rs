@@ -11,9 +11,9 @@
 //! the core's own `Debug` keeps them out of a log elsewhere.
 
 use layer2_core::{
-    AgentConfiguration, CatalogSkill, CredentialMode, EnvironmentProfile,
+    AgentConfiguration, CatalogSkill, CoreError, CredentialMode, EnvironmentProfile,
     EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentVariable, KernelId,
-    PermissionMode, ReasoningEffort, ServiceId, SessionMode, SkillId, SoftwarePackage,
+    PermissionMode, ReasoningEffort, ServiceId, SessionMode, SessionSize, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +95,9 @@ pub struct AgentBody {
     /// Whose model access it spends.
     #[serde(default)]
     pub credential: Option<CredentialMode>,
+    /// How much a session from this profile reserves.
+    #[serde(default)]
+    pub size: Option<SizeBody>,
     /// Whether a session's tool bodies are recorded in its durable log.
     #[serde(default)]
     pub record_tool_bodies: Option<bool>,
@@ -103,9 +106,22 @@ pub struct AgentBody {
     pub skills: Vec<String>,
 }
 
-impl From<ProfileRequest> for EnvironmentProfileSpec {
-    fn from(body: ProfileRequest) -> Self {
-        Self {
+/// A requested session size, as a caller supplies it.
+///
+/// Two integers with their units in their names. A field called `cpu` carrying
+/// `1` is ambiguous between one core and one millicore, and the two differ by a
+/// factor of a thousand.
+#[derive(Debug, Deserialize)]
+pub struct SizeBody {
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+}
+
+impl TryFrom<ProfileRequest> for EnvironmentProfileSpec {
+    type Error = CoreError;
+
+    fn try_from(body: ProfileRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
             name: body.name,
             agent_notes: body.agent_notes,
             variables: body
@@ -133,6 +149,11 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 permission: body.agent.permission.unwrap_or_default(),
                 record_tool_bodies: body.agent.record_tool_bodies.unwrap_or_default(),
                 credential: body.agent.credential.unwrap_or_default(),
+                size: body
+                    .agent
+                    .size
+                    .map(|s| SessionSize::new(s.cpu_millis, s.memory_mib))
+                    .transpose()?,
                 skills: body.agent.skills.into_iter().map(SkillId::new).collect(),
             },
             services: body
@@ -141,7 +162,7 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 .into_iter()
                 .map(ServiceId::new)
                 .collect(),
-        }
+        })
     }
 }
 
@@ -159,6 +180,8 @@ pub struct AgentView {
     reasoning_effort: ReasoningEffort,
     permission: PermissionMode,
     credential: CredentialMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<SessionSize>,
     skills: Vec<String>,
 }
 
@@ -238,6 +261,7 @@ impl ProfileView {
                 reasoning_effort: profile.agent.reasoning_effort,
                 permission: profile.agent.permission,
                 credential: profile.agent.credential,
+                size: profile.agent.size,
                 skills: profile.agent.skills.into_iter().map(|s| s.0).collect(),
             },
             nyxid: NyxIdView {
