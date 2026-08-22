@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeSpec, TerminalChannel,
+    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeLossReason, RuntimeSpec,
+    TerminalChannel,
 };
 use tokio::sync::{mpsc, Mutex};
 
@@ -46,6 +47,8 @@ pub(crate) struct FakeAdapter {
     /// sandbox. A test that merely removes the handle is describing a
     /// different failure — one the census already handled.
     pub(crate) stopped: Mutex<std::collections::HashSet<String>>,
+    /// Why a stopped runtime stopped, where the provider named a reason.
+    pub(crate) stopped_because: Mutex<HashMap<String, RuntimeLossReason>>,
     /// The identity this provider reports on everything it is running.
     ///
     /// Set to model a provider shared with another control plane, whose
@@ -114,6 +117,7 @@ impl Default for FakeAdapter {
             running: Mutex::default(),
             refuse_list: false,
             stopped: Mutex::default(),
+            stopped_because: Mutex::default(),
             created_by: None,
             last_spec: Mutex::default(),
             issued: std::sync::atomic::AtomicUsize::new(0),
@@ -153,6 +157,18 @@ impl FakeAdapter {
     /// that killed a session on production while looking perfectly healthy.
     pub(crate) async fn stop_serving(&self, handle: &str) {
         self.stopped.lock().await.insert(handle.to_string());
+    }
+
+    /// The sandbox stops serving, and the provider says why.
+    ///
+    /// Separate from `stop_serving` so the two facts stay separable: a
+    /// provider that stops a sandbox and names nothing is a real case.
+    pub(crate) async fn stop_serving_because(&self, handle: &str, why: RuntimeLossReason) {
+        self.stop_serving(handle).await;
+        self.stopped_because
+            .lock()
+            .await
+            .insert(handle.to_string(), why);
     }
 
     pub(crate) async fn running_count(&self) -> usize {
@@ -323,6 +339,7 @@ impl KernelAdapter for FakeAdapter {
         }
         // Both locks taken before the map, because the closure cannot await.
         let stopped = self.stopped.lock().await.clone();
+        let stopped_because = self.stopped_because.lock().await.clone();
         Ok(self
             .running
             .lock()
@@ -336,7 +353,31 @@ impl KernelAdapter for FakeAdapter {
                 // existing test keeps describing a healthy sandbox and only a
                 // test that asks for a dead one gets one.
                 serving: !stopped.contains(h),
+                lost_because: stopped_because.get(h).copied(),
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_stopped_fake_runtime_can_carry_the_providers_verdict() {
+        let adapter = FakeAdapter::default();
+        adapter
+            .running
+            .lock()
+            .await
+            .insert("sbx-dead".to_string(), Some("sesn_x".to_string()));
+        adapter
+            .stop_serving_because("sbx-dead", RuntimeLossReason::Displaced)
+            .await;
+
+        let listed = adapter.list_runtimes().await.expect("the fake can list");
+        assert_eq!(listed.len(), 1);
+        assert!(!listed[0].serving);
+        assert_eq!(listed[0].lost_because, Some(RuntimeLossReason::Displaced));
     }
 }
