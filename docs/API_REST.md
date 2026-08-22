@@ -405,7 +405,7 @@ Requires the `usage` capability. Not every kernel reports token counts, and one 
 
 `input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall when the agent summarises the conversation to make room. Each such fall is recorded as a durable `context_compacted` event carrying the previous reading, the new reading and the stated ceiling where one is known.
 
-Monetary accounting is not served here yet. When it is, amounts will be **integer strings in minor units** — `"412"` is $4.12 — never floats.
+Monetary accounting is not served here yet. When it is, amounts will be **integer strings in micro-USD** — `"412"` is $0.000412 — never floats.
 
 ---
 
