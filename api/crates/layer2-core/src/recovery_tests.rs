@@ -12,10 +12,34 @@
 
 use std::sync::Arc;
 
+use layer3_adapter::RuntimeLossReason;
+
+use crate::event::EventKind;
+use crate::ids::SessionId;
 use crate::service::Deployment;
-use crate::session::{SessionStatus, StopReason};
+use crate::session::{RecoveryState, RuntimeLossCause, SessionStatus, StopReason};
 use crate::store::SessionStore;
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+
+/// Runtime losses in one session's log, in sequence order.
+async fn runtime_losses(
+    store: &FakeStore,
+    id: &SessionId,
+) -> Vec<(u64, String, Option<RuntimeLossCause>)> {
+    store
+        .events_since(id, 0)
+        .await
+        .expect("the event log is readable")
+        .into_iter()
+        .filter_map(|stored| {
+            let seq = stored.seq;
+            match stored.into_known()?.kind {
+                EventKind::RuntimeLost { runtime_id, cause } => Some((seq, runtime_id, cause)),
+                _ => None,
+            }
+        })
+        .collect()
+}
 
 #[tokio::test]
 async fn a_running_session_survives_the_control_plane_restarting() {
@@ -113,6 +137,267 @@ async fn a_session_whose_sandbox_stopped_serving_is_given_another() {
         SessionStatus::Ready,
         "and the session comes back usable rather than being left to rot"
     );
+}
+
+#[tokio::test]
+async fn a_runtime_lost_while_no_process_was_serving_is_still_recorded() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+
+    drop(first);
+    adapter
+        .stop_serving_because(&dead, RuntimeLossReason::OutOfMemory)
+        .await;
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let moved = restarted.reconcile().await;
+
+    assert_eq!(moved.lost_runtimes, 1);
+    let losses = runtime_losses(&store, &created.id).await;
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].1, dead);
+    assert_eq!(losses[0].2, Some(RuntimeLossCause::OutOfMemory));
+}
+
+#[tokio::test]
+async fn a_runtime_lost_under_the_process_serving_it_is_recorded_too() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let running = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = running
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&running, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+
+    adapter
+        .stop_serving_because(&dead, RuntimeLossReason::Failed)
+        .await;
+    running.reconcile().await;
+
+    let losses = runtime_losses(&store, &created.id).await;
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].1, dead);
+    assert_eq!(losses[0].2, Some(RuntimeLossCause::Failed));
+}
+
+#[tokio::test]
+async fn a_lost_runtime_the_provider_said_nothing_about_still_records_the_loss() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+
+    adapter.lose(&dead).await;
+    first.reconcile().await;
+
+    let losses = runtime_losses(&store, &created.id).await;
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].1, dead);
+    assert_eq!(losses[0].2, None, "silence is not an unknown verdict");
+}
+
+#[tokio::test]
+async fn the_loss_is_recorded_before_the_replacement_is_started() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let running = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = running
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&running, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+
+    adapter.lose(&dead).await;
+    running.reconcile().await;
+    await_settled(&running, &alice, &created.id).await;
+
+    let events = store
+        .events_since(&created.id, 0)
+        .await
+        .expect("the event log is readable");
+    let loss_seq = events
+        .iter()
+        .find_map(|event| {
+            matches!(
+                &event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeLost { .. })
+            )
+            .then_some(event.seq)
+        })
+        .expect("the loss is recorded");
+    let replacement_ready = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            crate::event::StoredEventKind::Known(EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                ..
+            }) if event.seq > loss_seq => Some(event.seq),
+            _ => None,
+        })
+        .expect("the replacement becomes ready");
+    assert!(loss_seq < replacement_ready);
+}
+
+#[tokio::test]
+async fn a_session_that_never_had_a_runtime_records_no_loss() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    let old = record.runtime_id.take().expect("had a runtime");
+    record.session.status = SessionStatus::Provisioning;
+    store.upsert(&record).await.expect("the fixture is updated");
+    adapter.lose(&old).await;
+    drop(first);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    restarted.reconcile().await;
+
+    assert!(runtime_losses(&store, &created.id).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_runtime_that_stays_lost_is_recorded_once() {
+    let store = Arc::new(FakeStore::default());
+    let original = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let first = service(Arc::clone(&store), Arc::clone(&original));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    drop(first);
+
+    let unavailable = Arc::new(FakeAdapter {
+        refuse_provision: true,
+        ..FakeAdapter::default()
+    });
+    unavailable
+        .running
+        .lock()
+        .await
+        .insert(dead.clone(), Some(created.id.0.clone()));
+    unavailable
+        .stop_serving_because(&dead, RuntimeLossReason::Displaced)
+        .await;
+    let restarted = service(Arc::clone(&store), Arc::clone(&unavailable));
+
+    restarted.reconcile().await;
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readable")
+            .expect("present")
+            .runtime_id,
+        None
+    );
+    restarted.reconcile().await;
+    assert_eq!(runtime_losses(&store, &created.id).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_session_being_restored_is_not_reported_as_normal() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let running = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = running
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&running, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present")
+        .runtime_id
+        .expect("has a runtime");
+    adapter.lose(&dead).await;
+    adapter
+        .fail_first
+        .store(3, std::sync::atomic::Ordering::SeqCst);
+
+    running.reconcile().await;
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readable")
+            .expect("present")
+            .session
+            .recovery_state,
+        RecoveryState::Recovering
+    );
+    let settled = await_settled(&running, &alice, &created.id).await;
+    assert_eq!(settled.recovery_state, RecoveryState::Normal);
+    let mut durable_state = None;
+    for _ in 0..100 {
+        durable_state = Some(
+            store
+                .get(&created.id)
+                .await
+                .expect("readable")
+                .expect("present")
+                .session
+                .recovery_state,
+        );
+        if durable_state == Some(RecoveryState::Normal) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(durable_state, Some(RecoveryState::Normal));
 }
 
 #[tokio::test]
@@ -315,7 +600,7 @@ async fn the_deployment_that_owns_the_provider_still_reclaims_orphans() {
 }
 
 #[tokio::test]
-async fn a_provider_that_cannot_be_asked_changes_nothing() {
+async fn a_provider_that_cannot_be_asked_records_no_loss() {
     // The dangerous reading of silence. An enumeration that fails says nothing
     // about what is running, and treating it as "nothing is running" would tear
     // down or replace every live session at once.
@@ -359,6 +644,10 @@ async fn a_provider_that_cannot_be_asked_changes_nothing() {
     assert_eq!(
         recovered.readopted_sessions, 1,
         "attaching answers what enumeration could not, so the session comes back"
+    );
+    assert!(
+        runtime_losses(&store, &created.id).await.is_empty(),
+        "not knowing the provider state is not evidence of a loss"
     );
 }
 
