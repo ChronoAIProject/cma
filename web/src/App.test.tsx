@@ -165,6 +165,9 @@ beforeEach(() => {
         }
         return json(200, allowanceAnswer);
       }
+      if (url.includes('/api/v1/pricing/quote')) {
+        return json(200, { priced: false });
+      }
       if (url.endsWith('/api/v1/sessions') && (init?.method ?? 'GET') === 'GET') {
         // Empty unless a test seeded a fleet, which is the fresh-owner case.
         return json(200, { sessions: listing });
@@ -239,6 +242,7 @@ async function waitForConsole() {
  */
 async function startSession(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /new session/i }));
+  await user.click(await screen.findByRole('button', { name: /^continue$/i }));
   await user.click(await screen.findByRole('button', { name: /start session/i }));
 }
 
