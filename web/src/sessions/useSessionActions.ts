@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import {
+  ApiError,
   changePlane,
   createSession,
   deleteSession,
@@ -67,7 +68,7 @@ interface SessionActionHandles {
 
 export interface SessionActions {
   /** Start a session and put it at the head of the list. */
-  readonly start: (environmentProfile?: string | null) => Promise<void>;
+  readonly start: (environmentProfile?: string | null, quotedRateCard?: string) => Promise<void>;
   /** Release the sandbox, keeping the session readable and revivable. */
   readonly endSession: (id: string) => Promise<void>;
   /** Give a stopped session a sandbox again, under the same identifier. */
@@ -93,17 +94,28 @@ export function useSessionActions({
   refreshAllowance,
 }: SessionActionHandles): SessionActions {
   const start = useCallback(
-    async (environmentProfile: string | null = null) => {
+    async (environmentProfile: string | null = null, quotedRateCard?: string) => {
       setNotice(null);
       try {
         // Returns as soon as the session exists, before its runtime does, so the
         // tab appears immediately and reports its own progress.
-        const session = await createSession(INITIAL_COLS, INITIAL_ROWS, environmentProfile);
+        const session = await createSession(
+          INITIAL_COLS,
+          INITIAL_ROWS,
+          environmentProfile,
+          quotedRateCard,
+        );
         setSessions((prev) => [session, ...prev]);
         select(session.id);
         setOpeningForId((prev) => prev ?? session.id);
       } catch (cause) {
-        report(cause, 'Starting a session failed.', 'No session was created.');
+        // A changed price belongs in the still-open confirmation card, where a
+        // fresh quote can be shown. Reporting it behind that card would leave a
+        // stale failure notice after the owner accepts the new rate.
+        if (!(cause instanceof ApiError && cause.code === 'price_changed')) {
+          report(cause, 'Starting a session failed.', 'No session was created.');
+        }
+        throw cause;
       } finally {
         refreshAllowance();
       }

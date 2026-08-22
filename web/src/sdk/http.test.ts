@@ -272,6 +272,7 @@ describe('what comes back', () => {
     );
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).not.toBeInstanceOf(SessionLimitReached);
+    expect((failure as ApiError).code).toBe('session_terminated');
   });
 
   it('keeps malformed session-limit numbers absent', async () => {

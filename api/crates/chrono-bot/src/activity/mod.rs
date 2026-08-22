@@ -31,7 +31,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use layer1_public::{ActedUpon, AuthenticatedSubject};
+use layer1_public::{ActedUpon, AuthenticatedSubject, SettingsTouched};
 use layer2_core::{
     ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, DetailKey, SubjectId,
 };
@@ -119,6 +119,14 @@ pub async fn record(
     // reason somebody reads this back.
     if let Some(ActedUpon(subject)) = response.extensions().get::<ActedUpon>() {
         detail.record(DetailKey::Subject, subject.as_str());
+    }
+    if let Some(touched) = response.extensions().get::<SettingsTouched>() {
+        if !touched.changed.is_empty() {
+            detail.record(DetailKey::Setting, touched.changed.join(","));
+        }
+        if let Some(card) = &touched.rate_card {
+            detail.record(DetailKey::RateCard, card.clone());
+        }
     }
     store(&recorder, &classified, actor, detail, outcome).await;
     response

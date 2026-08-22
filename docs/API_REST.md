@@ -487,7 +487,73 @@ Requires the `usage` capability. Not every kernel reports token counts, and one 
 
 `input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall when the agent summarises the conversation to make room. Each such fall is recorded as a durable `context_compacted` event carrying the previous reading, the new reading and the stated ceiling where one is known.
 
-Accrued monetary accounting is not served here yet. Price quotes and pinned session prices use **integer strings in micro-USD** — `"412"` is $0.000412 — never floats.
+### Reserved-capacity spend
+
+```http
+GET /api/v1/sessions/{id}/spend
+```
+
+This owner-only route reads what the session has accrued at the rate pinned
+when it was created. It is separate from `/usage`: this is the deployment's
+charge for reserved CPU and memory, while token usage and any model-vendor cost
+describe a different service and may be billed to a different party.
+
+A priced session returns:
+
+```json
+{
+  "priced": true,
+  "rate_card": "rate_9f2c4d71",
+  "currency": "USD",
+  "micros_per_hour": "45000",
+  "accrued_micros": "22500",
+  "display": "$0.0225",
+  "billable_seconds": 1800,
+  "accruing": true,
+  "unbounded_intervals": 0
+}
+```
+
+`micros_per_hour` and `accrued_micros` are decimal strings in micro-USD;
+`display` is rendered by the service from the same pinned integer and is what a
+client shows verbatim. The ledger has one-second resolution. It combines all
+billable seconds before dividing by 3,600, so the one final floor rounds toward
+the owner instead of losing a fraction independently at every transition.
+
+The charge is for the session's recorded reservation, not sampled CPU or
+memory utilisation. Requests and limits are the same at the provider boundary,
+but the provider does not echo the capacity it applied, so this service cannot
+claim that measured or provider-confirmed capacity is being billed. A rotation
+is one continuous session interval and overlapping runtimes cannot count a
+second twice.
+
+Accrual begins when the session first becomes `ready`. It remains open while
+the session is `ready`, `running`, `rotating`, or waiting for its owner to
+resolve an approval. Provisioning time and time after an owner stops or
+terminates the session are not charged. A sandbox that has died continues to
+accrue while the durable history still says the session holds capacity; the
+ledger stops only when the loss produces a durable closing transition. It does
+not infer a bill from transient provider observations.
+
+An interval with an absent, malformed, pre-creation, or future bound is skipped
+rather than guessed. `unbounded_intervals` counts those omissions. A non-zero
+value means the displayed figure covers less than the session's whole durable
+life and must not be presented as complete.
+
+A session created before pricing was recorded, or while no card was configured,
+returns exactly the non-monetary shape below. It is not a zero charge:
+
+```json
+{
+  "priced": false,
+  "accruing": false,
+  "unbounded_intervals": 0
+}
+```
+
+Price quotes, pinned session rates, and accrued amounts use micro-USD; `"412"`
+means $0.000412, never $4.12. Monetary values on the quote and spend routes are
+decimal strings, never binary floating-point numbers.
 
 ---
 
@@ -668,7 +734,7 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 | `chrono-bot:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
 | `chrono-bot:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
 | `chrono-bot:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
-| `chrono-bot:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
+| `chrono-bot:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
 
@@ -686,11 +752,12 @@ Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the 
 
 ```http
 GET   /api/v1/admin/settings
+PUT   /api/v1/admin/settings
 PATCH /api/v1/admin/settings
 POST  /api/v1/admin/settings/reset
 ```
 
-All three routes require `chrono-bot:admin:settings`, which appears to clients
+All four routes require `chrono-bot:admin:settings`, which appears to clients
 as the `configure_platform` capability. The product wildcard `chrono-bot:*`
 grants it. A signed-in caller without it receives `403` with a problem type
 ending `/not-an-operator`; these routes name no protected identifier, so they
@@ -715,6 +782,7 @@ exists:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
       "max_cpu_millis": 4000,
@@ -732,6 +800,7 @@ exists:
       "reach_none": "No services are available to this session.",
       "after": []
     },
+    "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 500,
       "max_cpu_millis": 3000,
@@ -746,7 +815,63 @@ exists:
 An untouched deployment answers at revision `0` with the shipped settings and
 omits `previous`. `previous` has no revision of its own and is not an automatic
 rollback: it is the full object available for inspection or recovery. To
-restore it, send its values in a PATCH together with the current revision.
+restore its PATCH-editable values, send them in a PATCH together with the
+current revision. Pricing history cannot be rolled back; a later rate is
+represented by another sealed card.
+
+`PUT` is a conditional replacement of the complete settings document. It is
+the route used to configure pricing, because a price card is durable history
+and is never treated as an ordinary field-level edit. Start from the complete
+`settings` object returned by `GET`, retain every existing card byte-for-byte
+and in order, and send it under `settings` with the revision that was read:
+
+```http
+PUT /api/v1/admin/settings
+Content-Type: application/json
+
+{
+  "expected_revision": 12,
+  "settings": {
+    "briefing": {
+      "before": ["# Working in this session"],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": []
+    },
+    "pricing": {
+      "cards": [
+        {
+          "id": "rate_9f2c4d71",
+          "effective_from": "2026-08-23T05:00:00Z",
+          "rate": {
+            "cpu_micros_per_cpu_hour": 40000,
+            "memory_micros_per_gib_hour": 5000
+          },
+          "retired_at": null
+        }
+      ]
+    },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 4
+  }
+}
+```
+
+The only currency is USD. The two rate figures are integer micro-USD per
+reserved CPU-hour and per reserved GiB-hour. An empty `cards` array means the
+deployment has configured no price, not a zero rate. A legitimate price change
+retires the current card and appends exactly one new card; the outgoing
+`retired_at` and incoming `effective_from` are the same instant. Existing cards
+cannot be removed, reordered, reopened, or have their timestamps or rates
+edited. Such a document is refused as `422 price_list_not_append_only` and the
+stored list remains unchanged.
 
 `PATCH` is conditional and setting-granular. Every request includes
 `expected_revision` and at least one setting. A setting that is omitted stays
@@ -797,6 +922,7 @@ as `GET`. The object it replaced becomes `previous`:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
       "max_cpu_millis": 4000,
@@ -817,6 +943,7 @@ as `GET`. The object it replaced becomes `previous`:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
       "max_cpu_millis": 4000,
@@ -828,7 +955,8 @@ as `GET`. The object it replaced becomes `previous`:
 }
 ```
 
-The three settings have distinct replacement rules:
+The three settings accepted by `PATCH` have distinct replacement rules.
+`pricing` is accepted only inside the complete document sent to `PUT`:
 
 | Setting         | PATCH rule                                                                                                                                                                                                                                                                       |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -864,7 +992,7 @@ The empty body below is not a valid no-op and returns `422 invalid_request`:
 Unknown fields are also refused. A malformed settings body never echoes the
 administrator's prose in its problem response.
 
-Every write is optimistic. A PATCH or reset whose `expected_revision` is no
+Every write is optimistic. A PUT, PATCH, or reset whose `expected_revision` is no
 longer current changes nothing and returns:
 
 ```http
@@ -884,6 +1012,14 @@ On `settings_conflict`, read again and let the operator choose whether to load
 the current values or retain their draft and explicitly repeat the write
 against the new revision. A client must not silently retry with last-write-wins
 semantics.
+
+On a deployment with no settings store, `GET` still returns the shipped
+defaults at revision `0`; `PUT`, `PATCH`, and reset return `503
+settings_unavailable` rather than claiming an unwritten change succeeded. A
+configured store that cannot be read or written uses the same 503 code. These
+write routes return the 403 `not-an-operator` refusal described above when the
+caller lacks `configure_platform`, and a stale revision always returns the 409
+`settings_conflict` response without changing the stored document.
 
 Reset restores only the shipped briefing. It preserves the current size bounds
 and live-session limit, increments the revision, and records the complete
@@ -932,6 +1068,15 @@ GET /api/v1/admin/activity?actor=76fe9d91&limit=100
 ```
 
 Every request the control plane serves is recorded: who, when, what, with which parameters, and how it came out. `outcome` is one of `succeeded`, `denied` (turned away), `rejected` (sent something unusable), `failed` (our fault). `actor` is absent when the request carried no established identity — a refused caller is recorded precisely because they were refused.
+
+Settings reads are recorded as `platform_settings_read`; successful `PUT` and
+`PATCH` requests, and their refusals, are `platform_settings_write`. The reset
+route retains its more specific `platform_settings_reset` action. A successful
+write may carry `detail.setting`, a comma-joined list in declaration order of
+the settings that actually changed, such as `"briefing,pricing"`. When pricing
+changed it may also carry `detail.rate_card`, the identifier of the newly
+in-force sealed card. A no-op write invents neither detail. These entries never
+copy a rate, a monetary amount, or any administrator-authored briefing prose.
 
 **`detail` never contains a secret.** What may be recorded is an allowlist in the core, and there is no key in it for an environment variable's value, a credential, a token, a cookie or a header. A bundle of variables is described by how many it carried, never by what they were. Newest first; `limit` is clamped by the service. Entries expire on a schedule the deployment sets (`CHRONO_ACTIVITY_RETENTION_DAYS`, ninety days by default).
 

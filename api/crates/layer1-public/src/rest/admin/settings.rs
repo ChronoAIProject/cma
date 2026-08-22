@@ -22,7 +22,7 @@ use layer2_core::{
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::AdminProblem;
-use crate::auth::AuthenticatedCaller;
+use crate::auth::{AuthenticatedCaller, SettingsTouched};
 use crate::rest::ConfidentialBodyProblem;
 
 /// The two exact paths owned by this module remain in the parent surface's
@@ -30,7 +30,10 @@ use crate::rest::ConfidentialBodyProblem;
 /// restrict.
 pub(super) fn router(service: Arc<PlatformSettingsService>) -> Router {
     Router::new()
-        .route(super::OPERATOR_ROUTES[6], get(read).patch(change))
+        .route(
+            super::OPERATOR_ROUTES[6],
+            get(read).put(replace).patch(change),
+        )
         .route(super::OPERATOR_ROUTES[7], post(reset))
         .with_state(service)
 }
@@ -148,6 +151,14 @@ struct ChangeRequest {
     live_sessions: PatchField<NonZeroU32>,
 }
 
+/// A conditional replacement of the complete settings document.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplaceRequest {
+    expected_revision: u64,
+    settings: PlatformSettings,
+}
+
 impl ChangeRequest {
     fn apply(self, mut settings: PlatformSettings) -> Result<(u64, PlatformSettings), CoreError> {
         if matches!(&self.briefing, PatchField::Missing)
@@ -234,27 +245,59 @@ async fn change(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     body: Result<Json<ChangeRequest>, axum::extract::rejection::JsonRejection>,
-) -> Result<Json<SettingsView>, SettingsFailure> {
+) -> Result<Response, SettingsFailure> {
     let Json(body) = body?;
     let current = service.read(&caller).await?;
+    let previous = current.settings.clone();
     let (expected, replacement) = body.apply(current.settings)?;
-    Ok(Json(
-        service.write(&caller, expected, replacement).await?.into(),
-    ))
+    let stored = service.write(&caller, expected, replacement).await?;
+    Ok(changed_response(stored, &previous))
+}
+
+async fn replace(
+    State(service): State<Arc<PlatformSettingsService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    body: Result<Json<ReplaceRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, SettingsFailure> {
+    let Json(body) = body?;
+    let previous = service.read(&caller).await?.settings;
+    let stored = service
+        .write(&caller, body.expected_revision, body.settings)
+        .await?;
+    Ok(changed_response(stored, &previous))
 }
 
 async fn reset(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     body: Result<Json<ResetRequest>, axum::extract::rejection::JsonRejection>,
-) -> Result<Json<SettingsView>, SettingsFailure> {
+) -> Result<Response, SettingsFailure> {
     let Json(body) = body?;
-    Ok(Json(
-        service
-            .reset_briefing(&caller, body.expected_revision)
-            .await?
-            .into(),
-    ))
+    let previous = service.read(&caller).await?.settings;
+    let stored = service
+        .reset_briefing(&caller, body.expected_revision)
+        .await?;
+    Ok(changed_response(stored, &previous))
+}
+
+/// Render a successful write and carry the facts only its handler can know.
+fn changed_response(stored: StoredSettings, previous: &PlatformSettings) -> Response {
+    let changed = stored.settings.changed_from(previous);
+    let rate_card = changed
+        .contains(&"pricing")
+        .then(|| {
+            stored
+                .settings
+                .pricing
+                .in_force()
+                .map(|card| card.id.0.clone())
+        })
+        .flatten();
+    let mut response = Json(SettingsView::from(stored)).into_response();
+    response
+        .extensions_mut()
+        .insert(SettingsTouched { changed, rate_card });
+    response
 }
 
 #[cfg(test)]

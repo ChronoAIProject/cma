@@ -14,6 +14,7 @@ import type {
 import { kernelLabel, planeRefusal, PLANES } from './kernels';
 import './NewSessionDialog.css';
 import type { KernelOffer, SessionPlane } from './types';
+import { ApiError, type PricingQuote } from '../sdk';
 
 /**
  * The choice made when a session starts.
@@ -49,7 +50,9 @@ interface NewSessionDialogProps {
    * which agent, which plane, how freely it acts, and what it carries. A
    * profile authored here is saved first, so this always names a stored one.
    */
-  readonly onStart: (environmentProfile: string | null) => void;
+  readonly onStart: (environmentProfile: string | null, quotedRateCard?: string) => Promise<void>;
+  /** Read the exact hourly rate this profile would pin. */
+  readonly quote: (environmentProfile: string | null) => Promise<PricingQuote>;
   /**
    * Environment bundles this person can start a session with.
    *
@@ -77,6 +80,7 @@ export function NewSessionDialog({
   open,
   onCancel,
   onStart,
+  quote: readQuote,
   profiles = [],
   kernels = [],
   store,
@@ -98,28 +102,42 @@ export function NewSessionDialog({
   const preferred = profiles.find((candidate) => candidate.preferred)?.id ?? '';
   const [profile, setProfile] = useState<string>(preferred);
   const [opened, setOpened] = useState(open);
+  const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
+  const [catalogue, setCatalogue] = useState<ServiceCatalogue | undefined>(undefined);
+  const [skills, setSkills] = useState<SkillCatalogue | undefined>(undefined);
+  const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
+  const [servicesError, setServicesError] = useState<string | undefined>(undefined);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [step, setStep] = useState<'choose' | 'confirm'>('choose');
+  const [quoted, setQuoted] = useState<PricingQuote | undefined>(undefined);
+  const [quoteError, setQuoteError] = useState<string | undefined>(undefined);
+  const [priceChanged, setPriceChanged] = useState(false);
+  const [confirmedProfile, setConfirmedProfile] = useState<string | null>(null);
+  const [savedProfile, setSavedProfile] = useState<EnvironmentProfile | undefined>(undefined);
   if (opened !== open) {
     setOpened(open);
     if (open) {
       // Opening is when the choice starts, so it starts from the preference —
       // and a choice made in a previous opening does not survive into this one.
       setProfile(preferred);
+      setStep('choose');
+      setQuoted(undefined);
+      setQuoteError(undefined);
+      setPriceChanged(false);
+      setConfirmedProfile(null);
+      setSavedProfile(undefined);
+      setError(undefined);
     }
   }
-  const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
-  const [catalogue, setCatalogue] = useState<ServiceCatalogue | undefined>(undefined);
   /*
    * The skill registry, read alongside the services for the same reason and
    * failing the same way: a registry that cannot be listed is recoverable, and
    * everything else on the form still works.
    */
-  const [skills, setSkills] = useState<SkillCatalogue | undefined>(undefined);
-  const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
-  const [servicesError, setServicesError] = useState<string | undefined>(undefined);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
   const profileLabelId = useId();
   const noRuntimesId = useId();
+  const priceReasonId = useId();
 
   const authoring = profile === AUTHOR;
 
@@ -179,35 +197,75 @@ export function NewSessionDialog({
     ? planeRefusal(kernels, draft.agent.kernel, draft.agent.mode)
     : undefined;
 
-  function start(): void {
-    if (!authoring) {
-      onStart(profile === '' ? null : profile);
-      return;
+  async function quoteFor(environmentProfile: string | null): Promise<void> {
+    try {
+      setQuoted(await readQuote(environmentProfile));
+      setQuoteError(undefined);
+    } catch (cause) {
+      setQuoted(undefined);
+      setQuoteError(message(cause, 'The price could not be read.'));
     }
-    const problem = validate(draft);
-    if (problem !== null) {
-      setError(problem);
+  }
+
+  async function continueToConfirmation(): Promise<void> {
+    setSaving(true);
+    setError(undefined);
+    setPriceChanged(false);
+
+    let selected = profile === '' ? null : profile;
+    if (authoring) {
+      const problem = validate(draft);
+      if (problem !== null) {
+        setError(problem);
+        setSaving(false);
+        return;
+      }
+      /*
+       * Saved before the quote is read. The profile determines the size being
+       * priced, so quoting the draft would be a second source of truth. Keeping
+       * the dialog open on failure also preserves everything just authored.
+       */
+      let created = savedProfile;
+      if (created === undefined) {
+        try {
+          created = await store.create(draft);
+          setSavedProfile(created);
+          onProfileCreated?.(created);
+        } catch (cause) {
+          setError(message(cause, 'The profile could not be saved.'));
+          setSaving(false);
+          return;
+        }
+      }
+      selected = created.id;
+    }
+
+    setConfirmedProfile(selected);
+    await quoteFor(selected);
+    setStep('confirm');
+    setSaving(false);
+  }
+
+  async function start(): Promise<void> {
+    if (quoted === undefined || quoteError !== undefined) {
       return;
     }
     setSaving(true);
     setError(undefined);
-    /*
-     * Saved before the session is started, and the dialog stays open if that
-     * fails. Closing on a failure would lose the name and the services the
-     * person just chose, which is the detour this form exists to remove.
-     */
-    store
-      .create(draft)
-      .then((created) => {
-        onProfileCreated?.(created);
-        onStart(created.id);
-      })
-      .catch((cause: unknown) => {
-        setError(message(cause, 'The profile could not be saved.'));
-      })
-      .finally(() => {
-        setSaving(false);
-      });
+    try {
+      await onStart(confirmedProfile, quoted.priced ? quoted.rateCard : undefined);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'price_changed') {
+        await quoteFor(confirmedProfile);
+        // Do not call the accepted figure "new" while the replacement quote
+        // is still in flight. The alert appears only with the refresh result.
+        setPriceChanged(true);
+      } else {
+        setError(message(cause, 'The session could not be started.'));
+      }
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -222,21 +280,46 @@ export function NewSessionDialog({
       placement={authoring ? 'modal--widest' : 'modal--wide'}
       onClose={onCancel}
       footer={
-        <>
-          {/*
-           * Short here and named in full beside the control that caused it:
-           * §7 states a disabled key's reason once per row, as a sibling of
-           * the keys it explains, and the same sentence in both places reads
-           * as two problems.
-           */}
-          {refusal === undefined ? null : (
-            <span className="control-reason">The agent cannot serve this plane</span>
-          )}
-          <Button onClick={onCancel}>Cancel</Button>
-          <Button variant="primary" disabled={saving || refusal !== undefined} onClick={start}>
-            {saving ? 'Starting' : 'Start session'}
-          </Button>
-        </>
+        step === 'choose' ? (
+          <>
+            {refusal === undefined ? null : (
+              <span className="control-reason">The agent cannot serve this plane</span>
+            )}
+            <Button onClick={onCancel}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={saving || refusal !== undefined}
+              onClick={() => void continueToConfirmation()}
+            >
+              {saving ? 'Reading price' : 'Continue'}
+            </Button>
+          </>
+        ) : (
+          <>
+            {quoteError === undefined ? null : (
+              <span className="control-reason" id={priceReasonId}>
+                The price could not be read
+              </span>
+            )}
+            <Button
+              onClick={() => {
+                setStep('choose');
+                setPriceChanged(false);
+                setError(undefined);
+              }}
+            >
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              disabled={saving || quoted === undefined || quoteError !== undefined}
+              aria-describedby={quoteError === undefined ? undefined : priceReasonId}
+              onClick={() => void start()}
+            >
+              {saving ? 'Starting' : 'Start session'}
+            </Button>
+          </>
+        )
       }
     >
       {error === undefined ? null : (
@@ -245,96 +328,133 @@ export function NewSessionDialog({
         </p>
       )}
 
-      <div className="field">
-        <span className="field__label" id={profileLabelId}>
-          Environment profile
-        </span>
-        {/*
-         * "None" is not "bare". A session that names no profile is started the
-         * way this deployment says an unqualified session should be — which
-         * agent, which model, how freely it acts — so this chooses between
-         * described sessions rather than between something and nothing.
-         */}
-        {/*
-         * The picker lists only what a session can be started from, and the
-         * authoring entry is a button beside it rather than a last option
-         * inside it. A picker's options are alternatives to each other;
-         * authoring is not an alternative to a profile — choosing it opened a
-         * form while choosing anything else started a session, which is why
-         * it alone needed a disabled state and a reason of its own.
-         */}
-        <div className="profilerow">
-          <Picker
-            placement="profilerow__picker"
-            label="Environment profile"
-            value={profile}
-            options={[
-              { value: '', label: "This deployment's defaults" },
-              ...profiles.map((p) => ({ value: p.id, label: p.name })),
-            ]}
-            onChange={setProfile}
-          />
-          {authoring ? null : (
-            <Button
-              disabled={kernels.length === 0}
-              aria-describedby={kernels.length === 0 ? noRuntimesId : undefined}
-              onClick={() => {
-                setProfile(AUTHOR);
-              }}
-            >
-              New environment profile
-            </Button>
-          )}
-        </div>
-        {/*
-         * §7: a disabled key states its reason beside it. Choosing a runtime
-         * blind is how somebody fills a form in and then learns the deployment
-         * could not tell them what it runs.
-         */}
-        {authoring || kernels.length > 0 ? null : (
-          <span className="control-reason" id={noRuntimesId}>
-            This deployment&rsquo;s runtimes could not be read
-          </span>
-        )}
-        <span className="field__hint">
-          The whole description of the session: the agent and how it behaves, the software it
-          carries, and the variables it is started with.
-        </span>
-        {chosen === undefined ? null : (
-          <span className="field__hint">
-            Starts a {planeWord(chosen.agent.mode)} session on {kernelLabel(chosen.agent.kernel)}.
-          </span>
-        )}
-      </div>
+      {step === 'choose' ? (
+        <>
+          <div className="field">
+            <span className="field__label" id={profileLabelId}>
+              Environment profile
+            </span>
+            {/*
+             * "None" is not "bare". A session that names no profile is started the
+             * way this deployment says an unqualified session should be — which
+             * agent, which model, how freely it acts — so this chooses between
+             * described sessions rather than between something and nothing.
+             */}
+            {/*
+             * The picker lists only what a session can be started from, and the
+             * authoring entry is a button beside it rather than a last option
+             * inside it. A picker's options are alternatives to each other;
+             * authoring is not an alternative to a profile — choosing it opened a
+             * form while choosing anything else started a session, which is why
+             * it alone needed a disabled state and a reason of its own.
+             */}
+            <div className="profilerow">
+              <Picker
+                placement="profilerow__picker"
+                label="Environment profile"
+                value={profile}
+                options={[
+                  { value: '', label: "This deployment's defaults" },
+                  ...profiles.map((p) => ({ value: p.id, label: p.name })),
+                ]}
+                onChange={(next) => {
+                  setProfile(next);
+                  setSavedProfile(undefined);
+                }}
+              />
+              {authoring ? null : (
+                <Button
+                  disabled={kernels.length === 0}
+                  aria-describedby={kernels.length === 0 ? noRuntimesId : undefined}
+                  onClick={() => {
+                    setProfile(AUTHOR);
+                  }}
+                >
+                  New environment profile
+                </Button>
+              )}
+            </div>
+            {/*
+             * §7: a disabled key states its reason beside it. Choosing a runtime
+             * blind is how somebody fills a form in and then learns the deployment
+             * could not tell them what it runs.
+             */}
+            {authoring || kernels.length > 0 ? null : (
+              <span className="control-reason" id={noRuntimesId}>
+                This deployment&rsquo;s runtimes could not be read
+              </span>
+            )}
+            <span className="field__hint">
+              The whole description of the session: the agent and how it behaves, the software it
+              carries, and the variables it is started with.
+            </span>
+            {chosen === undefined ? null : (
+              <span className="field__hint">
+                Starts a {planeWord(chosen.agent.mode)} session on{' '}
+                {kernelLabel(chosen.agent.kernel)}.
+              </span>
+            )}
+          </div>
 
-      {/*
-       * The real editor, not a smaller copy of it.
-       *
-       * This carried its own form of three fields — a name, an agent and the
-       * services it reaches — while a profile has an agent configuration, a
-       * skill set, its NyxID access and its environment variables. Somebody
-       * authoring one here got a profile they then had to go and finish
-       * somewhere else, and the two forms had to be kept in step by hand.
-       *
-       * One form, in both places. What it can express is what a profile is.
-       *
-       * It is given no `error`: this dialog draws the save failure once at its
-       * head, above whichever half of it is showing, and the editor works out
-       * the agent's own refusal for itself. Handing it either drew the same
-       * sentence twice.
-       */}
-      {!authoring ? null : (
-        <ProfileEditor
-          draft={draft}
-          onChange={setDraft}
-          kernels={kernels}
-          skills={skills?.skills ?? []}
-          skillsError={skillsError}
-          services={catalogue?.services ?? []}
-          mandatoryServices={catalogue?.mandatory ?? []}
-          servicesError={servicesError}
-          mandatory={skills?.mandatory ?? NOTHING_MANDATED}
-        />
+          {/*
+           * The real editor, not a smaller copy of it.
+           *
+           * This carried its own form of three fields — a name, an agent and the
+           * services it reaches — while a profile has an agent configuration, a
+           * skill set, its NyxID access and its environment variables. Somebody
+           * authoring one here got a profile they then had to go and finish
+           * somewhere else, and the two forms had to be kept in step by hand.
+           *
+           * One form, in both places. What it can express is what a profile is.
+           *
+           * It is given no `error`: this dialog draws the save failure once at its
+           * head, above whichever half of it is showing, and the editor works out
+           * the agent's own refusal for itself. Handing it either drew the same
+           * sentence twice.
+           */}
+          {!authoring ? null : (
+            <ProfileEditor
+              draft={draft}
+              onChange={(next) => {
+                setDraft(next);
+                setSavedProfile(undefined);
+              }}
+              kernels={kernels}
+              skills={skills?.skills ?? []}
+              skillsError={skillsError}
+              services={catalogue?.services ?? []}
+              mandatoryServices={catalogue?.mandatory ?? []}
+              servicesError={servicesError}
+              mandatory={skills?.mandatory ?? NOTHING_MANDATED}
+            />
+          )}
+        </>
+      ) : (
+        <div className="sessionconfirmation">
+          {priceChanged ? (
+            <p className="sessionconfirmation__changed" role="alert">
+              {quoted === undefined ? (
+                'The price changed. The new price could not be read.'
+              ) : quoted.priced ? (
+                <>
+                  The price changed. The new rate is <strong>{quoted.display}</strong> per hour.
+                </>
+              ) : (
+                'The price changed. This deployment has not set a price.'
+              )}
+            </p>
+          ) : null}
+          {quoted === undefined ? null : quoted.priced ? (
+            <p className="sessionconfirmation__price">
+              This session accrues <strong>{quoted.display}</strong> per hour while it is running.
+            </p>
+          ) : (
+            <p className="sessionconfirmation__price">
+              This deployment has not set a price. This session will not accrue a charge.
+            </p>
+          )}
+          {quoteError === undefined ? null : <p className="field__hint">{quoteError}</p>}
+        </div>
       )}
     </Modal>
   );
