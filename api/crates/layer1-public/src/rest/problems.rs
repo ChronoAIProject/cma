@@ -1,7 +1,7 @@
 //! RFC 9457 projection of the core's error vocabulary.
 
 use axum::{
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -97,7 +97,12 @@ impl IntoResponse for Problem {
                 _ => {}
             }
         }
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json"),
+        );
+        response
     }
 }
 
@@ -242,6 +247,17 @@ mod tests {
         assert_eq!(body["code"], "session_limit_reached");
         assert_eq!(body["limit"], 3);
         assert_eq!(body["live"], 4);
+    }
+
+    #[test]
+    fn a_problem_document_uses_its_registered_media_type() {
+        let response =
+            Problem(CoreError::SessionLimitReached { limit: 1, live: 1 }).into_response();
+
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/problem+json"))
+        );
     }
 
     #[tokio::test]
