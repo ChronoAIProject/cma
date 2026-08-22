@@ -34,6 +34,7 @@ mod limits;
 mod log;
 mod platform;
 pub mod platform_service;
+mod pricing;
 mod provision;
 mod provision_failure;
 mod reading;
@@ -120,12 +121,14 @@ pub use environment::{
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
-pub use ids::EnvironmentProfileId;
-pub use ids::{KernelId, SessionId, SubjectId};
+pub use ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
 pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
-pub use platform::{CapacityBounds, OutOfBounds, PlatformSettings, SessionBriefing, SizeDimension};
+pub use platform::{
+    CapacityBounds, OutOfBounds, PlatformSettings, PriceList, PriceListViolation, Rate, RateCard,
+    RateCardId, SessionBriefing, SizeDimension, CURRENCY,
+};
 pub use platform_service::PlatformSettingsService;
 pub use reconcile::Reclaimed;
 pub use service::{

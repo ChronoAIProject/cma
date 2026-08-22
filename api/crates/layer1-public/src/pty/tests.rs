@@ -178,6 +178,10 @@ fn each_remaining_failure_has_its_own_code() {
         error_code(&CoreError::RuntimeUnavailable("x".into())),
         "runtime_unavailable"
     );
+    assert_eq!(
+        error_code(&CoreError::PriceListNotAppendOnly("x".into())),
+        "price_list_not_append_only"
+    );
 }
 
 #[test]
