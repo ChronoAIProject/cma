@@ -45,6 +45,29 @@ impl SessionService {
         }
     }
 
+    /// The caller's current live-session allowance.
+    ///
+    /// Advisory: asking again on create or revive is the authority. This read
+    /// exists so a client can avoid offering an action that is currently known
+    /// to fail. It is always scoped to the caller's own subject; an operator's
+    /// cross-subject read grant does not turn this into somebody else's quota.
+    pub async fn session_allowance(
+        &self,
+        caller: &Caller,
+    ) -> Result<crate::SessionAllowance, CoreError> {
+        let settings = self.settings.for_provisioning().await;
+        let live = self
+            .store
+            .count_live_for(&caller.subject)
+            .await
+            .map_err(store_failed)?;
+        Ok(crate::SessionAllowance {
+            limit: settings.live_sessions.map(|limit| limit.get()),
+            live,
+            exempt: caller.authorization.allows(Capability::ExceedSessionLimit),
+        })
+    }
+
     /// Every session there is, whoever owns it.
     ///
     /// Distinct from `list_sessions` in two ways that matter to whoever is

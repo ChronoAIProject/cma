@@ -19,6 +19,7 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod allowance;
 mod events;
 mod operate;
 mod problems;
@@ -620,10 +621,7 @@ pub mod admin;
 
 /// What the session routes are served from.
 ///
-/// Two services rather than one because a session names the person who started
-/// it, and a subject identifier is the wrong thing to put in front of anybody.
-/// Composed with `FromRef` so a handler that does not name anyone keeps asking
-/// for exactly what it uses.
+/// The session service and collaborators used to render its public view.
 #[derive(Clone)]
 pub struct SessionsState {
     /// Sessions and the runtimes serving them.
@@ -672,6 +670,7 @@ impl FromRef<SessionsState> for Arc<EnvironmentProfileService> {
 pub fn router(state: SessionsState) -> Router {
     Router::new()
         .route("/api/v1/sessions", post(create).get(list))
+        .route("/api/v1/sessions/allowance", get(allowance::read))
         .route("/api/v1/sessions/{id}", get(read))
         // Two distinct verbs: ending a session leaves it listed, removing it
         // does not. Collapsing them would make "stop this" and "forget this"
