@@ -59,6 +59,9 @@ mod service_support;
 mod test_support;
 
 #[cfg(test)]
+mod capacity_bounds_service_tests;
+
+#[cfg(test)]
 #[path = "persistence_tests.rs"]
 mod persistence_tests;
 

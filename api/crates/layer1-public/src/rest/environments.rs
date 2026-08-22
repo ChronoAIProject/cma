@@ -250,6 +250,7 @@ mod tests {
             None,
             None,
             Default::default(),
+            Arc::new(layer2_core::PlatformSettingsService::unconfigured()),
         )
     }
 
@@ -402,6 +403,7 @@ mod tests {
             None,
             None,
             Default::default(),
+            Arc::new(layer2_core::PlatformSettingsService::unconfigured()),
         );
         let caller = layer2_core::Caller::new(
             SubjectId("subject-a".into()),

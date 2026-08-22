@@ -17,6 +17,11 @@ use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{EnvironmentProfileId, SubjectId};
 use crate::store::{EnvironmentProfileStore, StoreError};
 
+/// The shipped policy, for tests whose subject is not platform configuration.
+pub(crate) fn unconfigured_settings() -> Arc<crate::PlatformSettingsService> {
+    Arc::new(crate::PlatformSettingsService::unconfigured())
+}
+
 /// Environment profiles held in memory, shared between service instances.
 ///
 /// Shareable for the same reason the session store is: two services over one
@@ -193,6 +198,7 @@ pub(crate) fn service_catalog_service(
         None,
         catalog.map(|c| c as Arc<dyn crate::environment::ServiceCatalog>),
         fake_agent(),
+        unconfigured_settings(),
     )
 }
 
@@ -207,7 +213,14 @@ pub(crate) fn baseline() -> Baseline {
 
 /// A profile service over the given store, with the standard baseline.
 pub(crate) fn environments(store: Arc<FakeProfileStore>) -> Arc<EnvironmentProfileService> {
-    EnvironmentProfileService::new(store, baseline(), None, None, fake_agent())
+    EnvironmentProfileService::new(
+        store,
+        baseline(),
+        None,
+        None,
+        fake_agent(),
+        unconfigured_settings(),
+    )
 }
 
 /// A profile service wired to a catalogue.
@@ -224,6 +237,7 @@ pub(crate) fn catalog_service(catalog: Arc<FakeSkillCatalog>) -> Arc<Environment
             kernel: crate::ids::KernelId::new("fake"),
             ..Default::default()
         },
+        unconfigured_settings(),
     )
 }
 

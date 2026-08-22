@@ -24,7 +24,11 @@ use crate::environment::{
 };
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
+use crate::platform_service::PlatformSettingsService;
 use crate::store::{EnvironmentProfileStore, StoreError};
+
+#[path = "environment_warnings.rs"]
+mod warnings;
 
 /// Reusable environment bundles, and what a session is started with.
 pub struct EnvironmentProfileService {
@@ -46,6 +50,8 @@ pub struct EnvironmentProfileService {
     /// there is simply no list to choose from. That is a degraded picker, not a
     /// broken session.
     catalog: Option<Arc<dyn SkillCatalog>>,
+    /// Deployment policy consulted only to warn about a stated profile size.
+    settings: Arc<PlatformSettingsService>,
 }
 
 impl EnvironmentProfileService {
@@ -56,6 +62,7 @@ impl EnvironmentProfileService {
         catalog: Option<Arc<dyn SkillCatalog>>,
         services: Option<Arc<dyn crate::environment::ServiceCatalog>>,
         default_agent: AgentConfiguration,
+        settings: Arc<PlatformSettingsService>,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
@@ -63,6 +70,7 @@ impl EnvironmentProfileService {
             catalog,
             services,
             default_agent,
+            settings,
         })
     }
 
@@ -174,40 +182,6 @@ impl EnvironmentProfileService {
             }
         }
         Ok(())
-    }
-
-    /// Note a selection the catalogue does not currently grant.
-    ///
-    /// A warning and never a refusal. Refusing here would turn a momentary
-    /// NyxID outage into a caller unable to save a profile, and would refuse a
-    /// selection that may well be granted by the time a session is started
-    /// from it. The provision-time check is the one that decides; this exists
-    /// so the decision is not first heard about minutes later.
-    async fn warn_ungranted(
-        &self,
-        caller: &Caller,
-        credential: Option<&str>,
-        selected: &[crate::environment::ServiceId],
-    ) {
-        let Ok(availability) = self.service_availability(caller, credential).await else {
-            return;
-        };
-        let Some(granted) = availability.grants() else {
-            return;
-        };
-        for id in selected {
-            if self.baseline.services().contains(id) {
-                continue;
-            }
-            if !granted.iter().any(|service| &service.id == id) {
-                tracing::warn!(
-                    subject = %caller.subject,
-                    service = %id.0,
-                    "a profile names a service this owner has not granted; \
-                     sessions started from it will be refused until they do"
-                );
-            }
-        }
     }
 
     /// What this deployment mandates in every session.
@@ -322,6 +296,7 @@ impl EnvironmentProfileService {
         // catalogue does not currently grant is a warning here and a refusal
         // at provision, because a grant can change between the two.
         self.warn_ungranted(caller, None, &profile.services).await;
+        self.warn_out_of_bounds(caller, profile.agent.size).await;
         tracing::info!(
             profile_id = %profile.id,
             owner = %profile.owner,
@@ -440,6 +415,7 @@ impl EnvironmentProfileService {
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
         self.warn_ungranted(caller, None, &profile.services).await;
+        self.warn_out_of_bounds(caller, profile.agent.size).await;
         tracing::info!(profile_id = %profile.id, owner = %profile.owner, "environment profile replaced");
         Ok(profile)
     }
