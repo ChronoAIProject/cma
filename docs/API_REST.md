@@ -117,6 +117,45 @@ it may ask for without trying. `runtime_version`, `rotations` and `rotated_at`
 appear once a session has been moved, and are absent before that because a
 session that has never been rotated has nothing to explain.
 
+### Live-session allowance
+
+```http
+GET /api/v1/sessions/allowance
+```
+
+```json
+{ "limit": 3, "live": 2, "exempt": false }
+```
+
+This is the authenticated caller's own allowance, including for an operator
+who may read other owners' sessions. `limit` is absent when this deployment has
+set no limit. `exempt` is true only for a caller explicitly allowed to exceed
+the limit; it is not inferred from an absent limit.
+
+`live` counts records whose desired state wants a runtime: `provisioning`,
+`ready`, `running`, and `rotating`. It is read from the session record, never
+from provider inventory. An `idle` (paused) session consumes no slot, nor does
+a terminated one. Reviving a paused session is checked as a new ask, which is
+what prevents pause and revive from walking around the limit.
+
+**This is advisory.** It exists so a client can offer only what will be
+permitted, rather than offering everything and letting people discover
+refusals by hitting them. The core checks again on the create or revive request
+that uses it, so a client that ignored this answer, or fabricated one, would
+gain nothing. Hiding a control is a courtesy; it is not access control.
+
+Lowering a limit is **not retroactive**. Existing work is never stopped, and a
+control-plane restart, reconciliation sweep, or runtime rotation brings every
+recorded live session back regardless of the new limit. An owner already over
+the limit cannot create or revive until enough sessions have been paused or
+ended to put them below it. Repeating revive on a session that already wants a
+runtime remains a no-op and does not consume a second slot.
+
+Enforcement serialises asks by one subject inside each control-plane replica.
+Across replicas it is best-effort: concurrent asks can overshoot the configured
+limit by a bounded amount. This is a policy limit, not a security boundary; a
+hard distributed limit requires a conditional write in the session store.
+
 ### Read, list, stop, revive, delete
 
 ```http
@@ -128,7 +167,12 @@ GET    /api/v1/sessions/{id}/transcript
 DELETE /api/v1/sessions/{id}
 ```
 
-`stop` releases the runtime and keeps the session: it goes `idle`, stays listed, stays readable, and nothing is being paid for. `revive` gives it a runtime again under the same id, with the same history and the same options — reviving never mints a new session.
+`stop` releases the runtime and keeps the session: it goes `idle`, stays listed,
+stays readable, and nothing is being paid for. `revive` gives it a runtime
+again under the same id, with the same history and the same options — reviving
+never mints a new session. When the owner is at or over their live-session
+limit, revive returns the same typed refusal as create and the session stays
+paused.
 
 `DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
 
@@ -418,7 +462,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `401` | Missing or invalid NyxID credential |
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No such session, or not visible to this subject |
-| `409` | Conflicts with current state — turn in progress, session terminated |
+| `409` | Conflicts with current state — turn in progress, session terminated, or live-session limit reached |
 | `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |
 | `429` | Rate limited; observe `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
@@ -463,6 +507,37 @@ The problem document carries the refusal as top-level fields so a client never h
 The refusal happens when a session is created, before an identifier or record exists, not when its environment profile is saved. Bounds can change after a profile was authored, so an out-of-bounds profile remains writable and is logged as a warning; starting a session from it is the operation refused.
 
 These bounds apply only to a size the profile explicitly states. A profile with no `agent.size`, and a creation naming no profile, use this deployment's own sandbox reservation without being measured against the bounds. That reservation may lie outside the range an administrator has configured: the range governs what a caller may ask for, not the unnamed deployment default.
+
+### Live-session-limit refusal
+
+`session_limit_reached` is a `409` response with problem type
+`session-limit-reached`. The request is valid and can succeed after the owner
+pauses or ends enough sessions. It is not `429`: time does not clear this
+condition, so no honest `Retry-After` exists and automatic retry is not useful.
+
+```json
+{
+  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/session-limit-reached",
+  "title": "session limit reached",
+  "status": 409,
+  "detail": "3 of 3 sessions are already running for this owner; stop one before starting another",
+  "code": "session_limit_reached",
+  "limit": 3,
+  "live": 3
+}
+```
+
+`limit` and `live` are top-level integer fields so a client can act without
+parsing the English `detail`. If an administrator lowered the limit beneath an
+owner's current count, `live` may be greater than `limit`; the detail then says
+that nothing new starts until fewer than `limit` sessions are running.
+
+Creation is refused before an identifier is minted or a record is written.
+Revive is refused before the paused record changes, so its history remains
+readable and its state remains `idle`. The limit applies only where an owner is
+asking for another runtime; reconciliation and rotation never reach it. See
+the advisory allowance route in §2 for counting, non-retroactivity, and the
+cross-replica enforcement boundary.
 
 ---
 
