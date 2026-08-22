@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Sidebar } from './Sidebar';
 import { BUILD } from './build';
+import { creationAbilityFor, type Allowance } from '../sessions/availability';
 
 /**
  * The sidebar — `docs/Web_Style.md` §10.
@@ -24,6 +25,7 @@ function renderSidebar(props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   render(
     <Sidebar
       collapsed={false}
+      creation={{ canCreate: true }}
       account={<button type="button">Account</button>}
       {...handlers}
       {...props}
@@ -68,6 +70,40 @@ describe('the sidebar', () => {
     await user.click(screen.getByRole('button', { name: /find a session/i }));
     expect(handlers.onSearch).toHaveBeenCalledOnce();
     expect(handlers.onToggleCollapsed).not.toHaveBeenCalled();
+  });
+});
+
+describe('starting another session', () => {
+  const enabled: readonly { readonly name: string; readonly allowance: Allowance | undefined }[] = [
+    { name: 'under the limit', allowance: { limit: 3, live: 2, exempt: false } },
+    { name: 'exempt', allowance: { limit: 3, live: 3, exempt: true } },
+    { name: 'with no configured limit', allowance: { live: 12, exempt: false } },
+    { name: 'after the advisory read failed', allowance: undefined },
+  ];
+
+  it.each(enabled)('enables both creation shortcuts $name', ({ allowance }) => {
+    renderSidebar({ creation: creationAbilityFor(allowance) });
+    expect(screen.getByRole('button', { name: 'CMA' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /new session/i })).toBeEnabled();
+    expect(document.querySelector('.control-reason')).toBeNull();
+  });
+
+  it('disables both shortcuts at the limit and draws their shared reason once', async () => {
+    const user = userEvent.setup();
+    const creation = creationAbilityFor({ limit: 3, live: 3, exempt: false });
+    const handlers = renderSidebar({ creation });
+    const brand = screen.getByRole('button', { name: 'CMA' });
+    const key = screen.getByRole('button', { name: /new session/i });
+
+    expect(brand).toBeDisabled();
+    expect(key).toBeDisabled();
+    expect(brand).toHaveAttribute('aria-describedby', 'sidebar-creation-reason');
+    expect(key).toHaveAttribute('aria-describedby', 'sidebar-creation-reason');
+    expect(screen.getAllByText(creation.reason ?? '')).toHaveLength(1);
+
+    await user.click(brand);
+    await user.click(key);
+    expect(handlers.onCreate).not.toHaveBeenCalled();
   });
 });
 

@@ -9,6 +9,8 @@
 //! special cases. Each setting remains independently named and typed as the set
 //! grows.
 
+use std::num::NonZeroU32;
+
 use serde::{Deserialize, Serialize};
 
 // Re-exported so the split is a move rather than a rename: callers still read
@@ -93,6 +95,21 @@ pub struct PlatformSettings {
     /// setting and question from this per-request range.
     #[serde(default)]
     pub size_bounds: CapacityBounds,
+    /// How many sessions one subject may hold live at once.
+    ///
+    /// `None` is no limit, and is what the platform ships: a deployment that
+    /// has decided nothing must not start refusing sessions when this setting
+    /// first appears.
+    ///
+    /// Lowering this is not retroactive. It stops new asks and never stops
+    /// running work, including during reconciliation after a control-plane
+    /// restart. An owner already over the limit who stops a session cannot
+    /// revive it until fewer than the limit are live.
+    ///
+    /// This is per subject. The core has no tenant, organization, or account
+    /// grouping above `SubjectId`, so two subjects receive two limits.
+    #[serde(default)]
+    pub live_sessions: Option<NonZeroU32>,
 }
 
 impl Default for SessionBriefing {

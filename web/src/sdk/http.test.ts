@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { headersFor, resolveConfig, urlOf } from './config';
 import { request } from './http';
-import { ApiError, CapabilityRefused } from './errors';
+import { ApiError, CapabilityRefused, SessionLimitReached } from './errors';
 
 /**
  * The SDK's transport.
@@ -239,6 +239,59 @@ describe('what comes back', () => {
     );
     expect(failure).toBeInstanceOf(CapabilityRefused);
     expect((failure as CapabilityRefused).capability).toBeUndefined();
+  });
+
+  it('carries a live-session refusal and both of its numbers', async () => {
+    const { impl } = recorder({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          detail: '3 of 3 sessions are already running for this owner',
+          code: 'session_limit_reached',
+          limit: 3,
+          live: 3,
+        }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(SessionLimitReached);
+    expect((failure as SessionLimitReached).limit).toBe(3);
+    expect((failure as SessionLimitReached).live).toBe(3);
+  });
+
+  it('uses the problem code rather than treating every 409 as a session limit', async () => {
+    const { impl } = recorder({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ detail: 'this session has ended', code: 'session_terminated' }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).not.toBeInstanceOf(SessionLimitReached);
+  });
+
+  it('keeps malformed session-limit numbers absent', async () => {
+    const { impl } = recorder({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          detail: 'limit reached',
+          code: 'session_limit_reached',
+          limit: 'three',
+          live: -1,
+        }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(SessionLimitReached);
+    expect((failure as SessionLimitReached).limit).toBeUndefined();
+    expect((failure as SessionLimitReached).live).toBeUndefined();
   });
 
   it('reports an unreachable service as status zero', async () => {

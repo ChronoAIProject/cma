@@ -51,6 +51,14 @@ pub enum CoreError {
     #[error("size out of bounds: {0}")]
     SizeOutOfBounds(#[from] OutOfBounds),
 
+    /// This owner already holds as many live sessions as the deployment permits.
+    ///
+    /// Both numbers are fields so clients can act without parsing prose. This
+    /// is neither `Forbidden`, which interfaces conceal as not-found, nor an
+    /// invalid request: stopping or pausing work makes the same ask valid.
+    #[error("{}", session_limit_message(*limit, *live))]
+    SessionLimitReached { limit: u32, live: u32 },
+
     /// A session size with a zero figure was supplied.
     #[error("invalid session size: {0}")]
     InvalidSessionSize(#[from] InvalidSessionSize),
@@ -154,6 +162,7 @@ impl CoreError {
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
             Self::SizeOutOfBounds(_) => "size_out_of_bounds",
+            Self::SessionLimitReached { .. } => "session_limit_reached",
             Self::InvalidSessionSize(_) => "invalid_session_size",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::RuntimeRefused(_) => "runtime_refused",
@@ -165,6 +174,18 @@ impl CoreError {
             Self::SettingsConflict(_) => "settings_conflict",
             Self::SettingsUnavailable(_) => "settings_unavailable",
         }
+    }
+}
+
+fn session_limit_message(limit: u32, live: u32) -> String {
+    if live == limit {
+        format!(
+            "{live} of {limit} sessions are already running for this owner; stop one before starting another"
+        )
+    } else {
+        format!(
+            "{live} sessions are already running for this owner and the limit is {limit}; nothing new starts until fewer than {limit} are running"
+        )
     }
 }
 
@@ -200,6 +221,7 @@ mod tests {
                 minimum: 250,
                 maximum: 4_000,
             }),
+            CoreError::SessionLimitReached { limit: 3, live: 3 },
             CoreError::InvalidSessionSize(SessionSize::new(0, 512).expect_err("zero CPU fails")),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
@@ -223,6 +245,7 @@ mod tests {
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
                 | CoreError::SizeOutOfBounds(_)
+                | CoreError::SessionLimitReached { .. }
                 | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
@@ -287,5 +310,17 @@ mod tests {
         let source = SessionSize::new(500, 0).expect_err("zero memory fails");
         let err: CoreError = source.into();
         assert_eq!(err.code(), "invalid_session_size");
+    }
+
+    #[test]
+    fn a_limit_refusal_explains_at_limit_and_already_over_differently() {
+        assert_eq!(
+            CoreError::SessionLimitReached { limit: 3, live: 3 }.to_string(),
+            "3 of 3 sessions are already running for this owner; stop one before starting another"
+        );
+        assert_eq!(
+            CoreError::SessionLimitReached { limit: 3, live: 4 }.to_string(),
+            "4 sessions are already running for this owner and the limit is 3; nothing new starts until fewer than 3 are running"
+        );
     }
 }

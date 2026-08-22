@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Session } from '../sessions/types';
 import type { Arrangement } from '../sessions/arrangement';
+import type { CreationAbility } from '../sessions/availability';
 import { lastActivity } from '../sessions/lastActivity';
 import { tabLabel } from '../sessions/sessionTime';
 import { setAppearance, type Appearance } from '../theme/appearance';
@@ -22,6 +23,7 @@ import './CommandBar.css';
 
 interface CommandBarProps {
   readonly sessions: readonly Session[];
+  readonly creation: CreationAbility;
   readonly onClose: () => void;
   readonly onSelectSession: (id: string) => void;
   readonly onArrange: (arrangement: Arrangement) => void;
@@ -34,6 +36,7 @@ interface Command {
   readonly id: string;
   readonly label: string;
   readonly detail?: string;
+  readonly disabled?: boolean;
   readonly run: () => void;
 }
 
@@ -45,6 +48,7 @@ const APPEARANCES: readonly { readonly value: Appearance; readonly label: string
 
 export function CommandBar({
   sessions,
+  creation,
   onClose,
   onSelectSession,
   onArrange,
@@ -62,6 +66,8 @@ export function CommandBar({
       {
         id: 'new-session',
         label: 'New session',
+        detail: creation.reason,
+        disabled: !creation.canCreate,
         run: () => {
           onClose();
           onNewSession();
@@ -108,7 +114,7 @@ export function CommandBar({
       })),
     ];
     return all;
-  }, [sessions, canvasAvailable, onArrange, onClose, onNewSession, onSelectSession]);
+  }, [sessions, creation, canvasAvailable, onArrange, onClose, onNewSession, onSelectSession]);
 
   const matched = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -150,7 +156,10 @@ export function CommandBar({
               setActiveIndex((index) => Math.max(index - 1, 0));
             } else if (event.key === 'Enter') {
               event.preventDefault();
-              matched[active]?.run();
+              const command = matched[active];
+              if (command?.disabled !== true) {
+                command?.run();
+              }
             }
           }}
         />
@@ -165,6 +174,7 @@ export function CommandBar({
                 <button
                   type="button"
                   className={`commandbar__item${index === active ? ' commandbar__item--active' : ''}`}
+                  disabled={command.disabled ?? false}
                   onClick={command.run}
                   onPointerEnter={() => {
                     setActiveIndex(index);

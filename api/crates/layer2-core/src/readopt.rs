@@ -46,6 +46,11 @@ impl SessionService {
             return Ok(record.session);
         }
 
+        let settings = self.settings.for_provisioning().await;
+        let limit_guard = self
+            .refuse_at_session_limit(caller, settings.live_sessions)
+            .await?;
+
         let adapter = self
             .adapters
             .get(&record.session.kernel)
@@ -60,6 +65,7 @@ impl SessionService {
         let seq = self.sequences.take(id, starting.session.last_seq, 1);
         starting.session.last_seq = seq;
         self.store.upsert(&starting).await.map_err(store_failed)?;
+        limit_guard.record_written(self.store.as_ref()).await;
         self.append_durably(
             id,
             vec![Event {

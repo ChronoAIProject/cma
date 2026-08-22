@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import markUrl from '../assets/brand/cma-mark.svg';
+import type { CreationAbility } from '../sessions/availability';
 import { BUILD } from './build';
 import { IconNewChatOutline16, IconPanelLeftOutline16, IconSearchOutline16 } from '../ui/icons';
 import './Sidebar.css';
@@ -19,6 +20,7 @@ import './Sidebar.css';
 
 interface SidebarProps {
   readonly collapsed: boolean;
+  readonly creation: CreationAbility;
   readonly onToggleCollapsed: () => void;
   readonly onCreate: () => void;
   /** Opens the command plate. The rail expands the sidebar instead. */
@@ -41,6 +43,7 @@ interface SidebarProps {
 
 export function Sidebar({
   collapsed,
+  creation,
   onToggleCollapsed,
   onCreate,
   onSearch,
@@ -48,6 +51,8 @@ export function Sidebar({
   status,
   account,
 }: SidebarProps) {
+  const reasonId = 'sidebar-creation-reason';
+  const describedBy = creation.reason === undefined ? undefined : reasonId;
   return (
     <div className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
       <div className="sidebar__logorow">
@@ -60,7 +65,13 @@ export function Sidebar({
           screen for the whole session, and a logo that replays its entrance
           every navigation is the kind of motion §14a exists to refuse.
         */}
-        <button type="button" className="sidebar__brand" onClick={onCreate}>
+        <button
+          type="button"
+          className="sidebar__brand"
+          disabled={!creation.canCreate}
+          aria-describedby={describedBy}
+          onClick={onCreate}
+        >
           <img className="sidebar__mark" src={markUrl} alt="" width={32} height={32} />
           {collapsed ? null : <span className="sidebar__name">CMA</span>}
         </button>
@@ -81,10 +92,21 @@ export function Sidebar({
         </span>
       )}
 
-      <button type="button" className="sidebar__new" onClick={onCreate}>
+      <button
+        type="button"
+        className="sidebar__new"
+        disabled={!creation.canCreate}
+        aria-describedby={describedBy}
+        onClick={onCreate}
+      >
         <IconNewChatOutline16 />
         {collapsed ? null : <span className="sidebar__newlabel">New session</span>}
       </button>
+      {creation.reason === undefined ? null : (
+        <span className="control-reason" id={reasonId}>
+          {creation.reason}
+        </span>
+      )}
 
       {/*
         Searching opens the command plate, closed or open. It used to expand
