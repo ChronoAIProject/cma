@@ -188,20 +188,18 @@ pub struct SessionService {
     pub(crate) environments: Arc<EnvironmentProfileService>,
     /// Deployment settings, always present so readers cannot skip the fallback.
     pub(crate) settings: Arc<PlatformSettingsService>,
+    /// Serializes one owner's limit check through its record write.
+    pub(crate) session_limit_guards: crate::limits::OwnerGuards,
     /// The runtime version sessions are expected to be running.
     ///
-    /// Held by the control plane rather than asked of each sandbox: this is
-    /// the version being deployed, and a session on anything else is one to
-    /// carry forward. `None` disables rotation entirely, which is what a
-    /// deployment that does not version its runtime image wants.
+    /// Held by the control plane rather than asked of each sandbox: a session
+    /// on anything else is carried forward. `None` disables rotation entirely,
+    /// which is what a deployment that does not version its runtime image wants.
     pub(crate) runtime_version: Option<String>,
     /// Sessions this process is currently bringing up.
     ///
-    /// Bring-up is detached and takes minutes, during which the record says
-    /// `provisioning` and no entry exists yet — which is indistinguishable, to
-    /// anything reading state, from a bring-up that died with an earlier
-    /// process. The controller would then start a second runtime for a session
-    /// that is already getting one. This set is the difference between the two.
+    /// Detached bring-up can outlive its request while no live entry exists;
+    /// this distinguishes it from work a reconciliation sweep must recover.
     pub(crate) starting: RwLock<HashSet<SessionId>>,
     /// Milliseconds to wait before the first provisioning retry.
     ///
@@ -262,6 +260,7 @@ impl SessionService {
             credentials,
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
+            session_limit_guards: Default::default(),
             runtime_version: deployment.runtime_version,
             identity: deployment.identity,
             adopts_untagged: deployment.adopts_untagged,
@@ -428,13 +427,13 @@ impl SessionService {
             .refuse_ungranted(caller, spec.caller_credential.as_deref(), &granted_services)
             .await?;
 
+        let settings = self.settings.for_provisioning().await;
         if let Some(size) = spec.options.size {
-            self.settings
-                .for_provisioning()
-                .await
-                .size_bounds
-                .check(size)?;
+            settings.size_bounds.check(size)?;
         }
+        let limit_guard = self
+            .refuse_at_session_limit(caller, settings.live_sessions)
+            .await?;
 
         let geometry = spec.geometry.unwrap_or_default();
         let id = SessionId::generate();
@@ -480,6 +479,7 @@ impl SessionService {
         let first = self.sequences.take(&id, 0, 3);
         record.session.last_seq = first + 2;
         self.store.upsert(&record).await.map_err(store_failed)?;
+        limit_guard.record_written(self.store.as_ref()).await;
         self.append_durably(
             &id,
             vec![

@@ -81,6 +81,14 @@ pub enum SessionStatus {
 }
 
 impl SessionStatus {
+    /// Every status for which `wants_runtime()` is true.
+    pub const WANTING_RUNTIME: [Self; 4] = [
+        Self::Provisioning,
+        Self::Ready,
+        Self::Running,
+        Self::Rotating,
+    ];
+
     /// Whether no further work can occur under this session id.
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Terminated)
@@ -396,9 +404,28 @@ mod tests {
             SessionStatus::Provisioning,
             SessionStatus::Ready,
             SessionStatus::Running,
+            SessionStatus::Rotating,
             SessionStatus::Idle,
         ] {
             assert!(!s.is_terminal(), "{s:?} must not be terminal");
+        }
+    }
+
+    #[test]
+    fn wanting_runtime_membership_matches_the_desired_state_predicate() {
+        for status in [
+            SessionStatus::Provisioning,
+            SessionStatus::Ready,
+            SessionStatus::Running,
+            SessionStatus::Rotating,
+            SessionStatus::Idle,
+            SessionStatus::Terminated,
+        ] {
+            assert_eq!(
+                SessionStatus::WANTING_RUNTIME.contains(&status),
+                status.wants_runtime(),
+                "membership and predicate disagree for {status:?}"
+            );
         }
     }
 
