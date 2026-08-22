@@ -4,6 +4,7 @@ import {
   createSession,
   deleteSession,
   reviveSession,
+  SessionLimitReached,
   stopSession,
 } from '../api/client';
 import type { Session, SessionLifecycle, SessionPlane } from './types';
@@ -60,6 +61,8 @@ interface SessionActionHandles {
   readonly report: (cause: unknown, failed: string, unchanged: string) => void;
   readonly applyLifecycle: (id: string, lifecycle: SessionLifecycle) => void;
   readonly setFocusHistory: React.Dispatch<React.SetStateAction<readonly string[]>>;
+  /** Re-read the caller's advisory allowance after an action settles. */
+  readonly refreshAllowance: () => void;
 }
 
 export interface SessionActions {
@@ -87,6 +90,7 @@ export function useSessionActions({
   report,
   applyLifecycle,
   setFocusHistory,
+  refreshAllowance,
 }: SessionActionHandles): SessionActions {
   const start = useCallback(
     async (environmentProfile: string | null = null) => {
@@ -100,9 +104,11 @@ export function useSessionActions({
         setOpeningForId((prev) => prev ?? session.id);
       } catch (cause) {
         report(cause, 'Starting a session failed.', 'No session was created.');
+      } finally {
+        refreshAllowance();
       }
     },
-    [report, select, setNotice, setOpeningForId, setSessions],
+    [refreshAllowance, report, select, setNotice, setOpeningForId, setSessions],
   );
 
   /** End the open session, leaving it readable. */
@@ -122,10 +128,11 @@ export function useSessionActions({
       } catch (cause) {
         report(cause, 'Pausing the session failed.', 'The session keeps running.');
       } finally {
+        refreshAllowance();
         setActing(false);
       }
     },
-    [applyLifecycle, report, setActing, setNotice],
+    [applyLifecycle, refreshAllowance, report, setActing, setNotice],
   );
 
   /** Give a stopped session a sandbox again, and follow it back up. */
@@ -139,12 +146,21 @@ export function useSessionActions({
         // progress of a revive is the progress of a start, because it is one.
         setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...revived } : s)));
       } catch (cause) {
-        report(cause, 'Reviving the session failed.', 'The session stays stopped.');
+        if (cause instanceof SessionLimitReached) {
+          setNotice({
+            failed: cause.message,
+            unchanged: 'The session stays stopped.',
+            code: 'session_limit_reached',
+          });
+        } else {
+          report(cause, 'Reviving the session failed.', 'The session stays stopped.');
+        }
       } finally {
+        refreshAllowance();
         setActing(false);
       }
     },
-    [report, setActing, setNotice, setSessions],
+    [refreshAllowance, report, setActing, setNotice, setSessions],
   );
 
   /**
@@ -206,11 +222,13 @@ export function useSessionActions({
       } catch (cause) {
         report(cause, 'Deleting the session failed.', 'The session and its history are untouched.');
       } finally {
+        refreshAllowance();
         setActing(false);
       }
     },
     [
       activeId,
+      refreshAllowance,
       report,
       select,
       sessions,

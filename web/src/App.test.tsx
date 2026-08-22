@@ -109,6 +109,10 @@ let created = 0;
  * another — cannot be reached from an owner with nothing running.
  */
 let listing: Record<string, unknown>[] = [];
+let allowanceAnswer: unknown = { live: 0, exempt: false };
+let allowanceFails = false;
+let allowanceReads = 0;
+let reviveProblem: { readonly status: number; readonly body: unknown } | null = null;
 
 /** `count` running sessions, distinguishable by start time as the rail shows them. */
 function seedSessions(count: number): void {
@@ -139,6 +143,10 @@ beforeEach(() => {
   created = 0;
   streams.length = 0;
   listing = [];
+  allowanceAnswer = { live: 0, exempt: false };
+  allowanceFails = false;
+  allowanceReads = 0;
+  reviveProblem = null;
   FakeEventSource.outcome = 'ready';
   FakeEventSource.signIn = null;
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -150,6 +158,13 @@ beforeEach(() => {
       const json = (status: number, body: unknown) =>
         ({ ok: status < 400, status, json: async () => body }) as Response;
 
+      if (url.endsWith('/api/v1/sessions/allowance')) {
+        allowanceReads += 1;
+        if (allowanceFails) {
+          throw new Error('allowance unavailable');
+        }
+        return json(200, allowanceAnswer);
+      }
       if (url.endsWith('/api/v1/sessions') && (init?.method ?? 'GET') === 'GET') {
         // Empty unless a test seeded a fleet, which is the fresh-owner case.
         return json(200, { sessions: listing });
@@ -167,6 +182,9 @@ beforeEach(() => {
           status: 'provisioning',
           created_at: new Date(0).toISOString(),
         });
+      }
+      if (url.endsWith('/revive') && init?.method === 'POST' && reviveProblem !== null) {
+        return json(reviveProblem.status, reviveProblem.body);
       }
       return json(404, {});
     }),
@@ -259,6 +277,69 @@ describe('App', () => {
 
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
     expect(await screen.findByText(/start one from the left/i)).toBeInTheDocument();
+  });
+
+  it('reads the allowance once while restoring and leaves creation enabled when it fails', async () => {
+    allowanceFails = true;
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(allowanceReads).toBe(1);
+    });
+    expect(screen.getByRole('button', { name: /new session/i })).toBeEnabled();
+  });
+
+  it('carries an at-limit allowance to the sidebar and command bar', async () => {
+    allowanceAnswer = { limit: 3, live: 3, exempt: false };
+    const reason = 'You have 3 of 3 sessions running. Pause or end one to start another.';
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    const newSession = screen.getByRole('button', { name: /new session/i });
+    await waitFor(() => {
+      expect(newSession).toBeDisabled();
+    });
+    expect(newSession).toHaveAccessibleDescription(reason);
+
+    await user.click(screen.getByRole('button', { name: /find a session/i }));
+    const row = screen
+      .getAllByRole('option')
+      .find((option) => option.textContent?.includes('New session'));
+    expect(row).toHaveTextContent(reason);
+    const command = within(row as HTMLElement).getByRole('button');
+    expect(command).toBeDisabled();
+  });
+
+  it('renders a revive limit refusal verbatim and keeps the session paused', async () => {
+    listing = [
+      {
+        id: 'sesn_paused',
+        kernel: 'codex',
+        status: 'idle',
+        created_at: new Date(0).toISOString(),
+      },
+    ];
+    allowanceAnswer = { limit: 3, live: 2, exempt: false };
+    const detail =
+      '4 sessions are already running for this owner and the limit is 3; nothing new starts until fewer than 3 are running';
+    reviveProblem = {
+      status: 409,
+      body: { detail, code: 'session_limit_reached', limit: 3, live: 4 },
+    };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^resume$/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(detail)).toBeInTheDocument();
+    expect(alert).toHaveTextContent('session_limit_reached');
+    expect(alert).toHaveTextContent('The session stays stopped.');
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    expect(screen.getByRole('menuitem', { name: /^resume$/i })).toBeInTheDocument();
   });
 
   it('says a session is starting rather than appearing to hang', async () => {

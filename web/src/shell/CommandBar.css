@@ -90,9 +90,14 @@
  * keeps working, which means the highlighted row has to be styled rather than
  * relying on `:focus`.
  */
-.commandbar__item:hover,
-.commandbar__item--active {
+.commandbar__item:hover:not(:disabled),
+.commandbar__item--active:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.commandbar__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .commandbar__detail {
