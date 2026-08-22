@@ -47,6 +47,15 @@ pub mod permission {
     /// session created afterwards, including ones belonging to people who
     /// will never meet whoever changed it.
     pub const ADMIN_SETTINGS: &str = "chrono-bot:admin:settings";
+    /// Create and revive sessions past the deployment's live-session limit.
+    ///
+    /// Its own string rather than part of any admin bundle. Every other
+    /// `admin:` permission here either observes across subjects or acts on
+    /// somebody else's session; this one does neither, and reaches nothing but
+    /// how many sessions its own holder may have at once. Bundling it with a
+    /// monitoring role would hand unlimited session creation to somebody who
+    /// asked to watch the service.
+    pub const ADMIN_UNLIMITED_SESSIONS: &str = "chrono-bot:admin:unlimited-sessions";
 }
 
 /// Wildcard the provider issues across everything it serves.
@@ -95,15 +104,17 @@ const fn product_wildcard_reaches(capability: Capability) -> bool {
         | Capability::UseOwnSessions
         | Capability::TerminateOwnSession
         | Capability::ManageOwnEnvironmentProfiles => true,
-        // Everything that crosses subjects. Only a grant naming this product
-        // reaches these; that is the distinction this file exists to draw.
+        // Everything outside the ordinary own-work grant. Only a grant naming
+        // this product reaches these; that is the distinction this file exists
+        // to draw.
         Capability::ReadAllSessions
         | Capability::ReadRuntimeInventory
         | Capability::ReadEventLog
         | Capability::ReadActivityLog
         | Capability::ReadUserDirectory
         | Capability::ConfigurePlatform
-        | Capability::ControlAnySession => true,
+        | Capability::ControlAnySession
+        | Capability::ExceedSessionLimit => true,
     }
 }
 
@@ -152,6 +163,7 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::ADMIN_USERS => granted.push(Capability::ReadUserDirectory),
             permission::ADMIN_CONTROL => granted.push(Capability::ControlAnySession),
             permission::ADMIN_SETTINGS => granted.push(Capability::ConfigurePlatform),
+            permission::ADMIN_UNLIMITED_SESSIONS => granted.push(Capability::ExceedSessionLimit),
             _ => {}
         }
     }
@@ -281,6 +293,79 @@ mod tests {
         assert!(!a.allows(Capability::CreateSession));
         assert!(!a.allows(Capability::UseOwnSessions));
         assert!(!a.is_privileged());
+    }
+
+    #[test]
+    fn a_monitoring_role_does_not_gain_unlimited_sessions() {
+        // Privileged monitoring is still only monitoring. Deriving this
+        // exemption from the catch-all privilege predicate would silently hand
+        // session-limit bypass to a role whose purpose is to watch the service.
+        let monitoring = capabilities_from_permissions([
+            permission::ADMIN_SESSIONS,
+            permission::ADMIN_SANDBOXES,
+            permission::ADMIN_EVENTS,
+            permission::ADMIN_ACTIVITY,
+            permission::ADMIN_USERS,
+        ]);
+        assert!(!monitoring.allows(Capability::ExceedSessionLimit));
+
+        let control = capabilities_from_permissions([permission::ADMIN_CONTROL]);
+        assert!(
+            !control.allows(Capability::ExceedSessionLimit),
+            "control over another subject's session is not a limit exemption"
+        );
+    }
+
+    #[test]
+    fn the_settings_role_does_not_gain_unlimited_sessions() {
+        // Authoring the deployment's limit and being exempt from it are
+        // separate decisions, so the settings grant must not imply the latter.
+        let a = capabilities_from_permissions([permission::ADMIN_SETTINGS]);
+        assert!(!a.allows(Capability::ExceedSessionLimit));
+    }
+
+    #[test]
+    fn the_daily_user_set_does_not_gain_unlimited_sessions() {
+        // Everyday session use reaches only the holder's own work; it must not
+        // quietly opt that holder out of a deployment-wide policy.
+        let a = capabilities_from_permissions([
+            permission::SESSION_CREATE,
+            permission::SESSION_USE,
+            permission::SESSION_TERMINATE,
+        ]);
+        assert!(!a.allows(Capability::ExceedSessionLimit));
+    }
+
+    #[test]
+    fn the_providers_own_wildcard_does_not_gain_unlimited_sessions() {
+        // The provider-wide wildcard represents ordinary work across a shared
+        // provider. Only a permission naming this product may grant an
+        // exemption from this product's deployment policy.
+        let a = capabilities_from_permissions([WILDCARD]);
+        assert!(!a.allows(Capability::ExceedSessionLimit));
+    }
+
+    #[test]
+    fn the_permission_grants_this_and_nothing_else() {
+        // The exemption is deliberately unbundled. Walking the maintained set
+        // makes any accidental second grant visible as the capability itself.
+        let a = capabilities_from_permissions([permission::ADMIN_UNLIMITED_SESSIONS]);
+        for capability in Capability::ALL {
+            assert_eq!(
+                a.allows(capability),
+                capability == Capability::ExceedSessionLimit,
+                "the unlimited-sessions permission grants {capability:?} incorrectly"
+            );
+        }
+        assert_eq!(a.capabilities().count(), 1);
+    }
+
+    #[test]
+    fn an_unrecognised_permission_still_grants_nothing() {
+        // Translation is deny-by-default. A singular near miss must not be
+        // guessed into the deployment-wide exemption.
+        let a = capabilities_from_permissions(["chrono-bot:admin:unlimited-session"]);
+        assert_eq!(a.capabilities().count(), 0);
     }
 
     #[test]

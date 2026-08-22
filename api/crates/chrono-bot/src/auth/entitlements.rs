@@ -36,6 +36,7 @@ pub fn wire_name(capability: Capability) -> &'static str {
         Capability::ReadUserDirectory => "read_user_directory",
         Capability::ControlAnySession => "control_any_session",
         Capability::ConfigurePlatform => "configure_platform",
+        Capability::ExceedSessionLimit => "exceed_session_limit",
     }
 }
 
@@ -75,6 +76,7 @@ mod tests {
             Capability::ReadUserDirectory,
             Capability::ControlAnySession,
             Capability::ConfigurePlatform,
+            Capability::ExceedSessionLimit,
         ];
         let mut names: Vec<&str> = all.iter().copied().map(wire_name).collect();
         names.sort_unstable();
