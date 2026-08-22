@@ -104,6 +104,7 @@ async fn main() {
     };
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
+    let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
     // The account of what this service is asked to do, and of who asks. Both
     // are opened with everything else rather than lazily: a control plane that
     // served traffic it could not account for would be discovered by somebody
@@ -220,11 +221,10 @@ async fn main() {
         );
     }
 
-    // The settings store itself belongs to #450 and does not exist in this
-    // composition root yet. Until it does, provisioning reads shipped policy
-    // through the same service and fallback path a temporarily unreadable
-    // store uses.
-    let settings = Arc::new(PlatformSettingsService::unconfigured());
+    // One persisted service is shared by every consumer: profile validation,
+    // session provisioning and the administrator surface must never observe
+    // different revisions of deployment policy by construction.
+    let settings = Arc::new(PlatformSettingsService::new(settings_store));
     let environments = EnvironmentProfileService::new(
         profile_store,
         baseline,
@@ -296,6 +296,7 @@ async fn main() {
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
+            axum::http::Method::PATCH,
             axum::http::Method::DELETE,
         ]);
 
@@ -311,6 +312,7 @@ async fn main() {
             sessions: Arc::clone(&service),
             activity: Arc::clone(&activity),
             users: Arc::clone(&users),
+            settings: Arc::clone(&settings),
         }));
 
     let app = Router::new()

@@ -9,6 +9,7 @@ fn spec_with(permission: RuntimePermission, effort: Option<&str>) -> RuntimeSpec
         restore_from: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),

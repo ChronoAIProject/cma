@@ -268,7 +268,11 @@ async fn an_unreadable_settings_store_falls_back_during_creation() {
         .expect("the explicit size reaches the runtime");
     assert_eq!(capacity.cpu_millis.get(), 1_000);
     assert_eq!(capacity.memory_mib.get(), 1_024);
-    assert_eq!(settings_store.reads(), 1);
+    assert_eq!(
+        settings_store.reads(),
+        2,
+        "creation reads policy and bring-up reads the briefing, and both fall back"
+    );
 }
 
 #[tokio::test]

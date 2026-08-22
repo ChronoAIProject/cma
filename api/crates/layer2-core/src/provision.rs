@@ -91,6 +91,16 @@ impl SessionService {
          */
         let mut spec = spec;
         let services = self.services_for(&session.id).await;
+        let reaches: Vec<String> = services.iter().map(|service| service.0.clone()).collect();
+        // Render here, where both inputs are authoritative: this service owns
+        // the deployment setting and the session record owns its frozen grant.
+        // Layer 3 receives prose and has no reason to understand either model.
+        let platform_briefing = self
+            .settings
+            .for_provisioning()
+            .await
+            .briefing
+            .render(&reaches);
         spec.runtime_credential = self
             .credential_for(&session.id, &session.owner, &services)
             .await;
@@ -103,7 +113,14 @@ impl SessionService {
         }
         match tokio::time::timeout(
             PROVISION_DEADLINE,
-            self.start_with_retries(&session, &spec, &adapter, geometry, restore.as_ref()),
+            self.start_with_retries(
+                &session,
+                &spec,
+                &adapter,
+                geometry,
+                restore.as_ref(),
+                &platform_briefing,
+            ),
         )
         .await
         {
@@ -142,6 +159,7 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
         restore: Option<&Vec<u8>>,
+        platform_briefing: &str,
     ) -> Result<(), StartFailure> {
         let id = session.id.clone();
         // Checked again, because this also runs for a session being revived or
@@ -295,6 +313,7 @@ impl SessionService {
                         files: pack.files.clone(),
                     })
                     .collect(),
+                platform_briefing: platform_briefing.to_string(),
                 reaches,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
