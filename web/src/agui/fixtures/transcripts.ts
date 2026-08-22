@@ -294,6 +294,105 @@ export const REPORTS_USAGE: Transcript = {
   ],
 };
 
+/** A context reading accompanied by the ceiling the runtime stated. */
+export const CONTEXT_WITH_WINDOW: Transcript = {
+  name: 'context-with-window',
+  about: 'Context fullness arrives with the window it is drawn from.',
+  provenance: 'authored',
+  source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
+  frames: [
+    frame(0, { type: 'RUN_STARTED', runId: 'run_context_window', seq: 1 }),
+    frame(80, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_window',
+      seq: 2,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 1840 },
+        { op: 'replace', path: '/usage/outputTokens', value: 260 },
+        { op: 'replace', path: '/usage/contextUsed', value: 42_100 },
+        { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
+      ],
+    }),
+    frame(20, {
+      type: 'RUN_FINISHED',
+      runId: 'run_context_window',
+      seq: 3,
+      outcome: { type: 'end_turn' },
+    }),
+  ],
+};
+
+/** A context reading from a runtime that stated no ceiling. */
+export const CONTEXT_WITHOUT_WINDOW: Transcript = {
+  name: 'context-without-window',
+  about: 'Context fullness arrives without an invented ceiling.',
+  provenance: 'authored',
+  source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
+  frames: [
+    frame(0, { type: 'RUN_STARTED', runId: 'run_context_open', seq: 1 }),
+    frame(80, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_open',
+      seq: 2,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 1840 },
+        { op: 'replace', path: '/usage/outputTokens', value: 260 },
+        { op: 'replace', path: '/usage/contextUsed', value: 42_100 },
+      ],
+    }),
+    frame(20, {
+      type: 'RUN_FINISHED',
+      runId: 'run_context_open',
+      seq: 3,
+      outcome: { type: 'end_turn' },
+    }),
+  ],
+};
+
+/** A context fall, projected before the reading that revealed it. */
+export const CONTEXT_COMPACTS: Transcript = {
+  name: 'context-compacts',
+  about: 'The agent summarises a nearly full conversation to make room.',
+  provenance: 'authored',
+  source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
+  frames: [
+    frame(0, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_compacts',
+      seq: 1,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 14_200 },
+        { op: 'replace', path: '/usage/outputTokens', value: 3100 },
+        { op: 'replace', path: '/usage/contextUsed', value: 198_000 },
+        { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
+      ],
+    }),
+    frame(80, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_compacts',
+      seq: 2,
+      delta: [
+        {
+          op: 'add',
+          path: '/contextCompactions/-',
+          value: { was: 198_000, now: 42_100, window: 200_000 },
+        },
+      ],
+    }),
+    frame(20, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_compacts',
+      seq: 3,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 14_200 },
+        { op: 'replace', path: '/usage/outputTokens', value: 3100 },
+        { op: 'replace', path: '/usage/contextUsed', value: 42_100 },
+        { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
+      ],
+    }),
+  ],
+};
+
 /**
  * A session that reports none.
  *
@@ -432,6 +531,9 @@ export const TRANSCRIPTS: readonly Transcript[] = [
   APPROVAL_DENIED,
   INTERRUPTED_TURN,
   REPORTS_USAGE,
+  CONTEXT_WITH_WINDOW,
+  CONTEXT_WITHOUT_WINDOW,
+  CONTEXT_COMPACTS,
   NO_USAGE,
   ROTATES,
   UNKNOWN_KIND,
