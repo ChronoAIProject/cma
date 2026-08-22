@@ -94,9 +94,9 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
 
 /// Apply what this deployment configures onto a kernel's own defaults.
 ///
-/// The sandbox's size and image, the identity platform, and what the image was
-/// built carrying are facts about this deployment rather than about an agent,
-/// so they are stated once and every kernel gets the same ones.
+/// The sandbox's default size and image, the identity platform, and what the
+/// image was built carrying are facts about this deployment rather than about
+/// an agent, so they are stated once and every kernel gets the same ones.
 ///
 /// Written as an overlay rather than as a constructor on purpose. A
 /// constructor here would return a whole `Deployment`, and every field it did
@@ -160,27 +160,30 @@ mod tests {
 
     #[test]
     fn every_kernel_is_deployed_into_the_same_sandbox() {
-        // Sizing and the baseline are facts about this deployment rather than
-        // about an agent, so a kernel that got different ones would be a
-        // session whose cost and promises depended on which agent it picked.
+        // The image, the baseline and the deployment's default size are facts
+        // about this deployment rather than about an agent, so a kernel that
+        // got different ones would be a session whose cost and promises
+        // depended on which agent it picked.
+        //
+        // Per-session sizing moves this rather than retiring it. A session's
+        // size may now vary by owner, and must still never vary by kernel. What
+        // `deploy` writes here is the floor a session that states no size falls
+        // back to, and all three kernels must fall back to the same one.
         let config = deployment_config();
-        let mut codex = CodexSandboxSpec::default();
-        let mut claude_code = ClaudeCodeSandboxSpec::default();
-        deploy(&config, &mut codex.deployment);
-        deploy(&config, &mut claude_code.deployment);
+        let mut deployments = [
+            CodexSandboxSpec::default().deployment,
+            ClaudeCodeSandboxSpec::default().deployment,
+            DshSandboxSpec::default().deployment,
+        ];
+        for deployment in &mut deployments {
+            deploy(&config, deployment);
+        }
 
-        assert_eq!(
-            codex.deployment.shape.image,
-            claude_code.deployment.shape.image
-        );
-        assert_eq!(
-            codex.deployment.shape.resource_limits,
-            claude_code.deployment.shape.resource_limits
-        );
-        assert_eq!(
-            codex.deployment.provided_packages,
-            claude_code.deployment.provided_packages
-        );
+        for pair in deployments.windows(2) {
+            assert_eq!(pair[0].shape.image, pair[1].shape.image);
+            assert_eq!(pair[0].shape.resource_limits, pair[1].shape.resource_limits);
+            assert_eq!(pair[0].provided_packages, pair[1].provided_packages);
+        }
     }
 
     #[test]
