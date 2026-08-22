@@ -14,10 +14,11 @@ use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
-use crate::service::{spawn_relay, store_failed, SessionEntry, SessionService, LIVE_BUFFER};
+use crate::service::{store_failed, SessionEntry, SessionService, LIVE_BUFFER};
 use crate::session::{Session, SessionSpec, SessionStatus};
 use crate::store::SessionRecord;
 use crate::terminal::ScreenModel;
+use crate::terminal_io::spawn_relay;
 
 impl SessionService {
     /// Give a stopped session a runtime again.

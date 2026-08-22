@@ -137,7 +137,8 @@ impl SessionStore for FakeStore {
 
 pub(crate) use crate::adapter_support::FakeAdapter;
 pub(crate) use crate::environment_support::{
-    baseline, catalog_service, environments, profile_spec, FakeProfileStore, FakeSkillCatalog,
+    baseline, catalog_service, environments, profile_spec, unconfigured_settings, FakeProfileStore,
+    FakeSkillCatalog,
 };
 pub(crate) use crate::screen_support::{FixedCredential, RecordingScreen};
 
@@ -161,7 +162,8 @@ impl ScreenModel for NullScreen {
 
 pub(crate) use crate::service_support::{
     credential_on, owned, service_as, service_on_version, service_on_version_with_skills,
-    service_with_context, service_with_credentials, service_with_environments_on_version,
+    service_with_context, service_with_credentials, service_with_environments_and_settings,
+    service_with_environments_and_settings_service, service_with_environments_on_version,
     write_screen,
 };
 
@@ -197,6 +199,7 @@ pub(crate) fn service_over(
             context: None,
             credentials: None,
             skills: None,
+            settings: None,
         },
         no_environments(),
         owned(),
@@ -226,6 +229,7 @@ pub(crate) fn service_with_environments(
             context: None,
             credentials: None,
             skills: None,
+            settings: None,
         },
         profiles,
         owned(),
@@ -249,6 +253,7 @@ pub(crate) fn no_environments() -> Arc<EnvironmentProfileService> {
             kernel: KernelId::new("fake"),
             ..Default::default()
         },
+        unconfigured_settings(),
     )
 }
 
@@ -265,6 +270,7 @@ pub(crate) fn environments_defaulting_to(
         None,
         None,
         agent,
+        unconfigured_settings(),
     )
 }
 

@@ -30,10 +30,11 @@ use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
 use crate::provision_failure::StartFailure;
-use crate::service::{spawn_relay, SessionEntry, SessionService, LIVE_BUFFER};
+use crate::service::{SessionEntry, SessionService, LIVE_BUFFER};
 use crate::session::{ProvisioningStage, Session, SessionSpec, SessionStatus};
 use crate::size::SessionSize;
 use crate::terminal::{ScreenModel, TerminalGeometry};
+use crate::terminal_io::spawn_relay;
 
 /// How long a runtime may take to become usable.
 ///

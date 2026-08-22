@@ -169,6 +169,7 @@ mod granted_services {
             None,
             None,
             fake_agent(),
+            crate::test_support::unconfigured_settings(),
         )
     }
 
@@ -409,6 +410,7 @@ mod granted_services {
             None,
             None,
             fake_agent(),
+            crate::test_support::unconfigured_settings(),
         );
         let owner = user("subject-a");
         let profile = environment_service
