@@ -563,6 +563,16 @@ impl IntoResponse for Problem {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service-catalogue-unavailable",
             ),
+            // 409 and not 422: the body was well formed and the caller was
+            // entitled. What went wrong is that somebody else wrote first, and
+            // the useful thing to say is "read it again", which is a different
+            // instruction from "fix what you sent".
+            CoreError::SettingsConflict(_) => (StatusCode::CONFLICT, "settings-conflict"),
+            // 503 for the same reason the catalogue is: nothing is wrong with
+            // the request and retrying is the correct response.
+            CoreError::SettingsUnavailable(_) => {
+                (StatusCode::SERVICE_UNAVAILABLE, "settings-unavailable")
+            }
         };
         // The ability a session lacks, as a field rather than only as prose.
         //
