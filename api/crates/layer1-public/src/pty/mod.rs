@@ -276,6 +276,12 @@ fn error_code(err: &CoreError) -> &'static str {
         // here rather than a frame that quietly says the wrong thing.
         CoreError::ServiceNotGranted(_) => "service_not_granted",
         CoreError::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+        // The platform's own settings are not something this interface reads
+        // or writes: it drives an existing session's terminal. Named for the
+        // reason above — so a variant added to the core is a compile error
+        // here rather than a frame that quietly says the wrong thing.
+        CoreError::SettingsConflict(_) => "settings_conflict",
+        CoreError::SettingsUnavailable(_) => "settings_unavailable",
     }
 }
 
