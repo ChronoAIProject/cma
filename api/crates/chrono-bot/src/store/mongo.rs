@@ -8,7 +8,7 @@
 use futures_util::TryStreamExt;
 use layer2_core::{
     store::{SessionRecord, SessionStore, StoreError},
-    Event, SessionId, SessionStatus, StoredEvent, SubjectId,
+    Event, Rate, RateCardId, SessionId, SessionPricing, SessionStatus, StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReplaceOptions};
@@ -36,6 +36,22 @@ enum StoredSkill {
     },
     /// Written before this service recorded versions.
     Bare(String),
+}
+
+/// A pinned session price in BSON-compatible signed integers.
+///
+/// BSON has no unsigned 64-bit integer, so this mirror is explicit and every
+/// conversion is checked. A price that cannot be represented is refused
+/// rather than clamped into a different charge.
+#[derive(Debug, Serialize, Deserialize)]
+struct PricingDoc {
+    rate_card: String,
+    cpu_micros_per_cpu_hour: i64,
+    memory_micros_per_gib_hour: i64,
+    cpu_millis: i64,
+    memory_mib: i64,
+    micros_per_hour: i64,
+    quoted_at: String,
 }
 
 impl StoredSkill {
@@ -121,6 +137,10 @@ struct SessionDoc {
     /// never recorded, which is a third thing again.
     #[serde(default)]
     granted_skills: Option<Vec<StoredSkill>>,
+    /// What this session was priced at. Absent means it was never priced,
+    /// which is a different fact from a price of nothing.
+    #[serde(default)]
+    pricing: Option<PricingDoc>,
 }
 
 /// A MongoDB-backed session store.
@@ -247,6 +267,61 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
                 })
                 .collect()
         }),
+        pricing: s.pricing.as_ref().map(pricing_to_doc).transpose()?,
+    })
+}
+
+fn pricing_to_doc(pricing: &SessionPricing) -> Result<PricingDoc, StoreError> {
+    Ok(PricingDoc {
+        rate_card: pricing.rate_card.0.clone(),
+        cpu_micros_per_cpu_hour: price_to_i64(pricing.rate.cpu_micros_per_cpu_hour)?,
+        memory_micros_per_gib_hour: price_to_i64(pricing.rate.memory_micros_per_gib_hour)?,
+        cpu_millis: capacity_to_i64(pricing.cpu_millis, "CPU millicores")?,
+        memory_mib: capacity_to_i64(pricing.memory_mib, "memory MiB")?,
+        micros_per_hour: price_to_i64(pricing.micros_per_hour)?,
+        quoted_at: pricing.quoted_at.clone(),
+    })
+}
+
+fn price_to_i64(value: u64) -> Result<i64, StoreError> {
+    i64::try_from(value).map_err(|_| {
+        StoreError::Malformed(format!("a price of {value} micro-USD cannot be stored"))
+    })
+}
+
+fn capacity_to_i64(value: u32, unit: &str) -> Result<i64, StoreError> {
+    i64::try_from(u64::from(value)).map_err(|_| {
+        StoreError::Malformed(format!(
+            "a session capacity of {value} {unit} cannot be stored"
+        ))
+    })
+}
+
+fn pricing_from_doc(pricing: PricingDoc) -> Result<SessionPricing, StoreError> {
+    Ok(SessionPricing {
+        rate_card: RateCardId(pricing.rate_card),
+        rate: Rate {
+            cpu_micros_per_cpu_hour: stored_price(pricing.cpu_micros_per_cpu_hour)?,
+            memory_micros_per_gib_hour: stored_price(pricing.memory_micros_per_gib_hour)?,
+        },
+        cpu_millis: stored_capacity(pricing.cpu_millis, "CPU millicores")?,
+        memory_mib: stored_capacity(pricing.memory_mib, "memory MiB")?,
+        micros_per_hour: stored_price(pricing.micros_per_hour)?,
+        quoted_at: pricing.quoted_at,
+    })
+}
+
+fn stored_price(value: i64) -> Result<u64, StoreError> {
+    u64::try_from(value).map_err(|_| {
+        StoreError::Malformed(format!("a stored price of {value} micro-USD is invalid"))
+    })
+}
+
+fn stored_capacity(value: i64, unit: &str) -> Result<u32, StoreError> {
+    u32::try_from(value).map_err(|_| {
+        StoreError::Malformed(format!(
+            "a stored session capacity of {value} {unit} is invalid"
+        ))
     })
 }
 
@@ -299,7 +374,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             granted_skills: d
                 .granted_skills
                 .map(|skills| skills.into_iter().map(StoredSkill::into_granted).collect()),
-            pricing: None,
+            pricing: d.pricing.map(pricing_from_doc).transpose()?,
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,
