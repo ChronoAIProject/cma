@@ -85,6 +85,23 @@ pub trait SessionStore: Send + Sync {
     /// Every session owned by a subject, newest first.
     async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError>;
 
+    /// How many of this subject's sessions are recorded as wanting a runtime.
+    ///
+    /// Its own method rather than a fold over `list_for`, which decodes every
+    /// record the subject has ever had on a query made for every creation. The
+    /// default is that fold so a store with nothing better remains correct.
+    ///
+    /// Recorded state is authoritative. Provider inventory can retain a dead
+    /// runtime and would then refuse a session its owner is entitled to start.
+    async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
+        Ok(self
+            .list_for(owner)
+            .await?
+            .into_iter()
+            .filter(|record| record.session.status.wants_runtime())
+            .count() as u32)
+    }
+
     /// Every session, newest first. For the monitoring surface.
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError>;
 

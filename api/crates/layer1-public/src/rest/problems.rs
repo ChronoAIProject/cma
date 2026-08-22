@@ -1,7 +1,7 @@
 //! RFC 9457 projection of the core's error vocabulary.
 
 use axum::{
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -40,6 +40,11 @@ impl IntoResponse for Problem {
             // formed and this deployment will not provision it.
             CoreError::SizeOutOfBounds(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "size-out-of-bounds")
+            }
+            // The request becomes valid when the owner releases a slot. This
+            // is not 429: no honest Retry-After exists for a user action.
+            CoreError::SessionLimitReached { .. } => {
+                (StatusCode::CONFLICT, "session-limit-reached")
             }
             CoreError::RuntimeUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
@@ -85,10 +90,19 @@ impl IntoResponse for Problem {
                     object.insert("minimum".into(), refusal.minimum.into());
                     object.insert("maximum".into(), refusal.maximum.into());
                 }
+                CoreError::SessionLimitReached { limit, live } => {
+                    object.insert("limit".into(), (*limit).into());
+                    object.insert("live".into(), (*live).into());
+                }
                 _ => {}
             }
         }
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json"),
+        );
+        response
     }
 }
 
@@ -149,6 +163,7 @@ mod tests {
                 minimum: 250,
                 maximum: 4_000,
             }),
+            CoreError::SessionLimitReached { limit: 3, live: 3 },
             CoreError::InvalidSessionSize(SessionSize::new(0, 512).unwrap_err()),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
@@ -169,6 +184,7 @@ mod tests {
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
                 | CoreError::SizeOutOfBounds(_)
+                | CoreError::SessionLimitReached { .. }
                 | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
@@ -214,6 +230,44 @@ mod tests {
             }
             let (_, body) = rendered(error).await;
             for field in ["dimension", "requested", "minimum", "maximum"] {
+                assert!(body.get(field).is_none(), "unexpected {field} in {body}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_limit_is_a_conflict_with_both_counts() {
+        let (status, body) = rendered(CoreError::SessionLimitReached { limit: 3, live: 4 }).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["type"]
+            .as_str()
+            .unwrap()
+            .ends_with("/session-limit-reached"));
+        assert_eq!(body["code"], "session_limit_reached");
+        assert_eq!(body["limit"], 3);
+        assert_eq!(body["live"], 4);
+    }
+
+    #[test]
+    fn a_problem_document_uses_its_registered_media_type() {
+        let response =
+            Problem(CoreError::SessionLimitReached { limit: 1, live: 1 }).into_response();
+
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/problem+json"))
+        );
+    }
+
+    #[tokio::test]
+    async fn limit_fields_are_absent_from_every_other_problem() {
+        for error in every_variant() {
+            if matches!(error, CoreError::SessionLimitReached { .. }) {
+                continue;
+            }
+            let (_, body) = rendered(error).await;
+            for field in ["limit", "live"] {
                 assert!(body.get(field).is_none(), "unexpected {field} in {body}");
             }
         }
