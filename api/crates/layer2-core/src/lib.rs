@@ -77,6 +77,7 @@ mod recovery_tests;
 mod rotate_tests;
 pub mod service;
 pub mod session;
+pub mod size;
 pub mod store;
 pub mod terminal;
 mod terminal_io;
@@ -118,6 +119,7 @@ pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
 pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+pub use size::{InvalidSessionSize, SessionSize};
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
     SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
