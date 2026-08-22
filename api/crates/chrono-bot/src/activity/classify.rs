@@ -130,6 +130,14 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         ["api", "v1", "admin", "activity"] => Some(Classified::new(Action::ActivityLogRead)),
         ["api", "v1", "admin", "runtimes"] => Some(Classified::new(Action::RuntimeInventoryRead)),
         ["api", "v1", "admin", "sessions"] => Some(Classified::new(Action::SessionList)),
+        ["api", "v1", "admin", "settings"] => match *method {
+            Method::GET => Some(Classified::new(Action::PlatformSettingsRead)),
+            Method::PATCH => Some(Classified::new(Action::PlatformSettingsChange)),
+            _ => None,
+        },
+        ["api", "v1", "admin", "settings", "reset"] if method == Method::POST => {
+            Some(Classified::new(Action::PlatformSettingsReset))
+        }
         ["api", "v1", "admin", "sessions", id, verb] => classify_session_verb(method, verb)
             .map(|action| Classified::new(action).on(session(id))),
 
