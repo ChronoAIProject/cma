@@ -131,6 +131,48 @@ export interface RuntimeInventory {
   readonly providers: readonly ProviderReport[];
 }
 
+/** Editable prose surrounding the generated granted-services list. */
+export interface SessionBriefing {
+  readonly before: readonly string[];
+  readonly reachHeading: string;
+  readonly reachLead: string;
+  readonly reachClose: string;
+  readonly reachNone: string;
+  readonly after: readonly string[];
+}
+
+/** Inclusive bounds for a size a caller states explicitly. */
+export interface CapacityBounds {
+  readonly minCpuMillis: number;
+  readonly maxCpuMillis: number;
+  readonly minMemoryMib: number;
+  readonly maxMemoryMib: number;
+}
+
+/** Deployment-wide settings as the operator surface edits them. */
+export interface PlatformSettings {
+  readonly briefing: SessionBriefing;
+  readonly sizeBounds: CapacityBounds;
+  /** `null` means the deployment imposes no per-subject live-session limit. */
+  readonly liveSessions: number | null;
+}
+
+/** A settings snapshot and the revision a conditional write must name. */
+export interface StoredPlatformSettings {
+  readonly revision: number;
+  readonly settings: PlatformSettings;
+  /** The complete object replaced by the latest write, when one exists. */
+  readonly previous?: PlatformSettings;
+}
+
+/** Somebody else wrote platform settings after this editor read them. */
+export class PlatformSettingsConflict extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PlatformSettingsConflict';
+  }
+}
+
 /**
  * Where the operator surface's data comes from.
  *
@@ -155,4 +197,13 @@ export interface OperatorStore {
   stopSession(id: string): Promise<void>;
   /** End a session. */
   terminateSession(id: string): Promise<void>;
+  /** Read deployment-wide settings and their conditional-write revision. */
+  readPlatformSettings(): Promise<StoredPlatformSettings>;
+  /** Replace all settings, provided nobody has written the named revision. */
+  changePlatformSettings(
+    expectedRevision: number,
+    settings: PlatformSettings,
+  ): Promise<StoredPlatformSettings>;
+  /** Restore shipped briefing prose without changing another setting. */
+  resetPlatformBriefing(expectedRevision: number): Promise<StoredPlatformSettings>;
 }

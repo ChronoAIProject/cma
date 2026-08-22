@@ -33,7 +33,8 @@ export type Capability =
   | 'read_event_log'
   | 'read_activity_log'
   | 'read_user_directory'
-  | 'control_any_session';
+  | 'control_any_session'
+  | 'configure_platform';
 
 const CAPABILITIES: readonly Capability[] = [
   'create_session',
@@ -46,6 +47,7 @@ const CAPABILITIES: readonly Capability[] = [
   'read_activity_log',
   'read_user_directory',
   'control_any_session',
+  'configure_platform',
 ];
 
 /**
