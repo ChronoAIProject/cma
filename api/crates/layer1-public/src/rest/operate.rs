@@ -107,6 +107,8 @@ pub(super) struct UsageView {
     input_tokens: u64,
     output_tokens: u64,
     context_used: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window: Option<u64>,
 }
 
 impl From<Usage> for UsageView {
@@ -115,6 +117,7 @@ impl From<Usage> for UsageView {
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
             context_used: usage.context_used,
+            context_window: usage.context_window,
         }
     }
 }

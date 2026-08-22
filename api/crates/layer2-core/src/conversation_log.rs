@@ -204,6 +204,12 @@ impl SessionService {
             }
             (entry.session.options.record_tool_bodies, secrets)
         };
+        let reading = match &update {
+            SessionUpdate::UsageUpdate(usage) if usage.used > 0 => {
+                Some((usage.used, (usage.size > 0).then_some(usage.size)))
+            }
+            _ => None,
+        };
         let Some(kind) = durable(update, record_tool_bodies, &secrets) else {
             // A kind of update this core has no word for. Skipped rather than
             // guessed at: the vocabulary here is the core's own, and inventing
@@ -216,6 +222,12 @@ impl SessionService {
             let Some(entry) = entries.get_mut(id) else {
                 return;
             };
+            if let Some((now, window)) = reading {
+                if let Some(was) = entry.context_reading.filter(|was| *was > now) {
+                    append(entry, EventKind::ContextCompacted { was, now, window });
+                }
+                entry.context_reading = Some(now);
+            }
             append(entry, kind);
         }
         self.flush(id).await;
@@ -281,6 +293,9 @@ impl SessionService {
                         // was rather than guessed at: the update stream is what
                         // says how full the context is.
                         context_used: 0,
+                        // A turn's accounting has no context-window field, so
+                        // there is no ceiling here to state or infer.
+                        context_window: None,
                     },
                 );
             }
@@ -538,6 +553,9 @@ fn durable(
             input_tokens: 0,
             output_tokens: 0,
             context_used: usage.used,
+            // The harness begins at zero and fills this when its route states
+            // a window. Until then zero means "not stated", not no context.
+            context_window: (usage.size > 0).then_some(usage.size),
         }),
         // A permission mode change is a safety matter: it decides how much the
         // agent may do unattended, so it is recorded rather than only shown.
