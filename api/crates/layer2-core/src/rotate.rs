@@ -425,6 +425,7 @@ impl SessionService {
             caller_credential: None,
             runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();

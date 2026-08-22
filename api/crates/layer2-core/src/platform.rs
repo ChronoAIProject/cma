@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 // deployment policy through `platform`, while the range has a file named for
 // the type and does not consume this settings file as more settings arrive.
 pub use crate::capacity_bounds::{CapacityBounds, OutOfBounds, SizeDimension};
-pub use crate::pricing::{PriceList, PriceListViolation, Rate, RateCard, RateCardId, CURRENCY};
+pub use crate::pricing::{
+    format_usd, PriceList, PriceListViolation, Quote, Rate, RateCard, RateCardId, SessionPricing,
+    CURRENCY,
+};
 
 /// What a session is told about itself before its agent does anything.
 ///

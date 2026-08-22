@@ -127,6 +127,15 @@ pub enum CoreError {
     #[error("service catalogue unavailable: {0}")]
     ServiceCatalogUnavailable(String),
 
+    /// The quote a caller accepted names a rate card no longer in force.
+    ///
+    /// Both ids are fields so an interface can tell the caller exactly what
+    /// changed without parsing this sentence. This keys on cards, never on the
+    /// settings revision: editing unrelated platform prose changes a revision
+    /// and does not change a price.
+    #[error("the price changed: quoted against rate card {quoted}, now {in_force}")]
+    PriceChanged { quoted: String, in_force: String },
+
     /// A settings save would have edited or removed a rate that has already
     /// priced something.
     ///
@@ -180,6 +189,7 @@ impl CoreError {
             Self::InvalidRequest(_) => "invalid_request",
             Self::ServiceNotGranted(_) => "service_not_granted",
             Self::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+            Self::PriceChanged { .. } => "price_changed",
             Self::PriceListNotAppendOnly(_) => "price_list_not_append_only",
             Self::SettingsConflict(_) => "settings_conflict",
             Self::SettingsUnavailable(_) => "settings_unavailable",
@@ -240,6 +250,10 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("api-github".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::PriceChanged {
+                quoted: "rate_old".into(),
+                in_force: "rate_new".into(),
+            },
             CoreError::PriceListNotAppendOnly("card rate_example changed field 'rate'".into()),
             CoreError::SettingsConflict("x".into()),
             CoreError::SettingsUnavailable("x".into()),
@@ -265,6 +279,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
                 | CoreError::SettingsUnavailable(_) => {}
