@@ -42,6 +42,18 @@ async fn unauthorized_is_indistinguishable_from_not_found() {
     );
 }
 
+#[tokio::test]
+async fn a_zero_size_is_unprocessable_and_named() {
+    let error = layer2_core::SessionSize::new(0, 512).expect_err("zero CPU fails");
+    let (status, body) = rendered(CoreError::InvalidSessionSize(error)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "invalid_session_size");
+    assert!(body["type"]
+        .as_str()
+        .expect("a problem type")
+        .ends_with("/invalid-session-size"));
+}
+
 #[test]
 fn zero_geometry_is_unprocessable_not_a_server_error() {
     let err = TerminalGeometry::new(0, 24).expect_err("zero width fails");
