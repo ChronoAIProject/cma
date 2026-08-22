@@ -4,7 +4,7 @@
 //! under test is the decision between "history from a newer writer" and
 //! "damage", and that decision is made entirely on the shape of one document.
 
-use layer2_core::{Event, EventKind, SessionId, StoredEventKind};
+use layer2_core::{Event, EventKind, RuntimeLossCause, SessionId, StoredEventKind};
 use mongodb::bson::{doc, Bson};
 
 use super::{from_document, from_document_before_context_compaction, to_document};
@@ -98,6 +98,10 @@ fn every_current_variant_survives_the_round_trip() {
             request_id: "req-1".into(),
             allowed: false,
         },
+        EventKind::RuntimeLost {
+            runtime_id: "sbx_1".into(),
+            cause: Some(RuntimeLossCause::OutOfMemory),
+        },
     ];
 
     for (index, kind) in kinds.into_iter().enumerate() {
@@ -113,6 +117,44 @@ fn every_current_variant_survives_the_round_trip() {
                 panic!("{kind:?} was read back as an unknown kind tagged {tag}")
             }
         }
+    }
+}
+
+#[test]
+fn a_runtime_loss_is_known_while_a_foreign_loss_tag_stays_unknown() {
+    let known = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 8_i64,
+        "kind": {
+            "type": "runtime_lost",
+            "runtime_id": "sbx_1",
+            "cause": "failed",
+        },
+    })
+    .expect("this build owns runtime_lost");
+    match known.kind {
+        StoredEventKind::Known(EventKind::RuntimeLost { runtime_id, cause }) => {
+            assert_eq!(runtime_id, "sbx_1");
+            assert_eq!(cause, Some(RuntimeLossCause::Failed));
+        }
+        other => panic!("expected a known runtime loss, got {other:?}"),
+    }
+
+    let future = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 9_i64,
+        "kind": {
+            "type": "runtime_lost_with_a_newer_verdict",
+            "runtime_id": "sbx_2",
+        },
+    })
+    .expect("a future tag is still readable history");
+    match future.kind {
+        StoredEventKind::Unknown { tag, payload } => {
+            assert_eq!(tag, "runtime_lost_with_a_newer_verdict");
+            assert_eq!(payload["runtime_id"], "sbx_2");
+        }
+        other => panic!("expected an unknown future event, got {other:?}"),
     }
 }
 

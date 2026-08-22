@@ -161,6 +161,47 @@ impl StopReason {
     }
 }
 
+/// Why a session's runtime stopped, as far as the service could establish it.
+///
+/// Distinct from [`StopReason`], which is why a *session* stopped or paused --
+/// something its owner or its agent did. This is why the machine underneath it
+/// went away, which is nobody's decision and usually nobody's fault.
+///
+/// The core's own vocabulary. It is mapped from what the runtime layer
+/// reports, in the same shape `StartFailure::from_provisioning` already maps an
+/// adapter error, so no layer below this one is named in the durable log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeLossCause {
+    /// It was stopped for using more memory than it was allowed.
+    OutOfMemory,
+    /// It ran to the end and exited without reporting a failure.
+    Ended,
+    /// It exited reporting a failure.
+    Failed,
+    /// The machine under it went away.
+    Displaced,
+    /// Something was said about it and this build cannot read it.
+    ///
+    /// A different fact from saying nothing, and worth its own name: one means
+    /// the record is silent, the other means the record has a word in it that
+    /// this build has not been taught. Only the second is a thing to go and fix.
+    Unrecognised,
+}
+
+impl From<layer3_adapter::RuntimeLossReason> for RuntimeLossCause {
+    fn from(reason: layer3_adapter::RuntimeLossReason) -> Self {
+        use layer3_adapter::RuntimeLossReason as R;
+        match reason {
+            R::OutOfMemory => Self::OutOfMemory,
+            R::Completed => Self::Ended,
+            R::Failed => Self::Failed,
+            R::Displaced => Self::Displaced,
+            R::Unrecognised => Self::Unrecognised,
+        }
+    }
+}
+
 /// Operational health, reported alongside lifecycle so operators read this
 /// control plane the same way they read neighbouring ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
