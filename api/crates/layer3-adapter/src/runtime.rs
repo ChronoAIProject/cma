@@ -41,6 +41,28 @@ pub struct RuntimeCapacity {
     pub memory_mib: NonZeroU32,
 }
 
+/// Why a runtime stopped serving, in this layer's own words.
+///
+/// The provider says this in its own vocabulary; this is the closed set the
+/// layers above are allowed to see. Mapping happens in `hosted/`, where the
+/// provider's words already live, so no provider string crosses this boundary
+/// -- CLAUDE.md section 3. A word this build does not know becomes
+/// `Unrecognised` rather than travelling upward verbatim: an unrecognised word
+/// is a fact worth reporting, and the word itself is the provider's business.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeLossReason {
+    /// Stopped for using more memory than it was allowed.
+    OutOfMemory,
+    /// Ran to the end and exited without reporting a failure.
+    Completed,
+    /// Exited reporting a failure.
+    Failed,
+    /// The machine under it went away, or the platform took it back.
+    Displaced,
+    /// The provider named something this build does not recognise.
+    Unrecognised,
+}
+
 /// One runtime the provider is running, as it describes it.
 ///
 /// Carries who created it as well as what it is for. A provider is shared: one
@@ -74,6 +96,18 @@ pub struct RuntimeListing {
     /// at was serving once, so not serving now means it stopped rather than
     /// that it has yet to start.
     pub serving: bool,
+    /// Why it stopped, where the provider said and this build recognised it.
+    ///
+    /// `None` in three different situations and they are deliberately not told
+    /// apart here: the runtime is still serving, the provider named nothing,
+    /// or the adapter cannot answer this question at all. What they share is
+    /// that there is no verdict to give, and inventing one would be worse than
+    /// the absence.
+    ///
+    /// Never read while `serving` is true. The provider sets a reason on a
+    /// healthy sandbox too, so reading it unconditionally would invent a death
+    /// for every live runtime in the list.
+    pub lost_because: Option<RuntimeLossReason>,
 }
 
 /// What the runtime should already have when the agent starts.
