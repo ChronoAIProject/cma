@@ -363,6 +363,20 @@ impl KeyIssuer {
             .filter_map(|k| session_of(&self.deployment, &k.name).map(|s| (k.id, s)))
             .collect()
     }
+
+    /// Every key this deployment named for one session on an owner's account.
+    ///
+    /// Kept over [`Self::minted_here`] rather than issuing a second listing
+    /// request shape: pagination and platform response handling belong to that
+    /// one path, whether a caller is sweeping an account or releasing one
+    /// session after this process has forgotten what it minted.
+    pub async fn minted_for(&self, session: &SessionId, owner_token: &str) -> Vec<String> {
+        self.minted_here(owner_token)
+            .await
+            .into_iter()
+            .filter_map(|(id, named)| (named == *session).then_some(id))
+            .collect()
+    }
 }
 
 /// A key row as the platform lists it.
