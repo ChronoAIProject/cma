@@ -1,6 +1,6 @@
 # API Overview
 
-chrono-bot exposes five public interfaces. Each is a **projection** of one core session model — never a separate product with its own semantics.
+CMA (ChronoAI Managed Agent) exposes five public interfaces. Each is a **projection** of one core session model — never a separate product with its own semantics.
 
 This document defines the shared vocabulary. The five interface documents define how each protocol expresses it:
 
@@ -92,7 +92,7 @@ provisioning ──► ready ──► running ⇄ idle ──► terminated
 A session carries the runtime version serving it, how many times it has been carried onto a newer one, and the moment of the snapshot the current runtime resumed from:
 
 ```json
-{ "runtime_version": "…/chrono-bot-runtime:8dbd315", "rotations": 1, "rotated_at": "2026-08-14T00:31:10Z" }
+{ "runtime_version": "…/cma-runtime:8dbd315", "rotations": 1, "rotated_at": "2026-08-14T00:31:10Z" }
 ```
 
 `rotated_at` is the honest part and clients should show it. Anything the agent did after that moment did not travel, so an owner who can see the boundary can recognise a gap rather than puzzle over one.
@@ -164,7 +164,7 @@ There is no separate approvals resource. Approvals ride the event stream, so the
 
 ## 5. Capability declaration
 
-No specification defines a named conformance profile for agent services. chrono-bot therefore declares its own, and publishes it through each protocol's **native** mechanism rather than inventing a parallel one:
+No specification defines a named conformance profile for agent services. CMA therefore declares its own, and publishes it through each protocol's **native** mechanism rather than inventing a parallel one:
 
 | Interface | Declaration surface |
 |---|---|

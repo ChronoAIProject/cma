@@ -31,7 +31,7 @@ Authenticated as the session owner. A second concurrent attach is rejected — s
 
 ### 2.1 Authenticating the upgrade
 
-The browser WebSocket API cannot set an `Authorization` header on the upgrade, and cross-origin cookies are not a workable contract for chrono-bot's actual consumers — other products' frontends, on their own origins. So there are two ways in, and a client uses whichever fits it.
+The browser WebSocket API cannot set an `Authorization` header on the upgrade, and cross-origin cookies are not a workable contract for the actual consumers of CMA (ChronoAI Managed Agent) — other products' frontends, on their own origins. So there are two ways in, and a client uses whichever fits it.
 
 **Same-origin, cookie-authenticated** (our own dashboard): nothing to do. The browser sends the session cookie itself and the upgrade is authenticated like any other route.
 
@@ -146,7 +146,7 @@ Resize frames with `cols` or `rows` of `0` are rejected with `{"t":"error"}` and
 
 Step 1 is not optional on reconnect. A ticket is spent the moment it is redeemed, so a client that kept one for later will find it refused.
 
-chrono-bot maintains a **server-side terminal emulator** per live session, so on reattach the client receives a full screen snapshot and then live output. This is necessary rather than convenient: replaying raw historical bytes is wrong after any resize, and a full-screen application's byte stream cannot be seeked.
+CMA maintains a **server-side terminal emulator** per live session, so on reattach the client receives a full screen snapshot and then live output. This is necessary rather than convenient: replaying raw historical bytes is wrong after any resize, and a full-screen application's byte stream cannot be seeked.
 
 Consequences for clients:
 
@@ -209,7 +209,7 @@ All three are in the private range, and all three close with a reason rather tha
 
 ### Approvals behave differently here, and it matters
 
-On every other interface, chrono-bot intercepts a permission request and applies policy before the action runs. On this interface **the user answers the kernel's prompt directly in the terminal**, so the control plane's approval policy is not consulted.
+On every other interface, CMA intercepts a permission request and applies policy before the action runs. On this interface **the user answers the kernel's prompt directly in the terminal**, so the control plane's approval policy is not consulted.
 
 That is inherent to relaying a real terminal, not an oversight. Two consequences:
 

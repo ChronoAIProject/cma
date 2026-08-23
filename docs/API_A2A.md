@@ -2,7 +2,7 @@
 
 **Priority 5 — for agent clients.**
 
-A2A (Agent2Agent) lets another organisation's agent discover chrono-bot, delegate a coding task to it, and receive the result as artifacts. It is the interface for **agent-to-agent delegation across a trust boundary**, as distinct from [MCP](./API_MCP.md), where chrono-bot is a tool inside someone else's agent loop.
+A2A (Agent2Agent) lets another organisation's agent discover CMA (ChronoAI Managed Agent), delegate a coding task to it, and receive the result as artifacts. It is the interface for **agent-to-agent delegation across a trust boundary**, as distinct from [MCP](./API_MCP.md), where CMA is a tool inside someone else's agent loop.
 
 A2A is the only protocol in the stack that is genuinely standardised — Apache-2.0, governed by the Linux Foundation, with a published specification and versioned bindings. That is why it is worth implementing despite being lowest priority.
 
@@ -16,7 +16,7 @@ See [API_Overview.md](./API_Overview.md) for the core operation set and session 
 GET /.well-known/agent-card.json
 ```
 
-The Agent Card is the declaration surface. It states what chrono-bot is, which transports it speaks, how to authenticate, and which capabilities it supports.
+The Agent Card is the declaration surface. It states what CMA is, which transports it speaks, how to authenticate, and which capabilities it supports.
 
 ```json
 {
@@ -51,13 +51,13 @@ Capability flags are set **truthfully**. Withholding an operation is legal only 
 
 The specification requires that every interface declared in a single Agent Card expose the **same** operation set. Declaring both a JSON-RPC and an HTTP+JSON interface would oblige them to be functionally identical.
 
-chrono-bot therefore **declares exactly one A2A interface**. chrono-bot's REST API is a separate product surface and is deliberately *not* declared as an A2A binding — its operation set is larger, and conflating the two would violate that rule.
+CMA therefore **declares exactly one A2A interface**. CMA's REST API is a separate product surface and is deliberately *not* declared as an A2A binding — its operation set is larger, and conflating the two would violate that rule.
 
 ---
 
 ## 3. Mapping to the core model
 
-| A2A concept | chrono-bot |
+| A2A concept | CMA |
 |---|---|
 | Task | A session, plus one delegated unit of work |
 | Context | The session, across multiple tasks |
@@ -67,7 +67,7 @@ chrono-bot therefore **declares exactly one A2A interface**. chrono-bot's REST A
 
 ### State mapping
 
-| chrono-bot | A2A task state |
+| CMA | A2A task state |
 |---|---|
 | `provisioning`, `ready` | submitted |
 | `running` | working |
@@ -76,7 +76,7 @@ chrono-bot therefore **declares exactly one A2A interface**. chrono-bot's REST A
 | `terminated` + error | failed |
 | `terminated` + `user_terminated` | canceled |
 
-The gap worth naming: **chrono-bot's `idle` — runtime reclaimed, session alive and revivable — has no A2A equivalent.** It is not `working` and not `completed`. chrono-bot reports `working` and carries the true state in the extension metadata, because reporting `completed` for a session that will resume would be a lie a client acts on.
+The gap worth naming: **CMA's `idle` — runtime reclaimed, session alive and revivable — has no A2A equivalent.** It is not `working` and not `completed`. CMA reports `working` and carries the true state in the extension metadata, because reporting `completed` for a session that will resume would be a lie a client acts on.
 
 ---
 
@@ -118,7 +118,7 @@ A task sitting in input-required is durable. A client that disconnects finds it 
 
 ## 6. Wire conventions
 
-These are specification requirements, not chrono-bot preferences, and clients depend on them:
+These are specification requirements, not CMA preferences, and clients depend on them:
 
 - JSON field names are camelCase.
 - Enum values serialise as `SCREAMING_SNAKE_CASE` strings — `"TASK_STATE_INPUT_REQUIRED"`, `"ROLE_USER"`.
@@ -154,4 +154,4 @@ The Agent Card may be signed. If ChronoAI signs it, note that capability boolean
 
 The core operations — send message, get task, list tasks, cancel task — are **not gated by any flag** and are implemented in full. There is no legal way to withhold them, and an interface that cannot serve all four must not be declared as an A2A interface at all.
 
-Capability-gated behaviour is declared truthfully in the card, and the specification's conformance suite is run in CI. Tests gated on a capability chrono-bot does not offer are skipped rather than failed, which is the intended behaviour and not a gap in coverage.
+Capability-gated behaviour is declared truthfully in the card, and the specification's conformance suite is run in CI. Tests gated on a capability CMA does not offer are skipped rather than failed, which is the intended behaviour and not a gap in coverage.

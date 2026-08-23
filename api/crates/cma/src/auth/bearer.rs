@@ -1,6 +1,6 @@
 //! Establishing who is calling from a bearer token.
 //!
-//! The browser signs in and gets a cookie. Nothing else can: chrono-bot's
+//! The browser signs in and gets a cookie. Nothing else can: CMA's
 //! stated clients are other products' backends, and a server has no cookie jar,
 //! no redirect to follow and no browser to be sent to a login page. Without
 //! this the REST interface is reachable only by the one client it was not

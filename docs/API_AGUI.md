@@ -2,7 +2,7 @@
 
 **Priority 1 — for frontend clients.**
 
-AG-UI is how a chat frontend renders a chrono-bot session as a conversation: assistant prose, tool calls, reasoning, and approval prompts, streamed as they happen. It is the highest-priority interface because NyxID Chat and FKST Chat are the primary consumers.
+AG-UI is how a chat frontend renders a CMA (ChronoAI Managed Agent) session as a conversation: assistant prose, tool calls, reasoning, and approval prompts, streamed as they happen. It is the highest-priority interface because NyxID Chat and FKST Chat are the primary consumers.
 
 See [API_Overview.md](./API_Overview.md) for the core operation set and session model.
 
@@ -20,7 +20,7 @@ It projects **conversation sessions**. A session created in terminal mode carrie
 
 ### The conformance table
 
-One row per core operation, for a **conversation session**. It is the claim behind "a chat client can drive a chrono-bot session", and it is narrower than that sentence sounds: two operations are terminal facts this protocol does not carry, and three depend on what the kernel behind the session offers.
+One row per core operation, for a **conversation session**. It is the claim behind "a chat client can drive a CMA session", and it is narrower than that sentence sounds: two operations are terminal facts this protocol does not carry, and three depend on what the kernel behind the session offers.
 
 | Operation | On a conversation session | If not |
 |---|---|---|
@@ -74,7 +74,7 @@ Content-Type: application/json
 }
 ```
 
-| Field | Meaning in chrono-bot |
+| Field | Meaning in CMA |
 |---|---|
 | `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected. The new session gets an identifier chosen by the service, not the one you sent, and every event on the run carries it: read `threadId` off the first event and use that from then on |
 | `runId` | Client-generated id for this turn; echoed on every event |
@@ -86,7 +86,7 @@ Content-Type: application/json
 
 `environmentProfile` is the one property in it this service reads. `kernel` is accepted and ignored, as the table above says; `llmSource` was named here as though it were honoured and frozen, and has never existed anywhere in the service — the same phantom `docs/API_REST.md` carried as `llm_source`. Both are gone from the example above, so it now shows only what sending actually does something.
 
-Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is chrono-bot's own, so an unknown field there is refused by name.
+Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is CMA's own, so an unknown field there is refused by name.
 
 One consequence worth stating, because a client cannot discover it here: **this interface never reports which kernel a session ended up on.** No event and no state patch carries it. Over REST the created session echoes its `kernel` back, so a caller could notice; here there is nothing to notice, which is what makes the declaration above the only signal there is. `GET /api/v1/sessions/{id}` is where to look.
 
@@ -94,7 +94,7 @@ One consequence worth stating, because a client cannot discover it here: **this 
 
 ## 3. Events emitted
 
-chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative list is the `events` map in the capability document; this table is its documented form.
+CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is the `events` map in the capability document; this table is its documented form.
 
 | Group | Emitted | Carries |
 |---|---|---|
@@ -291,7 +291,7 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 
 ```
 1. Codex requests permission to run a command
-2. chrono-bot ends the run:
+2. CMA ends the run:
 
    RUN_FINISHED {
      outcome: {
@@ -330,7 +330,7 @@ Between step 2 and step 4 the session is `idle` with `stop_reason: requires_acti
 
 - **Interrupt** — `POST /api/v1/sessions/{threadId}/interrupt`.
 
-  **A dropped stream does not cancel anything.** This was specified the other way round — "abort the HTTP request and chrono-bot cancels the turn" — and that is wrong for two reasons that only became clear once the stream existed.
+  **A dropped stream does not cancel anything.** This was specified the other way round — "abort the HTTP request and CMA cancels the turn" — and that is wrong for two reasons that only became clear once the stream existed.
 
   A connection that drops because a laptop slept is indistinguishable from one a person closed on purpose. Reading the first as a cancellation ends somebody's turn because their network blinked, which §5 of `CLAUDE.md` forbids in the strongest terms it has: a session is not interrupted by anything its owner did not ask for. And it contradicts §7 of this document, which tells a client to recover a dropped stream by reading the durable log — advice that only makes sense if the work is still running.
 
@@ -395,6 +395,6 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 
 ## 8. Stability
 
-AG-UI is pre-1.0 and single-vendor, with no protocol version distinct from its package semver. chrono-bot therefore versions **its own** projection through the `conformsTo` URIs above, and never claims conformance to an AG-UI version — no such version exists to cite.
+AG-UI is pre-1.0 and single-vendor, with no protocol version distinct from its package semver. CMA therefore versions **its own** projection through the `conformsTo` URIs above, and never claims conformance to an AG-UI version — no such version exists to cite.
 
 If AG-UI makes a breaking change, this interface's `conformsTo` URIs change and the core session model does not.
