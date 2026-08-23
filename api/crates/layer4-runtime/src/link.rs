@@ -42,8 +42,7 @@ use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 
-use crate::bridge::Outbound;
-use crate::lanes::{self, Ready, LANE_CONVERSATION, LANE_CONVERSATION_GAP, LANE_TERMINAL};
+use crate::lanes::{self, Ready, LANE_TERMINAL};
 use crate::pty::PtySession;
 use crate::upstream::PLACEHOLDER_KEY;
 use crate::AppState;
@@ -68,6 +67,14 @@ pub(crate) struct AttachParams {
     /// Absent means the terminal, which is what every link was.
     #[serde(default)]
     lanes: Option<String>,
+    /// How often, in milliseconds, to send a resource reading on this link.
+    ///
+    /// Present makes this a telemetry link and nothing else: no pty is taken,
+    /// no geometry is declared, no conversation is bridged. Asked for per link
+    /// rather than baked into the image, because the image is the runtime
+    /// version and changing it rotates every live session.
+    #[serde(default)]
+    telemetry: Option<u64>,
 }
 
 impl AttachParams {
@@ -79,6 +86,11 @@ impl AttachParams {
     /// Whether this link drives the conversation rather than the terminal.
     fn conversational(&self) -> bool {
         self.lanes.as_deref() == Some("conv")
+    }
+
+    /// Whether this link carries readings rather than a plane.
+    fn telemetric(&self) -> bool {
+        self.telemetry.is_some()
     }
 }
 
@@ -117,7 +129,7 @@ pub(crate) enum ControlFrame {
 ///
 /// Small on purpose: answers are one per request and are consumed at once, so
 /// a backlog here would mean the socket is already gone.
-const CONTROL_REPLIES: usize = 4;
+pub(crate) const CONTROL_REPLIES: usize = 4;
 
 /// The tag a supervisor answers a plane switch with.
 ///
@@ -125,7 +137,7 @@ const CONTROL_REPLIES: usize = 4;
 /// word, and a literal repeated in two crates is how they stop agreeing.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
 
-type Sink = SplitSink<WebSocket, Message>;
+pub(crate) type Sink = SplitSink<WebSocket, Message>;
 
 pub(crate) async fn attach(
     ws: WebSocketUpgrade,
@@ -148,11 +160,19 @@ async fn relay(
 ) -> std::io::Result<()> {
     let (mut sink, source) = socket.split();
 
+    if params.telemetric() && !params.framed() {
+        tracing::warn!(runtime = %id, "a resource reading cannot be sent on a wire with no lane discriminator");
+        let _ = sink.send(Message::Close(None)).await;
+        return Ok(());
+    }
+
     // Sent before anything else, so a control plane can decide how to read
     // every frame that follows from the first one it receives. A pod that
     // predates this sends nothing here, which is exactly how it is recognised.
     if params.framed() {
-        let lanes = if params.conversational() {
+        let lanes = if params.telemetric() {
+            ["ctl", lanes::LANE_NAME_TELEMETRY]
+        } else if params.conversational() {
             ["ctl", "conv"]
         } else {
             ["ctl", "term"]
@@ -164,8 +184,11 @@ async fn relay(
         }
     }
 
+    if let Some(interval_ms) = params.telemetry {
+        return crate::telemetry::relay_telemetry(sink, source, state, id, interval_ms).await;
+    }
     if params.conversational() {
-        relay_conversation(sink, source, state, id).await
+        crate::conversation_link::relay_conversation(sink, source, state, id).await
     } else {
         relay_terminal(sink, source, state, id, params).await
     }
@@ -287,158 +310,13 @@ async fn relay_terminal(
     Ok(())
 }
 
-/// Drive the conversation plane.
-///
-/// Frames cross in both directions without being read. What this pod does not
-/// interpret cannot break when a kernel version changes what a frame looks
-/// like, which is the same bargain the conversation capture makes.
-async fn relay_conversation(
-    mut sink: Sink,
-    mut source: futures_util::stream::SplitStream<WebSocket>,
-    state: AppState,
-    id: String,
-) -> std::io::Result<()> {
-    let bridge = state.conversation_bridge().await?;
-
-    // Subscribed before the backlog is taken, so a frame produced between the
-    // two is delivered live rather than falling between them.
-    let mut live = bridge.subscribe();
-    let backlog = bridge.backlog().await;
-    if !backlog.is_empty() {
-        tracing::info!(runtime = %id, frames = backlog.len(), "replaying what was said while detached");
-    }
-    for held in backlog {
-        if sink.send(outbound(held)).await.is_err() {
-            return Ok(());
-        }
-    }
-
-    // As on the terminal plane: one sink, and control answers ride it too.
-    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
-    let runtime = id.clone();
-    let mut pump_out = tokio::spawn(async move {
-        loop {
-            let said = tokio::select! {
-                answer = answers.recv() => {
-                    match answer {
-                        Some(text) => {
-                            if sink.send(Message::Text(text.into())).await.is_err() {
-                                break;
-                            }
-                            continue;
-                        }
-                        None => continue,
-                    }
-                }
-                said = live.recv() => said,
-            };
-            match said {
-                Ok(said) => {
-                    if sink.send(outbound(said)).await.is_err() {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    // Unlike a screen, a conversation cannot be re-derived, so
-                    // a lagging consumer leaves a real hole. Said as loudly as
-                    // one, and marked in the stream where it happened.
-                    tracing::error!(runtime = %runtime, skipped, "conversation consumer lagged");
-                    if sink
-                        .send(gap(usize::try_from(skipped).unwrap_or(usize::MAX)))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
-    let state_in = state.clone();
-    let runtime = id.clone();
-    let bridge_in = std::sync::Arc::clone(&bridge);
-    let mut pump_in = tokio::spawn(async move {
-        while let Some(frame) = source.next().await {
-            match frame {
-                Ok(Message::Binary(bytes)) => match lanes::unframe(&bytes) {
-                    Some((LANE_CONVERSATION, payload)) => {
-                        if !bridge_in.send(payload.to_vec()).await {
-                            tracing::warn!(runtime = %runtime, "the bridge stopped accepting frames");
-                            break;
-                        }
-                    }
-                    Some((lane, _)) => {
-                        tracing::warn!(runtime = %runtime, lane, "frame on a lane this link does not carry")
-                    }
-                    None => {}
-                },
-                Ok(Message::Text(text)) => {
-                    control(&text, &runtime, &state_in, None, &replies).await
-                }
-                Ok(Message::Close(_)) => break,
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(runtime = %runtime, error = %e, "conversation read failed");
-                    break;
-                }
-            }
-        }
-    });
-
-    // A bridge that exits is the runtime being lost, not a stream that went
-    // quiet, and has to end the link so the control plane finds out.
-    tokio::select! {
-        _ = &mut pump_out => pump_in.abort(),
-        _ = &mut pump_in => pump_out.abort(),
-        _ = bridge.ended() => {
-            tracing::warn!(runtime = %id, "the conversation bridge ended; closing the link");
-            pump_out.abort();
-            pump_in.abort();
-        }
-    }
-    /*
-     * If the model endpoint refused this pod while the conversation ran, that
-     * is very likely why it ended — an agent that cannot reach its model
-     * stops having anything to say. Said here, in the pod's own log, with
-     * the status the proxy actually saw.
-     *
-     * The control plane learns the same fact from its own side: the link
-     * closing fails every call waiting on it, and the turn is reported as a
-     * failure rather than as an empty ending.
-     */
-    if let Some(fault) = state.model_fault.get() {
-        tracing::warn!(runtime = %id, %fault, "the model endpoint had refused this runtime");
-    }
-    tracing::info!(runtime = %id, "conversation detached");
-    Ok(())
-}
-
-/// One thing the bridge said, on the lane that says what it is.
-fn outbound(said: Outbound) -> Message {
-    match said {
-        Outbound::Frame(bytes) => Message::Binary(lanes::frame(LANE_CONVERSATION, &bytes).into()),
-        Outbound::Gap { frames } => gap(frames),
-    }
-}
-
-/// A boundary where frames were dropped rather than kept.
-///
-/// Carried in the conversation's place so the control plane records where the
-/// gap falls, not merely that one exists.
-fn gap(frames: usize) -> Message {
-    let payload = serde_json::json!({ "frames": frames }).to_string();
-    Message::Binary(lanes::frame(LANE_CONVERSATION_GAP, payload.as_bytes()).into())
-}
-
 /// Act on a control-lane frame.
 ///
 /// Shared by both planes, which is the whole reason the lane exists: a
 /// credential reaches a conversation session the same way it reaches a
 /// terminal one. Resize and signal need a terminal, and say so rather than
 /// pretending when there is none.
-async fn control(
+pub(crate) async fn control(
     text: &str,
     runtime: &str,
     state: &AppState,

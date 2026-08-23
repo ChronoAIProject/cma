@@ -50,13 +50,6 @@ pub const LANE_CONVERSATION_GAP: u8 = 0x03;
 ///
 /// Declared before anything sends one, so the number is agreed between the two
 /// programs before either uses it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared ahead of the producer; the sampler issue that serves this lane removes this"
-    )
-)]
 pub const LANE_TELEMETRY: u8 = 0x04;
 
 /// The word for that lane in an attach query and in this pod's declaration.
@@ -64,13 +57,6 @@ pub const LANE_TELEMETRY: u8 = 0x04;
 /// One word, agreed at both ends, for the same reason `SWITCH_RESULT`
 /// (`link.rs:122-126`) is one word: a literal repeated in two crates is how they
 /// stop agreeing.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared ahead of the producer; the sampler issue that serves this lane removes this"
-    )
-)]
 pub const LANE_NAME_TELEMETRY: &str = "tel";
 
 /// What this pod tells a control plane the moment one connects.
