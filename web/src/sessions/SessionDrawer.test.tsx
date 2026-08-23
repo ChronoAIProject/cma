@@ -614,13 +614,15 @@ describe('the drawer reads as sections rather than a list', () => {
   it('spends its one colour on the state and nowhere else', () => {
     /*
      * The restraint is the design decision, so it is the thing worth pinning.
-     * §12.1's state vocabulary is what `--live`, `--wait` and `--fail` mean,
-     * and a section tinted for decoration would leave the interface no way to
-     * say that the unrestricted row above is different from the four around it.
+     * §12.1's success, warning and error aliases are the state vocabulary, and
+     * a section tinted for decoration would leave the interface no way to say
+     * that the unrestricted row above is different from the four around it.
      */
     const css = readFileSync(resolve(process.cwd(), 'src/sessions/SessionDrawer.css'), 'utf8');
     const tinted = [...css.matchAll(/^([.:[][^{]*)\{([^}]*)\}/gm)].filter(([, , body]) =>
-      /var\(--(live|wait|fail|accent)\)/.test(body ?? ''),
+      /var\(--dsw-alias-(?:state-(?:success|warn|error)-primary|state-business-primary)\)/.test(
+        body ?? '',
+      ),
     );
     for (const [, selector] of tinted) {
       expect(selector ?? '').toMatch(/drawer__band|drawer__ending|facts__answer\[data-tone/);
