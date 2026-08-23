@@ -20,7 +20,7 @@ The Agent Card is the declaration surface. It states what CMA is, which transpor
 
 ```json
 {
-  "name": "chrono-bot",
+  "name": "cma",
   "description": "Runs coding-agent kernels on ChronoAI infrastructure.",
   "url": "https://codex-api.chrono-ai.fun/api/v1/a2a",
   "capabilities": {
@@ -28,8 +28,8 @@ The Agent Card is the declaration surface. It states what CMA is, which transpor
     "pushNotifications": false,
     "extendedAgentCard": false,
     "extensions": [
-      { "uri": "https://w3id.org/chrono/a2a/chrono-bot/v1",
-        "description": "chrono-bot session operations not expressible in core A2A",
+      { "uri": "https://w3id.org/chrono/a2a/cma/v1",
+        "description": "CMA session operations not expressible in core A2A",
         "required": false }
     ]
   },
@@ -42,6 +42,8 @@ The Agent Card is the declaration surface. It states what CMA is, which transpor
   ]
 }
 ```
+
+The card name is `cma`, and the extension URI above is its permanent v1 identifier. The earlier `chrono-bot` spellings appeared only in this unserved design: no Agent Card or A2A route has emitted them, so they receive no alias or compatibility window. A breaking extension change mints a new versioned URI rather than changing the meaning of this one.
 
 Capability flags are set **truthfully**. Withholding an operation is legal only through a declared flag, and each has a specified error a client can act on. Silently not implementing something is not.
 
