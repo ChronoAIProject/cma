@@ -35,7 +35,13 @@ import type {
 import { isStage, type Stage } from '../sessions/progress';
 import type { SignIn } from '../chat/conversationModel';
 
-export { ApiError, CapabilityRefused, SessionLimitReached, toSession } from '../sdk';
+export {
+  ApiError,
+  CapabilityRefused,
+  DeploymentAtCapacity,
+  SessionLimitReached,
+  toSession,
+} from '../sdk';
 export type { PricingQuote, SessionAllowance, SessionResourceStatus, SessionSpend } from '../sdk';
 
 /**

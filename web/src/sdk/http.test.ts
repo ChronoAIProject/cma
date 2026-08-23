@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { headersFor, resolveConfig, urlOf } from './config';
 import { request } from './http';
-import { ApiError, CapabilityRefused, SessionLimitReached } from './errors';
+import { ApiError, CapabilityRefused, DeploymentAtCapacity, SessionLimitReached } from './errors';
 
 /**
  * The SDK's transport.
@@ -259,6 +259,48 @@ describe('what comes back', () => {
     expect(failure).toBeInstanceOf(SessionLimitReached);
     expect((failure as SessionLimitReached).limit).toBe(3);
     expect((failure as SessionLimitReached).live).toBe(3);
+  });
+
+  it('carries a deployment-capacity refusal and all four of its figures', async () => {
+    const { impl } = recorder({
+      ok: false,
+      status: 503,
+      json: () =>
+        Promise.resolve({
+          detail: 'this deployment has no room for that session',
+          code: 'deployment_at_capacity',
+          requested_cpu_millis: 2_000,
+          requested_memory_mib: 4_096,
+          free_cpu_millis: 750,
+          free_memory_mib: 1_536,
+        }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toBeInstanceOf(DeploymentAtCapacity);
+    expect(failure).toMatchObject({
+      requestedCpuMillis: 2_000,
+      requestedMemoryMib: 4_096,
+      freeCpuMillis: 750,
+      freeMemoryMib: 1_536,
+      isRetryable: true,
+    });
+  });
+
+  it('does not infer deployment capacity from an unrelated 503', async () => {
+    const { impl } = recorder({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve({ detail: 'runtime unavailable', code: 'runtime_unavailable' }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).not.toBeInstanceOf(DeploymentAtCapacity);
   });
 
   it('uses the problem code rather than treating every 409 as a session limit', async () => {

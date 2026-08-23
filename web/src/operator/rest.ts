@@ -4,7 +4,9 @@ import type {
   ActivityEntry,
   ActivityQuery,
   AdminSession,
+  AssumedSessionSize,
   CapacityBounds,
+  DeploymentCapacity,
   DetailPair,
   OperatorStore,
   Person,
@@ -133,6 +135,14 @@ function positiveInteger(value: unknown, what: string): number {
   return value;
 }
 
+/** A declared aggregate may be zero, but it must survive JSON exactly. */
+function nonNegativeInteger(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ApiError(0, `the ${what} was not a non-negative safe integer`);
+  }
+  return value;
+}
+
 /** Read editable briefing prose off the wire. */
 export function toSessionBriefing(raw: unknown): SessionBriefing {
   const briefing = object(raw, 'platform briefing');
@@ -157,11 +167,45 @@ export function toCapacityBounds(raw: unknown): CapacityBounds {
   };
 }
 
+function toAssumedSessionSize(raw: unknown): AssumedSessionSize {
+  const size = object(raw, 'assumed session size');
+  return {
+    cpuMillis: positiveInteger(size.cpu_millis, 'assumed session CPU'),
+    memoryMib: positiveInteger(size.memory_mib, 'assumed session memory'),
+  };
+}
+
+/** Read the three nullable deployment-ledger declarations off the wire. */
+export function toDeploymentCapacity(raw: unknown): DeploymentCapacity {
+  // The field was added compatibly to stored settings. During a rolling
+  // update an older control plane can still omit it, which means the same
+  // thing as the core's default: no dimensions declared.
+  if (raw === undefined) {
+    return { cpuMillis: null, memoryMib: null, assumedSessionSize: null };
+  }
+  const capacity = object(raw, 'deployment capacity');
+  return {
+    cpuMillis:
+      capacity.cpu_millis === null
+        ? null
+        : nonNegativeInteger(capacity.cpu_millis, 'deployment CPU capacity'),
+    memoryMib:
+      capacity.memory_mib === null
+        ? null
+        : nonNegativeInteger(capacity.memory_mib, 'deployment memory capacity'),
+    assumedSessionSize:
+      capacity.assumed_session_size === null
+        ? null
+        : toAssumedSessionSize(capacity.assumed_session_size),
+  };
+}
+
 /** Read one complete settings object off the wire. */
 export function toPlatformSettings(raw: unknown): PlatformSettings {
   const settings = object(raw, 'platform settings');
   return {
     briefing: toSessionBriefing(settings.briefing),
+    deploymentCapacity: toDeploymentCapacity(settings.deployment_capacity),
     sizeBounds: toCapacityBounds(settings.size_bounds),
     liveSessions:
       settings.live_sessions === null
@@ -197,6 +241,17 @@ function settingsRequest(settings: PlatformSettings): Record<string, unknown> {
       reach_close: settings.briefing.reachClose,
       reach_none: settings.briefing.reachNone,
       after: settings.briefing.after,
+    },
+    deployment_capacity: {
+      cpu_millis: settings.deploymentCapacity.cpuMillis,
+      memory_mib: settings.deploymentCapacity.memoryMib,
+      assumed_session_size:
+        settings.deploymentCapacity.assumedSessionSize === null
+          ? null
+          : {
+              cpu_millis: settings.deploymentCapacity.assumedSessionSize.cpuMillis,
+              memory_mib: settings.deploymentCapacity.assumedSessionSize.memoryMib,
+            },
     },
     size_bounds: {
       min_cpu_millis: settings.sizeBounds.minCpuMillis,
