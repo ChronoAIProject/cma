@@ -115,7 +115,17 @@ impl HostedKernel {
         extra_query: &str,
     ) -> Result<(Link, String), AdapterError> {
         let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
-        let mut url = self.link_url(&endpoint.endpoint, &handle.0);
+        self.connect_at(handle, &endpoint.endpoint, extra_query)
+            .await
+    }
+
+    pub(super) async fn connect_at(
+        &self,
+        handle: &RuntimeHandle,
+        endpoint: &str,
+        extra_query: &str,
+    ) -> Result<(Link, String), AdapterError> {
+        let mut url = self.link_url(endpoint, &handle.0);
         url.push_str(extra_query);
         let mut request = url
             .as_str()

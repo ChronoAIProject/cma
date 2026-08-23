@@ -329,6 +329,50 @@ pub enum TerminalInput {
     SwitchPlane { command: String },
 }
 
+/// What a runtime is using, as this layer reports it.
+///
+/// Levels and totals are carried through from the current supervisor frame;
+/// rates are derived against the previous frame on the same link. Every rate
+/// is absent on the first sample of a link, including the first one after a
+/// runtime rotation.
+///
+/// Every field is optional. A level may be unreadable, a limit may not exist,
+/// and a rate may have no sound predecessor. None of those absences is zero.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSample {
+    /// Processor use over `interval_ms`, in thousandths of one core.
+    pub cpu_millis_used: Option<u32>,
+    /// The processor allowance in thousandths of one core.
+    pub cpu_millis_limit: Option<u32>,
+    /// Memory in use at the instant of the sample, in bytes.
+    pub memory_bytes_used: Option<u64>,
+    /// The memory allowance in bytes.
+    pub memory_bytes_limit: Option<u64>,
+    /// The highest recorded memory use, in bytes.
+    pub memory_bytes_peak: Option<u64>,
+    /// Thousandths of the interval in which every task was memory-stalled.
+    pub stall_permille: Option<u16>,
+    /// Times memory usage reached its configured ceiling.
+    pub ceiling_hits: Option<u64>,
+    /// Allocations refused since the sandbox started.
+    pub allocation_failures: Option<u64>,
+    /// Processes killed for exceeding the memory allowance.
+    pub kills: Option<u64>,
+    /// Bytes received since the sandbox started.
+    pub received_bytes: Option<u64>,
+    /// Bytes sent since the sandbox started.
+    pub sent_bytes: Option<u64>,
+    /// Received bytes per second over `interval_ms`.
+    pub received_bytes_per_second: Option<u64>,
+    /// Sent bytes per second over `interval_ms`.
+    pub sent_bytes_per_second: Option<u64>,
+    /// The interval over which the three rates were derived, in milliseconds.
+    ///
+    /// Absent when there is no strictly later predecessor; present whenever
+    /// elapsed time is sound, even if an individual counter is unavailable.
+    pub interval_ms: Option<u64>,
+}
+
 /// A bidirectional attachment to a runtime's terminal.
 #[derive(Debug)]
 pub struct TerminalChannel {
