@@ -126,6 +126,11 @@ describe('the session header', () => {
     const pill = container.querySelector('.sessionheader .pill');
     expect(pill).not.toBeNull();
     expect(pill?.textContent).toContain('running');
+
+    // The header places the shared badge; it does not replace its mono voice
+    // with a local text size that makes this one pill a different component.
+    const css = readFileSync(resolve(process.cwd(), 'src/sessions/SessionHeader.css'), 'utf8');
+    expect(css).not.toMatch(/\.sessionheader \.pill\s*\{/);
   });
 
   it('pauses the session from the lifecycle menu', async () => {
