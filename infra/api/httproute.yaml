@@ -39,11 +39,11 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: chrono-bot-web
+  name: cma-web
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: chrono-bot-web
-    app.kubernetes.io/part-of: chrono-bot
+    app.kubernetes.io/name: cma-web
+    app.kubernetes.io/part-of: cma
 spec:
   parentRefs:
     - name: chronoai-gateway
@@ -59,7 +59,7 @@ spec:
       backendRefs:
         - group: ""
           kind: Service
-          name: chrono-bot-web
+          name: cma-web
           port: 80
           weight: 1
 ---
@@ -69,10 +69,10 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: chrono-bot-http-redirect
+  name: cma-http-redirect
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/part-of: chrono-bot
+    app.kubernetes.io/part-of: cma
 spec:
   parentRefs:
     - name: chronoai-gateway
