@@ -14,7 +14,7 @@ use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
-use crate::service::{store_failed, SessionEntry, SessionService, LIVE_BUFFER};
+use crate::service::{store_failed, SessionEntry, SessionService, LIVE_BUFFER, RESOURCE_BUFFER};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::store::SessionRecord;
 use crate::terminal::ScreenModel;
@@ -292,6 +292,7 @@ impl SessionService {
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
+        let (resources, _) = broadcast::channel(RESOURCE_BUFFER);
         let mut model = (self.screen_factory)(record.session.geometry);
 
         // Replayed before anything new arrives, so the person reattaching sees
@@ -332,10 +333,13 @@ impl SessionService {
             environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
-            runtime: Some(handle),
+            runtime: Some(handle.clone()),
             input: terminal.as_ref().map(|c| c.input.clone()),
             live: live.clone(),
             live_frames: live_frames.clone(),
+            resources,
+            last_reading: None,
+            readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),
             assembling: None,
@@ -346,6 +350,12 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        crate::resources::spawn_resource_watch(
+            Arc::clone(self),
+            id.clone(),
+            Arc::clone(&adapter),
+            handle,
+        );
         if let Some(channel) = terminal {
             spawn_relay(id.clone(), channel.output, screen, live);
         }
