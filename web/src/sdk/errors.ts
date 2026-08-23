@@ -83,3 +83,25 @@ export class SessionLimitReached extends ApiError {
     this.name = 'SessionLimitReached';
   }
 }
+
+/**
+ * This deployment has less declared room than one creation asks for.
+ *
+ * Distinct from an owner's session limit: these figures describe shared
+ * deployment headroom, so stopping somebody else's work can change the answer.
+ * They remain fields so a surface can state the request and the available room
+ * without parsing the control plane's sentence.
+ */
+export class DeploymentAtCapacity extends ApiError {
+  constructor(
+    status: number,
+    message: string,
+    readonly requestedCpuMillis?: number,
+    readonly requestedMemoryMib?: number,
+    readonly freeCpuMillis?: number,
+    readonly freeMemoryMib?: number,
+  ) {
+    super(status, message, 'deployment_at_capacity');
+    this.name = 'DeploymentAtCapacity';
+  }
+}
