@@ -20,6 +20,7 @@ const FULL_CONVERSATION_MARKDOWN = [
   '## Conversation surface review',
   '',
   'The shell now keeps **agent prose neutral** while its frame uses the new design aliases.',
+  'Read the [review log](https://example.test/review) for the measured checks.',
   '',
   '> Review note',
   '> - Preserve the live and replayed shape.',
