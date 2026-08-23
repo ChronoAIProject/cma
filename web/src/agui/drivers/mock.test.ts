@@ -164,7 +164,7 @@ describe('the cases the milestone needs', () => {
         (event) =>
           event.type === 'RUN_FINISHED' &&
           event.outcome?.type === 'interrupt' &&
-          event.outcome.interrupts[0]?.reason === 'chrono:release_review',
+          event.outcome.interrupts[0]?.reason === 'cma:release_review',
       ),
     ).toBe(true);
   });

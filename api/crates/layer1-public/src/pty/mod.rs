@@ -31,8 +31,8 @@ use attach::serve;
 
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/pty-core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/pty-core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
 ];
 
 /// Scrollback the core retains for a snapshot.

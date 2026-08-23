@@ -35,16 +35,16 @@ use crate::tickets::TerminalTickets;
 use crate::{InterfaceProfile, Operation};
 
 /// Base URI for problem types this interface returns.
-pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/problems";
+pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/problems";
 
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
 ];
 
 /// Where every conformance class this service declares is rooted.
-const CONF_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/conf";
+const CONF_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/conf";
 
 /// The classes one session satisfies, given what it was granted.
 ///

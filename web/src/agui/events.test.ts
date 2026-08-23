@@ -55,7 +55,7 @@ describe('reading a frame', () => {
       ...base,
       type: 'TOOL_CALL_START',
       toolCallId: 't1',
-      'chrono:toolKind': 'something_new',
+      'cma:toolKind': 'something_new',
       target: 'src/main.rs',
     });
     expect(start.type === 'TOOL_CALL_START' && start.toolKind).toBe('something_new');
@@ -64,7 +64,7 @@ describe('reading a frame', () => {
       ...base,
       type: 'TOOL_CALL_END',
       toolCallId: 't1',
-      'chrono:status': 'partially_applied',
+      'cma:status': 'partially_applied',
     });
     expect(end.type === 'TOOL_CALL_END' && end.status).toBe('partially_applied');
   });
@@ -79,7 +79,7 @@ describe('an interrupt', () => {
       interrupts: [
         {
           id: 'apr_7Q2',
-          reason: 'chrono:command_execution',
+          reason: 'cma:command_execution',
           message: 'Run `rm -rf build/`?',
           options: [
             { decision: 'allow', label: 'Allow', affirmative: true },
@@ -97,7 +97,7 @@ describe('an interrupt', () => {
       throw new Error('expected an interrupt outcome');
     }
     expect(event.outcome.interrupts[0]?.message).toBe('Run `rm -rf build/`?');
-    expect(event.outcome.interrupts[0]?.reason).toBe('chrono:command_execution');
+    expect(event.outcome.interrupts[0]?.reason).toBe('cma:command_execution');
   });
 
   it('carries every answer the kernel offered, not a hardcoded pair', () => {

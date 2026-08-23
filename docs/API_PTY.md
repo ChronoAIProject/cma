@@ -226,8 +226,8 @@ The `ready` frame carries the interface's capability set:
 { "t": "ready", "cols": 120, "rows": 40, "snapshot": true,
   "resources": true,
   "conformsTo": [
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/pty-core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/pty-core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/terminal"
   ],
   "limits": { "scrollbackLines": 2000, "maxFrameBytes": 262144 } }
 ```
