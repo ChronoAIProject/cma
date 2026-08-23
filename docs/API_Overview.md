@@ -170,7 +170,7 @@ No specification defines a named conformance profile for agent services. CMA the
 |---|---|
 | REST | `GET /conformance` returning `conformsTo[]` of class URIs |
 | AG-UI | `GET /agui/capabilities`, plus `AgentCapabilities` on the SDK object |
-| A2A | Agent Card `capabilities`, with chrono-specific operations in one extension |
+| A2A | Agent Card `capabilities`, with CMA-specific operations in one extension |
 | MCP | `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
 | PTY | the `ready` control frame |
 
@@ -226,3 +226,5 @@ New sandboxes carry the canonical correlation keys `cma/control-plane`, `cma/ses
 Tracing targets follow Rust source module paths rather than a wire identifier. The source rename therefore adopts `cma::*` for the control-plane crate without a `chrono_bot::*` alias. A repository-wide sweep found no explicit historical target in tracing calls, manifests, workflows, documentation, or runbooks: the deployment uses the broad `RUST_LOG=info` directive, and both binaries read `RUST_LOG` with an `info` fallback. No manifest transition or dual-read path is required. Any future target-specific filter must use the emitted canonical module target and be updated deliberately alongside a future source rename.
 
 Browser-owned state writes only the canonical keys `cma:appearance`, `cma:terminal-theme`, `cma:view-mode`, `cma:pending-turn`, and `cma:rail-collapsed`. Persistent preferences read the canonical value first, fall back only to valid data under the corresponding historical `chrono-bot:*` key, and copy that value forward; the product terminal-theme ids similarly migrate from `chronobot-dark` and `chronobot-light` to `cma-dark` and `cma-light`. Pending turns remain per-tab in `sessionStorage`: consumption prefers valid canonical content and clears both names together, including when it falls back to historical content, so an old prompt is neither lost nor replayed. The historical readers remain separately gated until the browser compatibility window has been measured.
+
+The A2A Agent Card name is `cma`, and CMA-specific task metadata is keyed by the permanent extension URI `https://w3id.org/chrono/a2a/cma/v1`. Both spellings are frozen before the interface is implemented. The earlier `chrono-bot` card name and extension URI existed only in an unserved design document, so no client or external state can depend on them and no compatibility alias is emitted. Any breaking extension change mints a new versioned URI.
