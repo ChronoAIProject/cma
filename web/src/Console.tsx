@@ -444,10 +444,6 @@ export function Console({ user, onSignOut }: ConsoleProps) {
    * it is not written down. A visit on a laptop does not decide what a desk
    * looks like.
    */
-  const toggleRail = useCallback(() => {
-    setRailCollapsed((wasCollapsed: boolean) => !wasCollapsed);
-  }, []);
-
   const arrangementShown: Arrangement = arrangement;
 
   /*
@@ -498,11 +494,12 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     <AppFrame
       detailsOpen={active !== null && detailsOpen}
       sidebarCollapsed={railCollapsed}
-      sidebar={
+      onSidebarCollapsedChange={setRailCollapsed}
+      sidebar={({ collapsed, onToggle }) => (
         <Sidebar
-          collapsed={railCollapsed}
+          collapsed={collapsed}
           creation={creation}
-          onToggleCollapsed={toggleRail}
+          onToggleCollapsed={onToggle}
           onCreate={() => {
             setChoosing(true);
           }}
@@ -524,7 +521,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               onManageEnvironments={() => {
                 setManagingProfiles(true);
               }}
-              collapsed={railCollapsed}
+              collapsed={collapsed}
               operationsActive={view === 'operations'}
               onOperations={
                 canOperate(user.capabilities)
@@ -536,7 +533,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             />
           }
         >
-          {railCollapsed ? null : (
+          {collapsed ? null : (
             <SessionRail
               sessions={listed}
               activeId={activeId}
@@ -552,7 +549,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
             />
           )}
         </Sidebar>
-      }
+      )}
       details={
         /*
          * One column, two occupants. A tool call takes it over while one is
