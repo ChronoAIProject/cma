@@ -13,21 +13,21 @@
 # marks unready, so pointing it at readiness as well would take a backend out
 # twice for the same reason.
 #
-# The neighbouring control planes each declare one of these; chrono-bot simply
+# The neighbouring control planes each declare one of these; CMA simply
 # lacked it.
 apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
 metadata:
-  name: chrono-bot-api
+  name: cma-api
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: chrono-bot-api
-    app.kubernetes.io/part-of: chrono-bot
+    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/part-of: cma
 spec:
   targetRef:
     group: ""
     kind: Service
-    name: chrono-bot-api
+    name: cma-api
   default:
     config:
       type: HTTP
