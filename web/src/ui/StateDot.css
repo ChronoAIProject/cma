@@ -1,5 +1,5 @@
 /*
- * The state dot — `docs/Web_Style.md` §7.
+ * The state dot — `docs/Web_Style.md` §12.1.
  *
  * The halo and the core are the same colour at different opacities, which is
  * what makes one token per state enough: both layers ride `currentColor`, and
@@ -42,54 +42,44 @@
 }
 
 /*
- * Running follows the theme accent through the business-state role. Components
- * never reach through that role to a static ramp.
+ * Running follows the theme accent through the business-state role. Its core
+ * is the ordinary `::after`; the static halo is replaced by one ping ring.
  */
-.statedot__chase {
-  flex: none;
+.statedot[data-state='ongoing'] {
   color: var(--dsw-alias-state-business-primary);
 }
 
-.statedot__cell {
-  fill: currentcolor;
-  opacity: 0.15;
-  animation: statedot-chase 1s infinite;
+.statedot[data-state='ongoing']::before {
+  display: none;
 }
 
-/*
- * Flat holds rather than tweening: each cell sits at a brightness step and
- * jumps to the next. Interpolating between them reads as a pulse, which is a
- * different thing from a chase.
- */
-@keyframes statedot-chase {
-  0%,
-  12.4% {
-    opacity: 1;
+.statedot__ping {
+  position: absolute;
+  border: 1px solid currentcolor;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: statedot-ping 1.8s var(--ds-ease-in-out) infinite;
+  inset: 20%;
+  transform-origin: center;
+}
+
+@keyframes statedot-ping {
+  0% {
+    opacity: 0.45;
+    transform: scale(1);
   }
 
-  12.5%,
-  24.9% {
-    opacity: 0.6;
-  }
-
-  25%,
-  37.4% {
-    opacity: 0.35;
-  }
-
-  37.5%,
+  70%,
   100% {
-    opacity: 0.15;
+    opacity: 0;
+    transform: scale(2.4);
   }
 }
 
-/*
- * A person who has asked for less motion gets the dot's brightest state and
- * no animation — still legible as "running", and honest about it.
- */
+/* Reduced motion leaves the labelled live core still and removes the ring. */
 @media (prefers-reduced-motion: reduce) {
-  .statedot__cell {
-    opacity: 0.6;
+  .statedot__ping {
+    display: none;
     animation: none;
   }
 }
