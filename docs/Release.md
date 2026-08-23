@@ -10,9 +10,9 @@ This document is the procedure. The rules it implements are in [CLAUDE.md](../CL
 
 | Artifact | Where | Immutable |
 |---|---|---|
-| `ghcr.io/chronoaiproject/chrono-bot-api:vX.Y.Z` | GHCR, private | yes |
-| `ghcr.io/chronoaiproject/chrono-bot-web:vX.Y.Z` | GHCR, private | yes |
-| `ghcr.io/chronoaiproject/chrono-bot-runtime:vX.Y.Z` | GHCR, private | yes |
+| `ghcr.io/chronoaiproject/cma-api:vX.Y.Z` | GHCR, private | yes |
+| `ghcr.io/chronoaiproject/cma-web:vX.Y.Z` | GHCR, private | yes |
+| `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z` | GHCR, private | yes |
 | the same three at `:<short-sha>` | GHCR, private | yes |
 | annotated tag `vX.Y.Z` | this repository | yes |
 | GitHub release `vX.Y.Z` | this repository | notes editable |
@@ -119,7 +119,7 @@ The login is accepted, so the credential looks good and the image looks like the
 
 ```sh
 echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-username> --password-stdin
-docker pull ghcr.io/chronoaiproject/chrono-bot-api:v0.1.0
+docker pull ghcr.io/chronoaiproject/cma-api:v0.1.0
 ```
 
 Inside Actions this does not arise — the workflow authenticates with the job's own `GITHUB_TOKEN`, which carries `packages: write` for this repository and needs no personal token at all.
@@ -129,9 +129,9 @@ The release body lists all three references for that version, which is the quick
 To deploy into a cluster that cannot authenticate to GHCR, pull and re-push into the registry it does use. The published images carry no provenance attestation precisely so that this is a plain copy:
 
 ```sh
-docker pull  ghcr.io/chronoaiproject/chrono-bot-api:v0.1.0
-docker tag   ghcr.io/chronoaiproject/chrono-bot-api:v0.1.0 <target-registry>/chrono-bot-api:v0.1.0
-docker push  <target-registry>/chrono-bot-api:v0.1.0
+docker pull  ghcr.io/chronoaiproject/cma-api:v0.1.0
+docker tag   ghcr.io/chronoaiproject/cma-api:v0.1.0 <target-registry>/cma-api:v0.1.0
+docker push  <target-registry>/cma-api:v0.1.0
 ```
 
 Only `web` is published for arm64 as well as amd64. `api` and `runtime` are amd64 only: emulated Rust release builds ran for hours in CI, and every node in the target cluster is amd64.

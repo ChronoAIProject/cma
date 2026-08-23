@@ -22,7 +22,7 @@ A **server** presents a bearer token issued by the identity provider:
 Authorization: Bearer <access token>
 ```
 
-This is the form chrono-bot's own clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
+This is the form CMA's own clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
 
 The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so revocation takes effect within that window rather than immediately.
 
@@ -34,7 +34,7 @@ A request with neither credential is `401`. A request whose credential is valid 
 | Concern | Rule |
 |---|---|
 | Base path | `/api/v1` |
-| Auth | NyxID bearer token, or the chrono-bot session cookie for browser clients |
+| Auth | NyxID bearer token, or the CMA session cookie for browser clients |
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
