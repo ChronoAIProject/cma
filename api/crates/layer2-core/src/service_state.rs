@@ -199,6 +199,12 @@ pub struct SessionService {
     pub(crate) settings: Arc<PlatformSettingsService>,
     /// Serializes one owner's limit check through its record write.
     pub(crate) session_limit_guards: crate::limits::OwnerGuards,
+    /// Serializes the deployment-wide reservation check through its record write.
+    ///
+    /// This closes the race inside one process. Like the owner-limit guard, it is
+    /// not a cross-process transaction; a scaled-out deployment needs a
+    /// conditional store write to make that stronger guarantee.
+    pub(crate) deployment_capacity_guard: Arc<Mutex<()>>,
     /// The runtime version sessions are expected to be running.
     ///
     /// Held by the control plane rather than asked of each sandbox: a session
