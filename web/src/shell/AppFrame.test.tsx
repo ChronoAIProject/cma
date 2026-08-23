@@ -46,6 +46,53 @@ function tracks(): string {
   return (document.querySelector('.frame') as HTMLElement).style.gridTemplateColumns;
 }
 
+function pointer(type: string, clientX: number): Event {
+  const event = new Event(type, { bubbles: true });
+  Object.defineProperties(event, {
+    clientX: { value: clientX },
+    pointerId: { value: 1 },
+  });
+  return event;
+}
+
+function capturePointer(handle: HTMLElement): void {
+  let captured = false;
+  Object.defineProperties(handle, {
+    setPointerCapture: {
+      configurable: true,
+      value: () => {
+        captured = true;
+      },
+    },
+    hasPointerCapture: {
+      configurable: true,
+      value: () => captured,
+    },
+    releasePointerCapture: {
+      configurable: true,
+      value: () => {
+        captured = false;
+      },
+    },
+  });
+}
+
+function dragAcrossFrames(handle: HTMLElement, positions: readonly number[]): void {
+  capturePointer(handle);
+  act(() => {
+    handle.dispatchEvent(pointer('pointerdown', positions[0] ?? 0));
+  });
+  for (const position of positions.slice(1)) {
+    act(() => {
+      handle.dispatchEvent(pointer('pointermove', position));
+      vi.advanceTimersByTime(20);
+    });
+  }
+  act(() => {
+    handle.dispatchEvent(pointer('pointerup', positions.at(-1) ?? 0));
+  });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal('ResizeObserver', FakeResizeObserver);
@@ -159,6 +206,19 @@ describe('the page frame', () => {
     expect(css).toMatch(
       /\.frame__handle\[data-side='details'\]::after\s*\{[^}]*width: 12px[^}]*height: 32px[^}]*border-radius: 10px/,
     );
+  });
+
+  it('anchors a multi-frame drag to the width at pointer-down', () => {
+    renderFrame();
+    measure(1600);
+
+    const sidebar = screen.getByRole('separator', { name: 'Resize the session list' });
+    dragAcrossFrames(sidebar, [SIDEBAR_DEFAULT, 300, 320, 340]);
+    expect(tracks().startsWith('340px ')).toBe(true);
+
+    const details = screen.getByRole('separator', { name: 'Resize the details column' });
+    dragAcrossFrames(details, [1300, 1280, 1260, 1240]);
+    expect(tracks().endsWith(' 360px')).toBe(true);
   });
 
   it('offers no details handle when there is no details column', () => {
