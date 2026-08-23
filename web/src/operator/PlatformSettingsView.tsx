@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import {
   BriefingField,
@@ -39,6 +39,10 @@ interface ConflictState {
 }
 
 interface Validation {
+  readonly deploymentCpu?: string;
+  readonly deploymentMemory?: string;
+  readonly assumedCpu?: string;
+  readonly assumedMemory?: string;
   readonly cpu?: string;
   readonly memory?: string;
   readonly liveSessions?: string;
@@ -51,6 +55,13 @@ function copyBriefing(briefing: SessionBriefing): SessionBriefing {
 function copySettings(settings: PlatformSettings): PlatformSettings {
   return {
     briefing: copyBriefing(settings.briefing),
+    deploymentCapacity: {
+      ...settings.deploymentCapacity,
+      assumedSessionSize:
+        settings.deploymentCapacity.assumedSessionSize === null
+          ? null
+          : { ...settings.deploymentCapacity.assumedSessionSize },
+    },
     sizeBounds: { ...settings.sizeBounds },
     liveSessions: settings.liveSessions,
   };
@@ -80,14 +91,29 @@ function sameBriefing(left: SessionBriefing, right: SessionBriefing): boolean {
 }
 
 function sameSettings(left: PlatformSettings, right: PlatformSettings): boolean {
+  const leftAssumed = left.deploymentCapacity.assumedSessionSize;
+  const rightAssumed = right.deploymentCapacity.assumedSessionSize;
   return (
     sameBriefing(left.briefing, right.briefing) &&
+    left.deploymentCapacity.cpuMillis === right.deploymentCapacity.cpuMillis &&
+    left.deploymentCapacity.memoryMib === right.deploymentCapacity.memoryMib &&
+    (leftAssumed === null
+      ? rightAssumed === null
+      : rightAssumed !== null &&
+        leftAssumed.cpuMillis === rightAssumed.cpuMillis &&
+        leftAssumed.memoryMib === rightAssumed.memoryMib) &&
     left.sizeBounds.minCpuMillis === right.sizeBounds.minCpuMillis &&
     left.sizeBounds.maxCpuMillis === right.sizeBounds.maxCpuMillis &&
     left.sizeBounds.minMemoryMib === right.sizeBounds.minMemoryMib &&
     left.sizeBounds.maxMemoryMib === right.sizeBounds.maxMemoryMib &&
     left.liveSessions === right.liveSessions
   );
+}
+
+function deploymentNumberProblem(value: number): string | undefined {
+  return Number.isSafeInteger(value) && value >= 0
+    ? undefined
+    : 'Use a whole number from 0 to 9,007,199,254,740,991.';
 }
 
 function numberProblem(value: number): string | undefined {
@@ -97,6 +123,7 @@ function numberProblem(value: number): string | undefined {
 }
 
 export function validatePlatformSettings(settings: PlatformSettings): Validation {
+  const assumed = settings.deploymentCapacity.assumedSessionSize;
   const cpuNumber =
     numberProblem(settings.sizeBounds.minCpuMillis) ??
     numberProblem(settings.sizeBounds.maxCpuMillis);
@@ -104,6 +131,16 @@ export function validatePlatformSettings(settings: PlatformSettings): Validation
     numberProblem(settings.sizeBounds.minMemoryMib) ??
     numberProblem(settings.sizeBounds.maxMemoryMib);
   return {
+    deploymentCpu:
+      settings.deploymentCapacity.cpuMillis === null
+        ? undefined
+        : deploymentNumberProblem(settings.deploymentCapacity.cpuMillis),
+    deploymentMemory:
+      settings.deploymentCapacity.memoryMib === null
+        ? undefined
+        : deploymentNumberProblem(settings.deploymentCapacity.memoryMib),
+    assumedCpu: assumed === null ? undefined : numberProblem(assumed.cpuMillis),
+    assumedMemory: assumed === null ? undefined : numberProblem(assumed.memoryMib),
     cpu:
       cpuNumber ??
       (settings.sizeBounds.minCpuMillis > settings.sizeBounds.maxCpuMillis
@@ -119,7 +156,15 @@ export function validatePlatformSettings(settings: PlatformSettings): Validation
 }
 
 function validationMessage(validation: Validation): string | undefined {
-  return validation.cpu ?? validation.memory ?? validation.liveSessions;
+  return (
+    validation.deploymentCpu ??
+    validation.deploymentMemory ??
+    validation.assumedCpu ??
+    validation.assumedMemory ??
+    validation.cpu ??
+    validation.memory ??
+    validation.liveSessions
+  );
 }
 
 function errorText(cause: unknown): string {
@@ -136,8 +181,26 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
   const [validation, setValidation] = useState<Validation>({});
   const [readAttempt, setReadAttempt] = useState(0);
   const lastLiveLimit = useRef(1);
+  const lastDeploymentCpu = useRef(0);
+  const lastDeploymentMemory = useRef(0);
+  const lastAssumedCpu = useRef(1);
+  const lastAssumedMemory = useRef(1);
 
   const busy = operation !== undefined;
+
+  const rememberCapacity = useCallback((settings: PlatformSettings): void => {
+    if (settings.deploymentCapacity.cpuMillis !== null) {
+      lastDeploymentCpu.current = settings.deploymentCapacity.cpuMillis;
+    }
+    if (settings.deploymentCapacity.memoryMib !== null) {
+      lastDeploymentMemory.current = settings.deploymentCapacity.memoryMib;
+    }
+    const assumed = settings.deploymentCapacity.assumedSessionSize;
+    if (assumed !== null) {
+      lastAssumedCpu.current = assumed.cpuMillis;
+      lastAssumedMemory.current = assumed.memoryMib;
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -148,6 +211,7 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
           if (stored.settings.liveSessions !== null) {
             lastLiveLimit.current = stored.settings.liveSessions;
           }
+          rememberCapacity(stored.settings);
           setEditor(readyFrom(stored));
         }
       })
@@ -159,7 +223,7 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
     return () => {
       mounted = false;
     };
-  }, [readAttempt, store]);
+  }, [readAttempt, rememberCapacity, store]);
 
   function changeDraft(change: (draft: PlatformSettings) => PlatformSettings): void {
     setEditor((state) =>
@@ -177,6 +241,7 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
     if (draft.liveSessions !== null) {
       lastLiveLimit.current = draft.liveSessions;
     }
+    rememberCapacity(draft);
     setEditor({ ...readyFrom(stored), draft: copySettings(draft) });
     setConflict(undefined);
     setError(undefined);
@@ -309,6 +374,7 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
               if (previous.liveSessions !== null) {
                 lastLiveLimit.current = previous.liveSessions;
               }
+              rememberCapacity(previous);
               changeDraft(() => copySettings(previous));
               setStatus('Previous values loaded into the draft. Save changes to write them.');
             }}
@@ -320,7 +386,7 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
 
       <div className="notice notice--quiet platform-settings__notice">
         <p className="notice__detail">
-          Only Codex currently reads this document. Clearing platform prose removes the guidance
+          Only Codex currently reads the session briefing. Clearing its prose removes the guidance
           that a session is already authenticated and that <code>nyxid login</code> will fail.
         </p>
       </div>
@@ -341,6 +407,10 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
               size="sm"
               variant="outline"
               onClick={() => {
+                if (conflict.current.settings.liveSessions !== null) {
+                  lastLiveLimit.current = conflict.current.settings.liveSessions;
+                }
+                rememberCapacity(conflict.current.settings);
                 setEditor(readyFrom(conflict.current));
                 setConflict(undefined);
                 setError(undefined);
@@ -469,6 +539,220 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
               }));
             }}
           />
+        </section>
+
+        <section
+          className="platform-settings__section"
+          aria-labelledby={`${id}-deployment-capacity`}
+        >
+          <div className="platform-settings__section-head">
+            <h3 id={`${id}-deployment-capacity`} className="platform-settings__section-title">
+              Deployment capacity
+            </h3>
+            <p className="platform-settings__section-note">
+              Declared totals reserved across sessions that want a runtime.
+            </p>
+          </div>
+
+          <div className="platform-settings__ranges">
+            <div className="platform-settings__range">
+              <label className="platform-settings__toggle">
+                <input
+                  type="checkbox"
+                  checked={draft.deploymentCapacity.cpuMillis !== null}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    changeDraft((settings) => {
+                      const current = settings.deploymentCapacity.cpuMillis;
+                      if (!checked && current !== null) {
+                        lastDeploymentCpu.current = current;
+                      }
+                      return {
+                        ...settings,
+                        deploymentCapacity: {
+                          ...settings.deploymentCapacity,
+                          cpuMillis: checked ? lastDeploymentCpu.current : null,
+                        },
+                      };
+                    });
+                  }}
+                />
+                Declare a CPU total
+              </label>
+              {draft.deploymentCapacity.cpuMillis === null ? null : (
+                <NumberField
+                  id={`${id}-deployment-cpu`}
+                  label="Total CPU"
+                  value={draft.deploymentCapacity.cpuMillis}
+                  minimum={0}
+                  maximum={Number.MAX_SAFE_INTEGER}
+                  error={validation.deploymentCpu}
+                  onChange={(cpuMillis) => {
+                    if (deploymentNumberProblem(cpuMillis) === undefined) {
+                      lastDeploymentCpu.current = cpuMillis;
+                    }
+                    changeDraft((settings) => ({
+                      ...settings,
+                      deploymentCapacity: { ...settings.deploymentCapacity, cpuMillis },
+                    }));
+                  }}
+                />
+              )}
+              {validation.deploymentCpu === undefined ? null : (
+                <p className="field__error" role="alert">
+                  {validation.deploymentCpu}
+                </p>
+              )}
+            </div>
+
+            <div className="platform-settings__range">
+              <label className="platform-settings__toggle">
+                <input
+                  type="checkbox"
+                  checked={draft.deploymentCapacity.memoryMib !== null}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    changeDraft((settings) => {
+                      const current = settings.deploymentCapacity.memoryMib;
+                      if (!checked && current !== null) {
+                        lastDeploymentMemory.current = current;
+                      }
+                      return {
+                        ...settings,
+                        deploymentCapacity: {
+                          ...settings.deploymentCapacity,
+                          memoryMib: checked ? lastDeploymentMemory.current : null,
+                        },
+                      };
+                    });
+                  }}
+                />
+                Declare a memory total
+              </label>
+              {draft.deploymentCapacity.memoryMib === null ? null : (
+                <NumberField
+                  id={`${id}-deployment-memory`}
+                  label="Total memory (MiB)"
+                  value={draft.deploymentCapacity.memoryMib}
+                  minimum={0}
+                  maximum={Number.MAX_SAFE_INTEGER}
+                  error={validation.deploymentMemory}
+                  onChange={(memoryMib) => {
+                    if (deploymentNumberProblem(memoryMib) === undefined) {
+                      lastDeploymentMemory.current = memoryMib;
+                    }
+                    changeDraft((settings) => ({
+                      ...settings,
+                      deploymentCapacity: { ...settings.deploymentCapacity, memoryMib },
+                    }));
+                  }}
+                />
+              )}
+              {validation.deploymentMemory === undefined ? null : (
+                <p className="field__error" role="alert">
+                  {validation.deploymentMemory}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <label className="platform-settings__toggle">
+            <input
+              type="checkbox"
+              checked={draft.deploymentCapacity.assumedSessionSize !== null}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                changeDraft((settings) => {
+                  const current = settings.deploymentCapacity.assumedSessionSize;
+                  if (!checked && current !== null) {
+                    lastAssumedCpu.current = current.cpuMillis;
+                    lastAssumedMemory.current = current.memoryMib;
+                  }
+                  return {
+                    ...settings,
+                    deploymentCapacity: {
+                      ...settings.deploymentCapacity,
+                      assumedSessionSize: checked
+                        ? {
+                            cpuMillis: lastAssumedCpu.current,
+                            memoryMib: lastAssumedMemory.current,
+                          }
+                        : null,
+                    },
+                  };
+                });
+              }}
+            />
+            Account for sessions without a recorded size
+          </label>
+
+          {draft.deploymentCapacity.assumedSessionSize === null ? null : (
+            <>
+              <div className="platform-settings__ranges">
+                <NumberField
+                  id={`${id}-assumed-cpu`}
+                  label="Assumed CPU (millicores)"
+                  value={draft.deploymentCapacity.assumedSessionSize.cpuMillis}
+                  error={validation.assumedCpu}
+                  onChange={(cpuMillis) => {
+                    if (numberProblem(cpuMillis) === undefined) {
+                      lastAssumedCpu.current = cpuMillis;
+                    }
+                    changeDraft((settings) => {
+                      const assumed = settings.deploymentCapacity.assumedSessionSize;
+                      return assumed === null
+                        ? settings
+                        : {
+                            ...settings,
+                            deploymentCapacity: {
+                              ...settings.deploymentCapacity,
+                              assumedSessionSize: { ...assumed, cpuMillis },
+                            },
+                          };
+                    });
+                  }}
+                />
+                <NumberField
+                  id={`${id}-assumed-memory`}
+                  label="Assumed memory (MiB)"
+                  value={draft.deploymentCapacity.assumedSessionSize.memoryMib}
+                  error={validation.assumedMemory}
+                  onChange={(memoryMib) => {
+                    if (numberProblem(memoryMib) === undefined) {
+                      lastAssumedMemory.current = memoryMib;
+                    }
+                    changeDraft((settings) => {
+                      const assumed = settings.deploymentCapacity.assumedSessionSize;
+                      return assumed === null
+                        ? settings
+                        : {
+                            ...settings,
+                            deploymentCapacity: {
+                              ...settings.deploymentCapacity,
+                              assumedSessionSize: { ...assumed, memoryMib },
+                            },
+                          };
+                    });
+                  }}
+                />
+              </div>
+              {validation.assumedCpu === undefined &&
+              validation.assumedMemory === undefined ? null : (
+                <p className="field__error" role="alert">
+                  {validation.assumedCpu ?? validation.assumedMemory}
+                </p>
+              )}
+            </>
+          )}
+
+          {(draft.deploymentCapacity.cpuMillis !== null ||
+            draft.deploymentCapacity.memoryMib !== null) &&
+          draft.deploymentCapacity.assumedSessionSize === null ? (
+            <p className="field__hint platform-settings__capacity-warning">
+              Capacity admission is inactive for a session without a recorded size, or while any
+              existing session lacks one.
+            </p>
+          ) : null}
         </section>
 
         <section className="platform-settings__section" aria-labelledby={`${id}-capacity`}>
