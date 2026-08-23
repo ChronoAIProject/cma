@@ -128,11 +128,11 @@
     <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"></stop>
   </linearGradient>
 
-  <path class="cma-arc" pathLength="100" d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="#2F5BEA" stroke-width="11" stroke-linecap="round"></path>
-  <path class="cma-teeth" pathLength="100" d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="#2F5BEA" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
-  <rect class="cma-lens" x="30" y="38" width="17" height="12" rx="4" fill="#2F5BEA"></rect>
-  <rect class="cma-lens cma-lens--right" x="53" y="38" width="17" height="12" rx="4" fill="#2F5BEA"></rect>
-  <path class="cma-bridge" d="M46 44 L54 44" fill="none" stroke="#2F5BEA" stroke-width="4"></path>
+  <path class="cma-arc" pathLength="100" d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round"></path>
+  <path class="cma-teeth" pathLength="100" d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+  <rect class="cma-lens" x="30" y="38" width="17" height="12" rx="4" fill="currentColor"></rect>
+  <rect class="cma-lens cma-lens--right" x="53" y="38" width="17" height="12" rx="4" fill="currentColor"></rect>
+  <path class="cma-bridge" d="M46 44 L54 44" fill="none" stroke="currentColor" stroke-width="4"></path>
   <g clip-path="url(#lenses)">
     <rect class="cma-sweep" x="14" y="34" width="11" height="20" fill="url(#sweep)" transform="skewX(-18)"></rect>
   </g>
