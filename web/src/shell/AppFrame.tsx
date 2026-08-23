@@ -62,6 +62,14 @@ export function AppFrame({
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
   const [dragging, setDragging] = useState(false);
+  /*
+   * A handle reports displacement from pointer-down, so its width must be
+   * anchored at pointer-down too. Reading `columns` on every rendered move
+   * re-added the cumulative displacement to the width from the move before it:
+   * a slow 60px drag reached the 420px clamp after only a few frames.
+   */
+  const sidebarDragStart = useRef(SIDEBAR_DEFAULT);
+  const detailsDragStart = useRef(DETAILS_MIN);
   /**
    * Whether the sidebar was opened by hand at a width that collapses it.
    *
@@ -141,9 +149,14 @@ export function AppFrame({
         at={columns.sidebar}
         label="Resize the session list"
         onDrag={(dx) => {
-          onSidebarDrag(columns.sidebar + dx);
+          onSidebarDrag(sidebarDragStart.current + dx);
         }}
-        onDraggingChange={setDragging}
+        onDraggingChange={(active) => {
+          if (active) {
+            sidebarDragStart.current = columns.sidebar;
+          }
+          setDragging(active);
+        }}
       />
       {columns.details === 0 ? null : (
         <DragHandle
@@ -152,9 +165,14 @@ export function AppFrame({
           label="Resize the details column"
           onDrag={(dx) => {
             // Dragging left widens: the column grows from its leading edge.
-            onDetailsDrag(columns.details - dx);
+            onDetailsDrag(detailsDragStart.current - dx);
           }}
-          onDraggingChange={setDragging}
+          onDraggingChange={(active) => {
+            if (active) {
+              detailsDragStart.current = columns.details;
+            }
+            setDragging(active);
+          }}
         />
       )}
 
