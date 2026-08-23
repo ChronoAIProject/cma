@@ -16,7 +16,8 @@
  * anywhere else in web storage.
  */
 
-const KEY = 'chrono-bot:pending-turn';
+const KEY = 'cma:pending-turn';
+const LEGACY_KEY = 'chrono-bot:pending-turn';
 
 /** Matches the REST surface's own bound on a turn. */
 export const MAX_TURN_LENGTH = 4000;
@@ -37,6 +38,50 @@ function storage(): Storage | null {
     // Safari in private mode and embedded webviews can throw on access rather
     // than merely being empty. Losing the prompt is acceptable; crashing the
     // landing page is not.
+    return null;
+  }
+}
+
+function readPendingTurn(store: Storage, key: string): string | null {
+  try {
+    return store.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function removePendingTurns(store: Storage): void {
+  for (const key of [KEY, LEGACY_KEY]) {
+    try {
+      store.removeItem(key);
+    } catch {
+      // Try both names even when one removal is blocked.
+    }
+  }
+}
+
+function parsePendingTurn(rawValue: string | null, now: number): string | null {
+  if (rawValue === null) {
+    return null;
+  }
+
+  // Anything in web storage is untrusted input: another script on the origin,
+  // or an older build, may have written it. Validate rather than assume shape.
+  try {
+    const parsed: unknown = JSON.parse(rawValue);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return null;
+    }
+    const { text, capturedAt } = parsed as Partial<PendingTurn>;
+    if (typeof text !== 'string' || typeof capturedAt !== 'number') {
+      return null;
+    }
+    if (!Number.isFinite(capturedAt) || now - capturedAt > MAX_AGE_MS) {
+      return null;
+    }
+    const trimmed = text.trim();
+    return trimmed.length > 0 ? trimmed.slice(0, MAX_TURN_LENGTH) : null;
+  } catch {
     return null;
   }
 }
@@ -76,44 +121,17 @@ export function consumePendingTurn(now: number = Date.now()): string | null {
     return null;
   }
 
-  let rawValue: string | null = null;
-  try {
-    rawValue = store.getItem(KEY);
-    store.removeItem(KEY);
-  } catch {
-    return null;
-  }
+  const canonical = readPendingTurn(store, KEY);
+  const historical = readPendingTurn(store, LEGACY_KEY);
+  removePendingTurns(store);
 
-  if (rawValue === null) {
-    return null;
-  }
-
-  // Anything in web storage is untrusted input: another script on the origin,
-  // or an older build, may have written it. Validate rather than assume shape.
-  try {
-    const parsed: unknown = JSON.parse(rawValue);
-    if (typeof parsed !== 'object' || parsed === null) {
-      return null;
-    }
-    const { text, capturedAt } = parsed as Partial<PendingTurn>;
-    if (typeof text !== 'string' || typeof capturedAt !== 'number') {
-      return null;
-    }
-    if (!Number.isFinite(capturedAt) || now - capturedAt > MAX_AGE_MS) {
-      return null;
-    }
-    const trimmed = text.trim();
-    return trimmed.length > 0 ? trimmed.slice(0, MAX_TURN_LENGTH) : null;
-  } catch {
-    return null;
-  }
+  return parsePendingTurn(canonical, now) ?? parsePendingTurn(historical, now);
 }
 
 /** Drop any stored prompt without reading it. */
 export function clearPendingTurn(): void {
-  try {
-    storage()?.removeItem(KEY);
-  } catch {
-    // Nothing actionable; the value expires with the tab regardless.
+  const store = storage();
+  if (store !== null) {
+    removePendingTurns(store);
   }
 }
