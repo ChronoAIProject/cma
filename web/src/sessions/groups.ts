@@ -84,7 +84,8 @@ export function groupSessions(
  * or a newer one somebody rolled back from may have written it. Anything this
  * build does not recognise is dropped rather than trusted.
  */
-const KEY = 'chrono-bot:rail-collapsed';
+const KEY = 'cma:rail-collapsed';
+const LEGACY_KEY = 'chrono-bot:rail-collapsed';
 
 function storage(): Storage | null {
   try {
@@ -100,30 +101,61 @@ function isGroupId(value: unknown): value is GroupId {
   return GROUPS.some((group) => group.id === value);
 }
 
-/** The groups that should start closed, from storage or from their defaults. */
-export function loadCollapsed(): ReadonlySet<GroupId> {
-  const fallback = new Set(GROUPS.filter((group) => !group.openByDefault).map((group) => group.id));
-  const raw = storage()?.getItem(KEY);
-  if (raw === null || raw === undefined) {
-    return fallback;
+function readCollapsed(store: Storage, key: string): string | null {
+  try {
+    return store.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function parseCollapsed(raw: string | null): ReadonlySet<GroupId> | null {
+  if (raw === null) {
+    return null;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
+    return null;
+  }
+  return Array.isArray(parsed) ? new Set(parsed.filter(isGroupId)) : null;
+}
+
+function writeCollapsed(store: Storage, collapsed: ReadonlySet<GroupId>): void {
+  try {
+    store.setItem(KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // The rail still works when storage is blocked or full.
+  }
+}
+
+/** The groups that should start closed, from storage or from their defaults. */
+export function loadCollapsed(): ReadonlySet<GroupId> {
+  const fallback = new Set(GROUPS.filter((group) => !group.openByDefault).map((group) => group.id));
+  const store = storage();
+  if (store === null) {
     return fallback;
   }
-  if (!Array.isArray(parsed)) {
+
+  const canonical = parseCollapsed(readCollapsed(store, KEY));
+  if (canonical !== null) {
+    return canonical;
+  }
+
+  const historical = parseCollapsed(readCollapsed(store, LEGACY_KEY));
+  if (historical === null) {
     return fallback;
   }
-  return new Set(parsed.filter(isGroupId));
+
+  writeCollapsed(store, historical);
+  return historical;
 }
 
 /** Remember which groups are closed. A failure to store is not a failure. */
 export function storeCollapsed(collapsed: ReadonlySet<GroupId>): void {
-  try {
-    storage()?.setItem(KEY, JSON.stringify([...collapsed]));
-  } catch {
-    // Quota, or a storage that refuses writes. The rail still works.
+  const store = storage();
+  if (store !== null) {
+    writeCollapsed(store, collapsed);
   }
 }

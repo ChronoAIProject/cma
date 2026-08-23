@@ -31,10 +31,25 @@
     <script>
       (function () {
         var choice = 'system';
+        var canonical = null;
         try {
-          choice = window.localStorage.getItem('chrono-bot:appearance') || 'system';
-        } catch (e) {
-          choice = 'system';
+          canonical = window.localStorage.getItem('cma:appearance');
+        } catch (e) {}
+        var valid = canonical === 'light' || canonical === 'dark' || canonical === 'system';
+        if (valid) {
+          choice = canonical;
+        } else {
+          var historical = null;
+          try {
+            historical = window.localStorage.getItem('chrono-bot:appearance');
+          } catch (e) {}
+          valid = historical === 'light' || historical === 'dark' || historical === 'system';
+          if (valid) {
+            choice = historical;
+            try {
+              window.localStorage.setItem('cma:appearance', historical);
+            } catch (e) {}
+          }
         }
         var dark =
           choice === 'dark' ||
