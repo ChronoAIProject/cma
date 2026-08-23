@@ -4,13 +4,26 @@
 //! are derived here from consecutive frames on one link, so a predecessor can
 //! never survive the sandbox that produced it.
 
-use futures_util::{SinkExt, StreamExt};
+use std::time::Duration;
+
+use futures_util::{SinkExt, Stream, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::{HostedKernel, READY_PATH, SUPERVISOR_PORT};
 use crate::supervisor;
 use crate::{AdapterError, ResourceSample, RuntimeHandle};
+
+/// A declared telemetry lane sends its first tick immediately. Bound the
+/// evidence wait so a runtime that advertises a silent lane cannot hold the
+/// watch open forever.
+const FIRST_READING_DEADLINE: Duration = Duration::from_secs(5);
+
+enum TelemetryRead {
+    Observed(supervisor::ResourceFrame),
+    Empty,
+    Ended,
+}
 
 impl HostedKernel {
     /// Whether this pod's supervisor can report what its sandbox is using.
@@ -73,53 +86,104 @@ impl HostedKernel {
         }
         drop(sink);
 
+        let sandbox = handle.0.clone();
+        let first = match tokio::time::timeout(
+            FIRST_READING_DEADLINE,
+            next_telemetry(&mut source, &sandbox),
+        )
+        .await
+        {
+            Ok(TelemetryRead::Observed(frame)) => frame,
+            Ok(TelemetryRead::Empty) => {
+                return Err(AdapterError::Unsupported(format!(
+                    "runtime {} advertised resources but observed none",
+                    handle.0
+                )));
+            }
+            Ok(TelemetryRead::Ended) => {
+                return Err(AdapterError::Unavailable(format!(
+                    "runtime {} ended its resource link before a reading",
+                    handle.0
+                )));
+            }
+            Err(_) => {
+                return Err(AdapterError::Unavailable(format!(
+                    "runtime {} sent no resource reading in time",
+                    handle.0
+                )));
+            }
+        };
+        if readings.send(derive_sample(None, &first)).await.is_err() {
+            return Err(AdapterError::Unavailable(format!(
+                "resource reader for runtime {} closed before its first reading",
+                handle.0
+            )));
+        }
+
         tracing::info!(
             sandbox = %handle.0,
             interval_ms,
             %url,
             "watching sandbox resources"
         );
-        let sandbox = handle.0.clone();
         tokio::spawn(async move {
             // Link-local by construction. This predecessor is dropped with
             // the socket and can never be differenced against a new sandbox.
-            let mut previous: Option<supervisor::ResourceFrame> = None;
-            while let Some(frame) = source.next().await {
-                match frame {
-                    Ok(Message::Binary(bytes)) => match supervisor::unframe(&bytes) {
-                        Some((supervisor::LANE_TELEMETRY, payload)) => {
-                            let Ok(now) =
-                                serde_json::from_slice::<supervisor::ResourceFrame>(payload)
-                            else {
-                                tracing::warn!(%sandbox, "a reading this build cannot read");
-                                continue;
-                            };
-                            let sample = derive_sample(previous.as_ref(), &now);
-                            previous = Some(now);
-                            if readings.send(sample).await.is_err() {
-                                break;
-                            }
+            let mut previous = first;
+            loop {
+                match next_telemetry(&mut source, &sandbox).await {
+                    TelemetryRead::Observed(now) => {
+                        let sample = derive_sample(Some(&previous), &now);
+                        previous = now;
+                        if readings.send(sample).await.is_err() {
+                            break;
                         }
-                        Some((lane, _)) => {
-                            tracing::warn!(
-                                %sandbox,
-                                lane,
-                                "frame on a lane this attachment does not carry"
-                            );
-                        }
-                        None => {}
-                    },
-                    Ok(Message::Close(_)) => break,
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::warn!(%sandbox, %error, "reading link read failed");
-                        break;
                     }
+                    TelemetryRead::Empty => {}
+                    TelemetryRead::Ended => break,
                 }
             }
             tracing::info!(%sandbox, "reading relay ended");
         });
         Ok(())
+    }
+}
+
+async fn next_telemetry<S>(source: &mut S, sandbox: &str) -> TelemetryRead
+where
+    S: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    loop {
+        match source.next().await {
+            Some(Ok(Message::Binary(bytes))) => match supervisor::unframe(&bytes) {
+                Some((supervisor::LANE_TELEMETRY, payload)) => {
+                    let Ok(frame) = serde_json::from_slice::<supervisor::ResourceFrame>(payload)
+                    else {
+                        tracing::warn!(%sandbox, "a reading this build cannot read");
+                        continue;
+                    };
+                    if frame.has_observations() {
+                        return TelemetryRead::Observed(frame);
+                    }
+                    tracing::debug!(%sandbox, "a reading carried no resource observation");
+                    return TelemetryRead::Empty;
+                }
+                Some((lane, _)) => {
+                    tracing::warn!(
+                        %sandbox,
+                        lane,
+                        "frame on a lane this attachment does not carry"
+                    );
+                }
+                None => {}
+            },
+            Some(Ok(Message::Close(_))) | None => return TelemetryRead::Ended,
+            Some(Ok(_)) => {}
+            Some(Err(error)) => {
+                tracing::warn!(%sandbox, %error, "reading link read failed");
+                return TelemetryRead::Ended;
+            }
+        }
     }
 }
 
