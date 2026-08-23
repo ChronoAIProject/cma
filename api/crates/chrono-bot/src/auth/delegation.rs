@@ -109,7 +109,18 @@ impl layer2_core::CredentialSource for AuthState {
             return;
         }
         for owner_token in owner_tokens {
-            for id in issuer.minted_for(session, &owner_token).await {
+            let ids = match issuer.minted_for(session, &owner_token).await {
+                Ok(ids) => ids,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %session,
+                        error = %error,
+                        "could not inspect an owner's keys for this ended session"
+                    );
+                    continue;
+                }
+            };
+            for id in ids {
                 issuer.revoke(&id, &owner_token).await;
             }
         }
