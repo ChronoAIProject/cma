@@ -38,12 +38,12 @@ use super::DshSandboxSpec;
 use crate::supervisor;
 use crate::{
     AdapterError, ContentBlock, ContentChunk, ConversationChannel, ConversationInput,
-    ConversationUpdate, PromptResponse, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, TurnStopReason, UsageUpdate,
+    ConversationInputSender, ConversationUpdate, PromptResponse, SessionUpdate, ToolCall,
+    ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, TurnStopReason, UsageUpdate,
 };
 
-/// How many messages either direction may queue before back pressure applies.
-const BUFFER: usize = 256;
+/// One operation may wait behind the writer, but a second is a backed-up link.
+const INPUT_BUFFER: usize = 1;
 
 /// How long to wait for the pod to say what it is.
 const DECLARATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
@@ -92,6 +92,11 @@ impl Harness {
         cwd: String,
         spec: &DshSandboxSpec,
         rejoin: Option<String>,
+        // Supplied by the caller and already being drained. This harness has
+        // no sign-in of its own, but the contract is one contract: a kernel
+        // that reported nothing during its open would be indistinguishable
+        // from one whose open had not started.
+        updates_tx: mpsc::Sender<crate::ConversationUpdate>,
     ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -108,9 +113,6 @@ impl Harness {
             }
         }
 
-        let (updates_tx, updates_rx) = mpsc::channel(BUFFER);
-        let (input_tx, mut input_rx) = mpsc::channel(BUFFER);
-
         let harness = Arc::new(Self {
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -122,6 +124,13 @@ impl Harness {
             session: rejoin.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             folder: Arc::new(Mutex::new(Folder::default())),
         });
+
+        let writer = Arc::clone(&harness);
+        let (input, input_task) =
+            ConversationInputSender::spawn_with_abort(INPUT_BUFFER, move |input| {
+                let writer = Arc::clone(&writer);
+                async move { writer.drive(input).await }
+            });
 
         // Read before anything is sent: the handshake's own answer arrives on
         // this loop, so it has to be running to receive it.
@@ -151,26 +160,19 @@ impl Harness {
                     }
                 }
             }
+            reader.pending.lock().await.clear();
+            input_task.abort();
             tracing::info!("conversation link ended");
         });
 
         harness.handshake(cwd, spec).await?;
-
-        let writer = Arc::clone(&harness);
-        tokio::spawn(async move {
-            while let Some(input) = input_rx.recv().await {
-                writer.drive(input).await;
-            }
-            tracing::info!("conversation input ended");
-        });
 
         let conversation_id = harness.session.clone();
         let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
 
         Ok((
             ConversationChannel {
-                updates: updates_rx,
-                input: input_tx,
+                input,
                 conversation_id: Some(conversation_id),
             },
             control,
@@ -197,27 +199,31 @@ impl Harness {
     }
 
     /// Act on something a caller sent toward the runtime.
-    async fn drive(&self, input: ConversationInput) {
+    async fn drive(&self, input: ConversationInput) -> Result<(), AdapterError> {
         match input {
             ConversationInput::Prompt(content) => {
                 let params = serde_json::json!({
                     "sessionId": self.session,
                     "contentBlocks": content,
                 });
-                if let Err(e) = self.call("session/prompt", params).await {
-                    tracing::warn!(error = %e, "could not send a prompt");
-                }
+                let waiting = self.begin("session/prompt", params).await?;
+                tokio::spawn(async move {
+                    if let Err(error) = Self::await_call("session/prompt", waiting).await {
+                        tracing::warn!(%error, "the harness did not accept the prompt");
+                    }
+                });
+                Ok(())
             }
             // Neither is reachable: this kernel declares no interrupt and no
             // permission channel, so the core refuses both by name before they
             // get here. Logged rather than dropped, because arriving anyway
             // would mean a capability check went missing upstream.
-            ConversationInput::Cancel => {
-                tracing::warn!(session = %self.session, "this kernel cannot interrupt a turn");
-            }
-            ConversationInput::PermissionAnswer { .. } => {
-                tracing::warn!(session = %self.session, "this kernel asks for no permission");
-            }
+            ConversationInput::Cancel => Err(AdapterError::Unsupported(
+                "this kernel cannot interrupt a turn".to_string(),
+            )),
+            ConversationInput::PermissionAnswer { .. } => Err(AdapterError::Unsupported(
+                "this kernel asks for no permission".to_string(),
+            )),
         }
     }
 
@@ -262,6 +268,16 @@ impl Harness {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, AdapterError> {
+        let waiting = self.begin(method, params).await?;
+        Self::await_call(method, waiting).await
+    }
+
+    /// Write a request and return the receiver that will carry its answer.
+    async fn begin(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<tokio::sync::oneshot::Receiver<serde_json::Value>, AdapterError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (answer, waiting) = tokio::sync::oneshot::channel();
         self.pending.lock().await.insert(id, answer);
@@ -275,6 +291,14 @@ impl Harness {
             self.pending.lock().await.remove(&id);
             return Err(e);
         }
+        Ok(waiting)
+    }
+
+    /// Wait for and classify the answer to one request already on the wire.
+    async fn await_call(
+        method: &str,
+        waiting: tokio::sync::oneshot::Receiver<serde_json::Value>,
+    ) -> Result<serde_json::Value, AdapterError> {
         let frame = tokio::time::timeout(CALL_DEADLINE, waiting)
             .await
             .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?

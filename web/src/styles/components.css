@@ -9,440 +9,110 @@
  * Rules belonging to exactly one component stay in that component's own .css.
  */
 
-/* ── Depth, §3 ────────────────────────────────────────────────────────────
+/* ── Depth, §3 and §20.1 ──────────────────────────────────────────────────
  *
- * Two levels. A thing resting on the page carries --lift-rest; a thing floating
- * over it carries --lift-plate and never moves. Nothing translates on hover:
- * hover raises the background one step in the ramp, active lowers it one step,
- * and that is the whole vocabulary. The letterpress contract is retired.
+ * Two levels. A thing resting on the page carries level 1; a thing floating
+ * over it carries level 3 and never moves. Nothing translates on hover:
+ * hover tints the background, active tints it further, and that is the whole
+ * vocabulary.
+ *
+ * The alias layer supplies the theme-specific edge and depth, so every
+ * floating surface declares both and neither theme needs its own rule.
  */
 
 .lift {
-  box-shadow: var(--lift-rest);
+  box-shadow: var(--dsw-shadow-lv1);
 }
 
 .plate {
-  background: var(--raised);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-plate);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .button,
-  .chip,
-  .row-item,
-  .select,
-  .field__control {
-    transition:
-      background var(--motion-colour) ease,
-      border-color var(--motion-colour) ease,
-      color var(--motion-colour) ease,
-      box-shadow var(--motion-press) ease;
-  }
-}
-
-/* ── Buttons, §7 ──────────────────────────────────────────────────────────
- *
- * One primary per surface, spent on the action that surface exists for.
- * Everything else is secondary or quiet, and the rest goes in the overflow
- * menu — a header carrying four equally-weighted keys makes the reader choose
- * before they can read. Every control is border-box, so a bordered and an
- * unbordered control in the same row measure alike.
- */
-
-.button {
-  display: inline-flex;
-  gap: var(--space-2);
-  align-items: center;
-  justify-content: center;
-  height: var(--control-h);
-  min-width: var(--hit);
-  padding-inline: var(--space-3);
-  color: var(--ink-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-note);
-  white-space: nowrap;
-  background: none;
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
-}
-
-.button:hover:not(:disabled, [aria-disabled='true']) {
-  color: var(--ink);
-  background: var(--raised);
-}
-
-.button:active:not(:disabled, [aria-disabled='true']) {
-  background: var(--sunken);
-}
-
-.button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.button:disabled,
-.button[aria-disabled='true'] {
-  color: var(--ink-3);
-  background: var(--inset);
-  border-color: var(--rule);
-  cursor: not-allowed;
-}
-
-/* The primary. No border: the fill is the edge. */
-.button--primary {
-  color: var(--on-accent);
-  font-weight: 600;
-  background: var(--accent-fill);
-  border-color: transparent;
-}
-
-.button--primary:hover:not(:disabled) {
-  color: var(--on-accent);
-  filter: brightness(1.06);
-}
-
-/* Quiet: no border at all. For a third-rank action beside two ranked ones. */
-.button--quiet {
-  color: var(--ink-2);
-  border-color: transparent;
-}
-
-/* Destructive. Confirms inline, in place of the controls that raised it. */
-.button--danger {
-  color: var(--fail);
-  border-color: var(--fail-wash);
-}
-
-.button--sm {
-  height: var(--control-h-sm);
-  padding-inline: var(--space-3);
-  font-size: var(--text-meta);
-  border-radius: var(--radius-sm);
-}
-
-.button--md {
-  height: var(--control-h-md);
-  font-size: var(--text-ui);
-}
-
-/* A panel's one full-width primary action — the rail's new-session key. */
-.button--block {
-  width: 100%;
-  height: var(--control-h-lg);
-  font-size: var(--text-ui);
-  font-weight: 600;
-}
-
-/* The landing's opening action. */
-.button--xl {
-  height: var(--control-h-xl);
-  padding-inline: var(--space-5);
-  font-size: var(--text-body);
-  font-weight: 600;
-  border-radius: var(--radius-md);
-}
-
-/* An icon-only control: the overflow key, a collapse handle, a dismiss. */
-.button--icon {
-  width: var(--control-h);
-  min-width: 0;
-  padding: 0;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 14px;
+  box-shadow: var(--dsw-shadow-lv3);
 }
 
 /*
- * §7: controls are disabled, never removed, and the reason is stated on the
+ * Micro-transitions are the default and are removed on request, rather than
+ * appearing only where a preference is reported.
+ *
+ * `no-preference` matches when somebody has explicitly expressed none — a
+ * platform that does not report the feature at all matches neither value, so
+ * gating on it silently took every hover fill away from those people. The
+ * `reduce` override is the idiom that gets this right.
+ */
+.button,
+.pill,
+.row-item,
+.input {
+  transition:
+    background var(--ds-transition-duration) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration) var(--ds-ease-in-out),
+    color var(--ds-transition-duration) var(--ds-ease-in-out),
+    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .pill,
+  .row-item,
+  .input {
+    transition: none;
+  }
+}
+
+/*
+ * §12: controls are disabled, never removed, and the reason is stated on the
  * surface — once per row, beside the controls it explains, never in a tooltip
  * and never repeated on each key.
  */
 .control-reason {
   overflow: hidden;
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ── Fields, §7 ───────────────────────────────────────────────────────── */
+/* ── Fields, §12.2 ───────────────────────────────────────────────────── */
 
+/*
+ * `align-items` folded in from the duplicate this replaced: it won by load
+ * order, so every field in the product was already laid out this way.
+ */
 .field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-}
-
-.field__label {
-  color: var(--ink-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-note);
-}
-
-.field__control {
-  height: var(--control-h-md);
-  padding-inline: var(--space-3);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  background: var(--inset);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
-}
-
-.field__control::placeholder {
-  color: var(--ink-3);
-}
-
-.field__control:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.field__hint {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
-}
-
-.field__error {
-  color: var(--fail);
-  font-size: var(--text-note);
-}
-
-/* ── Dropdowns, §7 ───────────────────────────────────────────────────────
- *
- * An instrument closed and a plate open. Choosing a VALUE is a select;
- * choosing an ACTION is a menu. A select never runs anything when it opens.
- */
-
-.select {
-  display: inline-flex;
-  gap: var(--space-2);
-  align-items: center;
-  justify-content: space-between;
-  height: var(--control-h);
-  min-width: 0;
-  padding-inline: var(--space-3);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  background: var(--surface);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
-}
-
-.select__value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The caret flips rather than rotating: at this size a rotation reads as a wobble. */
-.select__caret::before {
-  content: '▾';
-  color: var(--ink-3);
-  font-size: 9px;
-  line-height: 1;
-}
-
-.select[aria-expanded='true'] .select__caret::before {
-  content: '▴';
-}
-
-.menu {
-  position: absolute;
-  z-index: 20;
-  min-width: 200px;
-  margin: 0;
-  padding: var(--space-2);
-  list-style: none;
-  background: var(--raised);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-plate);
-}
-
-.menu__item {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  width: 100%;
-  height: var(--control-h-lg);
-  padding-inline: var(--space-3);
-  color: var(--ink-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-sm);
-}
-
-.menu__item:hover,
-.menu__item--active {
-  color: var(--ink);
-  background: var(--inset);
-}
-
-.menu__item[aria-disabled='true'] {
-  color: var(--ink-3);
-  cursor: not-allowed;
-}
-
-/* Selected is marked by a tick as well as by weight — never colour alone. */
-.menu__item[aria-selected='true'] {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.menu__tick::before {
-  content: '✓';
-  color: var(--accent);
-}
-
-.menu__kind {
-  margin-left: auto;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-}
-
-/* ── Status, §2 and §7 ────────────────────────────────────────────────────
- *
- * A pill carrying a dot and a word. The word is mandatory: colour never carries
- * meaning alone, and `stopped` is never drawn as a failure.
- */
-
-.status {
-  display: inline-flex;
-  gap: 7px;
-  align-items: center;
-  height: var(--chip-h);
-  padding-inline: 10px;
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
-  font-weight: 500;
-  white-space: nowrap;
-  border-radius: var(--radius-pill);
-}
-
-.status__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentcolor;
-}
-
-.status--live {
-  color: var(--live);
-  background: var(--live-wash);
-}
-.status--wait {
-  color: var(--wait);
-  background: var(--wait-wash);
-}
-.status--fail {
-  color: var(--fail);
-  background: var(--fail-wash);
-}
-.status--ended {
-  color: var(--ended);
-  background: var(--raised);
-}
-
-/* A neutral tag: a count, a filter that is off, a fact about a service. */
-.tag {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  height: var(--chip-h);
-  padding-inline: 10px;
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: 0.06em;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-pill);
-}
-
-.tag--on {
-  color: var(--on-accent);
-  font-family: var(--font-ui);
-  font-weight: 500;
-  background: var(--accent-fill);
-  border-color: transparent;
-}
-
-/* ── Rows, §12 and §14 ────────────────────────────────────────────────────
- *
- * A selectable row (the rail) and a record row (operations) are different
- * things: one is a target, the other is read. Both are rows, neither is a table.
- */
-
-.row-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 2px var(--space-3);
-  width: 100%;
-  padding: var(--space-3);
-  font-family: var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-md);
-}
-
-.row-item:hover {
-  background: var(--raised);
-}
-
-/* The selected session is marked on its leading edge and by its background. */
-.row-item[aria-selected='true'] {
-  background: var(--raised);
-  box-shadow: var(--edge-selected), var(--lift-rest);
-}
-
-.row-item:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.row-item__dot {
-  grid-row: 1 / span 2;
-  align-self: start;
-  margin-top: 5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-
-.row-item__subject {
-  color: var(--ink);
-  font-size: var(--text-ui);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.row-item__meta {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
+  gap: 8px;
+  align-items: flex-start;
 }
 
 /*
- * What the session last did — §12. It never wraps: a row that grows with its
- * longest sentence makes the list a different height every time it reloads.
+ * One rule, here, where the class is declared. A second `.field__label` in
+ * `EnvironmentProfiles.css` used to win by load order, so every field in the
+ * product took its uppercase treatment while `font-family` leaked through from
+ * this one — a label inheriting a face from a file that knew nothing about it.
+ * What is written here is what everything was already getting.
  */
-.row-item__activity {
-  grid-column: 2 / span 2;
-  overflow: hidden;
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.field__label {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.field__hint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.field__error {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .record {
@@ -452,19 +122,19 @@
   padding: 0;
   list-style: none;
   overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
 }
 
 /* Rows are read one at a time: no zebra striping, no hover, nothing navigates. */
 .record__row {
   display: grid;
   grid-template-columns: 190px 1fr auto;
-  gap: var(--space-4);
+  gap: 16px;
   align-items: center;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--rule);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .record__row:last-child {
@@ -472,33 +142,33 @@
 }
 
 .record__at {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .record__primary {
-  color: var(--ink);
-  font-size: var(--text-body);
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
 }
 
 .record__meta {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
 }
 
 /* An identifier is drawn as an identifier, so nobody reads it as a name. */
 .record__identifier {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
 }
 
 .record__empty {
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
 }
 
 /* ── Cards and notices, §3, §12 ──────────────────────────────────────────
@@ -509,18 +179,18 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 12px;
   min-width: 0;
-  padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  padding: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
 }
 
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: var(--space-3);
+  gap: 12px;
   align-items: stretch;
 }
 
@@ -531,103 +201,39 @@
  */
 .notice {
   display: flex;
-  gap: var(--space-3);
+  gap: 12px;
   align-items: flex-start;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  border-radius: 10px;
 }
 
 .notice--fail {
-  background: var(--fail-wash);
-  border: 1px solid var(--fail);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-left: 2px solid var(--dsw-alias-state-error-primary);
 }
 
 .notice--quiet {
-  background: var(--raised);
-  border: 1px solid var(--rule);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
 }
 
 .notice__title {
-  color: var(--ink);
-  font-size: var(--text-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
 }
 
 .notice__detail {
-  color: var(--ink-2);
-  font-size: var(--text-note);
-}
-
-/* ── Bands, §5 and §6 ─────────────────────────────────────────────────────
- *
- * A band's height is set on the band, never accumulated from padding: padding
- * is what lets two aligned columns drift apart when one gains a longer label.
- */
-
-.band {
-  display: flex;
-  flex: none;
-  gap: var(--space-3);
-  align-items: center;
-  padding-inline: var(--space-5);
-}
-
-.band--bar {
-  height: var(--bar-height);
-  gap: var(--space-5);
-  background: var(--ground);
-  border-bottom: 1px solid var(--rule);
-}
-
-.band--head {
-  height: var(--band-head);
-  padding-inline: var(--space-6);
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-}
-
-.band--foot {
-  height: var(--band-foot);
-  gap: var(--space-4);
-  background: var(--ground);
-  border-top: 1px solid var(--rule);
-}
-
-.band__subject {
-  color: var(--ink);
-  font-size: var(--text-subject);
-  font-weight: 600;
-  letter-spacing: var(--track-tight);
-  font-variant-numeric: tabular-nums;
-}
-
-.band__label {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.band__value {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  white-space: nowrap;
-}
-
-.band__spacer {
-  flex: 1 1 auto;
-  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
 }
 
 /* ── Section labels ─────────────────────────────────────────────────────── */
 
 .eyebrow {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
@@ -637,29 +243,16 @@
  */
 
 .tone-ink-live {
-  color: var(--live);
+  color: var(--dsw-alias-state-success-primary);
 }
 .tone-ink-wait {
-  color: var(--wait);
+  color: var(--dsw-alias-state-warn-primary);
 }
 .tone-ink-fail {
-  color: var(--fail);
+  color: var(--dsw-alias-state-error-primary);
 }
 .tone-ink-ended {
-  color: var(--ended);
-}
-
-.tone-bg-live {
-  background: var(--live);
-}
-.tone-bg-wait {
-  background: var(--wait);
-}
-.tone-bg-fail {
-  background: var(--fail);
-}
-.tone-bg-ended {
-  background: var(--ended);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* ── Waiting, §8 and §11 ─────────────────────────────────────────────────
@@ -669,7 +262,7 @@
  */
 
 .pulse {
-  animation: pulse-dot 1.4s ease-in-out infinite;
+  animation: pulse-dot 1.4s var(--ds-ease-in-out) infinite;
 }
 
 @keyframes pulse-dot {
@@ -684,21 +277,48 @@
 
 .progress {
   height: 3px;
-  overflow: hidden;
-  background: var(--inset);
-  border-radius: var(--radius-pill);
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 999px;
 }
 
 .progress__fill {
   height: 100%;
-  background: var(--wait);
-  border-radius: var(--radius-pill);
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: 999px;
+  box-shadow: var(--dsw-glow-accent);
+}
+
+/* A shared loading ground with one quiet sweep, and no new tone vocabulary. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-skeleton);
+}
+
+.skeleton::after {
+  position: absolute;
+  background: linear-gradient(90deg, transparent, var(--dsw-alias-bg-skeleton), transparent);
+  content: '';
+  animation: skeleton-shimmer 1.6s var(--ds-ease-in-out) infinite;
+  inset: 0;
+  transform: translateX(-100%);
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pulse {
     animation: none;
     opacity: 1;
+  }
+
+  .skeleton::after {
+    display: none;
+    animation: none;
   }
 }
 
@@ -716,32 +336,23 @@
 .collapse-handle {
   display: grid;
   place-items: center;
-  width: var(--hit);
-  height: var(--hit);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
+  width: 32px;
+  height: 32px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
   line-height: 1;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: 8px;
 }
 
 .collapse-handle:hover {
-  color: var(--ink);
-  border-color: var(--rule-2);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-border-l2);
 }
 
 .collapse-handle:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-}
-
-/*
- * A filter select holds §7's 200px minimum so its row does not resize as the
- * value changes. Kept beside .select rather than in Select.css because the
- * minimum is the shared dropdown contract, not one component's choice.
- */
-.select--filter {
-  min-width: 200px;
 }

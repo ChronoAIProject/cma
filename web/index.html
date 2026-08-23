@@ -3,9 +3,48 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>chrono-bot</title>
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FAF2E0" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#060606" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./src/assets/brand/png/favicon-32.png" />
+    <link rel="icon" type="image/svg+xml" href="./src/assets/brand/cma-favicon.svg" />
+    <!--
+      iOS ignores an SVG icon when a page is saved to the home screen, and
+      falls back to a screenshot of the page. The brand set ships the 180px
+      icon for exactly this and nothing was pointing at it.
+    -->
+    <link rel="apple-touch-icon" href="./src/assets/brand/png/appicon-180.png" />
+    <title>CMA</title>
   </head>
   <body>
+    <!--
+      The theme, before the first paint.
+
+      This runs inline and synchronously because the alternative is measurable:
+      the bundle resolves the theme too, but only once it has loaded, and until
+      then a dark reader is looking at a white page. Deciding it here costs a
+      few lines that must stay in sync with theme/appearance.ts, and the test
+      that runs this exact script and compares is what makes that trade honest.
+
+      Storage can throw — private modes and blocked cookies both do — and a
+      theme preference is never worth failing to render the page over.
+    -->
+    <script>
+      (function () {
+        var choice = 'system';
+        try {
+          choice = window.localStorage.getItem('chrono-bot:appearance') || 'system';
+        } catch (e) {
+          choice = 'system';
+        }
+        var dark =
+          choice === 'dark' ||
+          (choice !== 'light' &&
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        document.body.toggleAttribute('data-ds-dark-theme', dark);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

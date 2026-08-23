@@ -25,7 +25,7 @@ use layer3_adapter::{
 };
 use tokio::sync::mpsc;
 
-use crate::event::{ConfigOption, EventKind, LiveFrame, PlanStep, ToolBody};
+use crate::event::{ConfigOption, Event, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
@@ -46,6 +46,17 @@ impl SessionService {
             }
             ConversationUpdate::TurnEnded(completed) => {
                 self.fold_completion(id, completed).await;
+                return;
+            }
+            ConversationUpdate::SignInRequired { url, code, message } => {
+                self.fold_sign_in(id, url, code, message).await;
+                return;
+            }
+            ConversationUpdate::Failed {
+                message,
+                capability,
+            } => {
+                self.fold_failure(id, message, capability).await;
                 return;
             }
             ConversationUpdate::Lost { frames } => {
@@ -125,27 +136,56 @@ impl SessionService {
             return;
         }
 
-        // The actions the owner may invoke are liveness, not history: a
-        // stale list replayed from the log would offer actions that no longer
-        // exist. Sent on the live lane rather than recorded.
+        /*
+         * The actions the owner may invoke, sent live *and* recorded.
+         *
+         * This was liveness only, on the reasoning that a stale list replayed
+         * from the log would offer actions that no longer exist. The reasoning
+         * was sound and the outcome was not: the kernel announces this once,
+         * as the conversation opens, which is before any client has subscribed
+         * — so the send had no receiver and the list reached nobody, every
+         * session, every time. The protocol has no request to ask again, so
+         * there was no recovering it either.
+         *
+         * A list one announcement old beats the empty list that was the
+         * alternative, and it is replaced whole each time the kernel speaks.
+         */
         if let SessionUpdate::AvailableCommandsUpdate(commands) = &update {
+            let commands: Vec<crate::event::AvailableCommand> = commands
+                .available_commands
+                .iter()
+                .map(|command| crate::event::AvailableCommand {
+                    name: command.name.clone(),
+                    description: command.description.clone(),
+                })
+                .collect();
             let live = {
-                let entries = self.entries.read().await;
-                let Some(entry) = entries.get(id) else {
-                    return;
-                };
-                entry.live_frames.clone()
+                let mut entries = self.entries.write().await;
+                match entries.get_mut(id) {
+                    Some(entry) => {
+                        append(
+                            entry,
+                            EventKind::AvailableCommandsSet {
+                                commands: commands.clone(),
+                            },
+                        );
+                        Some(entry.live_frames.clone())
+                    }
+                    // Announced before the entry exists, which for this update
+                    // is the ordinary case rather than a fault.
+                    None => None,
+                }
             };
-            let _ = live.send(LiveFrame::AvailableCommands(
-                commands
-                    .available_commands
-                    .iter()
-                    .map(|command| crate::event::AvailableCommand {
-                        name: command.name.clone(),
-                        description: command.description.clone(),
-                    })
-                    .collect(),
-            ));
+            match live {
+                Some(live) => {
+                    let _ = live.send(LiveFrame::AvailableCommands(commands));
+                    self.flush(id).await;
+                }
+                None => {
+                    self.append_without_entry(id, EventKind::AvailableCommandsSet { commands })
+                        .await;
+                }
+            }
             return;
         }
 
@@ -164,6 +204,12 @@ impl SessionService {
             }
             (entry.session.options.record_tool_bodies, secrets)
         };
+        let reading = match &update {
+            SessionUpdate::UsageUpdate(usage) if usage.used > 0 => {
+                Some((usage.used, (usage.size > 0).then_some(usage.size)))
+            }
+            _ => None,
+        };
         let Some(kind) = durable(update, record_tool_bodies, &secrets) else {
             // A kind of update this core has no word for. Skipped rather than
             // guessed at: the vocabulary here is the core's own, and inventing
@@ -176,6 +222,12 @@ impl SessionService {
             let Some(entry) = entries.get_mut(id) else {
                 return;
             };
+            if let Some((now, window)) = reading {
+                if let Some(was) = entry.context_reading.filter(|was| *was > now) {
+                    append(entry, EventKind::ContextCompacted { was, now, window });
+                }
+                entry.context_reading = Some(now);
+            }
             append(entry, kind);
         }
         self.flush(id).await;
@@ -241,6 +293,9 @@ impl SessionService {
                         // was rather than guessed at: the update stream is what
                         // says how full the context is.
                         context_used: 0,
+                        // A turn's accounting has no context-window field, so
+                        // there is no ceiling here to state or infer.
+                        context_window: None,
                     },
                 );
             }
@@ -260,6 +315,135 @@ impl SessionService {
                     stop_reason: Some(reason),
                     detail: None,
                     capability: None,
+                },
+            );
+        }
+        self.flush(id).await;
+    }
+
+    /// Record that the agent is waiting for its owner to sign in.
+    ///
+    /// Durable rather than live-only. This is the one thing on this plane a
+    /// person has to act on somewhere else, and a prompt that vanished with a
+    /// reload would leave a session waiting on a code nobody can see any more.
+    ///
+    /// What is written is an address and a short-lived code, and nothing else
+    /// could be: the credential the sign-in produces is written by the agent
+    /// inside its own sandbox and never reaches this service.
+    async fn fold_sign_in(
+        &self,
+        id: &SessionId,
+        url: String,
+        code: Option<String>,
+        message: Option<String>,
+    ) {
+        tracing::info!(session_id = %id, "this session is waiting for its owner to sign in");
+        {
+            let mut entries = self.entries.write().await;
+            if let Some(entry) = entries.get_mut(id) {
+                append(entry, EventKind::SignInRequired { url, code, message });
+                drop(entries);
+                self.flush(id).await;
+                return;
+            }
+        }
+        /*
+         * No entry yet, which for this one update is the normal case rather
+         * than the exception. `entries` holds sessions that have a running
+         * runtime, and a kernel raises this from inside `open_conversation`,
+         * before that is true — then waits there for as long as a person takes
+         * to act on it. Returning here is what left an own-account session
+         * sitting in `provisioning` with nothing in its log to say why.
+         *
+         * So it goes to the store directly, the way provisioning progress
+         * already does. The sequence comes from the same shared allocator, so
+         * the two paths cannot hand out the same number.
+         */
+        self.append_without_entry(id, EventKind::SignInRequired { url, code, message })
+            .await;
+    }
+
+    /// Append one event for a session that has no live entry yet.
+    ///
+    /// Deliberately not offered to `fold_update` at large: most updates
+    /// describe a conversation that is already running, and one arriving with
+    /// no entry means something is wrong rather than something is early. Two
+    /// legitimately precede the runtime being ready — a sign-in the owner must
+    /// complete before anything can start, and the kernel's announcement of
+    /// what it offers, which it makes as the conversation opens. Both say so
+    /// at their call sites.
+    async fn append_without_entry(&self, id: &SessionId, kind: EventKind) {
+        let Ok(Some(mut record)) = self.store.get(id).await else {
+            tracing::error!(
+                session_id = %id,
+                event = kind.tag(),
+                "cannot record this event: the session is not in the store"
+            );
+            return;
+        };
+        let seq = self.sequences.take(id, record.session.last_seq, 1);
+        record.session.last_seq = seq;
+        if let Err(e) = self.store.upsert(&record).await {
+            tracing::error!(session_id = %id, error = %e, "cannot advance the log position");
+            return;
+        }
+        if let Err(e) = self
+            .append_durably(
+                id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind,
+                    appended_at: String::new(),
+                }],
+            )
+            .await
+        {
+            /*
+             * Error, not a warning, and never a silent return. A dropped
+             * sign-in leaves a session waiting on a prompt nobody will ever
+             * see, and the whole of #351 was that this path failed quietly
+             * underneath a `tracing::info!` that read like success.
+             */
+            tracing::error!(
+                session_id = %id,
+                error = %e,
+                "cannot record this event"
+            );
+        }
+    }
+
+    /// Record a turn that stopped because something went wrong.
+    ///
+    /// Modelled on `close_open_turn` rather than on `fold_completion`: what
+    /// happened is a failure, not an ending, and the difference is exactly
+    /// what lets a client tell "the agent had nothing more to say" from "the
+    /// agent could not answer". The reason travels as the status change's
+    /// detail, which every interface already projects — so every caller is
+    /// told the same thing without any interface being taught a new shape.
+    async fn fold_failure(&self, id: &SessionId, message: String, capability: Option<String>) {
+        tracing::warn!(session_id = %id, %message, "a turn failed");
+        {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(id) else {
+                return;
+            };
+            // Half a message is still what the agent said, and it is the last
+            // thing anybody saw. Committed before the failure so the log
+            // reads in the order it happened.
+            if let Some((_, content)) = entry.assembling.take() {
+                append(entry, EventKind::MessageCommitted { content });
+            }
+            entry.session.status = SessionStatus::Ready;
+            entry.session.stop_reason = Some(StopReason::Error);
+            append(entry, EventKind::TurnCompleted);
+            append(
+                entry,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: Some(StopReason::Error),
+                    detail: Some(message),
+                    capability,
                 },
             );
         }
@@ -369,6 +553,9 @@ fn durable(
             input_tokens: 0,
             output_tokens: 0,
             context_used: usage.used,
+            // The harness begins at zero and fills this when its route states
+            // a window. Until then zero means "not stated", not no context.
+            context_window: (usage.size > 0).then_some(usage.size),
         }),
         // A permission mode change is a safety matter: it decides how much the
         // agent may do unattended, so it is recorded rather than only shown.

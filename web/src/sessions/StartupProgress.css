@@ -5,26 +5,36 @@
  * than introducing a second one.
  */
 
+/*
+ * Centred in the column it fills, rather than pinned under the header.
+ *
+ * It sat 57px down a 900px surface with 780px of nothing beneath it — the one
+ * thing on screen, in the corner of the space it had. A surface waiting for
+ * something puts what it is waiting for where the eye already is.
+ */
 .startup {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  gap: 12px;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-6);
-  font-family: var(--font-mono);
-  color: var(--ink-2);
+  justify-content: center;
+  min-height: 0;
+  padding: 24px;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
 }
 
 .startup__message {
   margin: 0;
-  font-size: var(--text-note);
+  font-size: 13px;
   text-align: center;
 }
 
 .startup__track {
   width: min(28rem, 100%);
   height: 2px;
-  background: var(--inset);
+  background: var(--dsw-alias-bg-layer-3);
   overflow: hidden;
 }
 
@@ -35,15 +45,16 @@
  */
 .startup__fill {
   height: 100%;
-  background: var(--accent);
-  transition: width 240ms ease-out;
+  background: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-glow-accent);
+  transition: width var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
 .startup__stage {
   margin: 0;
-  font-size: var(--text-label);
-  color: var(--ink-3);
-  letter-spacing: var(--track-label);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  letter-spacing: 0.08em;
 }
 
 @media (prefers-reduced-motion: reduce) {

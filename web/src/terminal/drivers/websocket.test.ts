@@ -201,6 +201,22 @@ describe('the websocket terminal driver', () => {
     expect(sink.written).toEqual([]);
   });
 
+  it('ignores a resources frame and keeps drawing terminal output', () => {
+    const { current, sink, driver } = harness();
+    driver.attach(sink);
+    const socket = current();
+    socket.control({
+      t: 'resources',
+      cpuMillisUsed: null,
+      memoryBytesUsed: 892_211_200,
+      memoryBytesLimit: 1_073_741_824,
+    });
+    socket.output('terminal continues');
+
+    expect(sink.failures).toEqual([]);
+    expect(sink.written).toEqual(['terminal continues']);
+  });
+
   it('treats a clean close as the session ending', () => {
     const { current, sink, driver } = harness();
     driver.attach(sink);

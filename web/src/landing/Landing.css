@@ -1,0 +1,246 @@
+/*
+ * The signed-out surface — `docs/Web_Style.md` §20.
+ *
+ * Written in the alias tier. The sheet this replaced was still entirely in the
+ * retired vocabulary — `--accent`, `--ink`, `--rule`, `--space-*` — reaching
+ * the page through the migration shim, which is how a surface ends up unable
+ * to change theme.
+ */
+
+/*
+ * The stack is centred in the viewport rather than in the flow: this page has
+ * no frame around it (§9 — a visitor has no sessions, so there are no columns
+ * to draw), so the viewport is the only thing there is to centre against.
+ *
+ * `100dvh`, not `100vh`: on mobile Safari the static viewport unit is the tall
+ * one, so the toolbar overlaps the bottom of a box sized by it and the button
+ * lands underneath the browser chrome.
+ */
+.landing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 32px var(--page-gutter);
+  background-color: var(--dsw-alias-bg-base);
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 27px,
+      color-mix(in srgb, var(--dsw-alias-state-business-primary) 7%, transparent) 27px 28px
+    ),
+    linear-gradient(
+      to right,
+      transparent 0 47px,
+      color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent) 47px 48px,
+      transparent 48px
+    );
+}
+
+/* Lumen's signature is one quiet point of light in each 18px cell. */
+body[data-ds-dark-theme] .landing {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 18px 18px;
+}
+
+.landing__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 560px;
+  text-align: center;
+}
+
+/*
+ * The mark is the page. `vmin` rather than `vw` so it is bounded by whichever
+ * axis is short — sized on width alone it grows past the bottom of a landscape
+ * phone and pushes the prompt off-screen.
+ *
+ * The clamp floor is 200px because below roughly that the two lenses stop
+ * resolving as lenses and the mark reads as a smudge.
+ *
+ * Cropped rather than letterboxed, and the crop is measured rather than
+ * estimated. The painted artwork spans y 14.08–76.5 of a square viewBox: the
+ * arc's geometric apex is 19.58, and it carries an 11-unit stroke, so half of
+ * that stroke sits above the apex. An earlier crop was written against the
+ * *fill* bounds — getBBox and getBoundingClientRect both exclude stroke — and
+ * showed y 20–80, which sheared six units off an eleven-unit stroke and left
+ * the crown of the arc a flat horizontal line.
+ *
+ * The band below is y 11–80. It clears the artwork by about three units top
+ * and bottom, and its centre (45.5) sits within a quarter unit of the
+ * artwork's own (45.29), so the mark is centred on itself rather than on a
+ * viewBox whose padding is not symmetric.
+ */
+.landing__mark {
+  display: block;
+  width: clamp(200px, 52vmin, 560px);
+  aspect-ratio: 100 / 69;
+  overflow: hidden;
+  color: var(--dsw-alias-brand-primary);
+  filter: drop-shadow(var(--dsw-shadow-lv1-blur));
+  /*
+   * The bob begins where the drawing ends. The mark's own file draws its arc,
+   * then its base, then its lenses, and fades in the bridge last at 1.78s over
+   * 0.3s — so 2.1s is the first moment there is a finished mark to move, and
+   * starting earlier would drag a half-drawn one around.
+   *
+   * On the wrapper rather than on the `svg` inside it, and that is the whole
+   * trick: the wrapper is the crop, so the window and its contents travel
+   * together and the mark cannot ride up into its own clipped edge. Bobbing
+   * the `svg` would push its apex past `overflow: hidden` and shear the top of
+   * the arc off at the peak of every bounce.
+   */
+  animation: landing-bob 1.9s var(--ds-ease-in-out) 2.1s infinite;
+}
+
+/* The whole-value token is `none` in Inkwell and the bounded lime glow in Lumen. */
+body[data-ds-dark-theme] .landing__mark {
+  filter: drop-shadow(var(--dsw-glow-accent));
+}
+
+/*
+ * Up and down and nothing else. No rotation, no scale, no shadow travelling
+ * with it: this is the product's mark on the one screen that has nothing else
+ * on it, and a mark that tilts or swells reads as a toy.
+ *
+ * The distance is a percentage so it holds at every size — `translateY` here
+ * resolves against the wrapper's own height, which is the mark's, so the
+ * travel is the same fraction of the logo whether it is drawn at 200px or 560.
+ */
+@keyframes landing-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4.5%);
+  }
+}
+
+/*
+ * The square artwork, shifted up and clipped by the box above.
+ *
+ * `-11%` resolves against the wrapper's width, and the wrapper's width is the
+ * mark's width, so it is exactly eleven units of a hundred-unit viewBox at
+ * every size.
+ */
+.landing__mark svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: -11%;
+}
+
+/*
+ * Tight against the mark and set in the display face. The letterspacing is
+ * negative to match the lockup's own `-1.6` at its own size — this is the same
+ * wordmark, set live rather than shipped as paths, so it inherits the theme
+ * and stays selectable text.
+ */
+.landing__word {
+  margin: 20px 0 0;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-weight: 700;
+  font-size: clamp(40px, 9vmin, 72px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-variation-settings: var(--ds-font-variation-display);
+}
+
+body[data-ds-dark-theme] .landing__word {
+  font-weight: 900;
+}
+
+.landing__expand {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/*
+ * The prompt and its button on one line, the field taking the slack. It wraps
+ * on a narrow screen rather than shrinking the field to a stub — a prompt you
+ * cannot read what you typed into is worse than a button on its own row.
+ */
+.landing__ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 36px;
+}
+
+.landing__prompt {
+  flex: 1 1 260px;
+  min-width: 0;
+  height: 44px;
+  padding: 0 16px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 20px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  transition:
+    background var(--ds-transition-duration) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration) var(--ds-ease-in-out),
+    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.landing__prompt::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.landing__prompt:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-ring-accent-soft);
+}
+
+.landing__prompt:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.landing__prompt:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing__prompt {
+    transition: none;
+  }
+
+  /*
+   * Still, and at rest rather than mid-bounce. Somebody who has asked for less
+   * movement is asking to be shown the thing, which is the same rule the
+   * mark's own file follows for its drawing.
+   */
+  .landing__mark {
+    animation: none;
+    transform: none;
+  }
+}
+
+.landing__note {
+  margin: 20px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+}

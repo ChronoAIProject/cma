@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import './Thinking.css';
+import { IconThinkOutline14 } from '../ui/icons';
 
 /**
  * What the agent is reasoning about, while it reasons — `Web_Style.md` §18.8.
@@ -9,10 +10,19 @@ import './Thinking.css';
  * whether it is open or not, because a reader who saw reasoning and reloaded
  * to find it gone would otherwise report data loss.
  *
- * **Collapsed by default** to one pill key. The previous revision drew an
+ * **Collapsed by default** to one row. The previous revision drew an
  * always-open band, which put the least durable content on the surface at the
- * same weight as the conversation. Opening it shows a height-capped band on
- * the raised ground, pinned to the newest.
+ * same weight as the conversation. Opening it shows a height-capped band
+ * pinned to the newest.
+ *
+ * The row carries the newest line while it is collapsed. That is the whole
+ * reason to look at a shut row: "it is doing something" is what a spinner
+ * says, and this says what.
+ *
+ * There is deliberately no settled summary. The design this follows shows the
+ * first line once reasoning has stopped — but reasoning here never stops on
+ * screen: §18.8 makes it liveness, so the run ending removes it entirely and
+ * a row showing a finished summary is a row that cannot exist.
  *
  * No colour, ever. §2 reserves the semantic inks for session and system
  * state, and reasoning is neither — it says nothing about how the session is
@@ -21,6 +31,15 @@ import './Thinking.css';
 
 interface ThinkingProps {
   readonly text: string;
+}
+
+/** The newest line, which is what the agent is working through right now. */
+export function summaryOf(text: string): string {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return lines[lines.length - 1] ?? '';
 }
 
 export function Thinking({ text }: ThinkingProps) {
@@ -67,7 +86,18 @@ export function Thinking({ text }: ThinkingProps) {
           setOpen((wasOpen) => !wasOpen);
         }}
       >
-        Thought for {seconds}s · not kept after this turn
+        <span className="thinking__glyph" aria-hidden="true">
+          <IconThinkOutline14 />
+        </span>
+        <span className="thinking__title">Thought for {seconds}s</span>
+        <span className="thinking__dot" aria-hidden="true" />
+        {/*
+          The summary is the row's reason to exist while it is shut. It never
+          wraps: a row that grows with the agent's longest sentence moves the
+          conversation under it several times a second.
+        */}
+        <span className="thinking__summary">{summaryOf(text)}</span>
+        <span className="sr-only">, not kept after this turn</span>
       </button>
 
       {/*

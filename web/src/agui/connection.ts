@@ -1,3 +1,4 @@
+import { frameKey } from '../sdk/wire';
 import { toEvent, type AguiEvent } from './events';
 
 /**
@@ -56,7 +57,25 @@ const DEFAULT_MAX_BACKOFF = 15_000;
  */
 export class AguiConnection {
   #cursor = 0;
-  #seen = new Set<number>();
+  /*
+   * Frames already delivered, keyed by the durable event they came from AND
+   * the kind of frame it projected to.
+   *
+   * Not by sequence alone. One durable event legitimately projects to several
+   * frames — a committed message becomes TEXT_MESSAGE_START, then CONTENT,
+   * then END — and every one of them carries the sequence of the event it was
+   * projected from, because that sequence is the cursor a reconnect resumes
+   * on. Keyed by sequence alone, the first frame was delivered and its
+   * siblings were dropped as duplicates: every agent message opened and then
+   * received none of its own text. No projection emits the same kind twice
+   * for one event, so this pair is exact.
+   *
+   * The kind is the one that arrived on the wire, not the one this build
+   * normalised it to: everything unfamiliar normalises to UNKNOWN, so two
+   * different unfamiliar kinds at one sequence would collide precisely where
+   * a client can least afford to drop something it does not understand.
+   */
+  #seen = new Set<string>();
   #closed = false;
   #stopStream: (() => void) | undefined;
   /** Ends the current wait, so closing does not have to wait for a drop. */
@@ -176,9 +195,11 @@ export class AguiConnection {
   /**
    * Deliver one frame, once.
    *
-   * Deduplicated on `seq`, which is what the reconnect order above depends on:
-   * opening the stream before reading history guarantees an overlap, and this
-   * is what makes the overlap harmless.
+   * Deduplicated on the durable event a frame was projected from together
+   * with the kind of frame it is, which is what the reconnect order above
+   * depends on: opening the stream before reading history guarantees an
+   * overlap, and this is what makes the overlap harmless without discarding
+   * the siblings of a frame already seen.
    */
   #deliver(raw: unknown, onEvent: (event: AguiEvent) => void) {
     const event = toEvent(raw);
@@ -194,10 +215,12 @@ export class AguiConnection {
       onEvent(event);
       return;
     }
-    if (this.#seen.has(event.seq)) {
+    const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    const delivered = frameKey(event.seq, wireKind);
+    if (this.#seen.has(delivered)) {
       return;
     }
-    this.#seen.add(event.seq);
+    this.#seen.add(delivered);
     if (event.seq > this.#cursor) {
       this.#cursor = event.seq;
     }

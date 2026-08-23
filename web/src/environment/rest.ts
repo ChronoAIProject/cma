@@ -1,7 +1,7 @@
 import { ApiError } from '../api/client';
 import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
 import type { CredentialMode, PermissionMode, ReasoningEffort } from '../sessions/options';
-import { DEFAULT_AGENT } from './types';
+import { DEFAULT_AGENT, PLANE_BEFORE_PLANES_EXISTED } from './types';
 import type { SessionPlane } from '../sessions/types';
 import type {
   AgentConfiguration,
@@ -31,6 +31,8 @@ import type {
 
 /** What the control plane sends for a profile. */
 interface ProfilePayload {
+  agent_notes?: unknown;
+  preferred?: unknown;
   readonly id?: unknown;
   readonly name?: unknown;
   readonly variables?: unknown;
@@ -116,9 +118,13 @@ export function toProfile(raw: unknown): EnvironmentProfile {
     }),
     agent: readAgent(p.agent),
     nyxid: readNyxId(p.nyxid),
+    agentNotes: typeof p.agent_notes === 'string' ? p.agent_notes : '',
     mandatory: readMandatory(p.mandatory),
     createdAt: typeof p.created_at === 'string' ? p.created_at : '',
     updatedAt: typeof p.updated_at === 'string' ? p.updated_at : '',
+    // Anything but `true` is not the default, which is the right reading of a
+    // profile stored before the preference existed and of a malformed one.
+    preferred: p.preferred === true,
   };
 }
 
@@ -133,7 +139,9 @@ function readAgent(raw: unknown): AgentConfiguration {
   const a = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   return {
     kernel: typeof a.kernel === 'string' ? a.kernel : DEFAULT_AGENT.kernel,
-    mode: isPlane(a.mode) ? a.mode : DEFAULT_AGENT.mode,
+    // An unstated or unrecognised plane is what it always was, not what a
+    // new profile would start as — see PLANE_BEFORE_PLANES_EXISTED.
+    mode: isPlane(a.mode) ? a.mode : PLANE_BEFORE_PLANES_EXISTED,
     model: typeof a.model === 'string' ? a.model : undefined,
     reasoningEffort: isEffort(a.reasoning_effort)
       ? a.reasoning_effort
@@ -181,6 +189,7 @@ function body(draft: ProfileDraft): string {
       skills: [...draft.agent.skills],
     },
     nyxid: { services: [...draft.nyxid.services] },
+    agent_notes: draft.agentNotes,
   });
 }
 
@@ -188,6 +197,18 @@ export function createRestProfileStore(): EnvironmentProfileStore {
   return {
     async list(): Promise<readonly EnvironmentProfile[]> {
       const payload = await call(BASE);
+      const items = (payload as { profiles?: unknown })?.profiles ?? payload;
+      if (!Array.isArray(items)) {
+        throw new ApiError(0, 'the profile list was not a list');
+      }
+      return items.map(toProfile);
+    },
+
+    async prefer(id: string | null): Promise<readonly EnvironmentProfile[]> {
+      const payload = await call(`${BASE}/preferred`, {
+        method: 'PUT',
+        body: JSON.stringify({ profile: id }),
+      });
       const items = (payload as { profiles?: unknown })?.profiles ?? payload;
       if (!Array.isArray(items)) {
         throw new ApiError(0, 'the profile list was not a list');

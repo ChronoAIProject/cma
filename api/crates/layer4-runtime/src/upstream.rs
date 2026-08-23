@@ -69,14 +69,55 @@ pub struct UpstreamState {
     /// The credential to present.
     pub credential: CredentialHolder,
     http: reqwest::Client,
+    /// The last refusal the model endpoint gave, if it has given one.
+    ///
+    /// Recorded because an agent's own account of a failed call is unreliable
+    /// and sometimes absent: a CLI that retries a 503 quietly reports nothing
+    /// at all, and the owner is left watching a turn produce silence. The
+    /// proxy is the one place that always knows, so it is the place that
+    /// remembers — and the control plane asks it when a turn goes wrong.
+    fault: UpstreamFault,
+}
+
+/// The last thing the model endpoint refused, shared with whoever reports it.
+#[derive(Clone, Default)]
+pub struct UpstreamFault(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+
+impl UpstreamFault {
+    /// Record a refusal, replacing any earlier one: the most recent is the
+    /// one that explains the turn being asked about.
+    pub fn set(&self, detail: String) {
+        if let Ok(mut held) = self.0.lock() {
+            *held = Some(detail);
+        }
+    }
+
+    /// What the model endpoint last refused with, if anything.
+    pub fn get(&self) -> Option<String> {
+        self.0.lock().ok().and_then(|held| held.clone())
+    }
+}
+
+impl std::fmt::Debug for UpstreamFault {
+    /// Never renders what it holds: an upstream body can carry a credential
+    /// the caller sent, and this type exists to be logged.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UpstreamFault(..)")
+    }
 }
 
 impl UpstreamState {
+    /// What the model endpoint last refused with, for whoever reports it.
+    pub fn fault(&self) -> UpstreamFault {
+        self.fault.clone()
+    }
+
     /// Build proxy state for an upstream.
     pub fn new(base_url: impl Into<String>, credential: CredentialHolder) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             credential,
+            fault: UpstreamFault::default(),
             http: reqwest::Client::builder()
                 // Model responses stream for a long time; a short timeout here
                 // would sever a working turn mid-answer.
@@ -151,6 +192,22 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
     match state.http.execute(outbound).await {
         Ok(resp) => {
             let status = resp.status();
+            if status.is_client_error() || status.is_server_error() {
+                // Remembered rather than only logged. This is the moment
+                // chrono-bot learns the agent's model endpoint refused it, and
+                // it is the only moment: what the agent does about it — retry,
+                // give up quietly, report something vaguer — is the agent's
+                // business, and none of it reaches the owner on its own.
+                //
+                // The status and the target, never the body: an upstream's
+                // error body can echo the request, and the request carries the
+                // credential this proxy just attached.
+                tracing::warn!(%status, "the model endpoint refused a call");
+                state.fault.set(format!(
+                    "the model endpoint answered {status} for {}",
+                    parts.uri.path()
+                ));
+            }
             let mut builder = Response::builder().status(status);
             for (name, value) in resp.headers().iter() {
                 // Re-chunked downstream, so the upstream framing headers cannot
@@ -216,6 +273,39 @@ mod tests {
             s.target(&uri),
             "http://upstream/base/v1/chat/completions?stream=true"
         );
+    }
+
+    #[test]
+    fn a_refusal_from_the_model_endpoint_is_remembered() {
+        // The agent's own account of a failed model call is unreliable and
+        // sometimes absent — a CLI that retries a 503 quietly reports nothing
+        // at all, and the owner watches a turn produce silence. The proxy is
+        // the one thing that always learns of the refusal.
+        let fault = UpstreamFault::default();
+        assert_eq!(fault.get(), None, "nothing has been refused yet");
+
+        fault.set("the model endpoint answered 503 for /responses".into());
+        assert_eq!(
+            fault.get().as_deref(),
+            Some("the model endpoint answered 503 for /responses")
+        );
+
+        // The most recent refusal is the one that explains the turn being
+        // asked about.
+        fault.set("the model endpoint answered 401 for /responses".into());
+        assert_eq!(
+            fault.get().as_deref(),
+            Some("the model endpoint answered 401 for /responses")
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_never_rendered_by_debug() {
+        // It is logged, and an upstream error body can echo the request that
+        // produced it — which carries the credential this proxy attached.
+        let fault = UpstreamFault::default();
+        fault.set("swordfish".into());
+        assert!(!format!("{fault:?}").contains("swordfish"));
     }
 
     #[test]

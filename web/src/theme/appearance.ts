@@ -2,10 +2,14 @@
  * Light or dark, and remembering which.
  *
  * Web_Style.md specifies both themes in full and defines how they resolve: the
- * light palette lives on bare `:root`, dark is redefined under both a
- * `prefers-color-scheme` query and an explicit `[data-theme]` attribute, so an
- * explicit choice wins in either direction. This module only decides which
- * attribute to set; every colour still comes from that document.
+ * light palette is declared on `body`, and dark restates only what differs
+ * under `body[data-ds-dark-theme]`. This module only decides which attribute
+ * to set; every colour still comes from that document.
+ *
+ * The palette carries no `prefers-color-scheme` block, so "system" is resolved
+ * here rather than by the stylesheet — which means the operating system's
+ * setting has to be watched rather than merely answered. See
+ * `startAppearance`.
  *
  * Three states, not two. "System" is not the same as light or dark — it is the
  * absence of a choice, and collapsing it into one of them means a person who
@@ -39,18 +43,20 @@ export function storedAppearance(): Appearance {
 /**
  * Apply a preference to the document.
  *
- * "System" removes the attribute rather than computing a value, which is what
- * lets the media query in the stylesheet answer — and means a change to the
- * operating system's setting is picked up live, without this code watching for
- * it.
+ * Only what is being *shown* is written to the DOM — the choice itself lives
+ * in storage. "System" is therefore resolved here rather than left for a
+ * selector to answer, because the palette has no `prefers-color-scheme` block
+ * to answer it with.
+ *
+ * `color-scheme` is set alongside the attribute and is not decoration: it is
+ * what makes the browser's own surfaces — form controls, the canvas behind an
+ * overscroll, the default scrollbar before ours loads — match the page. A dark
+ * page with a white scrollbar is a page that flashes at its edges.
  */
 export function applyAppearance(appearance: Appearance): void {
-  const root = document.documentElement;
-  if (appearance === 'system') {
-    delete root.dataset.theme;
-  } else {
-    root.dataset.theme = appearance;
-  }
+  const dark = effectiveAppearance(appearance) === 'dark';
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  document.body.toggleAttribute('data-ds-dark-theme', dark);
 }
 
 /** Record a preference, and apply it. */
@@ -69,7 +75,52 @@ export function effectiveAppearance(appearance: Appearance): 'light' | 'dark' {
   if (appearance !== 'system') {
     return appearance;
   }
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return systemQuery()?.matches === true ? 'dark' : 'light';
+}
+
+/** The media query "system" resolves against, or null where it is unsupported. */
+function systemQuery(): MediaQueryList | null {
+  return typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+}
+
+/**
+ * Apply the stored preference, and keep "system" honest.
+ *
+ * Called once at boot. Two things depend on it that nothing else does:
+ *
+ * A stored choice is only a stored choice until something applies it. Before
+ * this existed nothing did, so choosing dark and reloading gave you light
+ * back, and the only reason that was not obvious is that the stylesheet's own
+ * media query happened to cover the people who had chosen nothing.
+ *
+ * And "system" now means watching. The palette selects on an attribute rather
+ * than answering a media query, so somebody switching their operating system
+ * to dark while the page is open gets nothing unless this listener re-resolves
+ * it for them.
+ *
+ * Returns an unsubscribe, so a test can leave no listener behind.
+ */
+export function startAppearance(): () => void {
+  applyAppearance(storedAppearance());
+
+  const query = systemQuery();
+  if (query === null) {
+    return () => {};
+  }
+
+  const reapply = () => {
+    // Re-read rather than closing over the value: the preference may have been
+    // changed since boot, and a stale "system" would fight the explicit choice.
+    const current = storedAppearance();
+    if (current === 'system') {
+      applyAppearance(current);
+    }
+  };
+
+  query.addEventListener('change', reapply);
+  return () => query.removeEventListener('change', reapply);
 }
 
 /** The order the control cycles through. */

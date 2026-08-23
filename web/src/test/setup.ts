@@ -62,11 +62,54 @@ if (hasDom) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1440 });
 }
 
+/*
+ * The observer is driveable rather than inert.
+ *
+ * A stub that only absorbs calls makes anything keyed on an element changing
+ * size untestable, and the reading column growing while the agent types is
+ * exactly that: the stream follows the column's growth, because the message
+ * being typed is deliberately not an entry and so changes no dependency list.
+ * A silent stub would let that regress with a full green suite.
+ */
+const observing = new Set<{ callback: ResizeObserverCallback; target: Element }>();
+
+/** Report that everything under observation has changed size. */
+export function resizeObserved(): void {
+  for (const { callback, target } of observing) {
+    callback([{ target } as ResizeObserverEntry], {} as ResizeObserver);
+  }
+}
+
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class {
-    observe(): void {}
-    disconnect(): void {}
-    unobserve(): void {}
+    readonly #callback: ResizeObserverCallback;
+    readonly #mine = new Set<{ callback: ResizeObserverCallback; target: Element }>();
+
+    constructor(callback: ResizeObserverCallback) {
+      this.#callback = callback;
+    }
+
+    observe(target: Element): void {
+      const entry = { callback: this.#callback, target };
+      this.#mine.add(entry);
+      observing.add(entry);
+    }
+
+    unobserve(target: Element): void {
+      for (const entry of this.#mine) {
+        if (entry.target === target) {
+          this.#mine.delete(entry);
+          observing.delete(entry);
+        }
+      }
+    }
+
+    disconnect(): void {
+      for (const entry of this.#mine) {
+        observing.delete(entry);
+      }
+      this.#mine.clear();
+    }
   } as unknown as typeof ResizeObserver;
 }
 
@@ -109,4 +152,5 @@ afterEach(() => {
   }
   setReducedMotion(false);
   stored.clear();
+  observing.clear();
 });

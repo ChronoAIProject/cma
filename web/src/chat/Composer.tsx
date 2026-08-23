@@ -1,7 +1,10 @@
-import { useState } from 'react';
-import { Button } from '../ui/Button';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ConcurrentInput, SessionCapabilities } from '../agui';
+import type { AvailableCommand } from './conversation';
+import { CommandMenu } from './CommandMenu';
 import './Composer.css';
+import { Pill } from '../ui/Pill';
+import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 
 /**
  * Where a prompt is written and sent — `Web_Style.md` §18.4.
@@ -28,7 +31,30 @@ interface ComposerProps {
   readonly turnInFlight: boolean;
   /** Why the session cannot take input at all, when it cannot (§11). */
   readonly refusedReason?: string;
-  readonly onSend: (text: string) => void;
+  /**
+   * Send this turn.
+   *
+   * Answers whether the turn was accepted, and the composer keeps the draft
+   * until it hears yes. It used to clear the field the instant the button was
+   * pressed, so a refusal — a `reject` policy mid-turn, a capability the
+   * session lacks, a dropped network — took the words with it and left a
+   * banner and nothing to retry. On a long run the message that fails is the
+   * carefully worded correction.
+   *
+   * Stated as an answer rather than inferred from a promise settling, because
+   * the surface reports refusals rather than throwing them: a promise that
+   * resolves is not evidence the service took anything.
+   */
+  readonly onSend: (text: string) => boolean | Promise<boolean>;
+  /**
+   * The commands this kernel says it offers, right now — §18.4.
+   *
+   * Liveness rather than history: the list arrives on the live lane and is
+   * absent after a reload until the kernel says again. That is why it belongs
+   * here and not in the stream, where §18.1's equivalence rule would have a
+   * stale list replayed from the log offering commands that no longer exist.
+   */
+  readonly availableCommands?: readonly AvailableCommand[];
   readonly onInterrupt: () => void;
   readonly busy?: boolean;
 }
@@ -46,10 +72,97 @@ export function Composer({
   turnInFlight,
   refusedReason,
   onSend,
+  availableCommands,
   onInterrupt,
   busy = false,
 }: ComposerProps) {
   const [text, setText] = useState('');
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  /*
+   * The command menu is open when the draft is a lone `/word` — §18.4.
+   *
+   * Derived from the draft rather than held as its own state, so there is one
+   * answer to "is it open" and it cannot disagree with what is in the field.
+   * Only at the head of the draft: an agent is asked to do things in prose, and
+   * a `/` in the middle of a sentence is a path or a date, not a command.
+   */
+  const slash = /^\/(\S*)$/.exec(text);
+  const [dismissed, setDismissed] = useState(false);
+  const commandQuery = slash === null || dismissed ? undefined : (slash[1] ?? '');
+
+  /*
+   * Grow the field with what is in it, to §18.4's six lines and no further.
+   *
+   * §18.4 has required this since it was written, and the comment above the
+   * rule in `Composer.css` restates it, but nothing implemented it: the
+   * textarea was `rows={1}`, so its intrinsic height sat on the CSS floor and
+   * a multi-paragraph prompt scrolled inside a two-line porthole. Somebody
+   * writing the careful instruction that a long run turns on could see two
+   * lines of it.
+   *
+   * Measured rather than declared. `field-sizing: content` would do this in
+   * CSS, and §9 forbids relying on an ability that has not been demonstrated
+   * in the browsers this ships to; a height sync works everywhere. Reset to
+   * `auto` first, because `scrollHeight` of an already-tall box never shrinks.
+   */
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (field === null) {
+      return;
+    }
+    /*
+     * Measured from `auto` every time, never from the height already set: a
+     * box already at its cap reports a `scrollHeight` of exactly that cap, so
+     * anything comparing the two sees agreement and leaves it there.
+     */
+    let syncing = false;
+    const sync = () => {
+      if (syncing) {
+        return;
+      }
+      syncing = true;
+      field.style.height = 'auto';
+      field.style.height = `${String(field.scrollHeight)}px`;
+      // Released after the resize this caused has been delivered, so the
+      // observer cannot drive itself.
+      requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    sync();
+    /*
+     * And again whenever the box it sits in resizes.
+     *
+     * Depending on `text` alone measured once, at mount, before the column
+     * around it had settled — `scrollHeight` came back as the space available
+     * rather than the space needed, and an empty field opened at its
+     * fourteen-line cap. Nothing corrected it, because the text never changed.
+     *
+     * Observing the field is what makes the measurement true whenever it is
+     * taken: the first settle, a window resize, the details column opening.
+     */
+    const observer = new ResizeObserver(() => {
+      sync();
+    });
+    observer.observe(field);
+    return () => {
+      observer.disconnect();
+    };
+  }, [text]);
+
+  /*
+   * Focus rests on the prompt — §10, which has said so all along and was
+   * honoured only by the landing. Opening a session and typing cost a mouse
+   * click every time, on the surface whose entire purpose is typing.
+   *
+   * Once, on mount. A session that refuses input renders no field at all, so
+   * there is nothing to focus and nothing to do.
+   */
+  useEffect(() => {
+    fieldRef.current?.focus();
+  }, []);
+
   const policy = capabilities.concurrentInput;
 
   /*
@@ -81,27 +194,73 @@ export function Composer({
     );
   }
 
+  /**
+   * Hand the turn over, and keep the words until it is taken.
+   *
+   * Cleared only once `onSend` resolves. A refusal leaves the draft exactly
+   * as it was typed, so the reader retries rather than rewrites.
+   */
+  async function send(): Promise<void> {
+    const outgoing = text.trim();
+    if (outgoing === '') {
+      return;
+    }
+    try {
+      if (await onSend(outgoing)) {
+        setText('');
+      }
+    } catch {
+      // Kept, deliberately. The surface reports the refusal; this keeps the
+      // only copy of what was written.
+    }
+  }
+
   const note = turnInFlight ? POLICY_SAYS[policy] : undefined;
 
   return (
     <div className="composer-block">
       <div className="composer">
+        {commandQuery === undefined ? null : (
+          <CommandMenu
+            commands={availableCommands}
+            query={commandQuery}
+            onPick={(command) => {
+              // The name and a trailing space, so the caret lands where the
+              // argument goes. The reader types what they meant, not what the
+              // list happened to spell.
+              setText(`/${command.name} `);
+              setDismissed(true);
+              fieldRef.current?.focus();
+            }}
+            onDismiss={() => {
+              setDismissed(true);
+              fieldRef.current?.focus();
+            }}
+          />
+        )}
         <textarea
           className="composer__field"
           aria-label="Message"
+          ref={fieldRef}
           rows={1}
           value={text}
           placeholder="Say what you want done"
           onChange={(event) => {
             setText(event.target.value);
+            // A draft that stops being a command re-arms the menu, so pressing
+            // Escape once does not silence it for the rest of the session.
+            if (!event.target.value.startsWith('/')) {
+              setDismissed(false);
+            }
           }}
           onKeyDown={(event) => {
             // Enter sends; Shift+Enter opens a line.
+            // While the menu is open it owns Enter, Escape and the arrows; it
+            // listens in the capture phase and stops them reaching here.
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
               if (canSend) {
-                onSend(text.trim());
-                setText('');
+                void send();
               }
             }
           }}
@@ -124,40 +283,60 @@ export function Composer({
            * composer's own row.
            */}
           {capabilities.steer && turnInFlight ? (
-            <span className="tag composer__steer">steerable</span>
+            <Pill placement="composer__steer">steerable</Pill>
           ) : null}
           <span className="composer__spacer" />
-
-          {/*
-           * Interrupt is offered only while a turn is in flight, and only on
-           * a session granted it — a kernel that cannot withdraw a prompt is
-           * refused by name rather than left waiting for something that will
-           * not happen.
-           */}
-          {turnInFlight && capabilities.interrupt ? (
-            <Button disabled={busy} onClick={onInterrupt}>
-              Interrupt
-            </Button>
-          ) : null}
-
-          <Button
-            tone="accent"
-            disabled={!canSend}
-            onClick={() => {
-              onSend(text.trim());
-              setText('');
-            }}
-          >
-            Send
-            <kbd className="composer__hint" aria-hidden="true">
-              ↵
-            </kbd>
-          </Button>
         </div>
       </div>
 
-      {/* Stated once, beneath the card — §18.4. */}
-      <p className="composer__keys">Enter sends; Shift+Enter opens a line.</p>
+      {/*
+       * One seat, and what sits in it follows what the session can
+       * actually do right now.
+       *
+       * Where a turn is running and the policy refuses input, sending is
+       * impossible and stopping is the only useful act — so the seat is
+       * Stop rather than a Send that cannot fire beside a second key.
+       *
+       * Where the policy accepts input mid-turn, sending is a real act
+       * and stays in the seat; interrupt is then its own smaller key
+       * beside it, because the two do different things and §18.4 lets
+       * both happen at once.
+       */}
+      {turnInFlight && capabilities.interrupt && !heldByTurn ? (
+        <button
+          type="button"
+          className="composer__interrupt"
+          aria-label="Stop generating"
+          disabled={busy}
+          onClick={onInterrupt}
+        >
+          <IconStopFill16 />
+        </button>
+      ) : null}
+
+      {heldByTurn && capabilities.interrupt ? (
+        <button
+          type="button"
+          className="composer__send composer__send--stop"
+          aria-label="Stop generating"
+          disabled={busy}
+          onClick={onInterrupt}
+        >
+          <IconStopFill16 />
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="composer__send"
+          aria-label="Send message"
+          disabled={!canSend}
+          onClick={() => {
+            void send();
+          }}
+        >
+          <IconSendOutline16 />
+        </button>
+      )}
     </div>
   );
 }

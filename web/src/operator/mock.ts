@@ -1,7 +1,11 @@
+import { PlatformSettingsConflict } from './types';
 import type {
   ActivityEntry,
   ActivityQuery,
   AdminSession,
+  PlatformSettings,
+  SessionBriefing,
+  StoredPlatformSettings,
   OperatorStore,
   Person,
   RuntimeInventory,
@@ -29,11 +33,16 @@ export interface MockOperatorOptions {
   readonly activity?: readonly ActivityEntry[];
   readonly sessions?: readonly AdminSession[];
   readonly inventory?: RuntimeInventory;
+  readonly platformSettings?: StoredPlatformSettings;
+  /** Briefing restored by reset. Defaults to the mock's shipped briefing. */
+  readonly shippedBriefing?: SessionBriefing;
   /** Force every call to fail, so error paths can be exercised. */
   readonly failWith?: string;
   /** Told which session was stopped, and which was ended. */
   readonly onStop?: (id: string) => void;
   readonly onTerminate?: (id: string) => void;
+  readonly onSettingsChange?: (settings: PlatformSettings) => void;
+  readonly onBriefingReset?: () => void;
 }
 
 const NOTHING_RUNNING: RuntimeInventory = {
@@ -42,8 +51,57 @@ const NOTHING_RUNNING: RuntimeInventory = {
   providers: [],
 };
 
+/** A complete settings document for local and component-level operator work. */
+export const MOCK_PLATFORM_SETTINGS: StoredPlatformSettings = {
+  revision: 0,
+  settings: {
+    briefing: {
+      before: [
+        '# Working in this session',
+        'This session is already authenticated. Do not run `nyxid login`.',
+      ],
+      reachHeading: '## What you can reach',
+      reachLead: 'Use only the service slugs granted below.',
+      reachClose: 'Calls to every other service are refused.',
+      reachNone: 'This session was granted no services.',
+      after: ['Continue with the work the owner requested.'],
+    },
+    sizeBounds: {
+      minCpuMillis: 250,
+      maxCpuMillis: 4000,
+      minMemoryMib: 256,
+      maxMemoryMib: 8192,
+    },
+    liveSessions: null,
+  },
+};
+
+function copyBriefing(briefing: SessionBriefing): SessionBriefing {
+  return { ...briefing, before: [...briefing.before], after: [...briefing.after] };
+}
+
+function copySettings(settings: PlatformSettings): PlatformSettings {
+  return {
+    briefing: copyBriefing(settings.briefing),
+    sizeBounds: { ...settings.sizeBounds },
+    liveSessions: settings.liveSessions,
+  };
+}
+
+function copyStored(stored: StoredPlatformSettings): StoredPlatformSettings {
+  return {
+    revision: stored.revision,
+    settings: copySettings(stored.settings),
+    previous: stored.previous === undefined ? undefined : copySettings(stored.previous),
+  };
+}
+
 export function createMockOperatorStore(options: MockOperatorOptions = {}): OperatorStore {
   const sessions = [...(options.sessions ?? [])];
+  let platform = copyStored(options.platformSettings ?? MOCK_PLATFORM_SETTINGS);
+  const shippedBriefing = copyBriefing(
+    options.shippedBriefing ?? MOCK_PLATFORM_SETTINGS.settings.briefing,
+  );
 
   function guard(): void {
     if (options.failWith !== undefined) {
@@ -97,6 +155,44 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
       guard();
       moveTo(id, 'terminated');
       options.onTerminate?.(id);
+    },
+
+    async readPlatformSettings() {
+      guard();
+      return copyStored(platform);
+    },
+
+    async changePlatformSettings(expectedRevision: number, settings: PlatformSettings) {
+      guard();
+      if (expectedRevision !== platform.revision) {
+        throw new PlatformSettingsConflict('Platform settings changed after they were read.');
+      }
+      const previous = copySettings(platform.settings);
+      platform = {
+        revision: platform.revision + 1,
+        settings: copySettings(settings),
+        previous,
+      };
+      options.onSettingsChange?.(copySettings(settings));
+      return copyStored(platform);
+    },
+
+    async resetPlatformBriefing(expectedRevision: number) {
+      guard();
+      if (expectedRevision !== platform.revision) {
+        throw new PlatformSettingsConflict('Platform settings changed after they were read.');
+      }
+      const previous = copySettings(platform.settings);
+      platform = {
+        revision: platform.revision + 1,
+        settings: {
+          ...copySettings(platform.settings),
+          briefing: copyBriefing(shippedBriefing),
+        },
+        previous,
+      };
+      options.onBriefingReset?.();
+      return copyStored(platform);
     },
   };
 }

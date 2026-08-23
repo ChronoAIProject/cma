@@ -6,21 +6,21 @@
  */
 
 .planecard {
-  gap: var(--space-1);
+  gap: 4px;
   align-items: flex-start;
-  font-family: var(--font-ui);
+  font-family: var(--dsw-font-family);
   text-align: left;
   cursor: pointer;
 }
 
 .planecard:disabled {
   cursor: not-allowed;
-  background: var(--inset);
+  background: var(--dsw-alias-bg-layer-3);
 }
 
 .planecard:not(:disabled):hover {
-  background: var(--raised);
-  border-color: var(--rule-2);
+  background: var(--dsw-alias-bg-layer-2);
+  border-color: var(--dsw-alias-border-l2);
 }
 
 .planecard:focus-visible {
@@ -30,23 +30,61 @@
 
 /* Chosen is marked by the accent edge and by aria-checked — never colour alone. */
 .planecard--chosen {
-  border-color: var(--accent);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .planecard__name {
-  color: var(--ink);
-  font-size: var(--text-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
   font-weight: 600;
 }
 
 .planecard--chosen .planecard__name::after {
-  margin-left: var(--space-2);
-  color: var(--accent);
+  margin-left: 8px;
+  color: var(--dsw-alias-state-business-primary);
   content: '✓';
 }
 
 .planecard__what {
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/*
+ * The picker and the key that opens the authoring form, on one row. The picker
+ * takes the width and the key takes what it needs: the profile is the choice
+ * being made and authoring one is the way out of it, so they are not peers.
+ */
+.profilerow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.profilerow__picker {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The same card's confirmation step — Web_Style.md §12.5. */
+.sessionconfirmation {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sessionconfirmation__price,
+.sessionconfirmation__changed {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.sessionconfirmation__price strong,
+.sessionconfirmation__changed strong {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
 }

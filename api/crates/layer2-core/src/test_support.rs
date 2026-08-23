@@ -29,6 +29,8 @@ use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 pub(crate) struct FakeStore {
     pub(crate) sessions: Mutex<HashMap<String, SessionRecord>>,
     pub(crate) events: Mutex<Vec<StoredEvent>>,
+    /// Successful record writes, so idempotent migrations can be asserted.
+    pub(crate) upserts: std::sync::atomic::AtomicUsize,
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
@@ -51,6 +53,8 @@ impl FakeStore {
 impl SessionStore for FakeStore {
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         self.guard().await?;
+        self.upserts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.sessions
             .lock()
             .await
@@ -137,7 +141,8 @@ impl SessionStore for FakeStore {
 
 pub(crate) use crate::adapter_support::FakeAdapter;
 pub(crate) use crate::environment_support::{
-    baseline, catalog_service, environments, profile_spec, FakeProfileStore, FakeSkillCatalog,
+    baseline, catalog_service, environments, profile_spec, unconfigured_settings, FakeProfileStore,
+    FakeSkillCatalog,
 };
 pub(crate) use crate::screen_support::{FixedCredential, RecordingScreen};
 
@@ -160,8 +165,10 @@ impl ScreenModel for NullScreen {
 }
 
 pub(crate) use crate::service_support::{
-    credential_on, owned, service_as, service_on_version, service_with_context,
-    service_with_credentials, write_screen,
+    credential_on, owned, service_as, service_on_version, service_on_version_with_settings,
+    service_on_version_with_skills, service_with_context, service_with_credentials,
+    service_with_environments_and_settings, service_with_environments_and_settings_service,
+    service_with_environments_on_version, write_screen,
 };
 
 pub(crate) fn kernel() -> KernelId {
@@ -192,8 +199,12 @@ pub(crate) fn service_over(
         adapters,
         factory,
         store,
-        None,
-        None,
+        crate::service::SessionPorts {
+            context: None,
+            credentials: None,
+            skills: None,
+            settings: None,
+        },
         no_environments(),
         owned(),
     );
@@ -214,7 +225,19 @@ pub(crate) fn service_with_environments(
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
-    SessionService::new(adapters, factory, store, None, None, profiles, owned())
+    SessionService::new(
+        adapters,
+        factory,
+        store,
+        crate::service::SessionPorts {
+            context: None,
+            credentials: None,
+            skills: None,
+            settings: None,
+        },
+        profiles,
+        owned(),
+    )
 }
 
 /// A profile service with nothing in it, for tests that do not care.
@@ -234,6 +257,7 @@ pub(crate) fn no_environments() -> Arc<EnvironmentProfileService> {
             kernel: KernelId::new("fake"),
             ..Default::default()
         },
+        unconfigured_settings(),
     )
 }
 
@@ -250,6 +274,7 @@ pub(crate) fn environments_defaulting_to(
         None,
         None,
         agent,
+        unconfigured_settings(),
     )
 }
 
@@ -298,8 +323,10 @@ pub(crate) fn spec() -> SessionSpec {
     SessionSpec {
         geometry: None,
         environment_profile: None,
-        subject_credential: None,
+        caller_credential: None,
+        runtime_credential: None,
         requested_mode: None,
+        quoted_rate_card: None,
         options: Default::default(),
     }
 }

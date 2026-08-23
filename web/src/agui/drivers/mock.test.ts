@@ -129,6 +129,46 @@ describe('the cases the milestone needs', () => {
     expect(seen.filter((e) => e.type === 'TEXT_MESSAGE_CONTENT')).toHaveLength(1);
   });
 
+  it('covers the complete conversation review surface', async () => {
+    const { seen } = await replay(new MockSession(transcriptNamed('full-conversation')));
+
+    const messages = seen.filter((event) => event.type === 'TEXT_MESSAGE_START');
+    expect(
+      messages.filter((event) => event.type === 'TEXT_MESSAGE_START' && event.role === 'user'),
+    ).toHaveLength(2);
+    expect(
+      seen.some(
+        (event) =>
+          event.type === 'TEXT_MESSAGE_CONTENT' &&
+          event.delta.includes('| Check | Result |') &&
+          event.delta.includes('```ts') &&
+          event.delta.includes('![Conversation surface diagram]'),
+      ),
+    ).toBe(true);
+
+    const toolOutcomes = seen.flatMap((event) =>
+      event.type === 'TOOL_CALL_END' ? [event.status] : [],
+    );
+    expect(toolOutcomes).toEqual(['ok', 'failed']);
+    expect(
+      seen.some((event) => event.type === 'REASONING_MESSAGE_CONTENT' && event.ephemeral === true),
+    ).toBe(true);
+    expect(seen.some((event) => event.type === 'RUN_ERROR')).toBe(true);
+
+    const patches = seen.flatMap((event) => (event.type === 'STATE_DELTA' ? event.patch : []));
+    expect(patches.map((patch) => patch.path)).toEqual(
+      expect.arrayContaining(['/usage/inputTokens', '/usage/outputTokens', '/signIn', '/gaps/-']),
+    );
+    expect(
+      seen.some(
+        (event) =>
+          event.type === 'RUN_FINISHED' &&
+          event.outcome?.type === 'interrupt' &&
+          event.outcome.interrupts[0]?.reason === 'chrono:release_review',
+      ),
+    ).toBe(true);
+  });
+
   it('covers a stream that dies mid-turn and reconnects', async () => {
     // The one thing a mock can do that the wire cannot on demand.
     const session = new MockSession(transcriptNamed('plain-turn'), { dropAfter: 2 });

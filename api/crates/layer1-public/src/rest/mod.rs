@@ -7,21 +7,27 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{FromRef, Path, State},
-    http::StatusCode,
+    extract::{FromRef, Path, Query, State},
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, EnvironmentProfileService, PublicIdentity, Session, SessionCapabilities,
-    SessionId, SessionService, SessionSpec, TerminalGeometry, UserDirectory,
+    Caller, CoreError, EnvironmentProfileService, PublicIdentity, Quote, Session,
+    SessionCapabilities, SessionCapability, SessionId, SessionService, SessionSpec,
+    TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
+mod allowance;
 mod events;
 mod operate;
+mod problems;
 mod tickets;
+
+pub(crate) use problems::problem_document;
+pub use problems::Problem;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::tickets::TerminalTickets;
@@ -56,6 +62,10 @@ fn conformance_for(capabilities: &SessionCapabilities) -> Vec<String> {
         (capabilities.steer, "steering"),
         (capabilities.interrupt, "interrupt"),
         (capabilities.usage, "usage"),
+        (
+            capabilities.holds(SessionCapability::Resources),
+            "resources",
+        ),
     ] {
         if held {
             classes.push(format!("{CONF_BASE}/{class}"));
@@ -83,20 +93,45 @@ impl InterfaceProfile for RestInterface {
             Operation::ResizeTerminal,
             Operation::ScreenSnapshot,
             Operation::GetUsage,
+            Operation::GetSpend,
             Operation::ChangePlane,
         ]
     }
 }
 
 /// Request body for creating a session.
+///
+/// Unknown fields are refused rather than ignored. A caller who sends
+/// `{"kernel": "claude_code"}` — which `GET /api/v1/kernels` gives them every
+/// reason to try — was getting a session on a different runtime and a 201
+/// saying it had worked. §9: a session refused by name is one somebody can
+/// plan around; one accepted and silently altered is not.
+///
+/// The refusal is blanket rather than aimed at `kernel`, because the same
+/// silence swallowed `environmentProfile` — the camelCase spelling this
+/// project's own SDK and its AG-UI interface both use — and started a session
+/// on the deployment's default profile instead of the named one.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
+    /// Declared only so it can be refused in words a caller can act on.
+    ///
+    /// Left to `deny_unknown_fields`, this gets serde's generic sentence: it
+    /// names the field and lists the ones that were expected, which answers
+    /// "what is wrong" and not "then how do I get `claude_code`?". That second
+    /// question is the only reason anybody sent it, and §3's bar is a refusal
+    /// "in words a caller can act on".
+    ///
+    /// Every other unknown field keeps serde's message, which is right for
+    /// them: a typo has no remedy worth spelling out.
+    #[serde(default)]
+    kernel: Option<String>,
     /// Initial terminal width.
     #[serde(default)]
-    pub cols: Option<u16>,
+    cols: Option<u16>,
     /// Initial terminal height.
     #[serde(default)]
-    pub rows: Option<u16>,
+    rows: Option<u16>,
     /// The environment profile to start the session from.
     ///
     /// The whole description of the session: which agent, which model, how
@@ -105,7 +140,111 @@ pub struct CreateSessionRequest {
     /// this deployment says an unqualified session should start, which is not
     /// the same as a bare one.
     #[serde(default)]
+    environment_profile: Option<String>,
+    /// The sealed rate card returned by the quote the caller accepted.
+    ///
+    /// Optional for clients written before quoting existed. When present, the
+    /// core refuses creation if another card has come into force.
+    #[serde(default)]
+    quoted_rate_card: Option<String>,
+}
+
+/// What a create request means, once it has been checked.
+#[derive(Debug)]
+pub struct CreateSessionParts {
+    pub geometry: Option<TerminalGeometry>,
     pub environment_profile: Option<String>,
+    pub quoted_rate_card: Option<String>,
+}
+
+impl CreateSessionRequest {
+    /// Read the request, or say why it cannot be honoured.
+    ///
+    /// The fields are private and this is the only way to them, deliberately.
+    /// The first version of this check sat in the handler as a loose `if`, and
+    /// deleting it left the entire suite green: the test named after the
+    /// behaviour asserted that the field *parsed*, which is the opposite of
+    /// refused, so #298 could have reopened in silence.
+    ///
+    /// Declaring `kernel` is what made that possible — a declared field is no
+    /// longer unknown, so `deny_unknown_fields` stops guarding it and this
+    /// check becomes the only thing standing there. Putting it on the only
+    /// path to the data is what makes it hard to lose: removing it now means
+    /// editing a function the tests call directly, and removing the call does
+    /// not compile.
+    pub fn into_parts(self) -> Result<CreateSessionParts, CoreError> {
+        if let Some(named) = self.kernel.as_deref() {
+            // Refused rather than honoured. Which runtime a session runs on is
+            // a property of the session, and §3 forbids an interface deciding
+            // one — a request that could name a kernel would resolve
+            // differently depending on which deployment received it.
+            tracing::debug!(kernel = %named, "a create request named a kernel");
+            return Err(CoreError::InvalidRequest(
+                "this interface accepts no 'kernel' field: which runtime a session runs on is \
+                 decided by the environment profile it names. Choose or create one whose \
+                 agent.kernel is the runtime you want (GET or POST /api/v1/environment-profiles) \
+                 and send its id as 'environment_profile'"
+                    .to_string(),
+            ));
+        }
+        // Geometry travels as a pair or not at all: half of it is not a size.
+        let geometry = match (self.cols, self.rows) {
+            (Some(c), Some(r)) => Some(TerminalGeometry::new(c, r).map_err(CoreError::from)?),
+            _ => None,
+        };
+        Ok(CreateSessionParts {
+            geometry,
+            environment_profile: self.environment_profile,
+            quoted_rate_card: self.quoted_rate_card,
+        })
+    }
+}
+
+/// Query parameters for pricing the deployment default or one profile.
+#[derive(Debug, Deserialize)]
+struct PricingQuoteParams {
+    #[serde(default)]
+    environment_profile: Option<String>,
+}
+
+/// A quote response, including the deliberate absence of a configured price.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum PricingQuoteView {
+    Priced(PricedQuoteView),
+    Unpriced { priced: bool },
+}
+
+#[derive(Debug, Serialize)]
+struct PricedQuoteView {
+    rate_card: String,
+    currency: &'static str,
+    cpu_millis: u32,
+    memory_mib: u32,
+    /// Decimal string so a browser never coerces money through a float.
+    micros_per_hour: String,
+    /// Rendered by the core. Clients display this verbatim.
+    display: String,
+    per: &'static str,
+    quoted_at: String,
+}
+
+impl From<Option<Quote>> for PricingQuoteView {
+    fn from(quote: Option<Quote>) -> Self {
+        match quote {
+            Some(quote) => Self::Priced(PricedQuoteView {
+                rate_card: quote.rate_card.0,
+                currency: quote.currency,
+                cpu_millis: quote.cpu_millis,
+                memory_mib: quote.memory_mib,
+                micros_per_hour: quote.micros_per_hour.to_string(),
+                display: quote.display,
+                per: "hour",
+                quoted_at: quote.quoted_at,
+            }),
+            None => Self::Unpriced { priced: false },
+        }
+    }
 }
 
 /// A session as this interface renders it.
@@ -117,6 +256,13 @@ pub struct SessionView {
     #[serde(skip_serializing_if = "Option::is_none")]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
+    /// How this session's agent was configured, settled when it was created.
+    ///
+    /// Read from the session rather than from the profile it came from: a
+    /// profile can be edited afterwards and a running session does not follow
+    /// it, so the profile answers what a *new* session would get and this
+    /// answers what this one has.
+    agent: AgentView,
     cols: u16,
     rows: u16,
     last_seq: u64,
@@ -158,6 +304,53 @@ pub struct SessionView {
     /// it was provisioned with, so reading the profile would give the wrong
     /// answer exactly when somebody has changed one.
     reach: Vec<ReachView>,
+    /// What this session was priced at when it was created.
+    ///
+    /// Absent is not zero. It means no price was recorded, so the field is
+    /// omitted rather than inviting a client to draw a free session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pricing: Option<SessionPricingView>,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionPricingView {
+    rate_card: String,
+    currency: &'static str,
+    /// Decimal string so the full micro-USD integer survives JavaScript.
+    micros_per_hour: String,
+    display: String,
+    quoted_at: String,
+}
+
+/// How a session's agent is configured, as this interface renders it.
+///
+/// Never a credential and never an endpoint. Which *kind* of credential pays
+/// for the model is a fact somebody needs — it decides whose bill a turn lands
+/// on — and the value behind it is not.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentView {
+    /// The model the agent selects, when the session names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    /// How much the agent may do before asking.
+    permission: layer2_core::PermissionMode,
+    /// How hard it thinks.
+    reasoning_effort: layer2_core::ReasoningEffort,
+    /// Whose account the model calls are spent against.
+    credential: layer2_core::CredentialMode,
+    /// How much this session reserves, or absent for the deployment's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<layer2_core::SessionSize>,
+    /// The skills this session was given, or absent where none was recorded.
+    ///
+    /// Absent and empty are different answers and stay that way: a session
+    /// created before this was recorded cannot be told from one given no
+    /// skills unless the two are drawn apart.
+    ///
+    /// Filled by `skilled`, so `From<Session>` leaves it as the identifiers
+    /// alone until the catalogue has been asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skills: Option<Vec<SkillView>>,
 }
 
 /// One service a session may reach, as this interface renders it.
@@ -182,6 +375,29 @@ pub struct ReachView {
     mandated: bool,
 }
 
+/// One skill a session was given, as this interface renders it.
+///
+/// The same shape and the same reasoning as `ReachView`: the identifier is
+/// always true, and a catalogue that could not be asked costs the name rather
+/// than the answer.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillView {
+    /// The identifier the profile stored. Always present.
+    id: String,
+    /// The version that was actually installed, where the registry said one.
+    ///
+    /// Recorded when the pack was fetched rather than looked up now: asking
+    /// the registry today answers with what is current, which is a different
+    /// fact and is wrong for every session that has been running a while.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    /// What the owner recognises it by, when the catalogue offers a name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
@@ -194,6 +410,27 @@ impl From<Session> for SessionView {
             recovery_state: s.recovery_state,
             stop_reason: s.stop_reason,
             kernel: s.kernel.0,
+            agent: AgentView {
+                model: s.options.model.clone(),
+                permission: s.options.permission,
+                reasoning_effort: s.options.reasoning_effort,
+                credential: s.options.credential,
+                size: s.options.size,
+                // Absent and empty are different answers: absent means the
+                // grant predates the field, empty means the session was given
+                // none. A client draws them differently.
+                skills: s.granted_skills.clone().map(|skills| {
+                    skills
+                        .into_iter()
+                        .map(|granted| SkillView {
+                            id: granted.id.0,
+                            version: granted.version,
+                            name: None,
+                            description: None,
+                        })
+                        .collect()
+                }),
+            },
             cols: s.geometry.columns(),
             rows: s.geometry.rows(),
             last_seq: s.last_seq,
@@ -207,8 +444,35 @@ impl From<Session> for SessionView {
             // Empty here rather than absent: a view built without them reports
             // nothing rather than claiming a session reaches nothing.
             reach: Vec::new(),
+            pricing: s.pricing.map(|pricing| SessionPricingView {
+                rate_card: pricing.rate_card.0,
+                currency: layer2_core::CURRENCY,
+                micros_per_hour: pricing.micros_per_hour.to_string(),
+                display: layer2_core::format_usd(pricing.micros_per_hour),
+                quoted_at: pricing.quoted_at,
+            }),
         }
     }
+}
+
+/// Render sessions for a caller: their names, and what each may reach.
+///
+/// One function for all three handlers that answer with sessions. It exists
+/// because `From<Session>` deliberately leaves `reach` empty for `reached` to
+/// fill — and an empty reach is a real answer on this interface, meaning the
+/// session reaches nothing. A handler that returned before filling it told the
+/// client something false, which is exactly what creation did.
+async fn viewed(
+    environments: &EnvironmentProfileService,
+    users: &UserDirectory,
+    caller: &Caller,
+    credential: Option<&str>,
+    sessions: Vec<Session>,
+) -> Vec<SessionView> {
+    let mut views = named(users, caller, sessions.clone()).await;
+    reached(environments, caller, credential, &sessions, &mut views).await;
+    skilled(environments, caller, credential, &mut views).await;
+    views
 }
 
 /// Describe what each session may reach, as far as this caller can be told.
@@ -262,6 +526,59 @@ async fn reached(
     }
 }
 
+/// Name the skills each session was given, as far as the catalogue can say.
+///
+/// One lookup for the whole page, for the reason its neighbours give. A
+/// catalogue that cannot be reached costs the names and not the answer: the
+/// identifiers were already on the view, and they are still true.
+///
+/// Nothing here is asked unless some session actually carries a skill, so the
+/// common case of a page of sessions with none costs no registry call at all.
+async fn skilled(
+    environments: &EnvironmentProfileService,
+    caller: &Caller,
+    credential: Option<&str>,
+    views: &mut [SessionView],
+) {
+    if !views
+        .iter()
+        .any(|view| view.agent.skills.as_ref().is_some_and(|s| !s.is_empty()))
+    {
+        return;
+    }
+
+    /*
+     * Keyed by identifier AND by name, because a profile stores neither
+     * consistently: the registry's own id is a GUID and what a profile holds
+     * is the slug, so a map keyed only on `id` never matched a single session
+     * and every skill came back unnamed. Both keys point at the same entry, so
+     * whichever a profile happens to hold resolves.
+     */
+    let mut named: std::collections::HashMap<String, layer2_core::CatalogSkill> =
+        std::collections::HashMap::new();
+    for skill in environments
+        .available_skills(caller, credential)
+        .await
+        .unwrap_or_default()
+    {
+        named.insert(skill.name.clone(), skill.clone());
+        named.insert(skill.id.0.clone(), skill);
+    }
+
+    for view in views.iter_mut() {
+        let Some(skills) = view.agent.skills.as_mut() else {
+            continue;
+        };
+        for skill in skills.iter_mut() {
+            let Some(known) = named.get(&skill.id) else {
+                continue;
+            };
+            skill.name = Some(known.name.clone());
+            skill.description = Some(known.description.clone());
+        }
+    }
+}
+
 /// Attach the owner's identity to each view, as far as this caller may know it.
 ///
 /// One lookup for the whole page rather than one per row: the directory is a
@@ -285,73 +602,134 @@ async fn named(users: &UserDirectory, caller: &Caller, sessions: Vec<Session>) -
         .collect()
 }
 
-/// A core failure rendered as an RFC 9457 problem document.
-pub struct Problem(pub(crate) CoreError);
+/// Why a request did not succeed: the body could not be read, or the operation
+/// was refused.
+///
+/// Both halves of a request can be wrong, and until now only one of them
+/// answered in this API's own vocabulary. This lets a handler use `?` on a core
+/// failure while still rendering a bad body as a problem document.
+pub enum RequestFailure {
+    /// The body did not parse, or carried something this interface cannot take.
+    Body(BodyProblem),
+    /// The body was fine and the core would not do it.
+    Refused(Problem),
+}
 
-impl IntoResponse for Problem {
-    fn into_response(self) -> Response {
-        // A caller who may not see a session is told it does not exist:
-        // confirming the id would itself leak information. The substitution
-        // happens once, here, and everything below renders the condition the
-        // caller is being told about rather than the one that occurred —
-        // matching the status while the body still says "forbidden" answers
-        // the very question the refusal exists to withhold.
-        let rendered = match &self.0 {
-            CoreError::Forbidden => &CoreError::SessionNotFound,
-            other => other,
-        };
-        let (status, slug) = match rendered {
-            CoreError::SessionNotFound | CoreError::Forbidden => {
-                (StatusCode::NOT_FOUND, "session-not-found")
-            }
-            CoreError::EnvironmentProfileNotFound => {
-                (StatusCode::NOT_FOUND, "environment-profile-not-found")
-            }
-            CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
-            CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
-            CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
-            CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
-            CoreError::RuntimeUnavailable(_) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
-            }
-            CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
-            // 422 rather than 404: the route exists and the request is
-            // well-formed, and this session simply cannot honour it. A 404
-            // would send the caller looking for a spelling mistake.
-            CoreError::CapabilityUnsupported(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "capability-unsupported")
-            }
-            // 422 and never 503: retrying will not grant it. The request is
-            // well-formed and this owner has simply not given the service to
-            // anything — which is fixed in NyxID, not by trying again.
-            CoreError::ServiceNotGranted(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "service-not-granted")
-            }
-            // 503 and never 422: the owner's services are fine and we could
-            // not list them. Retrying is the correct thing to do, which is the
-            // whole reason this is a different answer from the one above.
-            CoreError::ServiceCatalogUnavailable(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "service-catalogue-unavailable",
-            ),
-        };
-        (
-            status,
-            Json(serde_json::json!({
-                "type": format!("{PROBLEM_BASE}/{slug}"),
-                "title": slug.replace('-', " "),
-                "status": status.as_u16(),
-                "detail": rendered.to_string(),
-                "code": rendered.code(),
-            })),
-        )
-            .into_response()
+impl From<CoreError> for RequestFailure {
+    fn from(e: CoreError) -> Self {
+        Self::Refused(Problem(e))
     }
 }
 
-impl From<CoreError> for Problem {
-    fn from(e: CoreError) -> Self {
-        Self(e)
+impl From<BodyProblem> for RequestFailure {
+    fn from(e: BodyProblem) -> Self {
+        Self::Body(e)
+    }
+}
+
+impl IntoResponse for RequestFailure {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Body(e) => e.into_response(),
+            Self::Refused(e) => e.into_response(),
+        }
+    }
+}
+
+/// A request body this interface could not read, rendered like every other
+/// refusal.
+///
+/// Axum answers a bad body with its own plain text. Wrapping it keeps this
+/// API's shape and — the part worth the code — keeps axum's own status, which
+/// carries real information: a syntax error is 400, a wrong `Content-Type` is
+/// 415, and a body that parsed but could not be honoured is 422. Collapsing all
+/// three into one status would send somebody whose header is wrong to go and
+/// stare at their JSON.
+///
+/// Applied to session creation only, so far. The other routes still answer a
+/// bad body in axum's words, and saying so is cheaper than implying an
+/// evenness this does not yet have.
+///
+/// One caveat travels with `body_text()`: `CoreError::InvalidRequest` promises
+/// to name what is wrong without quoting a value, and this is a foreign string
+/// that cannot promise the same. Serde's unknown-field branch carries the key
+/// alone, but its `invalid type` branch echoes what was sent. No field on this
+/// body is a credential, so there is nothing to leak today — but a field that
+/// could carry one must not be added without revisiting this.
+pub struct BodyProblem(pub(crate) axum::extract::rejection::JsonRejection);
+
+impl IntoResponse for BodyProblem {
+    fn into_response(self) -> Response {
+        use axum::extract::rejection::JsonRejection;
+        let status = self.0.status();
+        // Slug and code together, so the two cannot drift. `Problem` reads its
+        // code from `CoreError::code()`; deriving one from the other by string
+        // substitution would be a second source of truth that happens to agree.
+        let (slug, code) = match &self.0 {
+            // Deliberately the same pair the core uses for a request it
+            // understood and would not act on. To a caller this is that: the
+            // body was read and could not be honoured.
+            JsonRejection::JsonDataError(_) => ("invalid-request", "invalid_request"),
+            JsonRejection::JsonSyntaxError(_) => ("malformed-json", "malformed_json"),
+            JsonRejection::MissingJsonContentType(_) => {
+                ("unsupported-media-type", "unsupported_media_type")
+            }
+            // Axum's rejection is non-exhaustive, so anything added later
+            // reads as a body we could not take rather than as a panic.
+            _ => ("unreadable-request-body", "unreadable_request_body"),
+        };
+        // Axum's own sentence. For the unknown-field case it carries serde's
+        // message, which names the field and lists what was expected — more
+        // than this could say by hand, and it stays correct when a field is
+        // added.
+        let detail = self.0.body_text();
+        let body = problem_document(status, slug, &detail, code);
+        (status, Json(body)).into_response()
+    }
+}
+
+/// A settings body this interface could not read, without reflecting it.
+///
+/// Axum's JSON rejection text may quote an invalid value. That is useful for
+/// ordinary request shapes, but platform settings contain administrator prose
+/// which must not travel into a response, activity record, or log merely
+/// because it was sent with the wrong JSON type. This renderer keeps axum's
+/// precise status and this API's stable code while using only fixed detail.
+pub(crate) struct ConfidentialBodyProblem(pub(crate) axum::extract::rejection::JsonRejection);
+
+impl IntoResponse for ConfidentialBodyProblem {
+    fn into_response(self) -> Response {
+        use axum::extract::rejection::JsonRejection;
+        let status = self.0.status();
+        let (slug, code, detail) = match &self.0 {
+            JsonRejection::JsonDataError(_) => (
+                "invalid-request",
+                "invalid_request",
+                "The JSON body does not match this operation's request schema.",
+            ),
+            JsonRejection::JsonSyntaxError(_) => (
+                "malformed-json",
+                "malformed_json",
+                "The request body is not valid JSON.",
+            ),
+            JsonRejection::MissingJsonContentType(_) => (
+                "unsupported-media-type",
+                "unsupported_media_type",
+                "The request must use the application/json media type.",
+            ),
+            _ => (
+                "unreadable-request-body",
+                "unreadable_request_body",
+                "The request body could not be read.",
+            ),
+        };
+        let body = problem_document(status, slug, detail, code);
+        let mut response = (status, Json(body)).into_response();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json"),
+        );
+        response
     }
 }
 
@@ -372,10 +750,7 @@ pub mod admin;
 
 /// What the session routes are served from.
 ///
-/// Two services rather than one because a session names the person who started
-/// it, and a subject identifier is the wrong thing to put in front of anybody.
-/// Composed with `FromRef` so a handler that does not name anyone keeps asking
-/// for exactly what it uses.
+/// The session service and collaborators used to render its public view.
 #[derive(Clone)]
 pub struct SessionsState {
     /// Sessions and the runtimes serving them.
@@ -423,7 +798,9 @@ impl FromRef<SessionsState> for Arc<EnvironmentProfileService> {
 /// Routes this interface contributes.
 pub fn router(state: SessionsState) -> Router {
     Router::new()
+        .route("/api/v1/pricing/quote", get(pricing_quote))
         .route("/api/v1/sessions", post(create).get(list))
+        .route("/api/v1/sessions/allowance", get(allowance::read))
         .route("/api/v1/sessions/{id}", get(read))
         // Two distinct verbs: ending a session leaves it listed, removing it
         // does not. Collapsing them would make "stop this" and "forget this"
@@ -463,6 +840,8 @@ pub fn router(state: SessionsState) -> Router {
             post(operate::resolve_approval),
         )
         .route("/api/v1/sessions/{id}/usage", get(operate::usage))
+        .route("/api/v1/sessions/{id}/resources", get(operate::resources))
+        .route("/api/v1/sessions/{id}/spend", get(operate::spend))
         .route("/api/v1/sessions/{id}/screen", get(screen))
         // What the session has shown, for one that has no runtime to attach
         // to. Reading stopped work is not the same as resuming it.
@@ -475,39 +854,81 @@ pub fn router(state: SessionsState) -> Router {
         .with_state(state)
 }
 
+async fn pricing_quote(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Query(params): Query<PricingQuoteParams>,
+) -> Result<Json<PricingQuoteView>, Problem> {
+    let profile = params
+        .environment_profile
+        .map(layer2_core::EnvironmentProfileId);
+    let quote = service.quote(&caller, profile.as_ref()).await?;
+    Ok(Json(quote.into()))
+}
+
 async fn create(
     State(service): State<Arc<SessionService>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
+    State(users): State<Arc<UserDirectory>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     // Optional on purpose: a deployment with no delegation configured still
     // creates sessions, they simply cannot call out as the owner.
     credential: Option<axum::Extension<DelegatedCredential>>,
-    Json(body): Json<CreateSessionRequest>,
-) -> Result<(StatusCode, Json<SessionView>), Problem> {
-    let geometry = match (body.cols, body.rows) {
-        (Some(c), Some(r)) => Some(TerminalGeometry::new(c, r).map_err(CoreError::from)?),
-        _ => None,
-    };
+    // Taken as a `Result` so a body this interface cannot honour is rendered
+    // as the same problem document as every other refusal. Left to axum, a
+    // rejection returns its own plain body, and a caller would meet two
+    // different error shapes from one endpoint depending on which half of the
+    // request was wrong.
+    body: Result<Json<CreateSessionRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<(StatusCode, Json<SessionView>), RequestFailure> {
+    let Json(body) = body.map_err(BodyProblem)?;
+    let parts = body.into_parts()?;
+    let credential_value = credential.as_ref().map(|axum::Extension(c)| c.0.clone());
     let session = service
         .create_session(
             &caller,
             SessionSpec {
-                environment_profile: body
+                environment_profile: parts
                     .environment_profile
                     .map(layer2_core::EnvironmentProfileId),
-                geometry,
+                geometry: parts.geometry,
                 // Replaced by the core from the profile this session names.
                 // Sent as a default rather than left out because the spec is
                 // also what a rotation rebuilds a session from, where these
                 // are the values the session was started with.
                 options: Default::default(),
-                subject_credential: credential.map(|axum::Extension(c)| c.0),
+                // The caller's own token, for asking the platform as them. It is
+                // never what the session runs on: the core mints that.
+                caller_credential: credential.map(|axum::Extension(c)| c.0),
+                runtime_credential: None,
                 // This interface takes no plane, so the profile or the
                 // deployment decides — which is what it has always done.
                 requested_mode: None,
+                quoted_rate_card: parts.quoted_rate_card.map(layer2_core::RateCardId),
             },
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(session.into())))
+    /*
+     * Filled here, not left as the placeholder it starts as.
+     *
+     * `From<Session>` seeds `reach: Vec::new()` for `reached` to fill, and
+     * this handler used to return before that happened. An empty list is a
+     * real answer on this interface — it means the session reaches nothing —
+     * so a client showed a freshly created session as reaching no services
+     * until something refetched it. The two ends disagreed about what `[]`
+     * meant, and both were reading their own contract correctly.
+     */
+    let sessions = vec![session];
+    let fallback: SessionView = sessions[0].clone().into();
+    let mut views = viewed(
+        &environments,
+        &users,
+        &caller,
+        credential_value.as_deref(),
+        sessions,
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(views.pop().unwrap_or(fallback))))
 }
 
 async fn list(

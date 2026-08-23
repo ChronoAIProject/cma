@@ -1,5 +1,5 @@
 /*
- * The command bar — docs/Web_Style.md §6 and §7.
+ * The command bar — docs/Web_Style.md §6 and §12.
  *
  * The plate itself is the shared .plate vocabulary; what lives here is the
  * palette's own geometry: pinned toward the window's top so the list grows
@@ -14,30 +14,32 @@
 .commandbar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   width: 100%;
   max-width: 520px;
-  padding: var(--space-2);
+  padding: 8px;
 }
 
 .commandbar__field {
-  height: var(--control-h-md);
-  padding-inline: var(--space-3);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  background: var(--inset);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
+  height: 44px;
+  padding-inline: 12px;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 22px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
 }
 
 .commandbar__field::placeholder {
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-dimmed);
 }
 
 .commandbar__field:focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring);
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-ring-accent-soft);
 }
 
 /* The results scroll inside the plate; the page never scrolls (§5). */
@@ -50,12 +52,60 @@
 }
 
 .commandbar__list .menu__item {
-  height: var(--control-h-lg);
+  height: 40px;
 }
 
 .commandbar__empty {
   margin: 0;
-  padding: var(--space-3);
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  padding: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+}
+
+/*
+ * The command rows.
+ *
+ * Their own classes rather than the dropdown's: this list is a search result
+ * with a keyboard cursor running down it, which the dropdown has no notion
+ * of, and sharing the vocabulary meant one of them silently changed whenever
+ * the other did.
+ */
+.commandbar__item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/*
+ * The cursor is drawn, not focused. Focus stays in the search field so typing
+ * keeps working, which means the highlighted row has to be styled rather than
+ * relying on `:focus`.
+ */
+.commandbar__item:hover:not(:disabled),
+.commandbar__item--active:not(:disabled) {
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.commandbar__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.commandbar__detail {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
 }

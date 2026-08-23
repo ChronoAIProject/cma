@@ -91,6 +91,28 @@ fn caller(id: &str) -> Caller {
     )
 }
 
+/// A source that mints a value visibly distinct from anything a caller holds.
+///
+/// The whole point of the mint is that what the runtime presents is not what
+/// the person presented, so a fake that echoed the caller's token back would
+/// pass whether or not the mint happened.
+struct MintingSource;
+
+#[async_trait::async_trait]
+impl crate::store::CredentialSource for MintingSource {
+    async fn credential_for(
+        &self,
+        session: &crate::SessionId,
+        _subject: &crate::SubjectId,
+        _services: &[crate::environment::ServiceId],
+    ) -> Option<String> {
+        Some(format!("minted-for-{}", session.0))
+    }
+
+    /// Nothing to reclaim: this mints a value rather than registering one.
+    async fn release(&self, _session: &crate::SessionId) {}
+}
+
 fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
@@ -103,8 +125,10 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
         adapters,
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
         Arc::new(FakeStore::default()),
-        None,
-        None,
+        crate::service::SessionPorts {
+            credentials: Some(Arc::new(MintingSource)),
+            ..Default::default()
+        },
         crate::environment_service::EnvironmentProfileService::new(
             Arc::new(crate::test_support::FakeProfileStore::default()),
             crate::environment::Baseline::default(),
@@ -114,6 +138,7 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
                 kernel: KernelId::new("recording"),
                 ..Default::default()
             },
+            crate::test_support::unconfigured_settings(),
         ),
         crate::test_support::owned(),
     )
@@ -124,27 +149,46 @@ async fn credentials_seen(sent: &Arc<tokio::sync::Mutex<Vec<String>>>) -> Vec<St
 }
 
 #[tokio::test]
-async fn the_owner_credential_reaches_the_runtime_at_creation() {
+async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
+    /*
+     * The property the mint exists for, and the one that was not holding.
+     *
+     * An interface put the caller's own access token on the spec so the
+     * platform could be asked questions as them. Provisioning read that field,
+     * found it filled, and skipped minting — so every session a person created
+     * ran on their whole identity, while the minting machinery ran only for
+     * sessions the controller recovered. The list below is what the runtime
+     * was actually handed, and "first-token" appearing in it is the defect.
+     */
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let svc = service(Arc::clone(&sent));
     let owner = caller("subject-a");
-    svc.create_session(
-        &owner,
-        SessionSpec {
-            environment_profile: None,
-            geometry: None,
-            options: Default::default(),
-            subject_credential: Some("first-token".into()),
-            requested_mode: None,
-        },
-    )
-    .await
-    .expect("session created");
+    let session = svc
+        .create_session(
+            &owner,
+            SessionSpec {
+                environment_profile: None,
+                geometry: None,
+                options: Default::default(),
+                caller_credential: Some("first-token".into()),
+                runtime_credential: None,
+                requested_mode: None,
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("session created");
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let seen = credentials_seen(&sent).await;
     assert_eq!(
-        credentials_seen(&sent).await,
-        vec!["first-token".to_string()]
+        seen,
+        vec![format!("minted-for-{}", session.id.0)],
+        "the runtime must present what was minted for this session"
+    );
+    assert!(
+        !seen.iter().any(|c| c == "first-token"),
+        "the caller's own credential must never reach the runtime, got {seen:?}"
     );
 }
 
@@ -162,8 +206,10 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
                 environment_profile: None,
                 geometry: None,
                 options: Default::default(),
-                subject_credential: Some("first-token".into()),
+                caller_credential: Some("first-token".into()),
+                runtime_credential: None,
                 requested_mode: None,
+                quoted_rate_card: None,
             },
         )
         .await
@@ -178,9 +224,14 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
     assert_eq!(pushed, 1, "the live session must receive the renewal");
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let seen = credentials_seen(&sent).await;
     assert_eq!(
-        credentials_seen(&sent).await,
-        vec!["first-token".to_string(), "second-token".to_string()]
+        seen,
+        vec![
+            format!("minted-for-{}", session.id.0),
+            "second-token".to_string()
+        ],
+        "the session starts on what was minted for it, then takes the renewal"
     );
 
     // Still the same session: renewal must not replace it.
@@ -202,8 +253,10 @@ async fn a_renewal_does_not_leak_across_subjects() {
             environment_profile: None,
             geometry: None,
             options: Default::default(),
-            subject_credential: Some("a-token".into()),
+            caller_credential: Some("a-token".into()),
+            runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
         },
     )
     .await
@@ -232,8 +285,10 @@ async fn a_terminated_session_is_not_renewed() {
                 environment_profile: None,
                 geometry: None,
                 options: Default::default(),
-                subject_credential: Some("token".into()),
+                caller_credential: Some("token".into()),
+                runtime_credential: None,
                 requested_mode: None,
+                quoted_rate_card: None,
             },
         )
         .await
@@ -249,7 +304,7 @@ async fn a_terminated_session_is_not_renewed() {
 }
 
 #[tokio::test]
-async fn a_session_created_without_a_credential_is_still_usable() {
+async fn a_session_is_minted_a_credential_even_when_the_caller_delegated_none() {
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let svc = service(Arc::clone(&sent));
     let owner = caller("subject-a");
@@ -258,14 +313,101 @@ async fn a_session_created_without_a_credential_is_still_usable() {
         SessionSpec {
             environment_profile: None,
             geometry: None,
-            subject_credential: None,
+            caller_credential: None,
+            runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
             options: Default::default(),
         },
     )
     .await
     .expect("a session with no delegation still starts");
 
+    /*
+     * What the runtime may spend is decided by what the session was granted,
+     * not by whether the caller happened to hand something over. This used to
+     * be the other way round — no delegation meant no credential — which is
+     * the same coupling that let a delegation become the session's credential
+     * and skip the mint entirely.
+     */
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert!(credentials_seen(&sent).await.is_empty());
+    let seen = credentials_seen(&sent).await;
+    assert_eq!(
+        seen.len(),
+        1,
+        "a credential is minted regardless, got {seen:?}"
+    );
+    assert!(
+        seen[0].starts_with("minted-for-"),
+        "and it is a minted one, got {seen:?}"
+    );
+}
+
+/// Which sessions still have a claim on the credential minted for them.
+///
+/// The reclaim sweep asks this before taking a key back, and asking the wrong
+/// question revoked the key of every paused session as soon as the process
+/// holding the in-memory record of it restarted.
+mod what_still_claims_a_credential {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_paused_session_still_claims_its_credential() {
+        // Its owner stopped it and can pick it up again. Taking the key back
+        // leaves them returning to a session whose credential was revoked
+        // underneath them.
+        let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let svc = service(Arc::clone(&sent));
+        let owner = caller("subject-a");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("created");
+        await_settled(&svc, &owner, &session.id).await;
+
+        svc.stop_session(&owner, &session.id)
+            .await
+            .expect("a session can be paused");
+
+        assert!(
+            svc.session_claims_credential(&session.id).await,
+            "a paused session keeps its claim"
+        );
+        assert!(
+            !svc.session_is_live(&session.id).await,
+            "though it wants no runtime, which is the answer that used to be asked"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_terminated_session_claims_nothing() {
+        let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let svc = service(Arc::clone(&sent));
+        let owner = caller("subject-a");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("created");
+        await_settled(&svc, &owner, &session.id).await;
+
+        svc.terminate_session(&owner, &session.id)
+            .await
+            .expect("a session can be ended");
+
+        assert!(
+            !svc.session_claims_credential(&session.id).await,
+            "an ended session has no claim, so its key is the sweep's to take"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_that_does_not_exist_claims_nothing() {
+        let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let svc = service(Arc::clone(&sent));
+        assert!(
+            !svc.session_claims_credential(&crate::ids::SessionId("sesn_never".into()))
+                .await,
+            "a key naming a session nobody has is exactly what the sweep exists for"
+        );
+    }
 }

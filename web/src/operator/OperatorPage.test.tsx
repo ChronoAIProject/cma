@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -20,7 +22,10 @@ const ALL: readonly Capability[] = [
   'read_runtime_inventory',
   'read_all_sessions',
   'control_any_session',
+  'configure_platform',
 ];
+
+const css = () => readFileSync(resolve(process.cwd(), 'src/operator/OperatorPage.css'), 'utf8');
 
 function open(capabilities: readonly Capability[] = ALL, options: MockOperatorOptions = {}) {
   const store = createMockOperatorStore(options);
@@ -50,11 +55,20 @@ const ADA = {
 };
 
 describe('the view switch', () => {
-  it('offers only the views this caller holds a capability for', () => {
+  it('offers only the views this caller holds a capability for', async () => {
     open(['read_activity_log']);
     const tabs = screen.getAllByRole('tab');
     expect(tabs).toHaveLength(1);
     expect(tabs[0]).toHaveTextContent(/activity/i);
+    expect(await screen.findByText(/nothing has been recorded yet/i)).toBeInTheDocument();
+  });
+
+  it('offers a configure-only caller Operations with only Settings', async () => {
+    open(['configure_platform']);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toHaveTextContent('Settings');
+    expect(await screen.findByRole('form', { name: 'Platform settings' })).toBeInTheDocument();
   });
 
   it('names the selected view by more than its colour', async () => {
@@ -65,6 +79,19 @@ describe('the view switch', () => {
 
     await userEvent.click(sessions as HTMLElement);
     expect(sessions).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps an unsaved settings draft across view switches', async () => {
+    const user = userEvent.setup();
+    open(['read_user_directory', 'configure_platform']);
+    await user.click(screen.getByRole('tab', { name: 'Settings' }));
+    const heading = await screen.findByLabelText(/granted-services heading/i);
+    await user.clear(heading);
+    await user.type(heading, 'Unsaved heading');
+
+    await user.click(screen.getByRole('tab', { name: 'People' }));
+    await user.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.getByLabelText(/granted-services heading/i)).toHaveValue('Unsaved heading');
   });
 });
 
@@ -237,5 +264,36 @@ describe('when the control plane cannot be reached', () => {
     open(['read_user_directory'], { failWith: 'the control plane is unreachable' });
     expect(await screen.findByRole('alert')).toHaveTextContent(/unreachable/i);
     expect(screen.queryByText(/nobody has signed in yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('the operations appearance', () => {
+  it('uses the reference tab geometry and a glowing two-pixel selected edge', () => {
+    const sheet = css();
+    expect(sheet).toMatch(
+      /\.operator__tabs\s*\{[^}]*gap: 2px[^}]*padding: 0 4px[^}]*border-bottom: 1px solid var\(--dsw-alias-border-l1\)/,
+    );
+    expect(sheet).toMatch(
+      /\.operator__tab\s*\{[^}]*height: 42px[^}]*padding: 0 16px[^}]*font-size: 14px[^}]*font-weight: 500/,
+    );
+    expect(sheet).toMatch(
+      /\.operator__tab--on\s*\{[^}]*color: var\(--dsw-alias-state-business-primary\)[^}]*font-weight: 600/,
+    );
+    expect(sheet).toMatch(
+      /\.operator__tab--on::after\s*\{[^}]*height: 2px[^}]*background: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-glow-accent\)/,
+    );
+  });
+
+  it('keeps page-owned filters compact and focused in the appearance accent', () => {
+    const sheet = css();
+    expect(sheet).toMatch(
+      /\.operator__filter-label\s*\{[^}]*font-family: var\(--ds-font-family-code\)[^}]*font-size: 10\.5px[^}]*letter-spacing: 0\.14em/,
+    );
+    expect(sheet).toMatch(
+      /\.operator__filter select\s*\{[^}]*height: 32px[^}]*background-color: var\(--dsw-alias-bg-layer-1\)[^}]*border-radius: 6px/,
+    );
+    expect(sheet).toMatch(
+      /\.operator__filter select:focus-visible\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
+    );
   });
 });

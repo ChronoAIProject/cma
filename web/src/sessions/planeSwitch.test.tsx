@@ -48,6 +48,7 @@ function renderActions(
       onReconnect={vi.fn()}
       onRevive={vi.fn()}
       onStop={vi.fn()}
+      onDelete={vi.fn()}
       onDetails={vi.fn()}
     />,
   );
@@ -88,12 +89,25 @@ describe('what a session offers', () => {
 });
 
 describe('the affordance in the session header', () => {
-  it('names the plane it moves to, in the overflow menu', async () => {
-    // §18.6: a key in the overflow menu naming the plane it moves to.
+  it('names the act rather than the destination, in the overflow menu', async () => {
+    /*
+     * "Terminal" beside "Conversation" read as two views to flip between,
+     * which is what the retired tab strip made this look like. It is a
+     * rotation with a cost, so the entry says what it does.
+     */
     const user = userEvent.setup();
-    renderActions();
+    renderActions(session('running', 'terminal'));
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    expect(screen.getByRole('menuitem', { name: /conversation/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Return to chat mode' })).toBeInTheDocument();
+  });
+
+  it('offers the terminal from a conversation, by name', async () => {
+    const user = userEvent.setup();
+    renderActions(session('running', 'conversation'));
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    expect(
+      screen.getByRole('menuitem', { name: 'Interact directly with terminal' }),
+    ).toBeInTheDocument();
   });
 
   it('is not drawn at all where the kernel cannot serve the other plane', async () => {
@@ -110,41 +124,46 @@ describe('the affordance in the session header', () => {
     expect(screen.queryByText(/turn in flight is lost/i)).toBeNull();
   });
 
-  it('confirms inline, in place of the header’s own controls', async () => {
+  it('confirms in a card in the middle of the page', async () => {
+    /*
+     * §12.4: a dialog, because this is a rotation rather than a view change.
+     * The inline confirmation it replaced took over the header's own controls,
+     * which was quiet enough to be missed and put the question somewhere the
+     * eye was not — for the one entry in this menu that costs something.
+     */
     const user = userEvent.setup();
-    const { onChangePlane } = renderActions();
+    const { onChangePlane } = renderActions(session('running', 'terminal'));
 
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /conversation/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Return to chat mode' }));
 
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/turn in flight is lost/i)).toBeInTheDocument();
     expect(screen.getByText(/not interactive while it moves/i)).toBeInTheDocument();
-    // In place of, not beside: §7 forbids a second dialog over a dialog, and
-    // leaving the other keys reachable mid-question invites the wrong one.
-    expect(screen.queryByRole('button', { name: /^details$/i })).toBeNull();
     expect(onChangePlane).not.toHaveBeenCalled();
   });
 
   it('moves only when the confirmation is answered', async () => {
     const user = userEvent.setup();
-    const { onChangePlane } = renderActions();
+    const { onChangePlane } = renderActions(session('running', 'terminal'));
 
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /conversation/i }));
-    await user.click(screen.getByRole('button', { name: /move to conversation/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Return to chat mode' }));
+    await user.click(screen.getByRole('button', { name: 'Return to chat' }));
 
     expect(onChangePlane).toHaveBeenCalledWith('conversation');
   });
 
   it('lets somebody back out, changing nothing', async () => {
     const user = userEvent.setup();
-    const { onChangePlane } = renderActions();
+    const { onChangePlane } = renderActions(session('running', 'terminal'));
 
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /conversation/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Return to chat mode' }));
     await user.click(screen.getByRole('button', { name: /stay here/i }));
 
     expect(onChangePlane).not.toHaveBeenCalled();
+    // The row's own controls were never taken away, so they are still here.
     expect(screen.getByRole('button', { name: /^details$/i })).toBeInTheDocument();
   });
 
@@ -153,10 +172,10 @@ describe('the affordance in the session header', () => {
     // again, and a control that disappears and returns is one somebody hunts
     // for.
     const user = userEvent.setup();
-    renderActions(session('rotating'));
+    renderActions(session('rotating', 'terminal'));
 
     await user.click(screen.getByRole('button', { name: /more actions/i }));
-    const key = screen.getByRole('menuitem', { name: /conversation/i });
+    const key = screen.getByRole('menuitem', { name: /return to chat mode/i });
     expect(key).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByText(/already being moved/i)).toBeInTheDocument();
   });
@@ -171,10 +190,31 @@ describe('the affordance in the session header', () => {
         onReconnect={vi.fn()}
         onRevive={vi.fn()}
         onStop={vi.fn()}
+        onDelete={vi.fn()}
         onDetails={vi.fn()}
       />,
     );
     await userEvent.setup().click(screen.getByRole('button', { name: /more actions/i }));
     expect(screen.queryByRole('menuitem', { name: /conversation/i })).toBeNull();
+  });
+});
+
+describe('the terminal palette', () => {
+  it('is offered on a terminal session, in its own overflow menu', async () => {
+    const user = userEvent.setup();
+    renderActions(session('running', 'terminal'));
+
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    expect(screen.getByRole('menuitem', { name: /terminal theme/i })).toBeInTheDocument();
+  });
+
+  it('is absent on a conversation, which has no palette to change', async () => {
+    // §7: a control that can never do anything here is absent rather than
+    // drawn — not disabled, because it is not unavailable, it is irrelevant.
+    const user = userEvent.setup();
+    renderActions(session('running', 'conversation'));
+
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    expect(screen.queryByRole('menuitem', { name: /terminal theme/i })).toBeNull();
   });
 });

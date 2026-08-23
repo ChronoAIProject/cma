@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
-import { Dialog, InlineConfirm } from '../ui/Dialog';
+import { Pill } from '../ui/Pill';
+import { Modal } from '../ui/Modal';
+import { InlineConfirm } from '../ui/InlineConfirm';
 import { ProfileEditor } from './ProfileEditor';
+import { NOTHING_MANDATED } from './types';
 import type {
   EnvironmentProfile,
   EnvironmentProfileStore,
-  MandatoryEntries,
   ProfileDraft,
   ServiceCatalogue,
   SkillCatalogue,
@@ -40,12 +42,13 @@ interface EnvironmentProfilesProps {
 }
 
 /** Until a profile has been read back, this is what the platform mandates. */
-const NOTHING_MANDATED: MandatoryEntries = { packages: [], skills: [] };
 
 type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'edit'; id: string };
 
 export function EnvironmentProfiles({ store, onClose, kernels = [] }: EnvironmentProfilesProps) {
   const [profiles, setProfiles] = useState<readonly EnvironmentProfile[] | null>(null);
+  /** While the default is moving, so it cannot be pressed twice. */
+  const [choosing, setChoosing] = useState(false);
   const [catalogue, setCatalogue] = useState<SkillCatalogue | null>(null);
   const [skillsError, setSkillsError] = useState<string | undefined>(undefined);
   const [servicesCatalogue, setServicesCatalogue] = useState<ServiceCatalogue | undefined>(
@@ -160,6 +163,25 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
     }
   }
 
+  /**
+   * Choose which profile this owner's sessions start from, or none.
+   *
+   * The whole list comes back, because setting it moves two rows — the one
+   * taking it and the one giving it up — and reloading instead would show a
+   * moment where both or neither held it.
+   */
+  async function choose(id: string | null): Promise<void> {
+    setChoosing(true);
+    try {
+      setProfiles(await store.prefer(id));
+      setError(undefined);
+    } catch (cause: unknown) {
+      setError(message(cause, 'That profile could not be made the default.'));
+    } finally {
+      setChoosing(false);
+    }
+  }
+
   async function remove(id: string): Promise<void> {
     try {
       await store.remove(id);
@@ -172,14 +194,15 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
 
   if (mode.kind !== 'list') {
     return (
-      <Dialog
+      <Modal
+        open
         title={mode.kind === 'new' ? 'New environment profile' : 'Edit environment profile'}
         /*
-         * The widest of §7's three. The editor is a form with pickers beside
-         * it; at 520px its rows truncated, which is the same reason §14 took
-         * operations out of a dialog.
+         * A form with pickers beside it. At the card's own width its rows
+         * truncated, which is the same reason §14 took operations out of a
+         * dialog altogether.
          */
-        width="wide"
+        placement="modal--widest"
         onClose={onClose}
         footer={
           <>
@@ -192,7 +215,7 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
               Cancel
             </Button>
             <Button
-              tone="accent"
+              variant="primary"
               disabled={saving}
               onClick={() => {
                 void save();
@@ -215,19 +238,20 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
           mandatory={mandatory}
           error={error}
         />
-      </Dialog>
+      </Modal>
     );
   }
 
   return (
-    <Dialog
+    <Modal
+      open
       title="Environment profiles"
-      /* A list of rows with controls on each: §7's middle width. */
-      width="medium"
+      /* A list of rows with controls on each. */
+      placement="modal--wide"
       onClose={onClose}
       footer={
         <Button
-          tone="accent"
+          variant="primary"
           onClick={() => {
             setDraft(emptyDraft());
             setError(undefined);
@@ -256,7 +280,16 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
           {profiles.map((profile) => (
             <li className="profiles__row" key={profile.id}>
               <span className="profiles__text">
-                <span className="profiles__name">{profile.name}</span>
+                <span className="profiles__name">
+                  {profile.name}
+                  {/*
+                   * Said on the row rather than only by the control beside it:
+                   * a list where one row's key reads "Default" and the rest
+                   * read "Make default" makes somebody compare four buttons to
+                   * answer a question the list could state.
+                   */}
+                  {profile.preferred ? <Pill placement="profiles__default">default</Pill> : null}
+                </span>
                 <span className="profiles__meta">{summarise(profile)}</span>
               </span>
               {confirmingRemoval === profile.id ? (
@@ -277,6 +310,21 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
                 />
               ) : (
                 <>
+                  {/*
+                   * Choosing one clears the last, so the key on the row that
+                   * already holds it clears the preference instead — which is
+                   * a real choice, returning sessions to the deployment's own
+                   * defaults rather than leaving nothing chosen by accident.
+                   */}
+                  <Button
+                    size="sm"
+                    disabled={choosing}
+                    onClick={() => {
+                      void choose(profile.preferred ? null : profile.id);
+                    }}
+                  >
+                    {profile.preferred ? 'Stop using by default' : 'Use by default'}
+                  </Button>
                   <Button
                     size="sm"
                     onClick={() => {
@@ -289,7 +337,7 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
                   </Button>
                   <Button
                     size="sm"
-                    tone="danger"
+                    variant="primary"
                     onClick={() => {
                       setConfirmingRemoval(profile.id);
                     }}
@@ -302,7 +350,7 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
           ))}
         </ul>
       )}
-    </Dialog>
+    </Modal>
   );
 }
 

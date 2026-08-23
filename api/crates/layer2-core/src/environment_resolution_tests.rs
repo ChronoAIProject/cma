@@ -80,6 +80,7 @@ async fn a_profile_stored_before_the_baseline_existed_still_resolves_with_it() {
         None,
         None,
         Default::default(),
+        crate::test_support::unconfigured_settings(),
     );
     let owner = caller("subject-a");
     let created = bare
@@ -290,6 +291,7 @@ async fn a_profile_that_named_no_kernel_runs_what_this_deployment_runs() {
             kernel: crate::ids::KernelId::new("fake"),
             ..Default::default()
         },
+        crate::test_support::unconfigured_settings(),
     );
     let owner = caller("subject-a");
 

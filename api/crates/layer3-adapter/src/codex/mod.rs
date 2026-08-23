@@ -15,10 +15,12 @@ pub use environment::CodexSandboxSpec;
 
 use crate::hosted::{acp, HostedKernel};
 use crate::sandbox::SandboxClient;
+use crate::ConversationUpdate;
 use crate::{
-    AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, RuntimeHandle,
-    RuntimeListing, RuntimeMode, RuntimeOptions, RuntimeSpec, TerminalChannel,
+    AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
+    RuntimeHandle, RuntimeListing, RuntimeMode, RuntimeOptions, RuntimeSpec, TerminalChannel,
 };
+use tokio::sync::mpsc;
 
 /// Drives Codex inside a provider-managed sandbox.
 pub struct CodexAdapter {
@@ -30,7 +32,13 @@ impl CodexAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
         Self {
-            hosted: HostedKernel::new(client, spec.deployment.shape.clone(), "codex"),
+            hosted: HostedKernel::new(
+                client,
+                spec.deployment.shape.clone(),
+                "codex",
+                spec.deployment.skills_root.clone(),
+                spec.deployment.agent_notes.clone(),
+            ),
             spec,
         }
     }
@@ -58,20 +66,20 @@ impl KernelAdapter for CodexAdapter {
             interrupt: true,
             // Reported per turn, with the context window alongside.
             usage: true,
+            resources: true,
         }
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        // Refused rather than ignored. Nothing in the runtime authenticates the
-        // agent against the owner's own vendor account, so a session that asked
-        // for it and was accepted would run on the delegated credential — the
-        // owner's bill and the owner's entitlements — while believing otherwise.
-        // A session that cannot be what was asked for must not start at all.
-        if spec.options.own_credential {
-            return Err(AdapterError::Unsupported(
-                "this kernel does not support the owner's own credential yet".to_string(),
-            ));
-        }
+        // An own-account session is provisioned now rather than refused. The
+        // refusal that stood here was right for as long as nothing signed the
+        // agent in — a session accepted and then run on the delegated
+        // credential would spend the platform's budget while its owner
+        // believed otherwise. What changed is that the kernel can now sign
+        // itself in inside the sandbox, and its configuration names no proxy,
+        // so an own-account session either spends the owner's account or
+        // cannot reach a model at all. Neither outcome is the quiet
+        // substitution the refusal existed to prevent.
 
         // Refused for the same reason, and it is the same defect: a caller
         // asked for something, was told nothing, and got a session without it.
@@ -99,6 +107,7 @@ impl KernelAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         options: &RuntimeOptions,
+        updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
@@ -107,6 +116,9 @@ impl KernelAdapter for CodexAdapter {
             self.hosted.workspace().to_string(),
             Some(permission::mode_for(options.permission).to_string()),
             options.resume_conversation.clone(),
+            Some((self.hosted.switch_waiters(), handle.0.clone())),
+            options.own_credential,
+            updates,
         )
         .await?;
         // Recorded here so a credential can reach a session that never attaches
@@ -140,6 +152,14 @@ impl KernelAdapter for CodexAdapter {
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         self.hosted.list_runtimes().await
+    }
+
+    async fn watch_resources(
+        &self,
+        handle: &RuntimeHandle,
+        readings: mpsc::Sender<ResourceSample>,
+    ) -> Result<(), AdapterError> {
+        self.hosted.watch_resources(handle, readings).await
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {

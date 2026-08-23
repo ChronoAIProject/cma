@@ -31,9 +31,10 @@ use std::sync::Arc;
 
 use layer3_adapter::RuntimeHandle;
 
+use crate::event::{Event, EventKind};
 use crate::ids::KernelId;
 use crate::service::SessionService;
-use crate::session::{SessionSpec, SessionStatus};
+use crate::session::{RecoveryState, RuntimeLossCause, SessionSpec, SessionStatus};
 use crate::store::SessionRecord;
 
 /// What a sweep did, for logging and for tests.
@@ -45,6 +46,11 @@ pub struct Reclaimed {
     pub readopted_sessions: usize,
     /// Sessions given a new runtime because theirs was gone.
     pub reprovisioned_sessions: usize,
+    /// Runtimes found gone, and recorded as gone in their session's log.
+    ///
+    /// Counted rather than only logged: one loss is a bad afternoon and forty
+    /// in one sweep is a provider outage, and both are worth one clear number.
+    pub lost_runtimes: usize,
     /// Sessions carried onto the current runtime version.
     pub rotated_sessions: usize,
     /// Sessions left exactly as they were, because nothing could be confirmed.
@@ -61,8 +67,24 @@ pub struct Reclaimed {
 /// evidence that nothing is running, and treating it as such would tear down
 /// every live session the moment the provider had a bad minute.
 struct RuntimeCensus {
-    /// Runtime ids the provider reports as existing.
-    handles: HashSet<String>,
+    /// Runtime ids the provider reports as still **serving**.
+    ///
+    /// Serving, not merely existing, and the distinction is the whole reason
+    /// this field changed meaning. A sandbox whose container has exited still
+    /// exists and is still listed, so a set of everything present reads a
+    /// corpse as a live runtime — which is how a session came to report
+    /// `running` for nineteen minutes after the kernel had killed its
+    /// container.
+    ///
+    /// Reclaiming walks `owners` rather than this, so a stopped sandbox that
+    /// no session is entitled to is still found and deleted.
+    serving: HashSet<String>,
+    /// Why a runtime that is no longer serving stopped, where one was named.
+    ///
+    /// Populated only for a listing that reports itself not serving. A healthy
+    /// sandbox can carry a provider reason too, and reading it then would
+    /// invent a death for every live runtime in the list.
+    stopped_because: HashMap<String, layer3_adapter::RuntimeLossReason>,
     /// Runtime id to the session it says it belongs to.
     owners: HashMap<String, Option<String>>,
     trusted: bool,
@@ -130,6 +152,7 @@ impl SessionService {
                 orphaned_runtimes = reclaimed.orphaned_runtimes,
                 readopted_sessions = reclaimed.readopted_sessions,
                 reprovisioned_sessions = reclaimed.reprovisioned_sessions,
+                lost_runtimes = reclaimed.lost_runtimes,
                 rotated_sessions = reclaimed.rotated_sessions,
                 "reconciliation moved sessions towards their recorded state"
             );
@@ -144,22 +167,31 @@ impl SessionService {
             let view = match adapter.list_runtimes().await {
                 Ok(runtimes) => {
                     let mut owners = HashMap::new();
-                    let mut handles = HashSet::new();
+                    let mut serving = HashSet::new();
+                    let mut stopped_because = HashMap::new();
                     for listing in runtimes {
                         // A runtime this control plane did not create is not
                         // its business. It still counts as alive — a session of
                         // ours pointing at it is not lost — but it is never
                         // reclaimed, because the only thing that knows whether
                         // it should exist is whoever made it.
+                        if listing.serving {
+                            serving.insert(listing.handle.0.clone());
+                        } else if let Some(why) = listing.lost_because {
+                            stopped_because.insert(listing.handle.0.clone(), why);
+                        }
+                        // A runtime this control plane did not create is never
+                        // reclaimed, so it is left out of `owners` — but it is
+                        // still counted above as serving, because a session of
+                        // ours pointing at it is not lost.
                         if !self.may_judge(listing.created_by.as_deref()) {
-                            handles.insert(listing.handle.0);
                             continue;
                         }
-                        handles.insert(listing.handle.0.clone());
                         owners.insert(listing.handle.0, listing.session);
                     }
                     RuntimeCensus {
-                        handles,
+                        serving,
+                        stopped_because,
                         owners,
                         trusted: true,
                     }
@@ -168,7 +200,8 @@ impl SessionService {
                     // Not knowing is not the same as nothing being there.
                     tracing::warn!(kernel = %kernel, error = %e, "cannot enumerate runtimes");
                     RuntimeCensus {
-                        handles: HashSet::new(),
+                        serving: HashSet::new(),
+                        stopped_because: HashMap::new(),
                         owners: HashMap::new(),
                         trusted: false,
                     }
@@ -195,7 +228,7 @@ impl SessionService {
     /// Give one session whatever it is missing.
     async fn settle_session(
         self: &Arc<Self>,
-        record: SessionRecord,
+        mut record: SessionRecord,
         census: &HashMap<KernelId, RuntimeCensus>,
         reclaimed: &mut Reclaimed,
     ) {
@@ -212,11 +245,14 @@ impl SessionService {
         // would replace every live session behind an adapter that merely cannot
         // enumerate.
         let alive: Option<bool> = match census.get(&record.session.kernel) {
+            // `serving`, not `handles`. A sandbox that exists but has stopped
+            // is not one a session can be settled onto, and reading presence
+            // as liveness is what let a session outlive its own runtime.
             Some(view) if view.trusted => Some(
                 record
                     .runtime_id
                     .as_deref()
-                    .is_some_and(|r| view.handles.contains(r)),
+                    .is_some_and(|r| view.serving.contains(r)),
             ),
             Some(_) => None,
             None => {
@@ -224,6 +260,30 @@ impl SessionService {
                 return;
             }
         };
+
+        /*
+         * The moment the loss is established, and the only place it is.
+         *
+         * Not inside the `entries` check below: that map is what this process
+         * is serving, and a runtime may die while another process is serving
+         * it, or while none is. A replacement control plane starts with that
+         * map empty and must still write the loss.
+         *
+         * Guarded on the record naming a runtime at all: `is_some_and` on an
+         * absent id also yields `Some(false)`, and a session that never had a
+         * runtime has not lost one.
+         */
+        if alive == Some(false) {
+            if let Some(runtime) = record.runtime_id.clone() {
+                let cause = census
+                    .get(&record.session.kernel)
+                    .and_then(|view| view.stopped_because.get(&runtime))
+                    .copied()
+                    .map(RuntimeLossCause::from);
+                self.record_runtime_lost(&mut record, &runtime, cause).await;
+                reclaimed.lost_runtimes += 1;
+            }
+        }
 
         // A session that is running, but not on what it should be running. Tried
         // before the checks below because it is the one case where a healthy,
@@ -286,6 +346,33 @@ impl SessionService {
                     reclaimed.deferred_sessions += 1;
                     return;
                 }
+                Err(crate::error::CoreError::RuntimeRefused(why)) => {
+                    /*
+                     * The runtime answered, and would not be taken over.
+                     *
+                     * Never replaced on this. An answer is proof something is
+                     * there to have sent it, and replacing it destroys a
+                     * working agent along with everything it knows — which is
+                     * what happened on every rollout while a refusal and a
+                     * silence were the same answer here. A bridge greeted
+                     * twice refused the second greeting, and a session was
+                     * rebuilt empty beside the pod still holding its
+                     * conversation.
+                     *
+                     * Deferred instead, so the next sweep tries again. A
+                     * refusal that clears costs one sweep; one that does not
+                     * leaves the session listed and its work intact for its
+                     * owner to act on, which is the recoverable failure of the
+                     * two available here.
+                     */
+                    tracing::warn!(
+                        session_id = %id,
+                        %why,
+                        "this runtime answered and refused the takeover; leaving it alone"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
                 Err(e) => {
                     // The provider was asked and says this runtime is there.
                     // Listed but unreachable is no more usable than gone.
@@ -295,6 +382,57 @@ impl SessionService {
         }
 
         self.reprovision(record, reclaimed).await;
+    }
+
+    /// Record that a session's runtime is gone, and stop naming it.
+    ///
+    /// One record write holds both facts. A record that still names a runtime
+    /// this sweep declared dead would have every later sweep declare it dead
+    /// again, filling the log with the same loss every five minutes.
+    ///
+    /// The session moves to `Recovering`, which is what that state means. It is
+    /// not a failure state; the same pass starts a replacement runtime.
+    async fn record_runtime_lost(
+        &self,
+        record: &mut SessionRecord,
+        runtime: &str,
+        cause: Option<RuntimeLossCause>,
+    ) {
+        let id = record.session.id.clone();
+        let seq = self.sequences.take(&id, record.session.last_seq, 1);
+        let previous = record.runtime_id.take();
+        let previous_state = record.session.recovery_state;
+        record.session.last_seq = seq;
+        record.session.recovery_state = RecoveryState::Recovering;
+        if let Err(e) = self.store.upsert(record).await {
+            // Nothing was recorded, so nothing is claimed. Put the local copy
+            // back and let a later sweep establish the loss again.
+            record.runtime_id = previous;
+            record.session.recovery_state = previous_state;
+            tracing::error!(session_id = %id, runtime = %runtime, error = %e,
+                "cannot record that this session's runtime is gone");
+            return;
+        }
+        if let Err(e) = self
+            .append_durably(
+                &id,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq,
+                    kind: EventKind::RuntimeLost {
+                        runtime_id: runtime.to_string(),
+                        cause,
+                    },
+                    appended_at: String::new(),
+                }],
+            )
+            .await
+        {
+            tracing::error!(session_id = %id, error = %e,
+                "the runtime is gone and the log does not say so");
+        }
+        tracing::warn!(session_id = %id, runtime = %runtime, ?cause,
+            "this session's runtime is gone");
     }
 
     /// Start a new runtime for a session that should have one.
@@ -332,8 +470,10 @@ impl SessionService {
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),
             // Nobody is here to delegate one; the renewal loop supplies it.
-            subject_credential: None,
+            caller_credential: None,
+            runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
         };
         let service = Arc::clone(self);
         let session = starting.session;

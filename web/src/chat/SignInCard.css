@@ -1,0 +1,100 @@
+/*
+ * The sign-in card — docs/Web_Style.md §13.
+ *
+ * Built on the approval card's idiom, because it is the same kind of object: a
+ * thing the session has stopped on, sitting in the stream where it stopped,
+ * that a person has to answer before anything continues. It carries the accent
+ * border for the same reason — this is state the surface is waiting on, and
+ * §20.2 leaves the accent exactly this job.
+ *
+ * Never a modal. A session can wait here while its owner reads something else.
+ */
+.signin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: 12px;
+  box-shadow: var(--dsw-glow-accent);
+}
+
+.signin__eyebrow {
+  align-self: flex-start;
+  margin: 0;
+  padding: 2px 8px;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.signin__what {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 17px;
+  line-height: 20px;
+}
+
+/*
+ * The code is being carried to another device — read aloud, or typed on a
+ * phone. It is the largest thing on the card and tracked wide, because a
+ * one-time code read at arm's length is where a wrong character costs the
+ * whole attempt.
+ */
+.signin__coderow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 10px;
+}
+
+.signin__code {
+  flex: 1;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 64px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+  user-select: all;
+}
+
+.signin__go {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/*
+ * Underline and cursor, no colour — the rule §18.1 sets for a link in agent
+ * content, held here too. The address is the agent's, not ours, and colouring
+ * it would be this surface making a claim about where it goes.
+ */
+.signin__link {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.signin__link:focus-visible {
+  outline: none;
+  border-radius: 6px;
+  box-shadow: var(--focus-ring);
+}
+
+.signin__note {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}

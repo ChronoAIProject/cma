@@ -1,10 +1,15 @@
+/*
+ * The terminal takes the same card the conversation gives a code block: it is
+ * the same kind of content — a program's own output, in its own font — and
+ * two treatments for that would make the two planes read as two products.
+ */
 .terminal {
   flex: 1;
   min-height: 0;
-  padding: var(--space-2);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--dsw-alias-markdown-code-block);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
 }
 
 /*

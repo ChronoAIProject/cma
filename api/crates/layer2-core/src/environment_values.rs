@@ -106,6 +106,19 @@ impl SoftwarePackage {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SkillId(pub String);
 
+/// A skill a session was given, and which version of it arrived.
+///
+/// The version rides with the identifier because they are one fact: "this
+/// session has nyxid" is not something anybody can act on without knowing
+/// which nyxid. Optional because a registry need not report one, and a session
+/// recorded before this did not carry it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct GrantedSkill {
+    pub id: SkillId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
 /// A service on the identity platform, as that platform names it.
 ///
 /// Opaque here, exactly like the credential itself: the core carries the

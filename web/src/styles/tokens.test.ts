@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { resolveToken, themes } from '../test/palette';
 
 /**
  * The token layer, checked against docs/Web_Style.md.
@@ -15,8 +16,22 @@ import { describe, expect, it } from 'vitest';
  */
 
 const SRC = resolve(process.cwd(), 'src');
-const TOKENS = join(SRC, 'styles', 'tokens.css');
-const COMPONENTS = join(SRC, 'styles', 'components.css');
+
+/**
+ * The sheets that may define a token — §2 and §3.
+ *
+ * The palette moved out of `tokens.css` into vendored sheets, and it declares
+ * on `body` rather than `:root` because the scrollbar sheet resolves against
+ * the element the tokens sit on. So a definition is looked for across all of
+ * these and under any selector, rather than in one file under one.
+ */
+const TOKEN_SHEETS = [
+  'tokens.css',
+  'design-platform.css',
+  'effects-typography.css',
+  'scrollbar.css',
+  'shiki.css',
+].map((name) => join(SRC, 'styles', name));
 
 function stylesheets(dir: string): string[] {
   const found: string[] = [];
@@ -32,7 +47,13 @@ function stylesheets(dir: string): string[] {
 }
 
 const ALL = stylesheets(SRC);
-const COMPONENT_SHEETS = ALL.filter((path) => path !== TOKENS);
+/*
+ * Everything that is not a token sheet. The palette sheets are full of literal
+ * colours by definition — that is what a palette is — so the no-literals rule
+ * applies to the sheets that consume them, which is where a literal would
+ * actually be unable to follow the theme.
+ */
+const COMPONENT_SHEETS = ALL.filter((path) => !TOKEN_SHEETS.includes(path));
 
 /**
  * Custom properties a stylesheet may reference without defining.
@@ -64,34 +85,54 @@ function referenced(css: string): Set<string> {
 
 describe('the token layer', () => {
   it('holds custom properties and nothing else', () => {
-    // Every rule in tokens.css is a :root block. A class selector here would
-    // mean component styling had leaked back into the file whose whole value
-    // is that checking §2 against it is a single-file review.
-    const withoutComments = readFileSync(TOKENS, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-    const selectors = [...withoutComments.matchAll(/([^{};]*)\{/g)]
-      .map((match) => (match[1] ?? '').trim().split('\n').pop()?.trim() ?? '')
-      .filter((selector) => selector.length > 0 && !selector.startsWith('@'));
-    for (const selector of selectors) {
-      expect(selector, `unexpected selector in tokens.css: ${selector}`).toMatch(/^:root/);
+    // A class selector here would mean component styling had leaked back into
+    // the sheets whose whole value is that checking §2 against them is a
+    // single-place review. `@font-face` is allowed: the one face this product
+    // downloads is declared beside the stack that names it.
+    for (const sheet of TOKEN_SHEETS) {
+      const withoutComments = readFileSync(sheet, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      const selectors = [...withoutComments.matchAll(/([^{};]*)\{/g)]
+        .map((match) => (match[1] ?? '').trim().split('\n').pop()?.trim() ?? '')
+        .filter((selector) => selector.length > 0 && !selector.startsWith('@'));
+      for (const selector of selectors) {
+        expect(selector, `unexpected selector in ${relative(SRC, sheet)}: ${selector}`).toMatch(
+          /^(:root|body|html|::?-?[a-z-]|\*)/,
+        );
+      }
     }
   });
 
-  it('defines every colour on bare :root before any theme block', () => {
-    // Web_Style.md §2: a colour whose only definition lives inside a media
-    // query or a [data-theme] block is a bug — it renders as `unset` under a
-    // combination of theme settings nobody tested.
-    const css = readFileSync(TOKENS, 'utf8');
-    const bare = declared(/^:root\s*\{([^}]*)\}/m.exec(css)?.[1] ?? '');
-    const themed = declared(/:root\[data-theme='dark'\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '');
+  it('defines every themed colour in the light theme too', () => {
+    // §3: a colour whose only definition lives in the dark block renders as
+    // `unset` for every light reader — the same failure the old bare-`:root`
+    // rule guarded, checked where the palette actually lives now.
+    const { light, darkOverrides } = themes();
 
-    expect(themed.size).toBeGreaterThan(0);
-    for (const name of themed) {
-      expect(bare, `--${name} is defined only in the dark block`).toContain(name);
+    expect(darkOverrides.size).toBeGreaterThan(0);
+    for (const name of darkOverrides.keys()) {
+      expect([...light.keys()], `--${name} is defined only in the dark theme`).toContain(name);
+    }
+  });
+
+  it('resolves every token in both themes', () => {
+    // A token whose chain ends on a name nothing defines renders as `unset`,
+    // and does so only in the theme where the chain breaks — which is how one
+    // survives review. Both themes are walked, every tier, to the literal.
+    const palette = themes();
+    for (const name of ['light', 'dark'] as const) {
+      for (const token of palette[name].keys()) {
+        expect(() => resolveToken(token, palette[name]), `--${token} in ${name}`).not.toThrow();
+      }
     }
   });
 
   it('resolves every var() reference in every stylesheet', () => {
-    const defined = new Set([...declared(readFileSync(TOKENS, 'utf8'))]);
+    const defined = new Set<string>();
+    for (const sheet of TOKEN_SHEETS) {
+      for (const name of declared(readFileSync(sheet, 'utf8'))) {
+        defined.add(name);
+      }
+    }
     const missing: string[] = [];
 
     for (const path of ALL) {
@@ -109,6 +150,13 @@ describe('the token layer', () => {
 });
 
 describe('the component layer', () => {
+  it('draws selected text with the appearance accent and paired foreground', () => {
+    const base = readFileSync(join(SRC, 'styles', 'base.css'), 'utf8');
+    const selection = /::selection\s*\{([^}]*)\}/.exec(base)?.[1] ?? '';
+    expect(selection).toMatch(/color:\s*var\(--dsw-alias-label-primary-foreground\)/);
+    expect(selection).toMatch(/background:\s*var\(--dsw-alias-state-business-primary\)/);
+  });
+
   it('declares no literal colour', () => {
     // §2: components reference tokens only. A literal here is a colour that
     // cannot follow the theme and will not appear in §2's contrast table.
@@ -126,15 +174,32 @@ describe('the component layer', () => {
     expect(offences).toEqual([]);
   });
 
-  it('declares no inline box-shadow', () => {
-    // §3: the depth tokens are the only shadow values permitted. An inline
-    // string is a value that cannot be checked against the letterpress system
-    // and will not change with the theme.
+  it('declares no hand-rolled depth', () => {
+    /*
+     * §3: depth comes from the shadow tokens. A hand-written offset and blur
+     * is a value that cannot be checked against the elevation system and will
+     * not change with the theme.
+     *
+     * An `inset` ring is exempt and is not an exception to the rule — it is a
+     * different thing wearing the same property. It draws a hairline without
+     * changing the element's box, which is why the selected pill uses one
+     * instead of a border that would shift its neighbours by a pixel as the
+     * selection moves. Its colour must still be a token.
+     */
     const offences: string[] = [];
     for (const path of COMPONENT_SHEETS) {
       for (const [index, line] of readFileSync(path, 'utf8').split('\n').entries()) {
         const match = /box-shadow:\s*(.+);/.exec(line);
-        if (match && !(match[1] ?? '').startsWith('var(--')) {
+        const value = match?.[1];
+        /*
+         * `none` is an opt-out, not a hand-rolled depth: removing a shadow
+         * cannot introduce a value the elevation system has not seen.
+         */
+        if (value === undefined || value.startsWith('var(--') || value === 'none') {
+          continue;
+        }
+        const ring = /^inset\s+[\d\s.px-]+\s+var\(--[a-z0-9-]+\)$/.test(value);
+        if (!ring) {
           offences.push(`${relative(SRC, path)}:${index + 1} ${line.trim()}`);
         }
       }
@@ -142,14 +207,149 @@ describe('the component layer', () => {
     expect(offences).toEqual([]);
   });
 
-  it('gives every semantic tone a dot colour', () => {
-    // SessionRail renders `tone-bg-${toneFor(lifecycle)}`, and until this
-    // change no stylesheet declared those classes — every status dot in the
-    // rail rendered with no colour at all. Recorded here rather than left to
-    // be re-fixed, per issue #111.
-    const css = readFileSync(COMPONENTS, 'utf8');
-    for (const tone of ['live', 'wait', 'fail', 'ended']) {
-      expect(css, `.tone-bg-${tone} is not declared`).toContain(`.tone-bg-${tone} {`);
+  it('gives every state the dot can take a colour', () => {
+    /*
+     * The rail once rendered `tone-bg-${lifecycle}` classes that no stylesheet
+     * declared, so every status dot in it drew with no colour at all — issue
+     * #111. The classes are gone and StateDot owns the colours now, so the
+     * guard moves with them rather than retiring.
+     *
+     * `ongoing` has the same state attribute as the static dots. Its core uses
+     * that colour while the one child ring supplies the liveness motion.
+     */
+    const css = readFileSync(join(SRC, 'ui', 'StateDot.css'), 'utf8');
+    for (const state of ['done', 'warning', 'error']) {
+      expect(css, `no colour for the ${state} state`).toMatch(
+        new RegExp(`\\[data-state='${state}'\\]\\s*\\{[^}]*color: var\\(--`),
+      );
     }
+    expect(css, 'the running state has no colour').toMatch(
+      /\.statedot\[data-state='ongoing'\]\s*\{[^}]*color: var\(--/,
+    );
+  });
+});
+
+describe('motion', () => {
+  it('removes motion on request rather than adding it on permission', () => {
+    /*
+     * `prefers-reduced-motion: no-preference` matches only where somebody has
+     * explicitly expressed none. A platform that does not report the feature
+     * at all matches *neither* value — so gating motion on `no-preference`
+     * silently took every hover fill and every caret away from those people,
+     * which is the opposite of what the gate was for.
+     *
+     * The `reduce` override is the idiom that gets this right: motion is the
+     * default, and asking for less removes it.
+     */
+    const offences: string[] = [];
+    for (const path of ALL) {
+      const css = readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      if (css.includes('prefers-reduced-motion: no-preference')) {
+        offences.push(relative(SRC, path));
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+
+  it('gives every looping animation a way to stop', () => {
+    /*
+     * A transition happens once and is over; an `infinite` animation does
+     * not, and is exactly what a reduced-motion request is about. Every sheet
+     * that starts one has to say how it stops.
+     */
+    const offences: string[] = [];
+    for (const path of ALL) {
+      const css = readFileSync(path, 'utf8');
+      if (/animation:[^;]*infinite/.test(css) && !css.includes('prefers-reduced-motion: reduce')) {
+        offences.push(relative(SRC, path));
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+
+  it('eases on one curve, from the tokens', () => {
+    // §4: one curve, three durations. A hand-written cubic-bezier is a fourth
+    // curve nobody chose.
+    const offences: string[] = [];
+    for (const path of COMPONENT_SHEETS) {
+      const css = readFileSync(path, 'utf8');
+      if (/cubic-bezier\(/.test(css)) {
+        offences.push(relative(SRC, path));
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+});
+
+describe('the scope a token is declared in', () => {
+  /**
+   * Which selector each property is declared under, across the token sheets.
+   *
+   * Blocks are matched on their own line-start selector, which is enough here
+   * because these sheets are flat: every declaration sits directly under
+   * `:root`, `body`, or `body[data-ds-dark-theme]`.
+   */
+  function declarationsBySelector(): Map<string, Set<string>> {
+    const found = new Map<string, Set<string>>();
+    for (const sheet of TOKEN_SHEETS) {
+      const css = readFileSync(sheet, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const block of css.matchAll(/(?:^|\n)(\s*)([^{}\n]+?)\s*\{([\s\S]*?)\n\1\}/g)) {
+        const selector = (block[2] ?? '').trim();
+        for (const declaration of (block[3] ?? '').matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+          const under = found.get(selector) ?? new Set<string>();
+          under.add(declaration[1] ?? '');
+          found.set(selector, under);
+        }
+      }
+    }
+    return found;
+  }
+
+  it('never references a property its own scope cannot see', () => {
+    /*
+     * The bug this exists for, found in a real browser and invisible to every
+     * other test here: a custom property's value is substituted in the scope
+     * it is **declared** in, not the scope it is used from.
+     *
+     * So `:root { --ground: var(--dsw-alias-bg-base) }` resolves against
+     * `:root` — where the palette, declared on `body`, does not exist — and
+     * computes to nothing. Every old name went empty, and the whole page
+     * rendered on browser defaults: no ground, no ink, no rules, no focus
+     * ring. jsdom resolves no custom properties, so 1083 tests passed.
+     *
+     * `:root` is an ancestor of `body`, so `body` may reference what `:root`
+     * declares. The reverse is what breaks.
+     */
+    const bySelector = declarationsBySelector();
+    const onRoot = bySelector.get(':root') ?? new Set<string>();
+    const onBody = new Set([
+      ...(bySelector.get('body') ?? []),
+      ...(bySelector.get('body[data-ds-dark-theme]') ?? []),
+    ]);
+
+    const offences: string[] = [];
+    for (const sheet of TOKEN_SHEETS) {
+      const css = readFileSync(sheet, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const block of css.matchAll(/(?:^|\n)(\s*):root\s*\{([\s\S]*?)\n\1\}/g)) {
+        for (const declaration of (block[2] ?? '').matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+          for (const reference of (declaration[2] ?? '').matchAll(/var\(\s*(--[\w-]+)/g)) {
+            const name = reference[1] ?? '';
+            const property = declaration[1] ?? '';
+            /*
+             * A `:root` declaration that cannot resolve is harmless once the
+             * same property is declared on `body` as well — everything under
+             * the body then reads the one that works. What is being caught is
+             * a property with no resolvable declaration at all.
+             */
+            if (!onRoot.has(name) && onBody.has(name) && !onBody.has(property)) {
+              offences.push(
+                `${relative(SRC, sheet)}: ${property} on :root reads ${name}, which only body declares`,
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(offences).toEqual([]);
   });
 });

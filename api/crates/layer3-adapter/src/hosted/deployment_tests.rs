@@ -7,7 +7,9 @@ use crate::{RuntimeEnvironment, RuntimeSpec, TermSize};
 fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
@@ -15,6 +17,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
             cols: 120,
             rows: 40,
         },
+        capacity: None,
         subject_credential: None,
         options: Default::default(),
     }
@@ -117,7 +120,7 @@ fn what_the_image_already_carries_is_honoured() {
     // this deployment's baseline, so a blanket refusal would refuse all of them.
     let d = Deployment {
         provided_packages: vec!["nyxid".into()],
-        provided_skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+        skills_root: ".codex/skills".into(),
         ..deployed()
     };
     assert!(d

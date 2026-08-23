@@ -45,6 +45,29 @@ impl SessionService {
         }
     }
 
+    /// The caller's current live-session allowance.
+    ///
+    /// Advisory: asking again on create or revive is the authority. This read
+    /// exists so a client can avoid offering an action that is currently known
+    /// to fail. It is always scoped to the caller's own subject; an operator's
+    /// cross-subject read grant does not turn this into somebody else's quota.
+    pub async fn session_allowance(
+        &self,
+        caller: &Caller,
+    ) -> Result<crate::SessionAllowance, CoreError> {
+        let settings = self.settings.for_provisioning().await;
+        let live = self
+            .store
+            .count_live_for(&caller.subject)
+            .await
+            .map_err(store_failed)?;
+        Ok(crate::SessionAllowance {
+            limit: settings.live_sessions.map(|limit| limit.get()),
+            live,
+            exempt: caller.authorization.allows(Capability::ExceedSessionLimit),
+        })
+    }
+
     /// Every session there is, whoever owns it.
     ///
     /// Distinct from `list_sessions` in two ways that matter to whoever is
@@ -143,5 +166,66 @@ impl SessionService {
             .get(id)
             .map(|entry| entry.live_frames.subscribe())
             .ok_or(CoreError::SessionNotFound)
+    }
+
+    /// Watch what a session is using, as it uses it.
+    ///
+    /// A sibling of `subscribe_live` rather than a widening of it: live frames
+    /// remain conversation-only, and readings have their own lag budget.
+    ///
+    /// Scoped to seeing the session rather than opening its event log. A
+    /// reading contains current resource figures, not the session's ordered
+    /// history. The named ability is checked before any receiver is handed out.
+    pub async fn subscribe_resources(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<tokio::sync::broadcast::Receiver<crate::resources::ResourceReading>, CoreError>
+    {
+        let record = self.record(id).await?;
+        if !caller.may_read_owned_by(&record.session.owner) {
+            return Err(CoreError::Forbidden);
+        }
+        record
+            .session
+            .capabilities
+            .require(crate::capabilities::Capability::Resources)?;
+        self.entries
+            .read()
+            .await
+            .get(id)
+            .map(|entry| entry.resources.subscribe())
+            .ok_or(CoreError::SessionNotFound)
+    }
+
+    /// What is known about a session's resource use right now.
+    ///
+    /// Scoped exactly like `subscribe_resources`: seeing the session and
+    /// holding the named ability are both required. A session with no live
+    /// entry answers `Awaiting`; a point read can report that nothing is held
+    /// even though there is no channel to subscribe to.
+    pub async fn last_reading(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<crate::resources::ResourceStatus, CoreError> {
+        let record = self.record(id).await?;
+        if !caller.may_read_owned_by(&record.session.owner) {
+            return Err(CoreError::Forbidden);
+        }
+        record
+            .session
+            .capabilities
+            .require(crate::capabilities::Capability::Resources)?;
+
+        let entries = self.entries.read().await;
+        Ok(match entries.get(id) {
+            Some(entry) => match &entry.last_reading {
+                Some(held) => crate::resources::ResourceStatus::Held(held.clone()),
+                None if entry.readings_unreported => crate::resources::ResourceStatus::Unreported,
+                None => crate::resources::ResourceStatus::Awaiting,
+            },
+            None => crate::resources::ResourceStatus::Awaiting,
+        })
     }
 }

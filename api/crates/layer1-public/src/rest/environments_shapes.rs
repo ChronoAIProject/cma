@@ -11,9 +11,9 @@
 //! the core's own `Debug` keeps them out of a log elsewhere.
 
 use layer2_core::{
-    AgentConfiguration, CatalogSkill, CredentialMode, EnvironmentProfile,
+    AgentConfiguration, CatalogSkill, CoreError, CredentialMode, EnvironmentProfile,
     EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentVariable, KernelId,
-    PermissionMode, ReasoningEffort, ServiceId, SessionMode, SkillId, SoftwarePackage,
+    PermissionMode, ReasoningEffort, ServiceId, SessionMode, SessionSize, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +53,14 @@ pub struct ProfileRequest {
     /// Which of the owner's platform services the session may reach.
     #[serde(default)]
     pub nyxid: NyxIdBody,
+    /// Standing instructions the owner wants their sessions to start with.
+    ///
+    /// Theirs alone. What this platform tells an agent about itself is
+    /// composed separately and is not editable from here — a session talked
+    /// out of knowing it is already authenticated spends its first minutes
+    /// rediscovering that badly.
+    #[serde(default)]
+    pub agent_notes: String,
 }
 
 /// The platform-access half of a profile, as a caller supplies it.
@@ -87,6 +95,9 @@ pub struct AgentBody {
     /// Whose model access it spends.
     #[serde(default)]
     pub credential: Option<CredentialMode>,
+    /// How much a session from this profile reserves.
+    #[serde(default)]
+    pub size: Option<SizeBody>,
     /// Whether a session's tool bodies are recorded in its durable log.
     #[serde(default)]
     pub record_tool_bodies: Option<bool>,
@@ -95,10 +106,24 @@ pub struct AgentBody {
     pub skills: Vec<String>,
 }
 
-impl From<ProfileRequest> for EnvironmentProfileSpec {
-    fn from(body: ProfileRequest) -> Self {
-        Self {
+/// A requested session size, as a caller supplies it.
+///
+/// Two integers with their units in their names. A field called `cpu` carrying
+/// `1` is ambiguous between one core and one millicore, and the two differ by a
+/// factor of a thousand.
+#[derive(Debug, Deserialize)]
+pub struct SizeBody {
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+}
+
+impl TryFrom<ProfileRequest> for EnvironmentProfileSpec {
+    type Error = CoreError;
+
+    fn try_from(body: ProfileRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
             name: body.name,
+            agent_notes: body.agent_notes,
             variables: body
                 .variables
                 .into_iter()
@@ -124,6 +149,11 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 permission: body.agent.permission.unwrap_or_default(),
                 record_tool_bodies: body.agent.record_tool_bodies.unwrap_or_default(),
                 credential: body.agent.credential.unwrap_or_default(),
+                size: body
+                    .agent
+                    .size
+                    .map(|s| SessionSize::new(s.cpu_millis, s.memory_mib))
+                    .transpose()?,
                 skills: body.agent.skills.into_iter().map(SkillId::new).collect(),
             },
             services: body
@@ -132,7 +162,7 @@ impl From<ProfileRequest> for EnvironmentProfileSpec {
                 .into_iter()
                 .map(ServiceId::new)
                 .collect(),
-        }
+        })
     }
 }
 
@@ -150,6 +180,8 @@ pub struct AgentView {
     reasoning_effort: ReasoningEffort,
     permission: PermissionMode,
     credential: CredentialMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<SessionSize>,
     skills: Vec<String>,
 }
 
@@ -168,12 +200,21 @@ pub struct ProfileView {
     packages: Vec<PackageBody>,
     agent: AgentView,
     nyxid: NyxIdView,
+    /// Standing instructions the owner wrote for their own sessions.
+    ///
+    /// Only theirs. What the platform tells an agent about itself is composed
+    /// when a session starts and is never returned here, because a client that
+    /// showed it as editable would be offering to edit something it cannot.
+    agent_notes: String,
     /// Which entries the platform mandates, so a client can render them as
     /// fixed rather than guessing — and so the rule is visible rather than
     /// only enforced when the client gets it wrong.
     mandatory: MandatoryView,
     created_at: String,
     updated_at: String,
+    /// Whether its owner's sessions start from this profile unless told
+    /// otherwise. At most one of theirs carries it.
+    preferred: bool,
 }
 
 /// The parts of a profile a caller may not remove.
@@ -220,14 +261,17 @@ impl ProfileView {
                 reasoning_effort: profile.agent.reasoning_effort,
                 permission: profile.agent.permission,
                 credential: profile.agent.credential,
+                size: profile.agent.size,
                 skills: profile.agent.skills.into_iter().map(|s| s.0).collect(),
             },
             nyxid: NyxIdView {
                 services: profile.services.into_iter().map(|s| s.0).collect(),
             },
+            agent_notes: profile.agent_notes,
             mandatory: MandatoryView::of(service.baseline()),
             created_at: profile.created_at,
             updated_at: profile.updated_at,
+            preferred: profile.preferred,
         }
     }
 }
