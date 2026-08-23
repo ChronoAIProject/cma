@@ -155,7 +155,7 @@ jobs:
           # GHCR rejects an uppercase path, and the organisation is spelled
           # ChronoAIProject.
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
-          echo "repository=ghcr.io/${owner}/chrono-bot-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+          echo "repository=ghcr.io/${owner}/cma-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
           echo "revision=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       # arm64 builds run under emulation on the amd64 runner.
@@ -181,7 +181,7 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: chrono-bot-${{ matrix.component }}:release
+          tags: cma-${{ matrix.component }}:release
           # Populated by ci.yml. A run on main can restore caches from main and
           # from the default branch, and develop is the default branch, so the
           # layers the merged pull request built are still warm here.
@@ -191,7 +191,7 @@ jobs:
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: chrono-bot-${{ matrix.component }}:release
+          image-ref: cma-${{ matrix.component }}:release
           format: table
           severity: HIGH,CRITICAL
           exit-code: "1"
@@ -271,11 +271,11 @@ jobs:
             printf 'Published to GitHub Container Registry, private to the organisation.\n\n'
             printf '```\n'
             for component in api web runtime; do
-              printf 'ghcr.io/%s/chrono-bot-%s:%s\n' "$owner" "$component" "$VERSION"
+              printf 'ghcr.io/%s/cma-%s:%s\n' "$owner" "$component" "$VERSION"
             done
             printf '```\n\n'
             for component in api web runtime; do
-              printf -- '- [chrono-bot-%s](%s/orgs/%s/packages/container/package/chrono-bot-%s)\n' \
+              printf -- '- [cma-%s](%s/orgs/%s/packages/container/package/cma-%s)\n' \
                 "$component" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY_OWNER" "$component"
             done
           } >> "$out"
