@@ -43,6 +43,10 @@ pub(crate) async fn relay_telemetry(
         tokio::select! {
             _ = interval.tick() => {
                 let sample = state.resources.sample(Instant::now());
+                if !sample.has_observations() {
+                    tracing::debug!(runtime = %id, "resource sample carried no observation");
+                    continue;
+                }
                 let payload = match serde_json::to_vec(&sample) {
                     Ok(payload) => payload,
                     Err(error) => {
