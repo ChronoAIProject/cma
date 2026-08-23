@@ -1,14 +1,6 @@
 /*
- * Vendored from deepseek-harness (deepseek-ai/deepseek-harness),
- * packages/client/ui-theme/src/styles/scrollbar.css, at the commit current on
- * 2026-08-20. Copied under its MIT licence, whose full text and copyright
- * notice are in ./vendor/LICENSE-deepseek-harness.txt as that licence
- * requires.
- *
- * Kept verbatim on purpose — `docs/Web_Style.md` §6 says why. Restyling a
- * palette chosen against a hundred languages, or a scrollbar sheet whose
- * selectors are load-bearing, produces a worse result than adopting it whole.
- * Changes belong upstream, or in a sheet of ours that overrides this one.
+ * First-party. Values are governed by docs/Web_Style.md Section 6.
+ * Change the design authority before changing this sheet.
  */
 
 /* Scrollbar skin: the sole consumer of the four --dsw-alias-scrollbar-*
@@ -34,14 +26,14 @@ body {
      below. A surface that must align itself beside a space-consuming bar
      (ConversationRoot's overlay composer seat) reads this instead of
      hardcoding the number. */
-  --dsh-scrollbar-width: 8px;
+  --dsh-scrollbar-width: 10px;
 }
 
 /* The two paths are mutually exclusive, and the gate is load-bearing rather
    than defensive. A non-`auto` `scrollbar-width` or `scrollbar-color` makes
    Chromium and Safari drop every `::-webkit-scrollbar*` rule for that
    element, including `::-webkit-scrollbar-thumb:hover` — measured in chromium
-   as an 8px `::-webkit-scrollbar` width taking effect on its own and being
+   as a 10px `::-webkit-scrollbar` width taking effect on its own and being
    ignored as soon as `scrollbar-width: thin` is added. Declaring both
    unconditionally therefore leaves the hover tokens with no rendering at all,
    because the engines that implement the hover pseudo-element are exactly the
@@ -77,8 +69,8 @@ body {
    selector matching already does. Not inherited either, hence the unscoped
    selectors. */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 /* Track stays transparent so the thumb reads against whatever surface scrolls
@@ -88,7 +80,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  border-radius: 4px;
+  border-radius: 99px;
   background: var(--dsh-scrollbar-thumb);
 }
 

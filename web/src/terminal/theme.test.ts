@@ -76,7 +76,7 @@ describe('terminal theme', () => {
 
     // And the accent is per-theme: the light one is darker for contrast on
     // white, so finding the dark one here means a slot was shared.
-    expect(JSON.stringify(terminalTheme('light')).toUpperCase()).not.toContain('#679EFE');
+    expect(JSON.stringify(terminalTheme('light')).toUpperCase()).not.toContain('#C3FD43');
   });
 
   it('reads the same mark the palette selects on', () => {
