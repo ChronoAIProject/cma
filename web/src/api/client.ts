@@ -29,13 +29,14 @@ import type {
   SessionLifecycle,
   SessionPlane,
   PricingQuote,
+  SessionResourceStatus,
   SessionSpend,
 } from '../sdk';
 import { isStage, type Stage } from '../sessions/progress';
 import type { SignIn } from '../chat/conversationModel';
 
 export { ApiError, CapabilityRefused, SessionLimitReached, toSession } from '../sdk';
-export type { PricingQuote, SessionAllowance, SessionSpend } from '../sdk';
+export type { PricingQuote, SessionAllowance, SessionResourceStatus, SessionSpend } from '../sdk';
 
 /**
  * The one client this app holds.
@@ -102,6 +103,14 @@ export function quoteSession(environmentProfile?: string | null): Promise<Pricin
 /** Read reserved-capacity spend derived from one session's durable log. */
 export function readSessionSpend(id: string): Promise<SessionSpend> {
   return bot.readSpend(id);
+}
+
+/** Read the latest public resource status for one session. */
+export function readSessionResources(
+  id: string,
+  signal?: AbortSignal,
+): Promise<SessionResourceStatus> {
+  return bot.readResources(id, signal);
 }
 
 /**
