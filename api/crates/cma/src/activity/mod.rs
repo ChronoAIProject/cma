@@ -169,7 +169,7 @@ fn too_large() -> Response {
     (
         StatusCode::PAYLOAD_TOO_LARGE,
         Json(serde_json::json!({
-            "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/request-too-large",
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/request-too-large",
             "title": "request too large",
             "status": 413,
             "detail": "The request body exceeds what this service accepts.",

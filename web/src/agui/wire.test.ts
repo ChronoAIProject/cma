@@ -90,7 +90,7 @@ describe('what the interface serves is what this client reads', () => {
           threadId: 's',
           toolCallId: 'call-1',
           toolCallName: 'Read file src/main.rs',
-          'chrono:toolKind': 'read',
+          'cma:toolKind': 'read',
         },
       },
     ]);
