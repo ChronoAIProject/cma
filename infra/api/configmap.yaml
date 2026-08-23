@@ -156,7 +156,7 @@ data:
   # a session on an image nobody maintains, and forbids interrupting it to fix
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:v0.6.0"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-runtime:v0.7.0"
   # The default, and therefore the floor a session receives when its profile
   # names no size.
   #
