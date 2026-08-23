@@ -351,6 +351,7 @@ impl SessionService {
             live_frames: live_frames.clone(),
             resources,
             last_reading: None,
+            memory_pressure: Default::default(),
             readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),

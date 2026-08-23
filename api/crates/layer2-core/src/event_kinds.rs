@@ -289,6 +289,37 @@ pub enum EventKind {
         /// Whether the action was permitted.
         allowed: bool,
     },
+    /// A session's memory has been near its limit long enough to say so.
+    ///
+    /// Durable because it happened once and the readings it was folded from
+    /// are never stored. An episode opens only after occupancy has held at or
+    /// above its entry threshold for several consecutive readings.
+    ///
+    /// An open episode ends at the first status change that leaves
+    /// `is_interactive()`, whether or not a close was written. A second open
+    /// with no close between replaces the first; this is state, not a stack.
+    MemoryPressureOpened {
+        /// Bytes in use at the reading that opened it.
+        used_bytes: u64,
+        /// The limit it was measured against.
+        limit_bytes: u64,
+        /// The first as a fraction of the second, in permille.
+        occupancy_permille: u16,
+    },
+    /// A session's memory came away from its limit and stayed away.
+    MemoryPressureClosed {
+        /// The most bytes held at any point in the episode.
+        peak_bytes: u64,
+        /// The limit those bytes were measured against.
+        limit_bytes: u64,
+        /// The peak as a fraction of the limit, in permille.
+        peak_permille: u16,
+        /// How long the episode ran, from a monotonic clock.
+        ///
+        /// A duration rather than wall-clock subtraction: event timestamps are
+        /// display moments and do not provide a monotonic interval.
+        duration_seconds: u32,
+    },
     /// The session's runtime is gone, and the service has established it.
     ///
     /// Written where reconciliation finds out, not where a replacement is
@@ -397,6 +428,8 @@ const KNOWN_TAGS: &[&str] = &[
     "terminal_resized",
     "approval_requested",
     "approval_resolved",
+    "memory_pressure_opened",
+    "memory_pressure_closed",
     "runtime_lost",
     "plane_changed",
     "sign_in_required",
