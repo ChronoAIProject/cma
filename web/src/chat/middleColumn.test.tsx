@@ -27,8 +27,8 @@ function payload(id: string, planes: readonly string[]) {
     kernel: 'codex',
     created_at: '2026-08-18T08:53:00Z',
     conforms_to: [
-      'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core',
-      ...planes.map((name) => `https://spec.chrono-ai.fun/chrono-bot/1.0/conf/${name}`),
+      'https://spec.chrono-ai.fun/cma/1.0/conf/core',
+      ...planes.map((name) => `https://spec.chrono-ai.fun/cma/1.0/conf/${name}`),
     ],
   };
 }

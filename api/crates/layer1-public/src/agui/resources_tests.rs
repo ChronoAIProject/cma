@@ -108,7 +108,7 @@ async fn a_reading_carries_no_cursor() {
 
     let wire = on_the_wire(&frame).await;
     assert!(!wire.contains("id:"), "{wire:?}");
-    assert!(wire.contains("\"chrono:live\":true"), "{wire:?}");
+    assert!(wire.contains("\"cma:live\":true"), "{wire:?}");
 }
 
 #[tokio::test]
