@@ -1,4 +1,4 @@
-//! chrono-bot control plane. Wires Layer 1 interfaces onto the Layer 2 core,
+//! CMA control plane. Wires Layer 1 interfaces onto the Layer 2 core,
 //! which drives kernels through Layer 3 adapters.
 //!
 //! This process never executes agent code. It serves public traffic, keeps one

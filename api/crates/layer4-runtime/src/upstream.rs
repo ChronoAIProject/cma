@@ -194,7 +194,7 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
             let status = resp.status();
             if status.is_client_error() || status.is_server_error() {
                 // Remembered rather than only logged. This is the moment
-                // chrono-bot learns the agent's model endpoint refused it, and
+                // CMA learns the agent's model endpoint refused it, and
                 // it is the only moment: what the agent does about it — retry,
                 // give up quietly, report something vaguer — is the agent's
                 // business, and none of it reaches the owner on its own.

@@ -1,5 +1,5 @@
 /**
- * The dashboard's own chrono-bot client.
+ * The dashboard's own CMA client.
  *
  * Everything below is the SDK (`web/src/sdk/`) bound to one configuration: the
  * empty one. That means same-origin paths authenticated by the cookie the

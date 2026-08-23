@@ -1,5 +1,5 @@
 [package]
-name = "chrono-bot"
+name = "cma"
 version.workspace = true
 edition.workspace = true
 publish = false

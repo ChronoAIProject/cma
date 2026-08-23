@@ -3,7 +3,7 @@
  *
  * The functions underneath all take a config as their first argument, which is
  * what makes two clients in one process possible. This is the shape a consumer
- * actually wants to hold: `chronoBot.listSessions()` rather than
+ * actually wants to hold: `cma.listSessions()` rather than
  * `listSessions(config)` threaded through every call site.
  *
  * Both are exported. A React app holds the object; a test that wants one call
@@ -18,7 +18,7 @@ import type { CreateSession, PricingQuote, SessionAllowance, SessionSpend } from
 import type { KernelOffer, Session, SessionPlane } from './types';
 
 /**
- * A configured chrono-bot client.
+ * A configured CMA client.
  *
  * Holds no session state and caches nothing. Every method is a request, and
  * what a session *is* comes back from the service rather than from anything
