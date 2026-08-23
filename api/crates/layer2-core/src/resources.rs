@@ -1,6 +1,7 @@
 //! Resource use in the core's own vocabulary.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use layer3_adapter::{AdapterError, KernelAdapter, RuntimeHandle};
 use tokio::sync::mpsc;
@@ -87,6 +88,31 @@ pub(crate) fn reading_from(sample: layer3_adapter::ResourceSample) -> ResourceRe
     }
 }
 
+/// Reduce one reading to the memory fields consumed by the pressure fold.
+#[allow(clippy::question_mark)] // The absence guard is the fold's first rule.
+pub(crate) fn pressure_sample(
+    reading: &ResourceReading,
+    at: Instant,
+) -> Option<crate::pressure::PressureSample> {
+    let Some(used) = reading.memory_bytes_used else {
+        return None;
+    };
+    let (limit_bytes, occupancy_permille) = match reading.memory_bytes_limit {
+        Some(limit) if limit > 0 => {
+            let occupancy =
+                (u128::from(used) * 1_000 / u128::from(limit)).min(u128::from(u16::MAX)) as u16;
+            (Some(limit), Some(occupancy))
+        }
+        _ => (None, None),
+    };
+    Some(crate::pressure::PressureSample {
+        occupancy_permille,
+        used_bytes: used,
+        limit_bytes,
+        at,
+    })
+}
+
 /// Watch a session for as long as it is this process's to watch.
 ///
 /// Each reading takes the entries write lock once for a field assignment. No
@@ -124,6 +150,7 @@ pub(crate) fn spawn_resource_watch(
 
         while let Some(sample) = rx.recv().await {
             let reading = reading_from(sample);
+            let pressure = pressure_sample(&reading, Instant::now());
             let resources = {
                 let mut entries = service.entries.write().await;
                 let Some(entry) = entries.get_mut(&id) else {
@@ -136,6 +163,9 @@ pub(crate) fn spawn_resource_watch(
                 entry.resources.clone()
             };
             let _ = resources.send(reading);
+            if let Some(sample) = pressure {
+                service.note_memory_pressure(&id, sample).await;
+            }
         }
 
         tracing::info!(session_id = %id, "resource reading watch ended");
