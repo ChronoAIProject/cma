@@ -28,8 +28,10 @@ body[data-ds-dark-theme] {
   --dsw-ring-accent-soft: 0 0 0 3px rgba(195, 253, 67, 0.1);
 }
 
-/* Composite typography exports are retained until the fonts issue applies Section 4. */
+/* Section 4's composite type ramp and display convention. */
 body {
+  --ds-font-variation-display: normal;
+
   --dsw-font-markdown-h1: 700 24px/34px var(--dsw-font-family);
   --dsw-font-markdown-h1-font-family: var(--dsw-font-family);
   --dsw-font-markdown-h1-font-weight: 700;
@@ -240,4 +242,8 @@ body {
   --dsw-font-xxxs-strong-11-line-height: 14px;
   --dsw-font-xxxs-strong-11-font-size: 11px;
   --dsw-font-xxxs-strong-11-font-style: normal;
+}
+
+body[data-ds-dark-theme] {
+  --ds-font-variation-display: 'wdth' 118;
 }
