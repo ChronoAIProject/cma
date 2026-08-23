@@ -40,6 +40,7 @@ function providerSpy() {
 }
 
 const PROMPT = /what would you like cma to build/i;
+const css = () => readFileSync(resolve(process.cwd(), 'src/landing/Landing.css'), 'utf8');
 
 describe('Landing', () => {
   beforeEach(() => {
@@ -110,6 +111,53 @@ describe('Landing', () => {
   });
 });
 
+describe('the signed-out appearance', () => {
+  it('draws the two signature grounds entirely from appearance tokens', () => {
+    const sheet = css();
+    const light = /\.landing\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(light).toContain('background-color: var(--dsw-alias-bg-base)');
+    expect(light).toContain('repeating-linear-gradient');
+    expect(light).toContain(
+      'color-mix(in srgb, var(--dsw-alias-state-business-primary) 7%, transparent) 27px 28px',
+    );
+    expect(light).toContain(
+      'color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent) 47px 48px',
+    );
+
+    const dark = /body\[data-ds-dark-theme\] \.landing\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(dark).toContain('radial-gradient');
+    expect(dark).toContain(
+      'color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent) 1px',
+    );
+    expect(dark).toContain('background-size: 18px 18px');
+  });
+
+  it('uses themed display weight and depth without changing the mark geometry', () => {
+    const sheet = css();
+    const mark = /\.landing__mark\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(mark).toContain('filter: drop-shadow(var(--dsw-shadow-lv1-blur))');
+    expect(sheet).toMatch(
+      /body\[data-ds-dark-theme\] \.landing__mark\s*\{[^}]*filter: drop-shadow\(var\(--dsw-glow-accent\)\)/,
+    );
+
+    const word = /\.landing__word\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(word).toContain('font-family: var(--dsw-font-family)');
+    expect(word).toContain('font-weight: 700');
+    expect(word).toContain('font-variation-settings: var(--ds-font-variation-display)');
+    expect(sheet).toMatch(/body\[data-ds-dark-theme\] \.landing__word\s*\{[^}]*font-weight: 900/);
+  });
+
+  it('gives the prompt the shared field scale and soft accent focus', () => {
+    const sheet = css();
+    expect(sheet).toMatch(
+      /\.landing__prompt\s*\{[^}]*height: 44px[^}]*background: var\(--dsw-alias-bg-layer-1\)[^}]*border-radius: 999px/,
+    );
+    expect(sheet).toMatch(
+      /\.landing__prompt:focus-visible\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
+    );
+  });
+});
+
 describe('the mark bobs, and only once it is drawn', () => {
   /*
    * Asserted against the sheet rather than a rendered node: jsdom runs no
@@ -120,8 +168,6 @@ describe('the mark bobs, and only once it is drawn', () => {
    * stated terms. Each of those terms is one assertion below, so relaxing one
    * is a decision somebody makes rather than a drift nobody notices.
    */
-  const css = () => readFileSync(resolve(process.cwd(), 'src/landing/Landing.css'), 'utf8');
-
   it('waits for the drawing to finish before it starts', () => {
     // The mark's own file fades the bridge in last, at 1.78s over 0.3s. A bob
     // starting before 2.08s drags a half-drawn mark around.
