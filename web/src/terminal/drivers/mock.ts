@@ -19,7 +19,7 @@ export interface MockDriverOptions {
   readonly openingTurn?: string;
 }
 
-const PROMPT = '\x1b[1;35moperator\x1b[0m\x1b[36m@chrono-bot\x1b[0m\x1b[90m:~$\x1b[0m ';
+const PROMPT = '\x1b[1;35moperator\x1b[0m\x1b[36m@cma\x1b[0m\x1b[90m:~$\x1b[0m ';
 
 export function createMockDriver(options: MockDriverOptions): TerminalDriver {
   let sink: TerminalSink | null = null;
