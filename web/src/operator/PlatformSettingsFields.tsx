@@ -208,10 +208,20 @@ interface NumberFieldProps {
   readonly label: string;
   readonly value: number;
   readonly error?: string;
+  readonly minimum?: number;
+  readonly maximum?: number;
   readonly onChange: (value: number) => void;
 }
 
-export function NumberField({ id, label, value, error, onChange }: NumberFieldProps) {
+export function NumberField({
+  id,
+  label,
+  value,
+  error,
+  minimum = 1,
+  maximum = MAX_U32,
+  onChange,
+}: NumberFieldProps) {
   return (
     <div className="field platform-settings__number-field">
       <label className="field__label" htmlFor={id}>
@@ -221,8 +231,8 @@ export function NumberField({ id, label, value, error, onChange }: NumberFieldPr
         id={id}
         placement="platform-settings__number"
         type="number"
-        min="1"
-        max={String(MAX_U32)}
+        min={String(minimum)}
+        max={String(maximum)}
         step="1"
         inputMode="numeric"
         aria-invalid={error === undefined ? undefined : true}

@@ -4,6 +4,7 @@ import {
   changePlane,
   createSession,
   deleteSession,
+  DeploymentAtCapacity,
   reviveSession,
   SessionLimitReached,
   stopSession,
@@ -109,10 +110,14 @@ export function useSessionActions({
         select(session.id);
         setOpeningForId((prev) => prev ?? session.id);
       } catch (cause) {
-        // A changed price belongs in the still-open confirmation card, where a
-        // fresh quote can be shown. Reporting it behind that card would leave a
-        // stale failure notice after the owner accepts the new rate.
-        if (!(cause instanceof ApiError && cause.code === 'price_changed')) {
+        // These answers belong in the still-open confirmation card, where the
+        // owner can act on the fresh quote or the requested/free figures.
+        // Reporting either behind that card would leave a stale duplicate after
+        // the owner accepts, retries, or backs out.
+        const handledInDialog =
+          (cause instanceof ApiError && cause.code === 'price_changed') ||
+          cause instanceof DeploymentAtCapacity;
+        if (!handledInDialog) {
           report(cause, 'Starting a session failed.', 'No session was created.');
         }
         throw cause;

@@ -157,13 +157,15 @@ data:
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/chrono-bot-runtime:v0.6.0"
-  # What a session reserves when its profile names no size: the deployment's
-  # own reservation.
+  # The default, and therefore the floor a session receives when its profile
+  # names no size.
   #
-  # The namespace carries a ResourceQuota, so dividing it by these figures is
-  # now a lower bound on capacity rather than an exact session count: a profile
-  # may ask for another reservation. Nothing bounds that per-session request
-  # yet; administrator-set bounds are the follow-up.
+  # How many sessions run at once is decided by `deployment_capacity` in
+  # platform settings. An administrator copies those declared totals from the
+  # space this namespace was given; the control plane sums the sizes promised
+  # by durable session records before admitting another. The old incident in
+  # which the tenth session was refused only after its owner watched it remain
+  # in provisioning is therefore refused during creation instead.
   #
   # Requests and limits are the same value at the provider, so this is a
   # reservation rather than a ceiling to burst against. Raising it costs

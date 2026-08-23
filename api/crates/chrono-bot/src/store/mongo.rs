@@ -8,7 +8,8 @@
 use futures_util::TryStreamExt;
 use layer2_core::{
     store::{SessionRecord, SessionStore, StoreError},
-    Event, Rate, RateCardId, SessionId, SessionPricing, SessionStatus, StoredEvent, SubjectId,
+    Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StoredEvent,
+    SubjectId,
 };
 use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReplaceOptions};
@@ -52,6 +53,18 @@ struct PricingDoc {
     memory_mib: i64,
     micros_per_hour: i64,
     quoted_at: String,
+}
+
+/// The one document produced by the deployment-reservation aggregation.
+///
+/// MongoDB sums into signed BSON integers. Conversion to the core's unsigned
+/// ledger is checked below rather than letting malformed negative data wrap.
+#[derive(Debug, Deserialize)]
+struct ReservedCapacityDoc {
+    sessions: i64,
+    unsized_sessions: i64,
+    cpu_millis: i64,
+    memory_mib: i64,
 }
 
 impl StoredSkill {
@@ -192,8 +205,23 @@ impl MongoSessionStore {
             .create_index(owner)
             .await
             .map_err(|e| StoreError::Unavailable(format!("session index: {e}")))?;
+
+        // Session creation matches this exact desired-state field before
+        // grouping reservations, so historical idle records never need to be
+        // scanned to answer whether another request fits.
+        self.sessions
+            .create_index(reservation_status_index())
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("session status index: {e}")))?;
         Ok(())
     }
+}
+
+fn reservation_status_index() -> IndexModel {
+    IndexModel::builder()
+        .keys(doc! { "status": 1 })
+        .options(IndexOptions::builder().name("status_1".to_string()).build())
+        .build()
 }
 
 /// The duplicate-key code, which is the unique index on `(session_id, seq)`
@@ -344,6 +372,60 @@ fn parse_plain<T: for<'de> Deserialize<'de>>(s: &str) -> Result<T, StoreError> {
         .map_err(|e| StoreError::Malformed(format!("{s:?}: {e}")))
 }
 
+/// A bounded server-side sum of every durable promise that wants a runtime.
+fn reserved_capacity_pipeline() -> Result<Vec<Document>, StoreError> {
+    let statuses = SessionStatus::WANTING_RUNTIME
+        .iter()
+        .map(serde_plain_string)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(vec![
+        doc! { "$match": { "status": { "$in": statuses } } },
+        doc! {
+            "$group": {
+                "_id": null,
+                "sessions": { "$sum": 1_i64 },
+                "unsized_sessions": {
+                    "$sum": {
+                        "$cond": [
+                            { "$eq": [{ "$ifNull": ["$options.size", null] }, null] },
+                            1_i64,
+                            0_i64,
+                        ]
+                    }
+                },
+                "cpu_millis": {
+                    "$sum": { "$ifNull": ["$options.size.cpu_millis", 0_i64] }
+                },
+                "memory_mib": {
+                    "$sum": { "$ifNull": ["$options.size.memory_mib", 0_i64] }
+                },
+            }
+        },
+    ])
+}
+
+fn reserved_from_doc(doc: ReservedCapacityDoc) -> Result<Reserved, StoreError> {
+    fn unsigned(value: i64, field: &str) -> Result<u64, StoreError> {
+        u64::try_from(value).map_err(|_| {
+            StoreError::Malformed(format!(
+                "reserved-capacity aggregation returned negative {field}: {value}"
+            ))
+        })
+    }
+
+    Ok(Reserved {
+        sessions: unsigned(doc.sessions, "session count")?,
+        unsized_sessions: unsigned(doc.unsized_sessions, "unsized session count")?,
+        cpu_millis: unsigned(doc.cpu_millis, "CPU total")?,
+        memory_mib: unsigned(doc.memory_mib, "memory total")?,
+    })
+}
+
+fn reserved_from_optional_doc(doc: Option<ReservedCapacityDoc>) -> Result<Reserved, StoreError> {
+    doc.map_or_else(|| Ok(Reserved::default()), reserved_from_doc)
+}
+
 fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
     use layer2_core::{Session, TerminalGeometry};
     let geometry = TerminalGeometry::new(d.columns as u16, d.rows as u16)
@@ -426,6 +508,23 @@ impl SessionStore for MongoSessionStore {
             .map_err(|e| StoreError::Unavailable(format!("count live sessions: {e}")))?;
         u32::try_from(count)
             .map_err(|_| StoreError::Malformed("live session count exceeds u32".into()))
+    }
+
+    async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
+        let mut cursor = self
+            .sessions
+            .aggregate(reserved_capacity_pipeline()?)
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("sum reserved capacity: {e}")))?;
+        let document = cursor
+            .try_next()
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("reserved capacity cursor: {e}")))?;
+        let aggregate = document
+            .map(mongodb::bson::deserialize_from_document)
+            .transpose()
+            .map_err(|e| StoreError::Malformed(format!("reserved capacity: {e}")))?;
+        reserved_from_optional_doc(aggregate)
     }
 
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {

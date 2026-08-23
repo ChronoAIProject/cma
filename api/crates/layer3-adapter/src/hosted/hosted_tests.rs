@@ -659,6 +659,15 @@ mod what_the_provider_said {
             AdapterError::Rejected("no".to_string()).context("the sign-in did not complete");
         assert!(!refused.is_runtime_loss(), "got {refused:?}");
         assert!(format!("{refused}").contains("the sign-in did not complete"));
+
+        let capacity = AdapterError::AtCapacity("declared by an adapter".to_string())
+            .context("could not start the runtime");
+        assert!(
+            matches!(capacity, AdapterError::AtCapacity(_)),
+            "got {capacity:?}"
+        );
+        assert!(!capacity.is_runtime_loss(), "got {capacity:?}");
+        assert!(format!("{capacity}").contains("could not start the runtime"));
     }
 }
 

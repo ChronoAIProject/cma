@@ -74,6 +74,63 @@ async fn a_provider_that_cannot_provision_fails_the_session_rather_than_leaving_
 }
 
 #[tokio::test]
+async fn a_late_capacity_refusal_is_not_retried_and_is_recorded_for_the_owner() {
+    let store = Arc::new(FakeStore::default());
+    let caller = user("alice");
+    let adapter = Arc::new(FakeAdapter {
+        refuse_at_capacity: true,
+        ..FakeAdapter::default()
+    });
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Terminated);
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "waiting and asking again cannot create room"
+    );
+
+    let events = svc
+        .events_since(&caller, &created.id, None)
+        .await
+        .expect("history readable");
+    let (detail, capability) = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            crate::event::EventKind::StatusChanged {
+                status: SessionStatus::Terminated,
+                detail: Some(detail),
+                capability,
+                ..
+            } => Some((detail, capability)),
+            _ => None,
+        })
+        .expect("the terminal status is explained");
+    assert_eq!(
+        detail,
+        "This deployment has no room for a session this size right now. Nothing is wrong with your session or your request — stop a session, or ask for a smaller one, and try again."
+    );
+    assert_eq!(capability, &None);
+    for forbidden in [
+        "provider",
+        "protocol",
+        "kubernetes",
+        "namespace",
+        "quota",
+        "http",
+    ] {
+        assert!(
+            !detail.to_ascii_lowercase().contains(forbidden),
+            "owner wording leaked {forbidden:?}: {detail}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_runtime_that_cannot_be_attached_to_is_torn_down() {
     // The leak this design exists to prevent: provisioning succeeded, so a
     // runtime is running, and the session it belongs to has failed.
