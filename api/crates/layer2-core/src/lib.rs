@@ -37,6 +37,7 @@ pub mod platform_service;
 mod pricing;
 mod provision;
 mod provision_failure;
+mod provision_support;
 mod reading;
 mod readopt;
 pub mod reconcile;
@@ -73,6 +74,8 @@ mod limits_tests;
 #[cfg(test)]
 mod pricing_service_tests;
 #[cfg(test)]
+mod resources_tests;
+#[cfg(test)]
 mod spend_tests;
 
 #[cfg(test)]
@@ -94,6 +97,7 @@ mod recovery_tests;
 #[path = "rotate_tests.rs"]
 mod rotate_tests;
 pub mod service;
+mod service_state;
 pub mod session;
 pub mod size;
 pub mod store;
