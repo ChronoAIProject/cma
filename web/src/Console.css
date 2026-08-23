@@ -1,23 +1,4 @@
 /*
- * The authenticated surface, per docs/Web_Style.md §5, §12 and §16.
- *
- * Three columns inside the one page frame: the sessions someone has, the one
- * they are working in, and what is known about it. The frame owns the app bar,
- * the status band and the fact that the page never scrolls; each column owns
- * its own overflow, so a long session list or a long transcript never pushes
- * anything else off the screen.
- */
-
-.console__body {
-  /* The positioned ancestor the details drawer overlays below 75rem (§16). */
-  position: relative;
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-}
-
-/*
  * The terminal column, taking whatever width the rail leaves. It opens with
  * its own head band, so the rule under the session header lands on the rule
  * under the rail's — §5's whole reason for setting band heights.
@@ -28,7 +9,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 /*
@@ -46,7 +27,7 @@
  */
 .console__notice {
   align-items: center;
-  margin: var(--space-3) var(--space-4) 0;
+  margin: 12px 16px 0;
 }
 
 .console__noticebody {
@@ -64,9 +45,9 @@
 /* The API's own code, drawn as an identifier so nobody reads it as prose. */
 .console__noticecode {
   flex: none;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
 }
 
 .console__noticedismiss {
@@ -76,10 +57,10 @@
 .console__empty {
   max-width: 32rem;
   margin: auto;
-  padding: var(--space-6);
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
-  color: var(--ink-3);
+  padding: 24px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
   text-align: center;
 }
 
@@ -89,70 +70,3 @@
  * surface to give up width: the sheet closes first, then the rail collapses,
  * then the rail leaves the layout.
  */
-
-/*
- * Below 60rem the rail leaves the layout and becomes a drawer over it, so the
- * terminal keeps the full width rather than sharing it with a strip.
- */
-@media (max-width: 59.999rem) {
-  .console__drawer {
-    position: fixed;
-    top: var(--bar-height);
-    bottom: var(--band-foot);
-    left: 0;
-    z-index: 15;
-    display: flex;
-  }
-
-  .console__drawer .rail {
-    box-shadow: var(--lift-plate);
-  }
-
-  /*
-   * The chrome §16 hands the drawer below 30rem. Stacked, because at that
-   * width a row of it would truncate the one thing it exists to carry.
-   */
-  .console__drawerchrome {
-    flex-direction: column;
-    gap: var(--space-2);
-    align-items: stretch;
-    width: var(--rail-width);
-    max-width: 80vw;
-    padding-block: var(--space-2);
-    background: var(--surface);
-    border-right: 1px solid var(--rule);
-    border-bottom: 1px solid var(--rule);
-  }
-
-  .console__drawer {
-    flex-direction: column;
-    max-width: 80vw;
-  }
-
-  .console__drawer .rail {
-    max-width: 80vw;
-  }
-
-  /*
-   * The scrim behind the drawer. A drawer over a live terminal with nothing
-   * between them reads as two surfaces at the same depth, and a gesture meant
-   * for the drawer lands in the terminal.
-   */
-  .console__drawerscrim {
-    position: fixed;
-    inset: 0;
-    z-index: 14;
-    background: var(--scrim);
-  }
-}
-
-/*
- * Below 30rem the sheet gives up its 412px: at that width it would leave the
- * terminal a few rows, and §16 makes the terminal the last surface to lose
- * space. Closed it is still the 40px band, still saying what the session is.
- */
-@media (max-width: 29.999rem) {
-  .details {
-    height: 50dvh;
-  }
-}

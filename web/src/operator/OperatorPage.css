@@ -1,5 +1,5 @@
 /*
- * The operations page — docs/Web_Style.md §14.
+ * The operations page — `docs/Web_Style.md` §19.
  *
  * A page, not a dialog: it is the one surface that shows many rows at once,
  * and a 560px dialog was why its rows truncated.
@@ -11,61 +11,80 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
+  font-family: var(--dsw-font-family);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 /*
- * The head band every column shares. Its height comes from .band--head, so the
+ * The header's proportions come from `.sessionheader`, so the
  * page's rule lands where the sessions view's does and the window does not
  * shift as somebody switches between them.
  */
+/* The header's proportions come from `.sessionheader`; only its gap differs. */
 .operator__head {
-  gap: var(--space-2);
+  gap: 8px;
 }
 
-/* §14: the page title and its one-line description. */
+/* §19: the page title and its one-line description. */
 .operator__intro {
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-5) var(--page-gutter) var(--space-3);
+  gap: 4px;
+  padding: 20px 20px 12px;
 }
 
 .operator__title {
   margin: 0;
-  color: var(--ink);
-  font-size: var(--text-page);
+  color: var(--dsw-alias-label-primary);
+  font-size: 24px;
   font-weight: 600;
-  letter-spacing: var(--track-tight);
+  line-height: 32px;
+  letter-spacing: -0.01em;
 }
 
 .operator__description {
   margin: 0;
-  color: var(--ink-2);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 /*
- * The four views as an underlined tablist at the interface size — §14:
+ * The five views as an underlined tablist at the interface size — §19:
  * selected by weight, accent ink, a 2px accent bottom border AND
  * aria-selected, so colour is never the only signal.
  */
+/*
+ * The same tab strip the session header uses for its planes: a page with two
+ * kinds of tab that look different is a page where somebody has to learn
+ * which kind they are looking at.
+ */
 .operator__tabs {
-  gap: var(--space-1);
-  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: flex-end;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .operator__tab {
-  height: var(--control-h);
-  padding-inline: var(--space-3);
-  color: var(--ink-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  cursor: pointer;
+  position: relative;
+  flex: none;
+  height: 42px;
+  padding: 0 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
   background: none;
   border: 0;
-  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.operator__tab:hover {
+  color: var(--dsw-alias-label-secondary);
 }
 
 .operator__tab:focus-visible {
@@ -74,9 +93,19 @@
 }
 
 .operator__tab--on {
-  color: var(--accent);
+  color: var(--dsw-alias-state-business-primary);
   font-weight: 600;
-  border-bottom-color: var(--accent);
+}
+
+.operator__tab--on::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-glow-accent);
+  content: '';
 }
 
 /*
@@ -87,9 +116,9 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 12px;
   min-height: 0;
-  padding: var(--space-3) var(--page-gutter);
+  padding: 12px var(--page-gutter);
   overflow-y: auto;
 }
 
@@ -99,15 +128,16 @@
 
 .operator__waiting,
 .operator__summary {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 /* The same treatment `field__error` gives a failure elsewhere in the product. */
 .operator__error {
-  color: var(--fail);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 /* Filters — ordinary selects that narrow without reordering. */
@@ -115,25 +145,49 @@
 .operator__filters {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: 12px;
 }
 
 .operator__filter {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
 }
 
 .operator__filter-label {
-  color: var(--ink-3);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
+.operator__filter select {
+  height: 32px;
+  padding: 0 10px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  background-color: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+}
+
+.operator__filter select:hover {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.operator__filter select:focus-visible {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-ring-accent-soft);
+}
+
 .operator__confirm {
-  color: var(--ink-2);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 /*
@@ -146,17 +200,28 @@
 .record__text {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
   min-width: 0;
 }
 
 .record__actions {
   display: flex;
   flex: none;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
 }
 
 .record__anonymous {
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+@media (max-width: 29.999rem) {
+  .operator__tabs {
+    padding-inline: 0;
+  }
+
+  .operator__tab {
+    padding-inline: 8px;
+    font-size: 13px;
+  }
 }

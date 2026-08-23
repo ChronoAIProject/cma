@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageStream } from './MessageStream';
 import { ApprovalCard } from './ApprovalCard';
+import { SignInCard } from './SignInCard';
 import { Composer } from './Composer';
+import { Context } from './Context';
 import { Usage } from './Usage';
+import { MemoryPressureNotice, Resources } from './Resources';
+import { RuntimeLoss } from './RuntimeLoss';
 import { EMPTY, reduce, type Conversation } from './conversation';
 import { planeStateFor } from './planeState';
 import {
@@ -17,7 +21,9 @@ import {
   type SessionCapabilities,
 } from '../agui';
 import type { Session } from '../sessions/types';
+import { readSessionResources, type SessionResourceStatus } from '../api/client';
 import './ConversationSurface.css';
+import type { ToolCallEntry } from './conversation';
 
 /**
  * A session drawn as a conversation — `Web_Style.md` §18.
@@ -25,9 +31,9 @@ import './ConversationSurface.css';
  * The counterpart of `TerminalSurface`: the middle column draws one or the
  * other from what the session was granted, and neither knows the other exists.
  *
- * Everything it shows comes from AG-UI and from nothing else. A chat surface
- * reaching for a terminal route to fill a gap in the conversation has found a
- * hole in AG-UI, and the hole is the bug (`CLAUDE.md` §1).
+ * Live and durable state comes from AG-UI. One public REST point read tells an
+ * older runtime that will never report from one whose first reading is still
+ * due; every third-party client can make the same call (`CLAUDE.md` §1).
  */
 
 interface ConversationSurfaceProps {
@@ -42,46 +48,150 @@ interface ConversationSurfaceProps {
   readonly transport?: AguiTransport;
   /** Where operations go. Injected for the same reason. */
   readonly operations?: OperationTransport;
+  /** The public resource-status point read. Injected so lifecycle tests own it. */
+  readonly readResourceStatus?: (
+    id: string,
+    signal?: AbortSignal,
+  ) => Promise<SessionResourceStatus>;
   /**
    * Told when the session starts or stops waiting on an answer — §18.3: a
    * session waiting on one says so everywhere it appears, and the rail and
    * the header are drawn by the console rather than by this surface.
    */
   readonly onWaitingChange?: (waiting: boolean) => void;
+  /**
+   * Open a tool call in the details column.
+   *
+   * The surface does not own that column — it belongs to the page — so this
+   * reports upward rather than holding a panel of its own.
+   */
+  readonly onInspect?: (call: ToolCallEntry) => void;
+  /** The call the column is showing, when it is showing one. */
+  readonly inspectingId?: string;
 }
+
+/**
+ * How long a link may be down before the surface says so — §18.13.
+ *
+ * Long enough that an ordinary reconnect passes in silence, short enough that
+ * somebody watching a turn that has stopped is not left guessing.
+ */
+const LINK_LOST_AFTER_MS = 6000;
 
 export function ConversationSurface({
   session,
   capabilities,
   transport = wireTransport,
   operations = fetchTransport,
+  readResourceStatus = readSessionResources,
   onWaitingChange,
+  onInspect,
+  inspectingId,
 }: ConversationSurfaceProps) {
   const [conversation, setConversation] = useState<Conversation>(EMPTY);
   const [link, setLink] = useState<LinkStatus>('reconnecting');
   const [busy, setBusy] = useState(false);
+  /**
+   * Whether the link has been down long enough to be worth saying — §18.13.
+   *
+   * A transient reconnect says nothing at all: a blip announced as a fault
+   * teaches a reader to distrust the next notice, and §11 forbids drawing a
+   * recovering session as a failed one. Only a link that stays down past this
+   * threshold is named, and then once.
+   */
+  const [linkLost, setLinkLost] = useState(false);
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
+  const [lossDismissed, setLossDismissed] = useState(false);
+  const [resourcesUnreported, setResourcesUnreported] = useState(false);
 
   const client = useMemo(
     () => new AguiOperations(session.id, operations),
     [session.id, operations],
   );
 
+  /*
+   * §18.13. The moment the link is not live, stop claiming the agent is
+   * working; only after a bounded wait say so in words.
+   *
+   * The withdrawal is immediate and the notice is not, deliberately: the
+   * failure mode this section exists for is the surface *asserting liveness
+   * that is false* — the pulse and the caret kept going on a stream that had
+   * stopped, so the one affordance built to tell a working agent from a dead
+   * one was the one that lied. Withdrawing a false claim is quieter than
+   * adding a true one and is correct at every point in between.
+   */
+  const [lostFor, setLostFor] = useState(link);
+  if (lostFor !== link) {
+    // Adjusted during render rather than in an effect, which is React's own
+    // pattern for a value derived from a changing input: any change of status
+    // restarts the wait, so a link that drops, recovers and drops again gets
+    // the full threshold each time rather than being named instantly.
+    setLostFor(link);
+    setLinkLost(false);
+  }
+
+  useEffect(() => {
+    if (link === 'live') {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setLinkLost(true);
+    }, LINK_LOST_AFTER_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [link]);
+
   useEffect(() => {
     // One connection per session, opened on mount and closed on unmount. The
     // conversation is not cleared here: the surface is keyed on the session at
     // its call sites, so a different session is a different component rather
     // than this one being emptied and refilled.
+    const controller = new AbortController();
+    let closed = false;
+    let hasBeenLive = false;
+    let latestStatusRead = 0;
+
+    const refreshResourceStatus = async () => {
+      const read = ++latestStatusRead;
+      try {
+        const status = await readResourceStatus(session.id, controller.signal);
+        if (!closed && read === latestStatusRead) {
+          setResourcesUnreported(status.reason === 'runtime_does_not_report');
+        }
+      } catch {
+        // The stream remains authoritative for readings. A failed point read
+        // cannot turn an absence into either of the two sentences it distinguishes.
+      }
+    };
+
+    if (capabilities.resources) {
+      void refreshResourceStatus();
+    }
+
     const connection = new AguiConnection(transport, session.id);
-    return connection.subscribe(
+    const unsubscribe = connection.subscribe(
       (event) => {
         setConversation((state) => reduce(state, event));
       },
       (status) => {
         setLink(status);
+        if (status === 'live') {
+          // The first live edge belongs to the mount read above. Every later
+          // one follows a real drop and gets one fresh answer, never a poll.
+          if (hasBeenLive && capabilities.resources) {
+            void refreshResourceStatus();
+          }
+          hasBeenLive = true;
+        }
       },
     );
-  }, [session.id, transport]);
+    return () => {
+      closed = true;
+      controller.abort();
+      unsubscribe();
+    };
+  }, [capabilities.resources, readResourceStatus, session.id, transport]);
 
   /**
    * Run an operation and keep its refusal intact.
@@ -90,11 +200,19 @@ export function ConversationSurface({
    * if the interface renders it as "something went wrong", so the capability
    * name reaches the surface (§18.7).
    */
-  const attempt = useCallback(async (work: () => Promise<void>) => {
+  /**
+   * Run one thing the reader asked for, and say whether it was taken.
+   *
+   * The answer matters to the composer, which keeps the draft until the
+   * service has accepted the turn: a refusal here is reported in the banner
+   * rather than thrown, so settling is not evidence of success.
+   */
+  const attempt = useCallback(async (work: () => Promise<void>): Promise<boolean> => {
     setBusy(true);
     setRefusal(undefined);
     try {
       await work();
+      return true;
     } catch (cause) {
       setRefusal(
         cause instanceof AguiRefusal && cause.capability !== undefined
@@ -103,6 +221,7 @@ export function ConversationSurface({
             ? cause.message
             : String(cause),
       );
+      return false;
     } finally {
       setBusy(false);
     }
@@ -133,6 +252,15 @@ export function ConversationSurface({
 
   return (
     <section className="conversation" aria-label="Conversation">
+      <RuntimeLoss
+        loss={lossDismissed ? undefined : conversation.runtimeLoss}
+        onDismiss={() => {
+          setLossDismissed(true);
+        }}
+      />
+
+      <MemoryPressureNotice pressure={conversation.memoryPressure} />
+
       {refusal === undefined ? null : (
         <div className="notice notice--fail conversation__refusal" role="alert">
           <span className="notice__detail">{refusal}</span>
@@ -141,24 +269,23 @@ export function ConversationSurface({
 
       <MessageStream
         entries={conversation.entries}
-        kernel={session.kernel}
+        onInspect={onInspect}
+        inspectingId={inspectingId}
         turnInFlight={conversation.turnInFlight}
         live={conversation.live}
         reasoning={conversation.reasoning}
         plan={conversation.plan}
         mode={conversation.mode}
         configOptions={conversation.configOptions}
-        availableCommands={conversation.availableCommands}
+        linkLive={link === 'live'}
+        linkLost={linkLost}
         footer={
-          pending === undefined ? null : (
-            <ApprovalCard
-              interrupt={pending}
-              busy={busy}
-              onAnswer={(decision) => {
-                void attempt(() => client.resolveApproval(pending.id, decision, runId()));
-              }}
-            />
-          )
+          /*
+           * The sign-in stays in the stream: it is a thing to go and do
+           * somewhere else, and a person can leave it open while they read.
+           * The approval does not — see the composer seat below.
+           */
+          conversation.signIn === undefined ? null : <SignInCard signIn={conversation.signIn} />
         }
       />
 
@@ -169,19 +296,56 @@ export function ConversationSurface({
        */}
       <div className="conversation__foot">
         <div className="conversation__footcolumn">
-          <Composer
-            capabilities={capabilities}
-            turnInFlight={conversation.turnInFlight}
-            refusedReason={state.interactive ? undefined : reason}
-            busy={busy}
-            onSend={(text) => {
-              void attempt(() => client.prompt(text, runId()));
-            }}
-            onInterrupt={() => {
-              void attempt(() => client.interrupt());
-            }}
-          />
+          {/*
+           * An approval takes the composer's seat rather than sitting in the
+           * stream — §18.3, amended.
+           *
+           * The section's binding constraint was that it must never be a
+           * modal, so that a session waiting on an answer leaves every other
+           * session reachable. That still holds: this is inside one session's
+           * own surface and the sidebar is untouched.
+           *
+           * What changes is that an approval in the stream scrolls away. A
+           * turn that stopped five entries ago leaves its question five
+           * entries up, and the one thing a person must answer is the one
+           * thing they can scroll past. Here it is where they were already
+           * looking, and it replaces the field because typing is not what the
+           * session is waiting for.
+           */}
+          {pending === undefined ? (
+            <Composer
+              capabilities={capabilities}
+              availableCommands={conversation.availableCommands}
+              turnInFlight={conversation.turnInFlight}
+              refusedReason={state.interactive ? undefined : reason}
+              busy={busy}
+              onSend={(text) => attempt(() => client.prompt(text, runId()))}
+              onInterrupt={() => {
+                void attempt(() => client.interrupt());
+              }}
+            />
+          ) : (
+            <ApprovalCard
+              interrupt={pending}
+              busy={busy}
+              /*
+               * The outcome goes back to the card, which is showing the answer
+               * already. A refusal has to put the question back, or the reader
+               * is left looking at a decision the service never took.
+               */
+              onAnswer={(decision) =>
+                attempt(() => client.resolveApproval(pending.id, decision, runId()))
+              }
+            />
+          )}
           <Usage granted={capabilities.usage} usage={conversation.usage} />
+          <Resources
+            granted={capabilities.resources}
+            unreported={resourcesUnreported}
+            resources={conversation.resources}
+            pressure={conversation.memoryPressure}
+          />
+          <Context granted={capabilities.usage} usage={conversation.usage} />
         </div>
       </div>
     </section>

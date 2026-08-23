@@ -1,102 +1,179 @@
 /*
- * Design tokens — docs/Web_Style.md is the single source of truth.
- * Every value here is transcribed from that document. Never introduce a colour,
- * shadow, spacing value, radius or type step that does not appear there.
+ * The token layer — `docs/Web_Style.md` §2, §3, §4.
  *
- * This file is custom properties and nothing else. Component rules live in
- * components.css or in the component's own stylesheet, so checking §2 against
- * the token layer stays a single-file review.
+ * Three first-party sheets carry the palette itself beside this one:
+ * `design-platform.css` (the ramps and aliases), `effects-typography.css`
+ * (shadows and the composite type ramp) and `shiki.css` (syntax). This file
+ * holds only what those sheets reference but do not define, plus the
+ * self-hosted faces each appearance selects.
  *
- * Light is defined on bare :root first, per §2: a colour whose only definition
- * lives inside a media query or [data-theme] block is a bug, because a token
- * that fails to resolve under an unexpected combination of theme settings
- * silently renders as `unset`.
+ * Read §2 before adding anything here. Spacing, radius and z-index have no
+ * tokens by design: they are literal pixels in the sheet that uses them,
+ * because a scale invites a component to take the step above when the one it
+ * needs is missing.
  */
 
 :root {
-  /* Surfaces — §2. Warm neutrals: the ramp is tinted toward the accent's hue
-     family so a lime key reads as part of the page rather than dropped on it. */
-  --ground: #f6f6f2;
-  --surface: #ffffff;
-  --raised: #f1f2eb;
-  --inset: #f1f2eb;
-  --sunken: #edeee6;
+  /* One curve, three durations — §4. Nothing in the product eases differently. */
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-transition-duration: 0.2s;
+  --ds-transition-duration-fast: 0.1s;
+  --ds-transition-duration-slow: 0.3s;
+}
 
-  /* Text — §2. --ink-3 is the binding constraint: it carries 11–12px metadata,
-     which is not large text, so the full 4.5:1 applies. Do not lighten it. */
-  --ink: #141613;
-  --ink-2: #55584f;
-  --ink-3: #64685e;
+/* Every face is self-hosted, OFL-licensed, and visible through fallback while loading. */
+@font-face {
+  font-family: 'Archivo';
+  src: url('../assets/fonts/Archivo-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
-  /* Borders — §2 */
-  --rule: #e3e4db;
-  --rule-2: #d8dacf;
-  --rule-3: #c7cabd;
+@font-face {
+  font-family: 'Familjen Grotesk';
+  src: url('../assets/fonts/FamiljenGrotesk-Variable.woff2') format('woff2-variations');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
 
-  /* One accent. Light and dark share the fill and differ in the ink, because a
-     colour bright enough to read on near-black cannot carry text on paper. */
-  --accent: #46620b;
-  --accent-fill: #c6f24e;
-  --accent-wash: rgb(70 98 11 / 0.08);
-  --on-accent: #141613;
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 
-  /* Semantic state — §2. Never used decoratively, never colour alone. */
-  --live: #46620b;
-  --wait: #8a5a00;
-  --fail: #a63232;
-  --ended: #64685e;
-  --live-wash: rgb(70 98 11 / 0.08);
-  --wait-wash: rgb(138 90 0 / 0.09);
-  --fail-wash: rgb(166 50 50 / 0.08);
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
 
-  /* The scrim behind a plate. Not a new colour: --ink at 40%. */
-  --scrim: rgb(20 22 19 / 0.4);
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/IBMPlexMono-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../assets/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
+  --dsw-font-family:
+    'Familjen Grotesk', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica,
+    Arial, sans-serif;
+  /* No bare `monospace`: on Windows it may resolve to a CJK serif. */
+  --ds-font-family-code:
+    'IBM Plex Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo,
+    Courier, 'PingFang SC', 'Microsoft YaHei';
+}
+
+body[data-ds-dark-theme] {
+  --dsw-font-family:
+    'Archivo', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --ds-font-family-code:
+    'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier,
+    'PingFang SC', 'Microsoft YaHei';
+}
+
+/*
+ * ── Migration shim, temporary ────────────────────────────────────────────
+ *
+ * The old names, defined in terms of the new aliases. Thirty-four stylesheets
+ * read them, and rewriting all of them in one commit would be one enormous
+ * unreviewable change — so each surface migrates in its own pull request and
+ * this shim keeps the tree green in between.
+ *
+ * **This block is deleted by the last pull request of #317.** Nothing new may
+ * reference these names; a component added after this was written and reaching
+ * for `--ink` is reaching for something already on its way out.
+ *
+ * The mapping is the one #317 specifies, so a surface being migrated is
+ * substituting names rather than choosing values.
+ *
+ * **Declared on `body`, not `:root`, and that is load-bearing.** A custom
+ * property's value is substituted in the scope it is *declared* in, not the
+ * scope it is used from — so `--ground: var(--dsw-alias-bg-base)` written on
+ * `:root` resolves against `:root`, where the palette is not declared, and
+ * every one of these names computes to nothing at all. The page then renders
+ * on browser defaults: no ground, no ink, no rules, no focus ring.
+ */
+body {
+  --ground: var(--dsw-alias-bg-base);
+  --surface: var(--dsw-alias-bg-layer-1);
+  --raised: var(--dsw-alias-bg-layer-2);
+  --inset: var(--dsw-alias-bg-layer-3);
+  --sunken: var(--dsw-alias-markdown-code-block);
+
+  --ink: var(--dsw-alias-label-primary);
+  --ink-2: var(--dsw-alias-label-secondary);
+  --ink-3: var(--dsw-alias-label-tertiary);
+
+  --rule: var(--dsw-alias-border-l1);
+  --rule-2: var(--dsw-alias-border-l2);
+  --rule-3: var(--dsw-alias-border-l3);
 
   /*
-   * Depth — §3. Two levels and no others: one for a thing resting on the page,
-   * one for a thing floating over it. The letterpress contract is retired; an
-   * inline box-shadow string in a component is still a bug.
+   * The theme accent now carries both primary actions and running/current/send
+   * state. These migration names remain separate until #317 removes the shim,
+   * but their role tokens deliberately resolve to the same accent.
    */
-  --lift-rest: 0 1px 2px rgb(20 22 19 / 0.06);
-  --lift-plate: 0 12px 32px rgb(20 22 19 / 0.12);
+  --accent: var(--dsw-alias-state-business-primary);
+  --accent-fill: var(--dsw-alias-state-business-primary);
+  --accent-wash: var(--dsw-alias-interactive-bg-hover);
+  --on-accent: var(--dsw-alias-label-primary-foreground);
+
+  --live: var(--dsw-alias-state-success-primary);
+  --wait: var(--dsw-alias-state-warn-primary);
+  --fail: var(--dsw-alias-state-error-primary);
+  --ended: var(--dsw-alias-label-tertiary);
+  --live-wash: var(--dsw-alias-interactive-bg-hover);
+  --wait-wash: var(--dsw-alias-interactive-bg-hover);
+  --fail-wash: var(--dsw-alias-interactive-bg-hover-danger);
+
+  --scrim: var(--dsw-alias-bg-mask-1);
+  --tint-hover: var(--dsw-alias-interactive-bg-hover);
+  --tint-active: var(--dsw-alias-interactive-bg-active);
+  --edge-hairline: var(--dsw-alias-border-l1);
+  --edge-selected: var(--dsw-alias-label-primary);
+
+  --primary-fill: var(--dsw-alias-button-primary-fill);
+  --primary-fill-hover: var(--dsw-alias-button-primary-hover);
+  --on-primary: var(--dsw-alias-label-primary-foreground);
+
+  --lift-rest: var(--dsw-shadow-lv1);
+  --lift-plate: var(--dsw-shadow-lv3);
   --lift-none: none;
-  --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
-  /* §8's one documented variant, for the terminal prompt row. */
-  --focus-prompt: inset 2px 0 0 var(--accent);
-  /* A focused canvas node, §13: hue change plus a soft halo, never a glow. */
-  --focus-node: 0 0 0 3px rgb(198 242 78 / 0.12);
-  /* The selected row's leading edge, §12. */
-  --edge-selected: inset 2px 0 0 var(--accent);
 
-  /* Type — §4. Both faces are self-hosted; nothing is fetched from a third party. */
-  --font-ui: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-ui: var(--dsw-font-family);
+  --font-mono: var(--ds-font-family-code);
 
-  --text-label: 11px; /* mono, uppercase, tracked */
-  --text-meta: 12px;
-  --text-note: 13px;
-  --text-ui: 14px;
-  --text-body: 15px;
-  --text-read: 16px; /* the conversation, and only the conversation */
-  --text-title: 17px; /* dialog and plate titles */
-  --text-subject: 20px; /* the session a surface is showing */
-  --text-page: 24px;
-  --text-display: 64px; /* the landing headline only */
+  /*
+   * Geometry the old sheets still read. These retire with their surfaces:
+   * §2 gives radius and spacing no tokens at all, so a migrated sheet writes
+   * the pixels it needs and stops reading these.
+   */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
 
-  --track-label: 0.08em;
-  --track-tight: -0.01em;
-  --track-display: -0.035em;
-
-  --leading-tight: 1.15;
-  --leading-ui: 1.55;
-  --leading-read: 1.65;
-
-  /* Terminal type keeps its own metrics — §4. Never track a terminal. */
-  --term-size: 13.5px;
-  --term-leading: 1.65;
-  --term-tracking: 0;
-
-  /* Spacing — §5. 4px rhythm; 2px steps only inside a control's own padding. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -107,24 +184,6 @@
   --space-12: 48px;
   --space-16: 64px;
 
-  /* Frame — §5, §6. Heights are set on the element, never accumulated. */
-  --bar-height: 60px;
-  --band-head: 56px;
-  --band-foot: 40px;
-  --page-gutter: 20px;
-  --rail-width: 320px;
-  --rail-collapsed: 56px;
-  --drawer-width: 360px;
-  --read-column: 760px;
-
-  /* Radius — §3. Five steps: control, row, card, panel, pill. */
-  --radius-sm: 8px;
-  --radius: 10px;
-  --radius-md: 12px;
-  --radius-lg: 14px;
-  --radius-pill: 999px;
-
-  /* Controls — §7 */
   --control-h-sm: 30px;
   --control-h: 32px;
   --control-h-md: 36px;
@@ -133,100 +192,62 @@
   --chip-h: 26px;
   --hit: 32px;
 
-  /* Canvas node size, §13. Fixed: a node's size is the geometry its runtime is
-     told to draw at, so a fluid grid would re-wrap everything an agent printed. */
+  --text-label: 11px;
+  --text-meta: 12px;
+  --text-note: 13px;
+  --text-ui: 14px;
+  --text-body: 15px;
+  --text-read: 16px;
+  --text-subject: 20px;
+  --text-title: 17px;
+  --text-display: 64px;
+  --text-page: 24px;
+
+  --leading-tight: 1.15;
+  --leading-ui: 1.55;
+  --leading-read: 1.65;
+  --leading-prose: 1.75;
+  --track-tight: -0.01em;
+  --track-label: 0.08em;
+  --track-display: -0.035em;
+
+  --term-size: 13.5px;
+  --term-leading: 1.65;
+  --term-tracking: 0;
+
+  --read-column: 748px;
+  /* Still read by four surfaces; retires with the last of them. */
+  --page-gutter: 20px;
   --canvas-node-w: 420px;
   --canvas-node-h: 280px;
 
-  /* Motion — §8 */
-  --motion-press: 140ms;
-  --motion-colour: 200ms;
+  /*
+   * Two syntax tokens, re-declared where they can resolve.
+   *
+   * `shiki.css` writes them on `:root` in terms of aliases the palette
+   * declares on `body`, so upstream they compute to nothing — the same scope
+   * trap the shim above fell into. The first-party syntax sheet keeps its
+   * selector contract, so the body-scoped correction remains here.
+   */
+  --shiki-foreground: var(--dsw-alias-label-primary);
+  --shiki-background: var(--dsw-alias-markdown-code-block);
+
+  --focus-ring:
+    0 0 0 2px var(--dsw-alias-bg-base), 0 0 0 4px var(--dsw-alias-state-business-primary);
+  --focus-prompt: inset 2px 0 0 var(--dsw-alias-state-business-primary);
+  --focus-node: 0 0 0 3px var(--dsw-alias-interactive-bg-active);
 }
 
 /*
- * Dark. Redefined under BOTH the media query (guarded so an explicit light
- * choice wins) and the explicit attribute, so a deliberate choice beats the
- * system preference in either direction. Only the tokens that change are restated.
- */
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --ground: #101210;
-    --surface: #171916;
-    --raised: #1b1e1a;
-    --inset: #22261e;
-    --sunken: #131512;
-
-    --ink: #f1f2ee;
-    --ink-2: #a9aea3;
-    --ink-3: #8a9082;
-
-    --rule: #23261f;
-    --rule-2: #2a2e26;
-    --rule-3: #3a3f36;
-
-    --accent: #c6f24e;
-    --accent-fill: #c6f24e;
-    --accent-wash: rgb(198 242 78 / 0.1);
-    --on-accent: #111310;
-
-    --live: #c6f24e;
-    --wait: #e9b44c;
-    --fail: #f58585;
-    --ended: #8a9082;
-    --live-wash: rgb(198 242 78 / 0.1);
-    --wait-wash: rgb(233 180 76 / 0.1);
-    --fail-wash: rgb(245 133 133 / 0.07);
-
-    --scrim: rgb(10 10 11 / 0.64);
-
-    --lift-rest: 0 1px 2px rgb(0 0 0 / 0.35);
-    --lift-plate: 0 12px 32px rgb(0 0 0 / 0.5);
-  }
-}
-
-:root[data-theme='dark'] {
-  --ground: #101210;
-  --surface: #171916;
-  --raised: #1b1e1a;
-  --inset: #22261e;
-  --sunken: #131512;
-
-  --ink: #f1f2ee;
-  --ink-2: #a9aea3;
-  --ink-3: #8a9082;
-
-  --rule: #23261f;
-  --rule-2: #2a2e26;
-  --rule-3: #3a3f36;
-
-  --accent: #c6f24e;
-  --accent-fill: #c6f24e;
-  --accent-wash: rgb(198 242 78 / 0.1);
-  --on-accent: #111310;
-
-  --live: #c6f24e;
-  --wait: #e9b44c;
-  --fail: #f58585;
-  --ended: #8a9082;
-  --live-wash: rgb(198 242 78 / 0.1);
-  --wait-wash: rgb(233 180 76 / 0.1);
-  --fail-wash: rgb(245 133 133 / 0.07);
-
-  --scrim: rgb(10 10 11 / 0.64);
-
-  --lift-rest: 0 1px 2px rgb(0 0 0 / 0.35);
-  --lift-plate: 0 12px 32px rgb(0 0 0 / 0.5);
-}
-
-/*
- * §16: below 30rem the app bar drops to 52px and every target grows to 44px.
- * The control heights grow with the minimum, because a control is a target.
- * Band heights do not change — the page reads as the same shape on a phone.
+ * The phone override, still part of the shim.
+ *
+ * §9 replaces the band geometry with the three-column concession chain, and
+ * these names go with it — but that is the shell's pull request, not this one.
+ * Kept here so the touch-target floor and the reading column keep working on a
+ * phone until the shell moves.
  */
 @media (max-width: 29.999rem) {
-  :root {
-    --bar-height: 52px;
+  body {
     --hit: 44px;
     --control-h-sm: 44px;
     --control-h: 44px;

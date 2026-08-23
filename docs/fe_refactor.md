@@ -1,5 +1,15 @@
 # Frontend refactor bundle
 
+> **Superseded.** This describes the "Quiet instrument" design that
+> `docs/Web_Style.md` no longer specifies: the deepseek-harness adoption
+> (#317) replaced that language, and the files named below — `TopBar`,
+> `StatusBand`, `PageFrame`, `ViewSwitch`, `Chip`, `Select`, `Dialog`,
+> `ArrangementToggle` — no longer exist.
+>
+> Kept as the record of what was planned at the time, and accurate about
+> that. Not guidance: nothing here describes the current frontend, and a
+> path in it is a path that will not be found.
+
 The five files staged in the `docs_refactor_fe` handoff folder, combined verbatim into one document.
 Nothing below has been edited, reflowed or reconciled — each part is the file it names, as it was
 filed. Where the parts disagree, the individual sections are the record of what was written, not a

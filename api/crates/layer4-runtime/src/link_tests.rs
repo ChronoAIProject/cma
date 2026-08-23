@@ -5,6 +5,10 @@
 //! agreeing without having to guess.
 
 use super::*;
+use crate::bridge::Outbound;
+use crate::conversation_link::{gap, outbound};
+use crate::lanes::{LANE_CONVERSATION, LANE_CONVERSATION_GAP};
+use std::time::Duration;
 
 /// A link opened with these query values, as the control plane would.
 fn params(wire: Option<u32>, lanes: Option<&str>) -> AttachParams {
@@ -13,6 +17,7 @@ fn params(wire: Option<u32>, lanes: Option<&str>) -> AttachParams {
         rows: Some(40),
         wire,
         lanes: lanes.map(str::to_string),
+        telemetry: None,
     }
 }
 
@@ -112,4 +117,154 @@ fn a_switch_names_the_program_to_restart() {
         switch,
         ControlFrame::SwitchPlane { command } if command == "codex-acp"
     ));
+}
+
+#[tokio::test]
+async fn a_switch_is_answered_either_way() {
+    // #289: the frame reaching the socket says nothing about the program
+    // being swapped, so the supervisor answers — and the control plane
+    // records an in-place switch only on a positive answer.
+    let state = AppState::for_test(&["codex-acp", "codex"]);
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    control(
+        r#"{"t":"switch_plane","command":"codex-acp"}"#,
+        "sbx_1",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+    // Asserted on the serialised frame rather than on a Rust value: the two
+    // ends agree on what goes over the wire. Key order is not part of that
+    // agreement — a workspace build turns on serde_json's preserve_order and
+    // a crate build does not — so the frame is parsed and its fields read.
+    let accepted: serde_json::Value =
+        serde_json::from_str(&answers.recv().await.expect("the switch was answered"))
+            .expect("the answer is JSON");
+    assert_eq!(accepted["t"], "switch_plane_result");
+    assert_eq!(accepted["command"], "codex-acp");
+    assert_eq!(accepted["accepted"], true);
+
+    // A command this pod was never told it may run is refused by name, and
+    // the refusal is on the wire rather than only in a log line.
+    control(
+        r#"{"t":"switch_plane","command":"rm"}"#,
+        "sbx_1",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+    let refused: serde_json::Value =
+        serde_json::from_str(&answers.recv().await.expect("the refusal was answered"))
+            .expect("the refusal is JSON");
+    assert_eq!(refused["t"], "switch_plane_result");
+    assert_eq!(refused["command"], "rm");
+    assert_eq!(refused["accepted"], false);
+}
+
+type ClientSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn serve(state: AppState) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let app = axum::Router::new()
+        .route("/readyz", axum::routing::get(crate::ready))
+        .route("/runtime/{id}/terminal", axum::routing::get(attach))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the test listener binds");
+    let address = listener.local_addr().expect("the listener has an address");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("the test runtime serves");
+    });
+    (address, server)
+}
+
+async fn telemetry_link(address: std::net::SocketAddr, interval_ms: u64) -> ClientSocket {
+    let url =
+        format!("ws://{address}/runtime/sbx_telemetry/terminal?wire=1&telemetry={interval_ms}");
+    tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the telemetry link opens")
+        .0
+}
+
+async fn next_client_message(socket: &mut ClientSocket) -> tokio_tungstenite::tungstenite::Message {
+    tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .expect("the telemetry link answers in time")
+        .expect("the telemetry link remains open")
+        .expect("the telemetry frame is readable")
+}
+
+fn assert_telemetry_frame(message: tokio_tungstenite::tungstenite::Message) {
+    let tokio_tungstenite::tungstenite::Message::Binary(bytes) = message else {
+        panic!("a resource sample travels as binary");
+    };
+    let (lane, payload) = lanes::unframe(&bytes).expect("the sample carries a lane");
+    assert_eq!(lane, lanes::LANE_TELEMETRY);
+    let frame: serde_json::Value = serde_json::from_slice(payload).expect("the sample is JSON");
+    assert!(frame["uptimeMs"].is_number());
+}
+
+#[tokio::test]
+async fn a_link_that_names_a_cadence_is_a_telemetry_link_and_takes_no_pty() {
+    let state = AppState::for_test(&[]);
+    let inspected = state.clone();
+    let (address, server) = serve(state).await;
+    let mut socket = telemetry_link(address, 2000).await;
+
+    let tokio_tungstenite::tungstenite::Message::Text(ready) =
+        next_client_message(&mut socket).await
+    else {
+        panic!("the lane declaration travels first as text");
+    };
+    let ready: serde_json::Value = serde_json::from_str(&ready).expect("the declaration is JSON");
+    assert_eq!(ready["lanes"], serde_json::json!(["ctl", "tel"]));
+    assert_telemetry_frame(next_client_message(&mut socket).await);
+    assert_telemetry_frame(next_client_message(&mut socket).await);
+    assert_eq!(inspected.registry.len().await, 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_cadence_outside_what_this_pod_serves_is_clamped_and_not_refused() {
+    assert_eq!(
+        crate::telemetry::clamp_interval_ms(1),
+        crate::telemetry::MIN_INTERVAL_MS
+    );
+    assert_eq!(
+        crate::telemetry::clamp_interval_ms(3_600_000),
+        crate::telemetry::MAX_INTERVAL_MS
+    );
+    let state = AppState::for_test(&[]);
+    let (address, server) = serve(state).await;
+    for requested in [1, 3_600_000] {
+        let mut socket = telemetry_link(address, requested).await;
+        assert!(matches!(
+            next_client_message(&mut socket).await,
+            tokio_tungstenite::tungstenite::Message::Text(_)
+        ));
+        assert_telemetry_frame(next_client_message(&mut socket).await);
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn readiness_declares_the_lane_this_image_serves() {
+    let state = AppState::for_test(&[]);
+    let (address, server) = serve(state).await;
+    let ready: serde_json::Value = reqwest::get(format!("http://{address}/readyz"))
+        .await
+        .expect("readiness is reachable")
+        .json()
+        .await
+        .expect("readiness is JSON");
+    assert_eq!(ready["prelude"], true);
+    assert_eq!(ready["resources"], true);
+    server.abort();
 }

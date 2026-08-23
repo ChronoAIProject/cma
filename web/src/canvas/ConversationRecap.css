@@ -1,5 +1,5 @@
 /*
- * The conversation recap — docs/Web_Style.md §13.
+ * The conversation recap — docs/Web_Style.md §18.
  *
  * What a glance wants from a conversation node: the last thing the agent
  * said, what is running, and the one key that opens the surface which can
@@ -11,10 +11,10 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: flex-start;
   min-width: 0;
-  padding: var(--space-3);
+  padding: 12px;
   overflow: hidden;
 }
 
@@ -24,9 +24,9 @@
   flex: 1 1 auto;
   margin: 0;
   overflow: hidden;
-  color: var(--ink);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 6;
 }
@@ -34,20 +34,20 @@
 .recap__empty {
   flex: 1 1 auto;
   margin: 0;
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
 }
 
 .recap__running {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   max-width: 100%;
   margin: 0;
   overflow: hidden;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -56,7 +56,7 @@
   flex: none;
   width: 6px;
   height: 6px;
-  background: var(--live);
+  background: var(--dsw-alias-state-success-primary);
   border-radius: 50%;
 }
 

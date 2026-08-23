@@ -51,6 +51,7 @@ impl Bridge {
                 }
             }
             Some("session/request_permission") => self.blocked_on(frame, updates).await,
+            Some("elicitation/create") => self.sign_in(&frame, updates).await,
             // Everything else the bridge may say to a client — filesystem
             // requests, terminal requests — is not offered by this client's
             // declared capabilities and is answered as unsupported rather than
@@ -67,6 +68,55 @@ impl Bridge {
                 }
             }
             None => {}
+        }
+    }
+
+    /// Pass a sign-in the kernel is waiting on up to whoever can complete it.
+    ///
+    /// Reached only on an own-account session: the kernel wants its owner to
+    /// open a page and enter a code, and it will block until they have. The
+    /// address and the code go up so an interface can show them.
+    ///
+    /// Accepted immediately rather than after the person has finished. The
+    /// answer means "this client is able to put that in front of somebody",
+    /// not "they are done" — the kernel discovers that for itself by polling,
+    /// and holding the reply until then would leave it waiting on us while we
+    /// waited on it. A refusal here is what cancels the sign-in, so it is sent
+    /// only when there is genuinely nothing that could show it.
+    ///
+    /// Nothing that comes back this way is a credential. What the sign-in
+    /// produces is written inside the sandbox by the kernel, which is the
+    /// whole basis of `CredentialMode::Own`'s promise.
+    async fn sign_in(&self, frame: &serde_json::Value, updates: &mpsc::Sender<ConversationUpdate>) {
+        let asked = sign_in_from(frame.get("params"));
+        let Some((url, code, message)) = asked else {
+            // Nothing to show. Refused rather than accepted, so the kernel
+            // stops waiting on a sign-in that was never going to appear.
+            tracing::warn!("a sign-in request carrying no address");
+            if let Some(id) = frame.get("id") {
+                let _ = self
+                    .send(&serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": { "action": "decline" },
+                    }))
+                    .await;
+            }
+            return;
+        };
+        tracing::info!(%url, "the agent is waiting for its owner to sign in");
+        let _ = updates
+            .send(ConversationUpdate::SignInRequired { url, code, message })
+            .await;
+
+        if let Some(id) = frame.get("id") {
+            let _ = self
+                .send(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "action": "accept" },
+                }))
+                .await;
         }
     }
 
@@ -111,6 +161,31 @@ impl Bridge {
 /// An intent with nothing to match is cancelled, which every ACP agent
 /// understands and which stops the turn rather than letting it proceed — the
 /// safe direction when the answer was "no" and we cannot say which kind.
+/// Read a sign-in request into the three things a person needs.
+///
+/// Separated from the sending so it can be tested without a bridge: what a
+/// client shows somebody is decided here, and getting it wrong shows them a
+/// card they cannot act on.
+///
+/// The code is read only from where it is declared. Some bridges carry it in
+/// its own field and some only inside the sentence; parsing it out of prose
+/// would break the first time the wording changed, and the sentence is shown
+/// whole either way.
+pub(crate) fn sign_in_from(
+    params: Option<&serde_json::Value>,
+) -> Option<(String, Option<String>, Option<String>)> {
+    let text = |key: &str| {
+        params
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    // No address, nothing to show. Everything else is optional.
+    let url = text("url")?;
+    let code = text("userCode").or_else(|| text("code"));
+    Some((url, code, text("message")))
+}
+
 pub(crate) fn outcome_for(
     decision: PermissionDecision,
     options: &[PermissionOption],

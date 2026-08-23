@@ -40,10 +40,12 @@ pub use environment::ClaudeCodeSandboxSpec;
 
 use crate::hosted::{acp, HostedKernel};
 use crate::sandbox::SandboxClient;
+use crate::ConversationUpdate;
 use crate::{
-    AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, RuntimeHandle,
-    RuntimeListing, RuntimeOptions, RuntimeSpec,
+    AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
+    RuntimeHandle, RuntimeListing, RuntimeOptions, RuntimeSpec,
 };
+use tokio::sync::mpsc;
 
 /// Drives Claude Code inside a provider-managed sandbox.
 pub struct ClaudeCodeAdapter {
@@ -55,7 +57,13 @@ impl ClaudeCodeAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: ClaudeCodeSandboxSpec) -> Self {
         Self {
-            hosted: HostedKernel::new(client, spec.deployment.shape.clone(), "claude_code"),
+            hosted: HostedKernel::new(
+                client,
+                spec.deployment.shape.clone(),
+                "claude_code",
+                spec.deployment.skills_root.clone(),
+                spec.deployment.agent_notes.clone(),
+            ),
             spec,
         }
     }
@@ -79,17 +87,31 @@ impl KernelAdapter for ClaudeCodeAdapter {
             steer: false,
             interrupt: true,
             usage: false,
+            resources: true,
         }
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        // Refused rather than ignored. Nothing in the runtime authenticates the
-        // agent against the owner's own vendor account, so a session that asked
-        // for it and was accepted would run on the delegated credential — the
-        // owner's bill and the owner's entitlements — while believing otherwise.
+        // Refused permanently, not pending. The word "yet" stood here while
+        // the codex adapter carried the same refusal, and that one has since
+        // been lifted — so leaving it would read as a feature on its way,
+        // which this is not.
+        //
+        // This kernel's vendor states that credentials from a personal
+        // subscription may not be used from another product or service, and
+        // enforces it on their side. A session doing that would be spending an
+        // account in a way its owner had been invited to believe was fine
+        // right up until the account was disabled. §9: declare the absence
+        // rather than let somebody discover it.
+        //
+        // What this kernel can compliantly spend is a key or token issued for
+        // programmatic use, which is a different setting and not this one.
         if spec.options.own_credential {
             return Err(AdapterError::Unsupported(
-                "this kernel does not support the owner's own credential yet".to_string(),
+                "this kernel cannot run on a personal subscription: its vendor does not permit \
+                 those credentials outside their own tools. An API key or gateway token is the \
+                 supported way to spend your own account here"
+                    .to_string(),
             ));
         }
 
@@ -129,6 +151,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
         &self,
         handle: &RuntimeHandle,
         options: &RuntimeOptions,
+        updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
         let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
@@ -137,6 +160,12 @@ impl KernelAdapter for ClaudeCodeAdapter {
             self.hosted.workspace().to_string(),
             Some(permission::mode_for(options.permission).to_string()),
             options.resume_conversation.clone(),
+            Some((self.hosted.switch_waiters(), handle.0.clone())),
+            // Never. This kernel refuses an own-account session at
+            // provisioning, permanently and for a stated reason, so one can
+            // never reach here asking to sign in.
+            false,
+            updates,
         )
         .await?;
         // Recorded here so a credential can reach a session that never attaches
@@ -156,6 +185,14 @@ impl KernelAdapter for ClaudeCodeAdapter {
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         self.hosted.list_runtimes().await
+    }
+
+    async fn watch_resources(
+        &self,
+        handle: &RuntimeHandle,
+        readings: mpsc::Sender<ResourceSample>,
+    ) -> Result<(), AdapterError> {
+        self.hosted.watch_resources(handle, readings).await
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {

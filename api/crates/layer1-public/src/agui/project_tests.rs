@@ -6,6 +6,7 @@
 //! stream fills with things that mean nothing to it.
 
 use super::*;
+use layer2_core::StopReason;
 
 /// A durable event as the log holds it.
 fn logged(seq: u64, kind: EventKind) -> Event {
@@ -164,12 +165,48 @@ fn usage_arrives_as_a_state_patch_rather_than_a_call() {
         input_tokens: 412,
         output_tokens: 9,
         context_used: 1024,
+        context_window: Some(200_000),
     });
     assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
     let delta = p.events[0].body["delta"].as_array().expect("a patch list");
-    assert_eq!(delta.len(), 3);
+    assert_eq!(delta.len(), 4);
     assert_eq!(delta[0]["path"], "/usage/inputTokens");
     assert_eq!(delta[0]["value"], 412);
+    assert_eq!(delta[3]["path"], "/usage/contextWindow");
+    assert_eq!(delta[3]["value"], 200_000);
+}
+
+#[test]
+fn a_usage_report_without_a_window_does_not_erase_one() {
+    let p = projected(EventKind::UsageReported {
+        input_tokens: 412,
+        output_tokens: 9,
+        context_used: 1024,
+        context_window: None,
+    });
+    let delta = p.events[0].body["delta"].as_array().expect("a patch list");
+
+    assert_eq!(delta.len(), 3);
+    assert!(delta
+        .iter()
+        .all(|patch| patch["path"] != "/usage/contextWindow"));
+}
+
+#[test]
+fn a_context_compaction_is_appended_to_state_without_an_invented_event_kind() {
+    let p = projected(EventKind::ContextCompacted {
+        was: 198_000,
+        now: 42_100,
+        window: None,
+    });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    let patch = &p.events[0].body["delta"][0];
+    assert_eq!(patch["op"], "add");
+    assert_eq!(patch["path"], "/contextCompactions/-");
+    assert_eq!(patch["value"]["was"], 198_000);
+    assert_eq!(patch["value"]["now"], 42_100);
+    assert!(patch["value"].get("window").is_none());
 }
 
 #[test]
@@ -328,6 +365,135 @@ fn a_lost_stretch_of_conversation_is_shown_as_a_boundary() {
 }
 
 #[test]
+fn a_lost_runtime_is_appended_to_its_own_state_path() {
+    let mut event = logged(
+        31,
+        EventKind::RuntimeLost {
+            runtime_id: "runtime-gone".into(),
+            cause: Some(layer2_core::RuntimeLossCause::OutOfMemory),
+        },
+    );
+    event.appended_at = "2026-08-23T04:12:00Z".into();
+
+    let p = project(&event, "run_1", "sesn_1");
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert_eq!(
+        p.events[0].body,
+        serde_json::json!({ "delta": [{
+            "op": "add",
+            "path": "/runtimeLosses/-",
+            "value": {
+                "runtime": "runtime-gone",
+                "cause": "out_of_memory",
+                "noticedAt": "2026-08-23T04:12:00Z",
+            },
+        }] })
+    );
+}
+
+#[test]
+fn a_lost_runtime_with_no_cause_says_so_rather_than_omitting_it() {
+    let p = projected(EventKind::RuntimeLost {
+        runtime_id: "runtime-silent".into(),
+        cause: None,
+    });
+    let value = &p.events[0].body["delta"][0]["value"];
+
+    assert!(value.get("cause").is_some(), "got {value}");
+    assert!(value["cause"].is_null(), "got {value}");
+}
+
+#[tokio::test]
+async fn a_lost_runtime_carries_a_cursor() {
+    let p = project(
+        &logged(
+            43,
+            EventKind::RuntimeLost {
+                runtime_id: "runtime-cursored".into(),
+                cause: Some(layer2_core::RuntimeLossCause::Displaced),
+            },
+        ),
+        "run_1",
+        "sesn_1",
+    );
+
+    assert_eq!(p.events[0].seq, Some(43));
+    let wire = on_the_wire(&p.events[0]).await;
+    assert!(wire.contains("id: 43"), "{wire:?}");
+}
+
+#[test]
+fn a_lost_runtime_does_not_end_the_run() {
+    let p = projected(EventKind::RuntimeLost {
+        runtime_id: "runtime-replaced".into(),
+        cause: Some(layer2_core::RuntimeLossCause::Failed),
+    });
+
+    assert!(p.ending.is_none());
+}
+
+#[test]
+fn an_open_pressure_episode_is_durable_state_and_does_not_end_the_run() {
+    let mut event = logged(
+        51,
+        EventKind::MemoryPressureOpened {
+            used_bytes: 892_211_200,
+            limit_bytes: 1_073_741_824,
+            occupancy_permille: 830,
+        },
+    );
+    event.appended_at = "2026-08-23T09:14:06Z".into();
+
+    let p = project(&event, "run_1", "sesn_1");
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert_eq!(p.events[0].seq, Some(51), "the durable edge has a cursor");
+    assert_eq!(
+        p.events[0].body,
+        serde_json::json!({ "delta": [{
+            "op": "replace",
+            "path": "/memoryPressure",
+            "value": {
+                "usedBytes": 892_211_200_u64,
+                "limitBytes": 1_073_741_824_u64,
+                "occupancyPermille": 830,
+                "since": "2026-08-23T09:14:06Z",
+            },
+        }] })
+    );
+    assert!(p.ending.is_none(), "pressure is not a run failure");
+}
+
+#[test]
+fn a_closed_pressure_episode_clears_the_path_with_a_value() {
+    let p = projected(EventKind::MemoryPressureClosed {
+        peak_bytes: 966_367_641,
+        limit_bytes: 1_073_741_824,
+        peak_permille: 900,
+        duration_seconds: 180,
+    });
+    let patch = &p.events[0].body["delta"][0];
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert_eq!(patch["op"], "replace");
+    assert_ne!(patch["op"], "remove");
+    assert_eq!(patch["path"], "/memoryPressure");
+    assert!(patch["value"].is_null());
+    assert!(p.ending.is_none());
+}
+
+#[test]
+fn an_open_pressure_episode_without_an_old_append_time_carries_an_absent_since() {
+    let p = projected(EventKind::MemoryPressureOpened {
+        used_bytes: 800,
+        limit_bytes: 1_000,
+        occupancy_permille: 800,
+    });
+    assert!(p.events[0].body["delta"][0]["value"]["since"].is_null());
+}
+
+#[test]
 fn what_this_interface_cannot_carry_becomes_nothing() {
     // The core's log is the union of what every interface needs. A resize, an
     // attachment, a screen — none has an honest shape here, and inventing one
@@ -359,6 +525,54 @@ fn the_sequence_rides_outside_the_payload() {
     let rendered = serde_json::to_value(&p.events[0]).expect("serializes");
     assert!(rendered.get("seq").is_none(), "got {rendered}");
     assert_eq!(rendered["type"], "RUN_STARTED");
+}
+
+#[test]
+fn the_commands_a_kernel_offers_replay_onto_the_live_lane_s_own_path() {
+    // The kernel announces these once, as the conversation opens — before any
+    // client has subscribed. Replay is the only way a client ever sees them,
+    // and it must land on the same state path the live lane writes, or a
+    // reader who was already watching and one who reloaded hold two different
+    // lists under two different names.
+    let p = projected(EventKind::AvailableCommandsSet {
+        commands: vec![
+            layer2_core::event::AvailableCommand {
+                name: "review".into(),
+                description: "Review the working tree".into(),
+            },
+            layer2_core::event::AvailableCommand {
+                name: "compact".into(),
+                description: "Summarise the conversation so far".into(),
+            },
+        ],
+    });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    let delta = &p.events[0].body["delta"][0];
+    assert_eq!(delta["op"], "replace");
+    assert_eq!(delta["path"], "/availableCommands");
+    assert_eq!(delta["value"][0]["name"], "review");
+    assert_eq!(delta["value"][0]["description"], "Review the working tree");
+    assert_eq!(delta["value"][1]["name"], "compact");
+    assert!(p.ending.is_none());
+}
+
+#[test]
+fn a_kernel_that_offers_nothing_replays_an_empty_list_rather_than_no_patch() {
+    // "This kernel has no commands" and "nobody has said yet" are different
+    // facts, and a client renders them differently. Skipping the patch when
+    // the list is empty would leave a stale list standing.
+    let p = projected(EventKind::AvailableCommandsSet { commands: vec![] });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    let delta = &p.events[0].body["delta"][0];
+    assert_eq!(delta["path"], "/availableCommands");
+    assert_eq!(
+        delta["value"].as_array().map(Vec::len),
+        Some(0),
+        "got {}",
+        p.events[0].body
+    );
 }
 
 #[test]

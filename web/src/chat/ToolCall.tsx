@@ -1,6 +1,7 @@
-import { useId, useState } from 'react';
 import type { ToolCallEntry } from './conversation';
+import type { DetailsSection } from './DetailsPanel';
 import './ToolCall.css';
+import { StateDot } from '../ui/StateDot';
 
 /**
  * A tool call, as structure — `Web_Style.md` §18.2.
@@ -24,6 +25,15 @@ import './ToolCall.css';
 
 interface ToolCallProps {
   readonly call: ToolCallEntry;
+  /**
+   * Open this call in the details column.
+   *
+   * Absent where there is no column to open — the row is then a summary and
+   * says so by not being pressable, rather than by opening onto nothing.
+   */
+  readonly onInspect?: (call: ToolCallEntry) => void;
+  /** Whether this is the call the column is currently showing. */
+  readonly inspecting?: boolean;
 }
 
 /**
@@ -70,73 +80,90 @@ function durationOf(call: ToolCallEntry): string | undefined {
   return `${minutes}m ${seconds}s`;
 }
 
-export function ToolCall({ call }: ToolCallProps) {
-  const [open, setOpen] = useState(false);
-  const bodyId = useId();
+/**
+ * The bodies the log can carry, in the order it holds them.
+ *
+ * What a call was asked to do comes before what it produced, because that is
+ * the order they happened in and the order a reader reconstructs them in.
+ */
+const BODIES = [
+  { key: 'arguments', label: 'Arguments' },
+  { key: 'result', label: 'Result' },
+] as const;
+
+/**
+ * What this call has to show, in the order it happened.
+ *
+ * Built here rather than in the panel because it is a fact about the log's
+ * shape, and the panel is a way of drawing things. A body that did not arrive
+ * contributes nothing rather than an empty region — an absence is a fact, not
+ * a zero.
+ */
+export function sectionsOf(call: ToolCallEntry): readonly DetailsSection[] {
+  const sections: DetailsSection[] = [];
+  for (const { key, label } of BODIES) {
+    const body = call[key];
+    if (body !== undefined) {
+      sections.push({
+        id: key,
+        label,
+        body: body.text,
+        truncated: body.truncated,
+        failed: key === 'result' && toneOf(call.status) === 'failed',
+      });
+    }
+  }
+  if (call.output !== undefined && call.output !== '') {
+    sections.push({ id: 'output', label: 'Output', body: call.output });
+  }
+  return sections;
+}
+
+export function ToolCall({ call, onInspect, inspecting = false }: ToolCallProps) {
   const tone = toneOf(call.status);
   const duration = durationOf(call);
-  const hasDetail =
-    (call.output !== undefined && call.output !== '') ||
-    call.arguments !== undefined ||
-    call.result !== undefined;
+  const hasDetail = sectionsOf(call).length > 0;
 
   return (
     <div className="toolcall" data-tone={tone}>
       <button
         type="button"
         className="toolcall__row"
-        aria-expanded={open}
-        aria-controls={hasDetail ? bodyId : undefined}
-        disabled={!hasDetail}
+        /*
+         * Not a disclosure any more. The row opens the details column rather
+         * than growing: what a call carries is unbounded and is not prose,
+         * and inside the reading column it pushed the conversation it belongs
+         * to off the screen.
+         */
+        aria-pressed={inspecting}
+        disabled={!hasDetail || onInspect === undefined}
         onClick={() => {
-          setOpen((wasOpen) => !wasOpen);
+          onInspect?.(call);
         }}
       >
         {/*
-         * The status glyph — §18.2: a tick for finished, a cross for failed,
-         * a pulsing dot while it runs. Reinforced by the word at the row's
-         * end, because §2 forbids colour carrying meaning alone.
+         * The state as a dot, in the same vocabulary the session list uses.
+         * A row that spelled its own state in a word did it in a face and a
+         * case nothing else on the surface uses, and said it twice — once as
+         * a glyph and once as RUNNING.
          */}
-        {tone === 'running' ? (
-          <span className="toolcall__glyph toolcall__glyph--running pulse" aria-hidden="true" />
-        ) : (
-          <span className="toolcall__glyph" aria-hidden="true">
-            {tone === 'failed' ? '×' : '✓'}
+        <span className="toolcall__glyph">
+          <StateDot state={tone === 'failed' ? 'error' : tone === 'running' ? 'ongoing' : 'done'} />
+          <span className="sr-only">
+            {tone === 'running' ? 'running' : (call.status ?? 'done')}
           </span>
-        )}
+        </span>
 
         <span className="toolcall__kind">{call.toolKind}</span>
-        {call.target === undefined ? null : <span className="toolcall__target">{call.target}</span>}
+        {call.target === undefined ? null : (
+          <>
+            <span className="toolcall__sep" aria-hidden="true" />
+            <span className="toolcall__target">{call.target}</span>
+          </>
+        )}
 
         {duration === undefined ? null : <span className="toolcall__duration">{duration}</span>}
-
-        {/*
-         * The status word, drawn for a failed or a running call. A finished
-         * call's word is its glyph and its stillness; §18.2 spends the words
-         * where the state needs one.
-         */}
-        {tone === 'done' && call.status === undefined ? null : (
-          <span className="toolcall__status">{tone === 'running' ? 'running' : call.status}</span>
-        )}
       </button>
-
-      {/*
-       * Disclosure, not truncation (§18.2). Output is agent-emitted content
-       * and §1's fidelity rule applies, so nothing is silently shortened —
-       * bounding it behind this control is a frame decision and is permitted,
-       * dropping the tail of it is not. It scrolls inside itself.
-       */}
-      {open && hasDetail ? (
-        <pre className="toolcall__output" id={bodyId}>
-          {call.arguments === undefined
-            ? null
-            : `arguments${call.arguments.truncated ? ' (truncated)' : ''}:\n${call.arguments.text}\n`}
-          {call.result === undefined
-            ? null
-            : `result${call.result.truncated ? ' (truncated)' : ''}:\n${call.result.text}\n`}
-          {call.output ?? ''}
-        </pre>
-      ) : null}
     </div>
   );
 }

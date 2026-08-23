@@ -1,0 +1,68 @@
+/*
+ * The risk confirmation — `docs/Web_Style.md` §12.4.
+ *
+ * Wider than the plain card because the sentence explaining the consequence
+ * has to be readable in one go: broken over five lines it stops being a
+ * warning and becomes something to scroll past.
+ */
+
+.risk {
+  width: min(440px, 100%);
+}
+
+.risk__warning {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.risk__warning p {
+  margin: 0;
+}
+
+/* The one red thing on the card. The button is not red — see the component. */
+.risk__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.risk__acknowledgement {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 20px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.risk__acknowledgement input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--dsw-alias-button-primary-fill);
+  cursor: pointer;
+}
+
+.risk__acknowledgement input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Minimum widths so the two keys do not resize with their labels — a Cancel
+ * that shifts when the confirm text changes reads as the dialog moving.
+ */
+.risk__cancel {
+  min-width: 72px;
+}
+
+.risk__confirm {
+  min-width: 136px;
+}

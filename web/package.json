@@ -11,11 +11,18 @@
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:styles": "node scripts/computed-styles.mjs",
+    "check:surfaces": "node scripts/signed-in-surfaces.mjs",
+    "check:css": "node scripts/css-collisions.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -35,6 +42,7 @@
     "globals": "^16.5.0",
     "jsdom": "^30.0.1",
     "prettier": "^3.6.0",
+    "puppeteer-core": "^25.8.0",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.46.0",
     "vite": "^7.2.0",

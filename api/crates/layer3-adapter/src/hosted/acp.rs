@@ -31,16 +31,14 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::supervisor;
 use crate::{
-    AdapterError, ConversationChannel, ConversationInput, ConversationUpdate, PromptResponse,
+    AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, PromptResponse,
 };
 
-use super::inbound::outcome_for;
-
 /// The protocol version this client speaks.
-const PROTOCOL_VERSION: u32 = 1;
+pub(super) const PROTOCOL_VERSION: u32 = 1;
 
-/// How many messages either direction may queue before back pressure applies.
-const BUFFER: usize = 256;
+/// One operation may wait behind the writer, but a second is a backed-up link.
+const INPUT_BUFFER: usize = 1;
 
 /// How long to wait for the pod to say what it is.
 ///
@@ -48,13 +46,37 @@ const BUFFER: usize = 256;
 /// this is a bound on a failure rather than on the ordinary case.
 const DECLARATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// How long to wait for the bridge to answer a request of ours.
+/// How long to wait for the bridge to answer a question of ours.
 ///
-/// Generous, because a prompt turn is one of these and a turn takes as long as
-/// the model takes. Bounded all the same: without it, a bridge that stops
-/// answering leaves a session waiting for something that is not coming, with
-/// nothing said about why.
-const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1800);
+/// Short, because every call that uses it is a question with a quick answer:
+/// initialising, naming a conversation, setting a mode. It was thirty minutes
+/// — a bound sized for a prompt, which no longer travels this path — and that
+/// is how a pod whose agent never started held a session at `Attaching` for
+/// half an hour with nothing said. A handshake that has not answered in this
+/// long is not slow; it is not coming.
+pub(super) const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long a turn may take before it is declared lost.
+///
+/// Generous, because a turn takes as long as the model takes, and a person
+/// watching an agent think must not have it cut off underneath them. Bounded
+/// all the same: a prompt had no deadline at all, so an agent that stopped
+/// answering left the turn `running` forever — indistinguishable, from the
+/// outside, from one still working.
+pub(super) const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// How long a sign-in may take.
+///
+/// Human-paced, not machine-paced: somebody has to open a page on another
+/// device, sign in, and type a code. The ordinary call deadline is thirty
+/// seconds and this timed out against it every time — the sign-in was working
+/// and the wait was not.
+///
+/// A little longer than the code itself lives, so a sign-in that runs out is
+/// reported by the kernel in its own words rather than by us giving up first.
+/// Which of the two spoke is the difference between "your code expired" and
+/// "something went wrong".
+pub(super) const SIGN_IN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(16 * 60);
 
 /// The socket half this client writes to.
 type Sink = SplitSink<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Message>;
@@ -68,7 +90,7 @@ pub struct Bridge {
     pub(super) pending: Pending,
     next_id: AtomicI64,
     /// The bridge's own identifier for this conversation, once one exists.
-    session: Mutex<Option<String>>,
+    pub(super) session: Mutex<Option<String>>,
     /// Permission requests the bridge is blocked on, by the id we gave them.
     ///
     /// Held because the answer comes back minutes later, from a person, and
@@ -93,6 +115,13 @@ impl Bridge {
     /// be prompted rather than one that may yet fail to start.
     /// Returns the conversation and the control sender for the same socket.
     ///
+    /// The update sink comes from the caller for that same reason read the
+    /// other way round. The handshake can stop and wait — an own-account
+    /// session waits there for its owner to sign in, which is a person's worth
+    /// of time — and what it is waiting for has to be shown to that person
+    /// while it waits. A sink created here and returned at the end would carry
+    /// the request only after it had been answered, which is to say never.
+    ///
     /// The second half is not optional bookkeeping. A credential reaches a
     /// runtime as a control frame on a link the adapter has recorded, and
     /// until now the only recorded links were terminal attachments — so a
@@ -103,6 +132,18 @@ impl Bridge {
         cwd: String,
         mode: Option<String>,
         rejoin: Option<String>,
+        // Where this link's answers to a plane switch are delivered, and the
+        // runtime they are about. A conversation link is the only link a
+        // conversation-only kernel has, so without this such a session could
+        // never confirm a switch and every one of them would rotate (#289).
+        switches: Option<(super::SwitchWaiters, String)>,
+        // Whether this session spends its owner's own account with the model
+        // vendor. It decides whether the agent has to be signed in before a
+        // conversation can be opened at all — an unauthenticated kernel
+        // refuses `session/new` outright.
+        own_credential: bool,
+        // Already being drained by the caller when this is called. See above.
+        updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
         let (sink, mut source) = stream.split();
 
@@ -127,9 +168,6 @@ impl Bridge {
                 ))
             }
         };
-        let (updates_tx, updates_rx) = mpsc::channel(BUFFER);
-        let (input_tx, mut input_rx) = mpsc::channel(BUFFER);
-
         let bridge = Arc::new(Self {
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -137,6 +175,15 @@ impl Bridge {
             session: Mutex::new(None),
             blocked: Mutex::new(HashMap::new()),
         });
+
+        let writer = Arc::clone(&bridge);
+        let writer_updates = updates_tx.clone();
+        let (input, input_task) =
+            ConversationInputSender::spawn_with_abort(INPUT_BUFFER, move |input| {
+                let writer = Arc::clone(&writer);
+                let updates = writer_updates.clone();
+                async move { writer.drive(input, &updates).await }
+            });
 
         // Read before anything is sent: the handshake's own answers arrive on
         // this loop, so it has to be running to receive them.
@@ -158,6 +205,16 @@ impl Bridge {
                         }
                         _ => {}
                     },
+                    Ok(Message::Text(text)) => {
+                        // A runtime's answer to a plane switch, and nothing
+                        // else: the conversation itself travels framed on its
+                        // own lane.
+                        if let (Some(accepted), Some((waiters, runtime))) =
+                            (super::link::switch_answer(&text), switches.as_ref())
+                        {
+                            waiters.settle(runtime, accepted).await;
+                        }
+                    }
                     Ok(Message::Close(_)) => break,
                     Ok(_) => {}
                     Err(e) => {
@@ -166,6 +223,18 @@ impl Bridge {
                     }
                 }
             }
+            /*
+             * Every call still waiting on this link is answered by dropping
+             * its sender, which wakes the waiter at once with an error.
+             *
+             * Without this, a link that closed left its oneshots alive
+             * forever: the handshake, a mode change, and above all a prompt
+             * would await an answer that could no longer come, and the turn
+             * sat "running" until somebody gave up. A dead link is an answer,
+             * and it has to be delivered as one.
+             */
+            reader.pending.lock().await.clear();
+            input_task.abort();
             tracing::info!("conversation link ended");
         });
 
@@ -173,196 +242,40 @@ impl Bridge {
         // They answer different questions — one is a control plane taking back
         // over a live runtime, the other a runtime taking over a session — and
         // when both are present the first is the more recent truth.
-        bridge.handshake(rejoin, resuming, cwd, mode).await?;
+        bridge
+            .handshake(rejoin, resuming, cwd, mode, own_credential)
+            .await?;
         let conversation_id = bridge.session.lock().await.clone();
-
-        let writer = Arc::clone(&bridge);
-        let updates = updates_tx;
-        tokio::spawn(async move {
-            while let Some(input) = input_rx.recv().await {
-                writer.drive(input, &updates).await;
-            }
-            tracing::info!("conversation input ended");
-        });
 
         let control = super::control_lane(Arc::clone(&bridge.sink));
 
         Ok((
             ConversationChannel {
-                updates: updates_rx,
-                input: input_tx,
+                input,
                 conversation_id,
             },
             control,
         ))
     }
 
-    /// Initialize, get hold of a session, and settle its mode.
-    ///
-    /// Three ways to have one, and they are genuinely different. A bridge that
-    /// is still running holds its session in memory and is simply told which
-    /// one this is. A bridge that has just started, on a pod handed a
-    /// conversation, loads it from disk. Anything else opens a new one.
-    ///
-    /// Getting the first two the wrong way round fails, and was checked rather
-    /// than reasoned about: a live bridge refuses to load a session it is
-    /// already holding, because loading reads a file that a conversation with
-    /// no committed turns has not written yet.
-    async fn handshake(
-        &self,
-        rejoining: Option<String>,
-        resuming: Option<String>,
-        cwd: String,
-        mode: Option<String>,
-    ) -> Result<(), AdapterError> {
-        self.call(
-            "initialize",
-            serde_json::json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false } },
-            }),
-        )
-        .await?;
-
-        let session = match (rejoining, resuming) {
-            // A conversation this bridge is still holding. Nothing is asked of
-            // it beyond the identifier: the session is in the process's memory,
-            // and asking it to load one would be asking it to read a file it
-            // may not have written.
-            (Some(conversation), _) => {
-                tracing::info!(%conversation, "rejoining the conversation this runtime is holding");
-                conversation
-            }
-            // Carried from another pod. The rollout is already on this pod's
-            // disk — the supervisor put it there — so loading by identifier is
-            // what makes the session continue rather than start again.
-            (None, Some(conversation)) => {
-                let params = serde_json::json!({
-                    "sessionId": conversation,
-                    "cwd": cwd,
-                    "mcpServers": [],
-                });
-                self.call("session/load", params).await.map_err(|e| {
-                    // Loud: the runtime this conversation came from is about to
-                    // be torn down, and reporting success here would lose it.
-                    AdapterError::Rejected(format!("could not resume conversation: {e}"))
-                })?;
-                conversation
-            }
-            (None, None) => {
-                let started = self
-                    .call(
-                        "session/new",
-                        serde_json::json!({ "cwd": cwd, "mcpServers": [] }),
-                    )
-                    .await?;
-                started
-                    .get("sessionId")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        AdapterError::Rejected("the bridge named no session".to_string())
-                    })?
-                    .to_string()
-            }
-        };
-        *self.session.lock().await = Some(session.clone());
-
-        // Refused rather than defaulted, for the bridges that have modes: they
-        // start every session in their most permissive one whatever the
-        // kernel's own configuration says, so a session whose mode did not
-        // take would be acting unattended while its owner had asked to be
-        // asked. A bridge with no modes names none and this is skipped.
-        if let Some(mode) = mode {
-            self.call(
-                "session/set_mode",
-                serde_json::json!({ "sessionId": session, "modeId": mode }),
-            )
-            .await
-            .map_err(|e| {
-                AdapterError::Rejected(format!(
-                    "this session could not be held to its permission mode ({mode}): {e}"
-                ))
-            })?;
-            tracing::info!(%session, %mode, "conversation opened");
-        } else {
-            tracing::info!(%session, "conversation opened");
-        }
-        Ok(())
-    }
-
-    /// Act on something a caller sent toward the runtime.
-    async fn drive(&self, input: ConversationInput, updates: &mpsc::Sender<ConversationUpdate>) {
-        let Some(session) = self.session.lock().await.clone() else {
-            return;
-        };
-        match input {
-            ConversationInput::Prompt(content) => {
-                // The turn's answer is the turn ending, so it is awaited on its
-                // own task: a prompt takes as long as the model takes, and
-                // blocking here would stop the caller cancelling it.
-                let params = serde_json::json!({ "sessionId": session, "prompt": content });
-                let updates = updates.clone();
-                // Not through `call`, which is otherwise the way to ask this
-                // bridge something: that one waits under a deadline meant for a
-                // question with a quick answer, and a prompt takes as long as
-                // the model takes.
-                match self.begin("session/prompt", params) {
-                    Ok(waiting) => {
-                        tokio::spawn(async move {
-                            let ended = match waiting.await {
-                                Ok(frame) => turn_outcome(frame),
-                                // The bridge went away mid-turn. Reported as a
-                                // cancellation rather than as an ending: the
-                                // turn did not finish, and the core closes it
-                                // with the reason the conversation stopped for.
-                                Err(_) => PromptResponse::new(crate::TurnStopReason::Cancelled),
-                            };
-                            let _ = updates.send(ConversationUpdate::TurnEnded(ended)).await;
-                        });
-                    }
-                    Err(e) => tracing::warn!(error = %e, "could not send a prompt"),
-                }
-            }
-            ConversationInput::PermissionAnswer { id, decision } => {
-                let held = self.blocked.lock().await.remove(&id);
-                let Some(held) = held else {
-                    // Answered after the bridge stopped waiting — a turn that
-                    // was cancelled, or a runtime that went away. Nothing to
-                    // send, and saying so beats a frame nothing will read.
-                    tracing::info!(request = %id, "nothing is waiting for this answer any more");
-                    return;
-                };
-                let outcome = outcome_for(decision, &held.options);
-                let answer = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": held.call,
-                    "result": { "outcome": outcome },
-                });
-                if let Err(e) = self.send(&answer).await {
-                    tracing::warn!(error = %e, "could not answer a permission request");
-                }
-            }
-            ConversationInput::Cancel => {
-                let notice = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "session/cancel",
-                    "params": { "sessionId": session },
-                });
-                if let Err(e) = self.send(&notice).await {
-                    tracing::warn!(error = %e, "could not cancel the turn");
-                }
-            }
-        }
-    }
-
     /// Ask the bridge something and wait for its answer.
-    async fn call(
+    pub(super) async fn call(
         &self,
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, AdapterError> {
-        let waiting = self.begin(method, params)?;
-        let frame = tokio::time::timeout(CALL_DEADLINE, waiting)
+        self.call_within(method, params, CALL_DEADLINE).await
+    }
+
+    /// The same, for something that legitimately takes longer than a call.
+    pub(super) async fn call_within(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        deadline: std::time::Duration,
+    ) -> Result<serde_json::Value, AdapterError> {
+        let waiting = self.begin(method, params).await?;
+        let frame = tokio::time::timeout(deadline, waiting)
             .await
             .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
             .map_err(|_| AdapterError::Unavailable(format!("{method} lost its answer")))?;
@@ -386,7 +299,7 @@ impl Bridge {
     ///
     /// Registered before it is sent, because the answer can arrive on the read
     /// loop before this function returns.
-    fn begin(
+    pub(super) async fn begin(
         &self,
         method: &str,
         params: serde_json::Value,
@@ -400,25 +313,11 @@ impl Bridge {
             "params": params,
         });
 
-        let pending = Arc::clone(&self.pending);
-        let sink = Arc::clone(&self.sink);
-        tokio::spawn(async move {
-            pending.lock().await.insert(id, answer);
-            let body = framed.to_string();
-            let frame = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
-            if sink
-                .lock()
-                .await
-                .send(Message::Binary(frame))
-                .await
-                .is_err()
-            {
-                // Dropped from the map so the caller's wait ends now rather
-                // than at the deadline: the link is gone and no answer is
-                // coming.
-                pending.lock().await.remove(&id);
-            }
-        });
+        self.pending.lock().await.insert(id, answer);
+        if let Err(error) = self.send(&framed).await {
+            self.pending.lock().await.remove(&id);
+            return Err(error);
+        }
         Ok(waiting)
     }
 
@@ -435,43 +334,17 @@ impl Bridge {
     }
 }
 
-/// Read how a turn ended out of the bridge's answer.
+/// How a turn came out: finished, or stopped by something going wrong.
 ///
-/// The answer is the whole JSON-RPC frame — `inbound` hands the receiver what
-/// it read, and `call` is what usually unwraps `result`. This path did not, and
-/// deserialized the envelope itself into a `PromptResponse`. That could only
-/// fail, so every turn was reported as having ended normally: a refusal, a
-/// context limit and a cancellation all arrived as `end_turn`, and so did an
-/// error. A turn that failed looked exactly like a turn that finished.
-///
-/// Three cases, and each is said rather than flattened:
-///
-/// * an error — the turn did not finish, and reporting an ending would tell
-///   the owner their agent had answered when it had not;
-/// * a result that reads — the kernel's own stop reason, which is the whole
-///   point of the field;
-/// * a result that does not — recorded loudly and ended, because a turn that
-///   is over must be closed either way or the session sits `running` forever.
-fn turn_outcome(frame: serde_json::Value) -> PromptResponse {
-    if let Some(error) = frame.get("error") {
-        tracing::warn!(%error, "the bridge refused a prompt");
-        return PromptResponse::new(crate::TurnStopReason::Refusal);
-    }
-    let Some(result) = frame.get("result") else {
-        tracing::warn!(answer = %frame, "a prompt was answered with neither a result nor an error");
-        return PromptResponse::new(crate::TurnStopReason::EndTurn);
-    };
-    match serde_json::from_value::<PromptResponse>(result.clone()) {
-        Ok(ended) => ended,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                answer = %result,
-                "a turn ended in a way this build cannot read; treating it as finished"
-            );
-            PromptResponse::new(crate::TurnStopReason::EndTurn)
-        }
-    }
+/// Kept apart from `PromptResponse` because the protocol has no word for
+/// "the agent could not answer at all", and folding that into a stop reason
+/// is what made every such turn read as an ordinary, empty completion.
+pub(super) enum Outcome {
+    Ended(PromptResponse),
+    Failed {
+        message: String,
+        capability: Option<String>,
+    },
 }
 
 #[cfg(test)]

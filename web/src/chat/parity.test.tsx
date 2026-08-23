@@ -68,6 +68,7 @@ const CAPABLE: SessionCapabilities = {
   steer: true,
   interrupt: true,
   usage: true,
+  resources: false,
   concurrentInput: 'enqueue',
 };
 
@@ -143,7 +144,7 @@ describe('what the chat surface can drive', () => {
     const { sent } = surface(accepted);
 
     await user.type(screen.getByRole('textbox', { name: /message/i }), 'build me a web scraper');
-    await user.click(screen.getByRole('button', { name: /^send$/i }));
+    await user.click(screen.getByRole('button', { name: /send message/i }));
 
     await waitFor(() => {
       expect(sent).toHaveLength(1);
@@ -160,8 +161,10 @@ describe('what the chat surface can drive', () => {
     // the reconnect order is open, read, dedupe, and what a person reloads
     // into is what they will believe.
     expect(await screen.findByRole('log', { name: /conversation/i })).toBeInTheDocument();
+    // What the agent actually said, rather than a label above it: the label
+    // is chrome and the words are the history this is proving arrived.
     await waitFor(() => {
-      expect(screen.getAllByText(/chronobot · /).length).toBeGreaterThan(0);
+      expect(document.querySelectorAll('.turn[data-role="assistant"]').length).toBeGreaterThan(0);
     });
   });
 
@@ -201,7 +204,7 @@ describe('what it refuses, by name, on screen', () => {
     // which is the case that separates "cannot" from "did not work".
     const { sent } = surface(refuses('interrupt'), CAPABLE, 'two-tool-calls', 3);
 
-    const key = await screen.findByRole('button', { name: /interrupt/i });
+    const key = await screen.findByRole('button', { name: /stop generating/i });
     await user.click(key);
 
     await waitFor(() => {
@@ -218,7 +221,7 @@ describe('what it refuses, by name, on screen', () => {
 
     await screen.findByRole('log', { name: /conversation/i });
     await user.type(screen.getByRole('textbox', { name: /message/i }), 'actually, do it in Rust');
-    await user.click(screen.getByRole('button', { name: /^send$/i }));
+    await user.click(screen.getByRole('button', { name: /send message/i }));
 
     await waitFor(() => {
       expect(sent).toHaveLength(1);
@@ -232,7 +235,7 @@ describe('what it refuses, by name, on screen', () => {
 
     // §18.5: a session with no usage grant has often spent a great deal, and
     // drawing that as 0 is the one answer that is certainly wrong.
-    expect(await screen.findByText(/not reported/i)).toBeInTheDocument();
+    expect(await screen.findByText('Usage not reported for this session')).toBeInTheDocument();
   });
 });
 
@@ -280,5 +283,33 @@ describe('the table and the tests agree', () => {
     for (const row of TABLE.filter((entry) => entry.projection === 'capability')) {
       expect(row.capability, `${row.operation} must name what it lacks`).toBeTruthy();
     }
+  });
+});
+
+describe('where an approval waits', () => {
+  it('takes the composer seat rather than sitting in the stream', async () => {
+    /*
+     * §18.3, amended. An approval in the stream scrolls away: a turn that
+     * stopped five entries ago leaves its question five entries up, and the
+     * one thing somebody must answer becomes the one thing they can scroll
+     * past. Here it is where they were already looking — and the field goes,
+     * because typing is not what the session is waiting for.
+     */
+    surface(accepted, CAPABLE, 'approval-granted', 2);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /allow/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('textbox', { name: /message/i })).toBeNull();
+  });
+
+  it('gives the field back once the question is answered', async () => {
+    // The seat is the composer's; an approval only borrows it.
+    surface(accepted, CAPABLE, 'approval-granted');
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: /message/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /^allow$/i })).toBeNull();
   });
 });

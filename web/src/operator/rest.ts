@@ -1,14 +1,19 @@
 import { ApiError } from '../api/client';
+import { PlatformSettingsConflict } from './types';
 import type {
   ActivityEntry,
   ActivityQuery,
   AdminSession,
+  CapacityBounds,
   DetailPair,
   OperatorStore,
   Person,
+  PlatformSettings,
   ProviderReport,
   RuntimeEntry,
   RuntimeInventory,
+  SessionBriefing,
+  StoredPlatformSettings,
 } from './types';
 
 /**
@@ -46,15 +51,26 @@ async function call(path: string, init?: RequestInit): Promise<unknown> {
   }
   if (!response.ok) {
     let detail = `request failed with ${response.status}`;
+    let code: string | undefined;
     try {
-      const body = (await response.json()) as { detail?: unknown; title?: unknown };
+      const body = (await response.json()) as {
+        detail?: unknown;
+        title?: unknown;
+        code?: unknown;
+      };
       const text = body?.detail ?? body?.title;
       if (typeof text === 'string' && text !== '') {
         detail = text;
       }
+      if (typeof body?.code === 'string') {
+        code = body.code;
+      }
     } catch {
       // A body that is not a problem document leaves the status as the whole
       // story, which is still better than reporting nothing.
+    }
+    if (code === 'settings_conflict') {
+      throw new PlatformSettingsConflict(detail);
     }
     throw new ApiError(response.status, detail);
   }
@@ -83,6 +99,113 @@ function list(payload: unknown, what: string): readonly unknown[] {
     throw new ApiError(0, `the ${what} was not a list`);
   }
   return payload;
+}
+
+/** An object-shaped payload, or a boundary failure fit to show an operator. */
+function object(payload: unknown, what: string): Record<string, unknown> {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new ApiError(0, `the ${what} was not an object`);
+  }
+  return payload as Record<string, unknown>;
+}
+
+/** A required string that may deliberately be empty. */
+function prose(value: unknown, what: string): string {
+  if (typeof value !== 'string') {
+    throw new ApiError(0, `the ${what} was not text`);
+  }
+  return value;
+}
+
+/** An ordered set of editable prose blocks. */
+function proseBlocks(value: unknown, what: string): readonly string[] {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+    throw new ApiError(0, `the ${what} was not a list of text blocks`);
+  }
+  return [...value];
+}
+
+/** A positive integer setting, never rounded or silently repaired. */
+function positiveInteger(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ApiError(0, `the ${what} was not a positive integer`);
+  }
+  return value;
+}
+
+/** Read editable briefing prose off the wire. */
+export function toSessionBriefing(raw: unknown): SessionBriefing {
+  const briefing = object(raw, 'platform briefing');
+  return {
+    before: proseBlocks(briefing.before, 'briefing preamble'),
+    reachHeading: prose(briefing.reach_heading, 'granted-services heading'),
+    reachLead: prose(briefing.reach_lead, 'granted-services introduction'),
+    reachClose: prose(briefing.reach_close, 'granted-services closing prose'),
+    reachNone: prose(briefing.reach_none, 'no-services prose'),
+    after: proseBlocks(briefing.after, 'briefing closing blocks'),
+  };
+}
+
+/** Read all four inclusive size bounds off the wire. */
+export function toCapacityBounds(raw: unknown): CapacityBounds {
+  const bounds = object(raw, 'platform size bounds');
+  return {
+    minCpuMillis: positiveInteger(bounds.min_cpu_millis, 'minimum CPU bound'),
+    maxCpuMillis: positiveInteger(bounds.max_cpu_millis, 'maximum CPU bound'),
+    minMemoryMib: positiveInteger(bounds.min_memory_mib, 'minimum memory bound'),
+    maxMemoryMib: positiveInteger(bounds.max_memory_mib, 'maximum memory bound'),
+  };
+}
+
+/** Read one complete settings object off the wire. */
+export function toPlatformSettings(raw: unknown): PlatformSettings {
+  const settings = object(raw, 'platform settings');
+  return {
+    briefing: toSessionBriefing(settings.briefing),
+    sizeBounds: toCapacityBounds(settings.size_bounds),
+    liveSessions:
+      settings.live_sessions === null
+        ? null
+        : positiveInteger(settings.live_sessions, 'live-session limit'),
+  };
+}
+
+/** Read a revisioned settings response off the wire. */
+export function toStoredPlatformSettings(raw: unknown): StoredPlatformSettings {
+  const stored = object(raw, 'platform settings response');
+  if (
+    typeof stored.revision !== 'number' ||
+    !Number.isSafeInteger(stored.revision) ||
+    stored.revision < 0
+  ) {
+    throw new ApiError(0, 'the platform settings revision was not a non-negative integer');
+  }
+  return {
+    revision: stored.revision,
+    settings: toPlatformSettings(stored.settings),
+    previous: stored.previous === undefined ? undefined : toPlatformSettings(stored.previous),
+  };
+}
+
+/** Render the frontend model in the API's names, including every briefing field. */
+function settingsRequest(settings: PlatformSettings): Record<string, unknown> {
+  return {
+    briefing: {
+      before: settings.briefing.before,
+      reach_heading: settings.briefing.reachHeading,
+      reach_lead: settings.briefing.reachLead,
+      reach_close: settings.briefing.reachClose,
+      reach_none: settings.briefing.reachNone,
+      after: settings.briefing.after,
+    },
+    size_bounds: {
+      min_cpu_millis: settings.sizeBounds.minCpuMillis,
+      max_cpu_millis: settings.sizeBounds.maxCpuMillis,
+      min_memory_mib: settings.sizeBounds.minMemoryMib,
+      max_memory_mib: settings.sizeBounds.maxMemoryMib,
+    },
+    live_sessions: settings.liveSessions,
+  };
 }
 
 /** Read one person off the wire. */
@@ -275,6 +398,34 @@ export function createRestOperatorStore(): OperatorStore {
 
     async terminateSession(id: string): Promise<void> {
       await call(`${BASE}/sessions/${encodeURIComponent(id)}/terminate`, { method: 'POST' });
+    },
+
+    async readPlatformSettings(): Promise<StoredPlatformSettings> {
+      return toStoredPlatformSettings(await call(`${BASE}/settings`));
+    },
+
+    async changePlatformSettings(
+      expectedRevision: number,
+      settings: PlatformSettings,
+    ): Promise<StoredPlatformSettings> {
+      return toStoredPlatformSettings(
+        await call(`${BASE}/settings`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            expected_revision: expectedRevision,
+            ...settingsRequest(settings),
+          }),
+        }),
+      );
+    },
+
+    async resetPlatformBriefing(expectedRevision: number): Promise<StoredPlatformSettings> {
+      return toStoredPlatformSettings(
+        await call(`${BASE}/settings/reset`, {
+          method: 'POST',
+          body: JSON.stringify({ expected_revision: expectedRevision }),
+        }),
+      );
     },
   };
 }

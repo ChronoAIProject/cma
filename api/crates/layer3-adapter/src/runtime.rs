@@ -11,6 +11,7 @@
 //! given.
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
 use tokio::sync::mpsc;
 
@@ -21,6 +22,45 @@ pub struct TermSize {
     pub cols: u16,
     /// Rows.
     pub rows: u16,
+}
+
+/// How much a runtime reserves from its provider.
+///
+/// Declared here rather than taken from the core for the reason everything in
+/// this file is (see the module doc): the dependency runs the other way, and
+/// the caller maps between the two vocabularies.
+///
+/// Numbers, never a provider's quantity syntax. Rendering these into the
+/// strings a particular provider understands happens in exactly one place, in
+/// the hosted kernel, which is the only code here that owns those words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeCapacity {
+    /// Processor time, in thousandths of one core.
+    pub cpu_millis: NonZeroU32,
+    /// Working memory, in mebibytes.
+    pub memory_mib: NonZeroU32,
+}
+
+/// Why a runtime stopped serving, in this layer's own words.
+///
+/// The provider says this in its own vocabulary; this is the closed set the
+/// layers above are allowed to see. Mapping happens in `hosted/`, where the
+/// provider's words already live, so no provider string crosses this boundary
+/// -- CLAUDE.md section 3. A word this build does not know becomes
+/// `Unrecognised` rather than travelling upward verbatim: an unrecognised word
+/// is a fact worth reporting, and the word itself is the provider's business.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeLossReason {
+    /// Stopped for using more memory than it was allowed.
+    OutOfMemory,
+    /// Ran to the end and exited without reporting a failure.
+    Completed,
+    /// Exited reporting a failure.
+    Failed,
+    /// The machine under it went away, or the platform took it back.
+    Displaced,
+    /// The provider named something this build does not recognise.
+    Unrecognised,
 }
 
 /// One runtime the provider is running, as it describes it.
@@ -41,6 +81,33 @@ pub struct RuntimeListing {
     /// `None` means it predates this being recorded, which is a different
     /// thing from belonging to somebody else and is treated differently.
     pub created_by: Option<String>,
+    /// Whether the provider says this runtime is still serving.
+    ///
+    /// Listed and serving are not the same thing, and conflating them is how a
+    /// session survives its own sandbox: a sandbox whose container has exited
+    /// is still a sandbox, so it is still listed, and a reconciliation that
+    /// reads presence as liveness finds record and reality agreeing and does
+    /// nothing. Observed on production — a session reported `running` for
+    /// nineteen minutes after the kernel had OOM-killed its container.
+    ///
+    /// `false` is a positive statement that it has stopped, not an absence of
+    /// news. It is safe to act on because provisioning **waits** for a sandbox
+    /// to report itself running before recording it: anything a record points
+    /// at was serving once, so not serving now means it stopped rather than
+    /// that it has yet to start.
+    pub serving: bool,
+    /// Why it stopped, where the provider said and this build recognised it.
+    ///
+    /// `None` in three different situations and they are deliberately not told
+    /// apart here: the runtime is still serving, the provider named nothing,
+    /// or the adapter cannot answer this question at all. What they share is
+    /// that there is no verdict to give, and inventing one would be worse than
+    /// the absence.
+    ///
+    /// Never read while `serving` is true. The provider sets a reason on a
+    /// healthy sandbox too, so reading it unconditionally would invent a death
+    /// for every live runtime in the list.
+    pub lost_because: Option<RuntimeLossReason>,
 }
 
 /// What the runtime should already have when the agent starts.
@@ -59,6 +126,12 @@ pub struct RuntimeEnvironment {
     pub packages: Vec<String>,
     /// Skill identifiers the runtime should load.
     pub skills: Vec<String>,
+    /// Standing instructions the session's owner wrote for their own sessions.
+    ///
+    /// Appended to `RuntimeSpec::platform_briefing`, never merged into it: the
+    /// two sources have different owners and neither may silently overwrite
+    /// the other.
+    pub agent_notes: String,
 }
 
 impl RuntimeEnvironment {
@@ -91,6 +164,19 @@ pub struct RuntimeSpec {
     pub session_id: String,
     /// Geometry to allocate the terminal at.
     pub size: TermSize,
+    /// How much this runtime should reserve, or `None` for the deployment's.
+    ///
+    /// **Not `size`.** That is the terminal's geometry, immediately above, and
+    /// was here first. This is how large the box is; that is how large the
+    /// screen inside it is, and conflating them would be a resize that changed
+    /// somebody's bill.
+    ///
+    /// `None` is not zero and not a default invented here: it means this
+    /// caller stated nothing about capacity, and the sandbox is shaped the way
+    /// this deployment shapes every sandbox. That is what every caller sent
+    /// before this field existed, so `None` reproduces today's behaviour
+    /// exactly.
+    pub capacity: Option<RuntimeCapacity>,
     /// Credential the runtime should present when calling out on the owner's
     /// behalf, if the caller has one to delegate.
     ///
@@ -116,6 +202,24 @@ pub struct RuntimeSpec {
     /// So that a provider shared between control planes can be told apart, and
     /// no control plane reclaims a runtime it did not create.
     pub created_by: Option<String>,
+    /// Skills to put on the pod's disk before its agent starts.
+    ///
+    /// Carried as bytes rather than as names. A name is only useful to
+    /// something that can resolve it, and the pod deliberately cannot: it
+    /// holds no registry credential and knows no registry. The control plane
+    /// resolves and this delivers, which is the same division the conversation
+    /// carry already uses.
+    ///
+    /// Where they land is composed here, from the kernel's own root — the
+    /// pod is told paths and writes them, and never learns what a skill is.
+    pub skills: Vec<SkillPackage>,
+    /// The deployment's standing instructions, already rendered for this
+    /// session by the core that owns both the setting and its recorded grants.
+    ///
+    /// Distinct from `environment.agent_notes`: an administrator controls this
+    /// document and the session's owner controls those notes. The adapter may
+    /// compose them, but must never make one authority overwrite the other.
+    pub platform_briefing: String,
     /// What the runtime should already carry when the agent starts.
     pub environment: RuntimeEnvironment,
     /// What this session's credential may reach, by name.
@@ -225,6 +329,50 @@ pub enum TerminalInput {
     SwitchPlane { command: String },
 }
 
+/// What a runtime is using, as this layer reports it.
+///
+/// Levels and totals are carried through from the current supervisor frame;
+/// rates are derived against the previous frame on the same link. Every rate
+/// is absent on the first sample of a link, including the first one after a
+/// runtime rotation.
+///
+/// Every field is optional. A level may be unreadable, a limit may not exist,
+/// and a rate may have no sound predecessor. None of those absences is zero.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSample {
+    /// Processor use over `interval_ms`, in thousandths of one core.
+    pub cpu_millis_used: Option<u32>,
+    /// The processor allowance in thousandths of one core.
+    pub cpu_millis_limit: Option<u32>,
+    /// Memory in use at the instant of the sample, in bytes.
+    pub memory_bytes_used: Option<u64>,
+    /// The memory allowance in bytes.
+    pub memory_bytes_limit: Option<u64>,
+    /// The highest recorded memory use, in bytes.
+    pub memory_bytes_peak: Option<u64>,
+    /// Thousandths of the interval in which every task was memory-stalled.
+    pub stall_permille: Option<u16>,
+    /// Times memory usage reached its configured ceiling.
+    pub ceiling_hits: Option<u64>,
+    /// Allocations refused since the sandbox started.
+    pub allocation_failures: Option<u64>,
+    /// Processes killed for exceeding the memory allowance.
+    pub kills: Option<u64>,
+    /// Bytes received since the sandbox started.
+    pub received_bytes: Option<u64>,
+    /// Bytes sent since the sandbox started.
+    pub sent_bytes: Option<u64>,
+    /// Received bytes per second over `interval_ms`.
+    pub received_bytes_per_second: Option<u64>,
+    /// Sent bytes per second over `interval_ms`.
+    pub sent_bytes_per_second: Option<u64>,
+    /// The interval over which the three rates were derived, in milliseconds.
+    ///
+    /// Absent when there is no strictly later predecessor; present whenever
+    /// elapsed time is sound, even if an individual counter is unavailable.
+    pub interval_ms: Option<u64>,
+}
+
 /// A bidirectional attachment to a runtime's terminal.
 #[derive(Debug)]
 pub struct TerminalChannel {
@@ -232,4 +380,18 @@ pub struct TerminalChannel {
     pub output: mpsc::Receiver<Vec<u8>>,
     /// Input destined for the runtime.
     pub input: mpsc::Sender<TerminalInput>,
+}
+
+/// One skill, as bytes ready to be written.
+///
+/// The paths are relative to the skill's own directory, exactly as the
+/// registry names them — `SKILL.md`, `references/api-reference.md` — so the
+/// kernel's root is prefixed at delivery and nothing here depends on which
+/// kernel is being served.
+#[derive(Debug, Clone)]
+pub struct SkillPackage {
+    /// The directory this skill occupies, which is the name the agent invokes.
+    pub name: String,
+    /// Each file, relative to that directory.
+    pub files: Vec<(String, Vec<u8>)>,
 }

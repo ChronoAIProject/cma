@@ -24,8 +24,8 @@ use layer1_public::{
     rest::RestInterface, InterfaceProfile,
 };
 use layer2_core::{
-    ActivityService, Baseline, EnvironmentProfileService, ScreenModel, SessionService, SkillId,
-    SoftwarePackage, TerminalGeometry, UserDirectory,
+    ActivityService, Baseline, EnvironmentProfileService, PlatformSettingsService, ScreenModel,
+    SessionService, SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -104,6 +104,7 @@ async fn main() {
     };
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
+    let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
     // The account of what this service is asked to do, and of who asks. Both
     // are opened with everything else rather than lazily: a control plane that
     // served traffic it could not account for would be discovered by somebody
@@ -220,19 +221,35 @@ async fn main() {
         );
     }
 
+    // One persisted service is shared by every consumer: profile validation,
+    // session provisioning and the administrator surface must never observe
+    // different revisions of deployment policy by construction.
+    let settings = Arc::new(PlatformSettingsService::new(settings_store));
     let environments = EnvironmentProfileService::new(
         profile_store,
         baseline,
-        catalog,
+        catalog
+            .clone()
+            .map(|c| c as Arc<dyn layer2_core::SkillCatalog>),
         service_picker,
         config.default_agent.clone(),
+        Arc::clone(&settings),
     );
     let service = SessionService::new(
         adapters,
         screen_factory,
         store,
-        context,
-        Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+        layer2_core::SessionPorts {
+            context,
+            credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
+            // The same registry the profile editor picks from, asked for
+            // contents rather than for names. A deployment without one still
+            // starts sessions; they carry whatever their image does.
+            skills: catalog
+                .clone()
+                .map(|c| c as Arc<dyn layer2_core::SkillSource>),
+            settings: Some(Arc::clone(&settings)),
+        },
         Arc::clone(&environments),
         layer2_core::Deployment {
             // The runtime image reference is the runtime version. Deriving it
@@ -279,6 +296,8 @@ async fn main() {
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::PATCH,
             axum::http::Method::DELETE,
         ]);
 
@@ -294,6 +313,7 @@ async fn main() {
             sessions: Arc::clone(&service),
             activity: Arc::clone(&activity),
             users: Arc::clone(&users),
+            settings: Arc::clone(&settings),
         }));
 
     let app = Router::new()

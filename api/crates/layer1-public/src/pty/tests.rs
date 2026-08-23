@@ -178,6 +178,17 @@ fn each_remaining_failure_has_its_own_code() {
         error_code(&CoreError::RuntimeUnavailable("x".into())),
         "runtime_unavailable"
     );
+    assert_eq!(
+        error_code(&CoreError::PriceListNotAppendOnly("x".into())),
+        "price_list_not_append_only"
+    );
+    assert_eq!(
+        error_code(&CoreError::PriceChanged {
+            quoted: "rate_old".into(),
+            in_force: "rate_new".into(),
+        }),
+        "price_changed"
+    );
 }
 
 #[test]
@@ -186,6 +197,7 @@ fn ready_frame_uses_the_documented_field_names() {
         cols: 120,
         rows: 40,
         snapshot: true,
+        resources: true,
         conforms_to: CONFORMS_TO,
         limits: Limits {
             scrollback_lines: SCROLLBACK_LINES,
@@ -195,9 +207,73 @@ fn ready_frame_uses_the_documented_field_names() {
     let json = serde_json::to_value(&msg).expect("serializes");
     assert_eq!(json["t"], "ready");
     assert_eq!(json["cols"], 120);
+    assert_eq!(json["resources"], true);
     assert_eq!(json["conformsTo"][0], CONFORMS_TO[0]);
     assert_eq!(json["limits"]["scrollbackLines"], 2000);
     assert_eq!(json["limits"]["maxFrameBytes"], 262_144);
+}
+
+fn empty_reading() -> ResourceReading {
+    ResourceReading {
+        cpu_millis_used: None,
+        cpu_millis_limit: None,
+        memory_bytes_used: None,
+        memory_bytes_limit: None,
+        memory_bytes_peak: None,
+        stall_permille: None,
+        ceiling_hits: None,
+        allocation_failures: None,
+        kills: None,
+        received_bytes: None,
+        sent_bytes: None,
+        received_bytes_per_second: None,
+        sent_bytes_per_second: None,
+        interval_ms: None,
+    }
+}
+
+#[test]
+fn a_resource_frame_carries_all_fourteen_camel_case_fields_as_explicit_nulls() {
+    let json =
+        serde_json::to_value(ServerControl::from_reading(empty_reading())).expect("serializes");
+    let object = json.as_object().expect("a control object");
+    let fields = [
+        "cpuMillisUsed",
+        "cpuMillisLimit",
+        "memoryBytesUsed",
+        "memoryBytesLimit",
+        "memoryBytesPeak",
+        "stallPermille",
+        "ceilingHits",
+        "allocationFailures",
+        "kills",
+        "receivedBytes",
+        "sentBytes",
+        "receivedBytesPerSecond",
+        "sentBytesPerSecond",
+        "intervalMs",
+    ];
+
+    assert_eq!(json["t"], "resources");
+    assert_eq!(object.len(), fields.len() + 1, "got {json}");
+    for field in fields {
+        assert!(object.contains_key(field), "missing {field}: {json}");
+        assert!(json[field].is_null(), "{field} was not null: {json}");
+    }
+}
+
+#[test]
+fn ready_promises_readings_only_for_a_reporting_subscription() {
+    let held = layer2_core::HeldReading {
+        reading: empty_reading(),
+        observed_at: "2026-08-23T09:14:06Z".into(),
+    };
+
+    assert!(reports_resources(true, Ok(ResourceStatus::Awaiting)));
+    assert!(reports_resources(true, Ok(ResourceStatus::Held(held))));
+    assert!(!reports_resources(true, Ok(ResourceStatus::Unreported)));
+    assert!(!reports_resources(true, Err(CoreError::SessionNotFound)));
+    assert!(!reports_resources(false, Ok(ResourceStatus::Awaiting)));
 }
 
 #[test]

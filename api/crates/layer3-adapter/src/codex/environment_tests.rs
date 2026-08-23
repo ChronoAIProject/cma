@@ -17,11 +17,14 @@ use crate::{AdapterError, KernelAdapter, RuntimeSpec, TermSize};
 fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: Default::default(),
     }
@@ -63,11 +66,14 @@ async fn permission_intent_reaches_this_kernel_through_the_file_it_reads() {
         let a = adapter("http://127.0.0.1:1");
         let spec = RuntimeSpec {
             restore_from: None,
+            skills: Vec::new(),
             reaches: Vec::new(),
+            platform_briefing: String::new(),
             created_by: None,
             environment: Default::default(),
             session_id: "sesn_x".into(),
             size: TermSize { cols: 80, rows: 24 },
+            capacity: None,
             subject_credential: None,
             options: RuntimeOptions {
                 permission,
@@ -107,11 +113,14 @@ async fn a_session_model_overrides_the_deployment_default() {
     let a = adapter("http://127.0.0.1:1");
     let spec = RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             model: Some("a-chosen-model".into()),
@@ -126,38 +135,46 @@ async fn a_session_model_overrides_the_deployment_default() {
 }
 
 #[tokio::test]
-async fn asking_for_the_owners_own_credential_is_refused_rather_than_ignored() {
-    // The failure this exists to prevent is silent: nothing in the runtime
-    // reads such a setting, so a session accepted with it would spend the
-    // delegated credential while its owner believed they were spending their
-    // own. Refusing before the provider is even called is what makes the
-    // difference visible.
+async fn an_own_account_session_is_given_no_upstream_of_ours() {
+    // This replaces a test that asserted the refusal, which was right for as
+    // long as nothing signed the agent in. What must stay true is the thing
+    // the refusal was protecting: an own-account session must not end up
+    // spending the platform's credential while its owner believes otherwise.
+    //
+    // Now it is guaranteed by absence rather than by refusal. With no upstream
+    // named, the supervisor starts no credential proxy, so there is nothing
+    // for a misconfigured session to fall back onto.
     use crate::RuntimeOptions;
 
     let a = adapter("http://127.0.0.1:1");
-    let err = a
-        .provision(&RuntimeSpec {
-            restore_from: None,
-            reaches: Vec::new(),
-            created_by: None,
-            environment: Default::default(),
-            session_id: "sesn_x".into(),
-            size: TermSize { cols: 80, rows: 24 },
-            subject_credential: None,
-            options: RuntimeOptions {
-                own_credential: true,
-                ..RuntimeOptions::default()
-            },
-        })
-        .await
-        .expect_err("an unsupported credential mode must not provision");
-    assert!(
-        matches!(err, AdapterError::Unsupported(_)),
-        "the refusal must be attributable to a missing ability, got {err:?}"
+    let spec = RuntimeSpec {
+        restore_from: None,
+        skills: Vec::new(),
+        reaches: Vec::new(),
+        platform_briefing: String::new(),
+        created_by: None,
+        environment: Default::default(),
+        session_id: "sesn_x".into(),
+        size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
+        subject_credential: None,
+        options: RuntimeOptions {
+            own_credential: true,
+            ..RuntimeOptions::default()
+        },
+    };
+    let env = a.environment_for(&spec);
+    assert_eq!(
+        env.get("CHRONO_UPSTREAM_BASE_URL").map(String::as_str),
+        Some(""),
+        "an own-account session must be given nothing to fall back onto"
     );
+    let config = env
+        .get(crate::layer4::CONFIG_BODY_VAR)
+        .expect("the kernel is still configured");
     assert!(
-        err.to_string().contains("own credential"),
-        "the refusal must name what was refused, got {err}"
+        !config.contains("127.0.0.1:9091") && !config.contains("model_provider"),
+        "and its configuration must name no provider of ours, got {config}"
     );
 }
 
@@ -169,11 +186,14 @@ async fn the_delegated_credential_provisions_exactly_as_before() {
     let err = a
         .provision(&RuntimeSpec {
             restore_from: None,
+            skills: Vec::new(),
             reaches: Vec::new(),
+            platform_briefing: String::new(),
             created_by: None,
             environment: Default::default(),
             session_id: "sesn_x".into(),
             size: TermSize { cols: 80, rows: 24 },
+            capacity: None,
             subject_credential: None,
             options: Default::default(),
         })
@@ -191,11 +211,14 @@ fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
     let a = adapter("http://127.0.0.1:1");
     let env = a.environment_for(&RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             own_credential: true,
@@ -224,6 +247,7 @@ fn this_kernel_advertises_only_what_was_proven_of_it() {
     );
     assert!(c.steer, "input mid-turn continues the same turn");
     assert!(c.usage, "token counts arrive with every turn");
+    assert!(c.resources, "the hosted runtime reports its resource use");
 }
 
 #[test]
@@ -293,7 +317,7 @@ async fn what_the_image_already_carries_provisions_as_before() {
         CodexSandboxSpec {
             deployment: crate::hosted::Deployment {
                 provided_packages: vec!["nyxid".into()],
-                provided_skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
+                skills_root: ".codex/skills".into(),
                 ..CodexSandboxSpec::default().deployment
             },
             ..CodexSandboxSpec::default()

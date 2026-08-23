@@ -79,14 +79,13 @@ pub struct AuthState {
     /// replacement is in place. The owner is kept alongside because reclaiming
     /// a key needs their token, and by then the session may be gone.
     issued: RwLock<HashMap<SessionId, Issued>>,
-    /// Credentials replaced but not yet taken back.
+    /// Credentials no runtime will present, but which are not yet taken back.
     ///
-    /// A replacement is not safe to revoke the moment it is minted: the
-    /// session is still presenting the old one until the new value has
-    /// reached it. Holding them here for a sweep is what removes the window
-    /// entirely — by the next pass the push has long since happened, and a
-    /// credential that outlives its session by a minute is not a risk while
-    /// one that dies mid-turn is a failed request somebody is waiting on.
+    /// Usually a replaced credential: it is not safe to revoke the moment its
+    /// successor is minted because the session may still be presenting it.
+    /// Also carries an ended session's credential when its owner token is
+    /// momentarily absent. In both cases the sweep waits until revocation can
+    /// actually be attempted instead of forgetting a still-valid key.
     superseded: RwLock<Vec<(String, SubjectId)>>,
     /// What the provider has said about bearer tokens, briefly.
     ///
@@ -260,12 +259,27 @@ impl AuthState {
         *self.issuer.write().await = Some(issuer);
     }
 
+    /// Whether sessions hold credentials of their own rather than their owner's.
+    ///
+    /// True once an issuer is configured, which is what `use_issuer` says in
+    /// the other direction: absent leaves every session on its owner's own
+    /// token, the behaviour that predates scoping.
+    ///
+    /// Asked because renewing the owner's token means two different things
+    /// depending on the answer. Where sessions hold their own keys it is this
+    /// service's own ability to mint and revoke being kept alive, and pushing
+    /// it into a session would hand back the whole identity those keys exist
+    /// to replace. Where they do not, the renewed token *is* what the sessions
+    /// run on and must reach them.
+    pub async fn sessions_hold_own_credentials(&self) -> bool {
+        self.issuer.read().await.is_some()
+    }
+
     /// Sessions whose credential has been held longer than `lifetime`.
     ///
     /// Age rather than a stated expiry, because the platform does not return
-    /// one when it mints. Replacing well inside the day these last means a
-    /// shortened lifetime upstream would have to halve before a session ever
-    /// presented a dead credential.
+    /// or request one when it mints. The caller chooses a local rotation
+    /// cadence independently of how long the provider accepts the key.
     pub async fn sessions_due_for_reissue(
         &self,
         lifetime: std::time::Duration,
@@ -312,19 +326,24 @@ impl AuthState {
         Some(minted.full_key)
     }
 
-    /// Take back credentials replaced on an earlier pass.
+    /// Take back credentials queued on an earlier pass or release.
     pub async fn take_back_superseded(&self) -> usize {
         let pending: Vec<(String, SubjectId)> = std::mem::take(&mut *self.superseded.write().await);
         let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
+            self.superseded.write().await.extend(pending);
             return 0;
         };
         let mut taken = 0;
+        let mut deferred = Vec::new();
         for (id, owner) in pending {
             if let Some(token) = self.access_token(&owner).await {
                 issuer.revoke(&id, &token).await;
                 taken += 1;
+            } else {
+                deferred.push((id, owner));
             }
         }
+        self.superseded.write().await.extend(deferred);
         taken
     }
 
@@ -347,8 +366,24 @@ impl AuthState {
             let Some(token) = self.access_token(&owner).await else {
                 continue;
             };
-            for (id, session) in issuer.minted_here(&token).await {
-                if service.session_is_live(&session).await {
+            let minted = match issuer.minted_here(&token).await {
+                Ok(minted) => minted,
+                Err(error) => {
+                    tracing::warn!(
+                        %owner,
+                        error = %error,
+                        "could not inspect this owner's keys for orphaned credentials"
+                    );
+                    continue;
+                }
+            };
+            for (id, session) in minted {
+                // Claimed, not merely running. A paused session is one its
+                // owner kept, and taking its key back leaves them to come
+                // back to a session whose credential was revoked underneath
+                // them — which is what happened to every stopped session as
+                // soon as this process restarted.
+                if service.session_claims_credential(&session).await {
                     continue;
                 }
                 // Held for a session this process is still tracking? Then it is

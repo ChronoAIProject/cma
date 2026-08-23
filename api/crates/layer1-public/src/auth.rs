@@ -39,6 +39,20 @@ impl AuthenticatedSubject {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActedUpon(pub SubjectId);
 
+/// What a platform-settings write actually changed.
+///
+/// Placed on the response by the handler, where the stored before and after
+/// documents are both known. Middleware outside the handler deliberately does
+/// not inspect the request body because it may contain administrator-authored
+/// prose.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SettingsTouched {
+    /// Setting names from the core document, in declaration order.
+    pub changed: Vec<&'static str>,
+    /// The sealed card appended by this write, when pricing changed.
+    pub rate_card: Option<String>,
+}
+
 /// The authenticated caller: who they are and what they may do.
 ///
 /// Extracted as one value so a handler cannot accidentally pass identity

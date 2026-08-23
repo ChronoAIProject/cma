@@ -212,6 +212,23 @@ RUN set -eux; \
     ln -s /opt/dsh-install/node_modules/.bin/dsh /usr/local/bin/dsh; \
     dsh --version
 
+# npm and the harness both carry node-tar 7.5.19, which is vulnerable to
+# CVE-2026-73566. Keep their known-good dependency resolutions intact, then
+# replace only that package with the fixed release. Both trees already carry
+# the same dependency shape required by 7.5.21.
+ARG TAR_VERSION=7.5.21
+RUN set -eux; \
+    npm install --no-save --prefix /tmp/tarfix "tar@${TAR_VERSION}"; \
+    for target in \
+        /usr/local/lib/node_modules/npm/node_modules/tar \
+        /opt/dsh-install/node_modules/tar; do \
+      rm -rf "$target"; \
+      cp -a /tmp/tarfix/node_modules/tar "$target"; \
+      test "$(node -p "require('$target/package.json').version")" = "${TAR_VERSION}"; \
+    done; \
+    rm -rf /tmp/tarfix; \
+    npm cache clean --force
+
 # Install the platform CLI from its published release. The checksum is verified
 # rather than trusted: this binary acts on the owner's behalf.
 RUN set -eux; \

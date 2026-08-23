@@ -1,10 +1,10 @@
 /*
- * The message stream — docs/Web_Style.md §18.1.
+ * The message stream — docs/Web_Style.md §13.
  *
- * A reading column, 760px, centred. The agent's turns are full width and
+ * A reading column, 748px, centred. The agent's turns are full width and
  * unboxed at the reading size; the owner's are right-aligned blocks on the
- * inset. No avatars, no alternating alignment beyond that one asymmetry, no
- * bubble on the agent's side.
+ * accent wash. No avatars, no alternating alignment beyond that one
+ * asymmetry, no bubble on the agent's side.
  */
 
 .stream {
@@ -33,10 +33,16 @@
 .stream__column {
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
+  /*
+   * §13: a 16px rhythm between turns. The previous spacing was set for a
+   * surface where every turn was a band separated by a rule; without the
+   * rules, that much air reads as the conversation falling apart rather than
+   * as it being airy.
+   */
+  gap: 16px;
   width: 100%;
   max-width: var(--read-column);
-  padding-block: var(--space-6);
+  padding-block: 24px;
   height: fit-content;
 }
 
@@ -45,12 +51,36 @@
  * turn. Over the surface rather than in it, so arriving content never moves
  * what they are reading.
  */
+/*
+ * Back to the newest. Centred rather than in a corner: it is about the column
+ * it sits over, and a corner reads as belonging to whatever is nearest it.
+ */
 .stream__behind {
   position: absolute;
-  right: var(--space-4);
-  bottom: var(--space-4);
-  height: var(--control-h-sm);
-  box-shadow: var(--lift-rest);
+  bottom: 16px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-button-floating-fill);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 100px;
+  box-shadow: var(--dsw-shadow-lv2);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+.stream__behind:hover {
+  background: var(--dsw-alias-button-floating-hover);
+}
+
+.stream__behind:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /* ── A turn ──────────────────────────────────────────────────────────── */
@@ -58,7 +88,38 @@
 .turn {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
+  font-size: 16px;
+  line-height: 28px;
+}
+
+/*
+ * The owner's turn is a bubble; the agent's runs the full measure unboxed —
+ * §13.
+ *
+ * Shape tells the two roles apart, which is what lets the ink stop doing it.
+ * The owner's turns are short and are theirs, so they sit right and carry a
+ * ground; the agent's are long and are the thing being read, so they get the
+ * whole column and nothing around them.
+ */
+/*
+ * The owner's bubble is capped in both directions: a share of the column so
+ * it never runs the full measure, and a fixed ceiling so it does not keep
+ * growing on a wide screen — a bubble as wide as the agent's prose stops
+ * reading as somebody's aside.
+ */
+.turn[data-role='user'] .turn__body {
+  align-self: flex-end;
+  max-width: min(525px, 82%);
+  padding: 10px 16px;
+  font-size: 16px;
+  line-height: 24px;
+  background: var(--dsw-specific-bubble);
+  border-radius: 22px;
+}
+
+.turn[data-role='user'] {
+  align-items: flex-end;
 }
 
 /*
@@ -67,19 +128,17 @@
  */
 .turn__eyebrow {
   display: inline-flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .turn__dot {
   width: 6px;
   height: 6px;
-  background: var(--live);
+  background: var(--dsw-alias-state-success-primary);
   border-radius: 50%;
 }
 
@@ -88,33 +147,15 @@
  * the reading size.
  */
 .turn__body {
-  color: var(--ink);
-  font-size: var(--text-read);
-  line-height: var(--leading-read);
+  color: var(--dsw-alias-label-primary);
+  font-size: 16px;
+  line-height: 28px;
   text-wrap: pretty;
 }
 
 /*
- * The owner's turn — §18.1: a block, right-aligned, on the inset, at most 78%
- * of the column, with the trailing corner tightened so the shape points at
- * where the request came from.
- */
-.turn[data-role='user'] {
-  align-items: flex-end;
-}
-
-.turn[data-role='user'] .turn__body {
-  max-width: 78%;
-  padding: var(--space-3) var(--space-4);
-  font-size: var(--text-body);
-  background: var(--inset);
-  border-radius: var(--radius-lg);
-  border-end-end-radius: 4px;
-}
-
-/*
  * The one difference between a message arriving and one that has settled —
- * §18.1's own geometry: a 9×17px accent block. Nothing else changes on
+ * §13's own geometry: a 9×17px accent block. Nothing else changes on
  * commit: a message that restyled itself would tell a reader the earlier
  * state was provisional when it was not.
  */
@@ -124,13 +165,21 @@
   height: 17px;
   margin-left: 2px;
   vertical-align: text-bottom;
-  background: var(--accent);
+  background: var(--dsw-alias-state-business-primary);
   border-radius: 1px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
+.turn__caret {
+  animation: turn-blink 1060ms step-end infinite;
+}
+
+/*
+ * A caret that never stops is exactly what a reduced-motion request is about,
+ * so it stops — and stays visible, because it marks where the text is.
+ */
+@media (prefers-reduced-motion: reduce) {
   .turn__caret {
-    animation: turn-blink 1060ms step-end infinite;
+    animation: none;
   }
 }
 
@@ -150,8 +199,8 @@
  * because the alternative is a conversation with a piece silently missing.
  */
 .turn--unknown .turn__body {
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
 }
 
 /*
@@ -163,31 +212,40 @@
   gap: 0;
 }
 
-/* ── A boundary where conversation was lost, §18.6 ───────────────────── */
+/* ── A boundary where conversation was lost, §13 ─────────────────────── */
 
 .gap {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: baseline;
-  padding-block: var(--space-3);
-  border-top: 1px solid var(--wait);
+  padding: 12px 16px;
+  background: var(--dsw-alias-state-warn-tertiary);
+  border-left: 2px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 10px;
 }
 
 .gap__label {
-  color: var(--wait);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  color: var(--dsw-alias-state-warn-label);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .gap__note {
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
 }
 
-/* ── Waiting for the first thing in a turn, §18.1 ────────────────────────
+/* A neutral boundary where the agent summarised the conversation, §13. */
+.context-compaction {
+  padding-block: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* ── Waiting for the first thing in a turn, §13 ──────────────────────────
  *
  * The §8 pulse with a word, drawn only between the turn starting and anything
  * arriving. It claims no progress, and it goes the moment there is something
@@ -196,75 +254,65 @@
 
 .stream__waiting {
   display: flex;
-  gap: var(--space-2);
+  gap: 6px;
   align-items: center;
   margin: 0;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  line-height: 24px;
 }
 
-.stream__waitdot {
-  width: 6px;
-  height: 6px;
-  background: var(--live);
-  border-radius: 50%;
-}
-
-/* ── A run that stopped badly, §18.9 ─────────────────────────────────────
+/* ── A run that stopped badly, §13 ───────────────────────────────────────
  *
- * In the stream, where it happened, as a --fail notice. The label carries
- * `--fail` *and* says the word: §2 forbids colour as the only carrier.
+ * In the stream, where it happened, as a danger notice. The leading rule
+ * carries the tone and the label says the word: §2 forbids colour as the
+ * only carrier.
  */
 
 .failure {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: var(--fail-wash);
-  border: 1px solid var(--fail);
-  border-radius: var(--radius-md);
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-left: 2px solid var(--dsw-alias-state-error-primary);
+  border-radius: 10px;
 }
 
 .failure__label {
-  color: var(--fail);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .failure__body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
 }
 
 .failure__message {
   margin: 0;
-  color: var(--ink);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
 }
 
 /* The named ability. Ink-1 like the message: it is the actionable half, not a
  * footnote. */
 .failure__named {
   margin: 0;
-  color: var(--ink);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
 }
 
 /* The API's own spelling, for somebody reading a report rather than a screen. */
 .failure__code {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
 }
 
-/* ── Agent-emitted content, §1 and §18.1 ─────────────────────────────────
+/* ── Agent-emitted content, §1 and §13 ───────────────────────────────────
  *
  * The frame is styled and the content is not. No colour is applied here — not
  * syntax highlighting, not a tint per role, not a semantic token on a word the
@@ -274,7 +322,7 @@
 .agent {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 12px;
 }
 
 .agent__paragraph {
@@ -283,7 +331,7 @@
 
 .agent__heading {
   margin: 0;
-  font-size: var(--text-body);
+  font-size: 15px;
   font-weight: 600;
   text-wrap: balance;
 }
@@ -291,38 +339,91 @@
 .agent__list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
   margin: 0;
-  padding-left: var(--space-5);
+  padding-left: 20px;
+}
+
+/*
+ * The block's frame — §13.
+ *
+ * Named outside the `.agent` namespace deliberately. §13 forbids colour on
+ * agent content, and a test enforces it by reading every `.agent*` rule; the
+ * header is frame around the content rather than content, so it carries the
+ * metadata ink every other label in the product carries. Calling it
+ * `.agent__*` would have been the wrong name, and the test that caught it was
+ * right to.
+ *
+ * The ground, the hairline and the radius move here from the `<pre>` so the
+ * header shares them: one boundary, one hairline, per §5.
+ */
+.codeblock {
+  overflow: hidden;
+  background: var(--dsw-alias-markdown-code-block);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+}
+
+/*
+ * The header stays put while a long listing scrolls beneath it — §13.
+ *
+ * Sticky against the stream's scrollport rather than the block's, which is
+ * why it sits out here: the `<pre>` below owns the horizontal overflow, and a
+ * sticky child of a horizontally scrolling box slides away sideways. It
+ * carries the frame's own ground so the code passes under it rather than
+ * through it.
+ */
+.codeblock__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 4px 12px;
+  background: var(--dsw-alias-markdown-code-block-banner);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+/*
+ * The fence's own info string, uppercased by type rather than by rewriting it.
+ * Empty when the agent named no language, which draws nothing rather than a
+ * label this client invented.
+ */
+.codeblock__lang {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 /*
  * A code block scrolls inside itself; the stream never does. Content length
- * is not allowed to decide the width of the surface it sits in. §18.1: the
- * mono face at half a step under the terminal size, on the sunken ground,
- * inside the card radius with a hairline.
+ * is not allowed to decide the width of the surface it sits in. §13: the
+ * mono face at half a step under the terminal size, on the sunken ground.
  */
 .agent__block {
   margin: 0;
-  padding: var(--space-3);
+  padding: 12px;
   overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: calc(var(--term-size) - 0.5px);
-  line-height: var(--term-leading);
-  background: var(--sunken);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  line-height: 22px;
+  background: var(--dsw-alias-markdown-code-block);
 }
 
 .agent__code {
-  padding: 1px var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
-  background: var(--inset);
-  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  background: var(--dsw-alias-markdown-inline-code);
+  border-radius: 6px;
 }
 
-/* ── The agent's plan, §18.10 ───────────────────────────────────────────
+/* ── The agent's plan, §13 ──────────────────────────────────────────────
  *
  * A stage, not prose: the list of steps the agent is working through, drawn
  * above the in-flight content. Each step is the kernel's own words, verbatim.
@@ -331,42 +432,252 @@
 .stage {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   margin: 0;
-  padding: var(--space-3);
+  padding: 12px;
   list-style: none;
-  background: var(--sunken);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  background: var(--dsw-alias-markdown-code-block);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
 }
 
 .stage__step {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: baseline;
   justify-content: space-between;
 }
 
 .stage__title {
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
 }
 
 .stage__status {
   flex: none;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .stage__mode {
-  padding-block: var(--space-2);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  padding-block: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/*
+ * A turn's own action — §13.
+ *
+ * Under the body, aligned to the turn's own edge: the owner's turns are a
+ * right-aligned block and the agent's run the full column, so the control
+ * follows whichever side its turn sits on rather than floating in the middle.
+ *
+ * Always present and never revealed on hover, per §3. It is quiet enough to
+ * live there permanently — label ink, no ground of its own — which is what
+ * makes an always-on control possible without it competing with the words.
+ */
+.turn__actions {
+  display: flex;
+  margin-top: 4px;
+}
+
+.turn[data-role='user'] .turn__actions {
+  justify-content: flex-end;
+}
+
+/*
+ * The surface cannot hear the session — §13.
+ *
+ * Deliberately not failure-toned. §13 draws a run the agent could not finish;
+ * this draws a link that stopped, and giving it the failure ink would tell an
+ * owner their work broke when their network did. Metadata ink, one line, in
+ * the reading column where the turn is.
+ */
+.stream__unheard {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 6px;
+}
+
+/*
+ * §13 — what an agent wrote, beyond code and lists.
+ *
+ * Nothing here takes colour. §13 forbids it on agent content without
+ * exception, and a link is where that exception arrives by habit: underline
+ * and cursor are what distinguish it, and they are enough.
+ */
+/*
+ * Underline and cursor, never colour — §13, which forbids colour on agent
+ * content without exception. Without `color: inherit` the browser's own blue
+ * wins, and that exception arrives by habit rather than by decision.
+ */
+.agent__link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agent__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.agent__link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 6px;
+}
+
+/*
+ * A quotation the agent set apart — §13.
+ *
+ * The rule carries it and nothing else does. An earlier draft dimmed it to
+ * secondary ink, which §13 forbids without exception and which the no-colour
+ * test caught: quoting is the agent's own emphasis, and drawing it fainter
+ * than the words around it is this surface deciding the quote matters less
+ * than the agent did.
+ */
+.agent__quote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--dsw-alias-border-l1);
+}
+
+/*
+ * Nesting kept, drawn as indent — §13. A plan with sub-steps flattened to
+ * one level is a different plan.
+ */
+.agent__list li[data-depth='1'] {
+  margin-left: 16px;
+}
+
+.agent__list li[data-depth='2'] {
+  margin-left: 32px;
+}
+
+.agent__list li[data-depth='3'] {
+  margin-left: 48px;
+}
+
+.agent__list li[data-depth='4'],
+.agent__list li[data-depth='5'] {
+  margin-left: 64px;
+}
+
+/*
+ * A table scrolls inside its own frame rather than widening the reading
+ * column — the rule a code block follows, for the same reason: content length
+ * is not allowed to decide the width of the surface it sits in.
+ */
+.agent__tablewrap {
+  overflow-x: auto;
+  margin: 8px 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+}
+
+.agent__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.agent__table th,
+.agent__table td {
+  padding: 4px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* One boundary, one hairline — §5. Rows are separated, never striped. */
+.agent__table tr + tr td,
+.agent__table thead tr th {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agent__table th {
+  font-weight: 500;
+}
+
+/*
+ * A soft line break is a line break — §13. An agent that wrote its steps on
+ * separate lines meant them on separate lines, and collapsing them into a
+ * paragraph rewrites the shape of the answer.
+ */
+.agent__paragraph {
+  white-space: pre-wrap;
+}
+
+/*
+ * A task list's box. Drawn at the reading size and never interactive: it
+ * records what the agent decided, and a control here would imply ticking it
+ * changed something.
+ */
+.agent__check {
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+  accent-color: var(--dsw-alias-label-tertiary);
+}
+
+/* An image the agent linked, never allowed to set the column's width. */
+.agent__image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.agent__rule {
+  height: 1px;
+  margin: 16px 0;
+  background: var(--dsw-alias-border-l1);
+  border: 0;
+}
+
+/*
+ * What an empty conversation says.
+ *
+ * A session with no turns drew a blank column, and the only sign it was ready
+ * was the composer no longer refusing — a state somebody had to infer from the
+ * absence of a refusal.
+ *
+ * In the reading column rather than centred in the surface: this is the first
+ * entry, where every entry after it will be, so nothing moves when the first
+ * turn arrives.
+ */
+.stream__opening {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 24px 0;
+}
+
+.stream__openingtitle {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.stream__openinghint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.stream__key {
+  padding: 1px 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
 }

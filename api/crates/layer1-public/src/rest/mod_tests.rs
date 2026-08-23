@@ -10,7 +10,7 @@ fn rest_projects_every_core_operation() {
     // REST has no structural constraint, so a missing operation here means
     // the facade has drifted from the core rather than that the protocol
     // cannot express it.
-    assert_eq!(RestInterface.operations().len(), 10);
+    assert_eq!(RestInterface.operations().len(), 11);
 }
 
 /// Everything a client can observe about a refusal.
@@ -40,6 +40,18 @@ async fn unauthorized_is_indistinguishable_from_not_found() {
         forbidden_body, missing_body,
         "a refusal that reads differently is an existence oracle"
     );
+}
+
+#[tokio::test]
+async fn a_zero_size_is_unprocessable_and_named() {
+    let error = layer2_core::SessionSize::new(0, 512).expect_err("zero CPU fails");
+    let (status, body) = rendered(CoreError::InvalidSessionSize(error)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "invalid_session_size");
+    assert!(body["type"]
+        .as_str()
+        .expect("a problem type")
+        .ends_with("/invalid-session-size"));
 }
 
 #[test]
@@ -77,6 +89,7 @@ fn a_session_declares_only_the_classes_it_was_granted() {
         conversation: true,
         steer: true,
         usage: true,
+        resources: Some(true),
         ..Default::default()
     });
     assert!(conversation
@@ -84,10 +97,39 @@ fn a_session_declares_only_the_classes_it_was_granted() {
         .any(|c| c.ends_with("/conf/conversation")));
     assert!(conversation.iter().any(|c| c.ends_with("/conf/steering")));
     assert!(conversation.iter().any(|c| c.ends_with("/conf/usage")));
+    assert!(conversation.iter().any(|c| c.ends_with("/conf/resources")));
     assert!(
         !conversation.iter().any(|c| c.ends_with("/conf/terminal")),
         "a conversation session must not claim the terminal class: {conversation:?}"
     );
+}
+
+#[test]
+fn an_unrecorded_or_refused_resource_grant_declares_no_resource_class() {
+    for capabilities in [
+        SessionCapabilities::default(),
+        SessionCapabilities {
+            conversation: true,
+            resources: Some(false),
+            ..Default::default()
+        },
+    ] {
+        let classes = conformance_for(&capabilities);
+        assert!(
+            !classes
+                .iter()
+                .any(|class| class.ends_with("/conf/resources")),
+            "got {classes:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_ungranted_resource_read_is_a_named_422_not_a_404() {
+    let (status, body) = rendered(CoreError::CapabilityUnsupported("resources".into())).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "capability_unsupported");
+    assert_eq!(body["capability"], "resources");
 }
 
 #[test]
@@ -108,6 +150,243 @@ fn a_missing_ability_is_unprocessable_rather_than_missing() {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// What a client actually receives for a body this interface could not take.
+///
+/// Drives axum's real extractor rather than serde directly. The bug behind all
+/// of this was end to end — a 201 on the wrong runtime — and a test that stops
+/// at `serde_json::from_str` would pass even if the rejection rendered as a
+/// 500.
+async fn body_rejection(content_type: &str, body: &'static str) -> (StatusCode, serde_json::Value) {
+    use axum::extract::FromRequest;
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/v1/sessions")
+        .header("content-type", content_type)
+        .body(axum::body::Body::from(body))
+        .expect("request builds");
+    let rejection = Json::<CreateSessionRequest>::from_request(request, &())
+        .await
+        .expect_err("this body must be rejected");
+    let response = BodyProblem(rejection).into_response();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("problem documents are small");
+    (
+        status,
+        serde_json::from_slice(&bytes).expect("a problem document is json"),
+    )
+}
+
+#[tokio::test]
+async fn an_unknown_field_is_refused_and_named() {
+    // The shape of request that produced #298: accepted, discarded, and
+    // answered 201 for a session that was not what was asked for.
+    let (status, body) = body_rejection(
+        "application/json",
+        r#"{"cols":120,"rows":32,"nonsense":"claude_code"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "invalid_request");
+    let detail = body["detail"].as_str().expect("detail is a string");
+    assert!(
+        detail.contains("nonsense"),
+        "it must name the field: {detail}"
+    );
+    assert!(
+        detail.contains("environment_profile"),
+        "and say what it would have taken: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn a_misspelled_profile_no_longer_starts_the_wrong_session() {
+    // The silent case nobody would have reported. `environmentProfile` is the
+    // camelCase spelling this project's own SDK and its AG-UI interface both
+    // use, and it used to start a session on the deployment's default profile
+    // instead of the named one — a working session, quietly not the one asked
+    // for.
+    let (status, body) = body_rejection(
+        "application/json",
+        r#"{"cols":120,"rows":32,"environmentProfile":"envp_1"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["detail"]
+        .as_str()
+        .expect("detail is a string")
+        .contains("environmentProfile"));
+}
+
+#[tokio::test]
+async fn a_bad_body_keeps_the_status_that_says_what_is_wrong() {
+    // Three conditions, three statuses, because each sends the reader
+    // somewhere different. Answering all of them 422 would send somebody whose
+    // header is wrong to go and stare at their JSON.
+    let (status, body) = body_rejection("application/json", r#"{"cols":"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "malformed json is 400");
+    assert_eq!(body["code"], "malformed_json");
+
+    let (status, body) = body_rejection("text/plain", r#"{"cols":120}"#).await;
+    assert_eq!(
+        status,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "a wrong content type is 415"
+    );
+    assert_eq!(body["code"], "unsupported_media_type");
+}
+
+#[tokio::test]
+async fn every_failure_renders_the_same_document_shape() {
+    // A caller writing one parser for this API's failures must not meet a
+    // second shape because the wrong half of their request was at fault.
+    let (_, from_body) = body_rejection("application/json", r#"{"nope":1}"#).await;
+    let (_, from_core) = rendered(CoreError::SessionTerminated).await;
+    for field in ["type", "title", "status", "detail", "code"] {
+        assert!(from_body.get(field).is_some(), "body problem lacks {field}");
+        assert!(from_core.get(field).is_some(), "core problem lacks {field}");
+    }
+}
+
+#[test]
+fn a_named_kernel_is_refused_and_told_where_to_put_it() {
+    // Guards the branch, not the parse. The test this replaces asserted that
+    // `kernel` deserialises — the opposite of refused — so deleting the whole
+    // refusal left 135 tests green and #298 reopened in silence. Verified by
+    // deleting it: nothing failed.
+    let request: CreateSessionRequest =
+        serde_json::from_str(r#"{"cols":120,"rows":32,"kernel":"claude_code"}"#)
+            .expect("a declared field parses; the refusal is the handler's job");
+
+    let refusal = request
+        .into_parts()
+        .expect_err("a named kernel must not reach the core");
+    assert_eq!(refusal.code(), "invalid_request");
+
+    // §3's bar is a refusal in words a caller can act on, which means naming
+    // the remedy and not only the mistake.
+    let said = refusal.to_string();
+    for expected in [
+        "kernel",
+        "environment profile",
+        "environment_profile",
+        "agent.kernel",
+    ] {
+        assert!(
+            said.contains(expected),
+            "the refusal must mention {expected}: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_request_without_a_kernel_passes_through_checked() {
+    // The other half. A gate that refuses everything is not a gate, and the
+    // geometry has to survive the trip.
+    let parts = serde_json::from_str::<CreateSessionRequest>(
+        r#"{"cols":120,"rows":32,"environment_profile":"envp_1","quoted_rate_card":"rate_1"}"#,
+    )
+    .expect("the declared fields are accepted")
+    .into_parts()
+    .expect("nothing here is unhonourable");
+    assert_eq!(parts.environment_profile.as_deref(), Some("envp_1"));
+    assert_eq!(parts.quoted_rate_card.as_deref(), Some("rate_1"));
+    assert!(parts.geometry.is_some());
+
+    // Half a geometry is not a size, so it is dropped rather than guessed at.
+    let half = serde_json::from_str::<CreateSessionRequest>(r#"{"cols":120}"#)
+        .expect("cols alone parses")
+        .into_parts()
+        .expect("and is not itself an error");
+    assert!(half.geometry.is_none());
+}
+
+#[test]
+fn a_well_formed_create_body_still_parses() {
+    // The other half. A gate that refuses everything is not a gate.
+    let body = serde_json::from_str::<CreateSessionRequest>(
+        r#"{"cols":120,"rows":32,"environment_profile":"envp_1"}"#,
+    )
+    .expect("the declared fields are still accepted");
+    assert_eq!(body.cols, Some(120));
+    assert_eq!(body.environment_profile.as_deref(), Some("envp_1"));
+
+    // And every field is optional, which is what an unqualified session is.
+    let bare = serde_json::from_str::<CreateSessionRequest>("{}").expect("a bare create is valid");
+    assert!(bare.cols.is_none() && bare.environment_profile.is_none());
+}
+
+#[test]
+fn priced_and_unpriced_quote_responses_have_distinct_exact_shapes() {
+    let priced = PricingQuoteView::from(Some(layer2_core::Quote {
+        rate_card: layer2_core::RateCardId("rate_exact".into()),
+        rate: layer2_core::Rate {
+            cpu_micros_per_cpu_hour: 40_000,
+            memory_micros_per_gib_hour: 5_000,
+        },
+        cpu_millis: 1_000,
+        memory_mib: 1_024,
+        micros_per_hour: 45_000,
+        display: "$0.045".into(),
+        currency: layer2_core::CURRENCY,
+        quoted_at: "2026-08-23T05:00:00Z".into(),
+    }));
+    assert_eq!(
+        serde_json::to_value(priced).expect("quote serializes"),
+        serde_json::json!({
+            "rate_card": "rate_exact",
+            "currency": "USD",
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "micros_per_hour": "45000",
+            "display": "$0.045",
+            "per": "hour",
+            "quoted_at": "2026-08-23T05:00:00Z"
+        })
+    );
+
+    assert_eq!(
+        serde_json::to_value(PricingQuoteView::from(None)).expect("absence serializes"),
+        serde_json::json!({"priced": false})
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_names_the_missing_ability_as_a_field() {
+    // §3 requires a refusal to name what is missing "in words a caller can act
+    // on". The name used to reach a caller only inside `detail`, as the tail
+    // of "capability not supported: conversation" — so acting on it meant
+    // parsing an English sentence, which every client would do slightly
+    // differently and which breaks the first time the wording is improved.
+    let (status, body) = rendered(CoreError::CapabilityUnsupported("conversation".into())).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["capability"], "conversation");
+    assert_eq!(body["code"], "capability_unsupported");
+    // The prose keeps saying it too: a caller that only shows `detail` to a
+    // person must not start showing them less.
+    assert!(
+        body["detail"]
+            .as_str()
+            .expect("detail is a string")
+            .contains("conversation"),
+        "the sentence should still name it: {}",
+        body["detail"]
+    );
+}
+
+#[tokio::test]
+async fn a_failure_with_no_ability_to_name_carries_no_field() {
+    // Absent rather than null. A field present on every failure invites a
+    // caller to branch on its emptiness instead of on the code, and the two
+    // disagree the first time a refusal arrives without a name.
+    let (_, body) = rendered(CoreError::SessionTerminated).await;
+    assert!(
+        body.get("capability").is_none(),
+        "nothing to name, so nothing should be there: {body}"
+    );
+}
+
 #[test]
 fn a_view_carries_geometry_as_plain_integers() {
     let s = Session {
@@ -126,6 +405,8 @@ fn a_view_carries_geometry_as_plain_integers() {
         rotated_at: None,
         capabilities: Default::default(),
         granted_services: None,
+        granted_skills: None,
+        pricing: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let view: SessionView = s.into();
@@ -133,6 +414,172 @@ fn a_view_carries_geometry_as_plain_integers() {
     assert_eq!(json["cols"], 120);
     assert_eq!(json["rows"], 40);
     assert!(json.get("stop_reason").is_none(), "absent reason omitted");
+    assert!(json.get("pricing").is_none(), "absent price omitted");
+}
+
+#[test]
+fn a_view_projects_the_pinned_price_without_rounding() {
+    let s = Session {
+        id: SessionId("sesn_priced".into()),
+        owner: layer2_core::SubjectId("subject-a".into()),
+        kernel: layer2_core::KernelId::new("example-runtime"),
+        status: layer2_core::SessionStatus::Ready,
+        recovery_state: layer2_core::RecoveryState::Normal,
+        stop_reason: None,
+        options: layer2_core::AgentOptions::default(),
+        environment_profile: None,
+        geometry: TerminalGeometry::default(),
+        last_seq: 3,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: None,
+        pricing: Some(layer2_core::SessionPricing {
+            rate_card: layer2_core::RateCardId("rate_exact".into()),
+            rate: layer2_core::Rate {
+                cpu_micros_per_cpu_hour: 40_000,
+                memory_micros_per_gib_hour: 5_000,
+            },
+            cpu_millis: 1_000,
+            memory_mib: 1_024,
+            micros_per_hour: 45_000,
+            quoted_at: "2026-08-23T05:00:00Z".into(),
+        }),
+        created_at: "2026-08-23T05:00:01Z".into(),
+    };
+
+    let json = serde_json::to_value(SessionView::from(s)).expect("session serializes");
+    assert_eq!(
+        json["pricing"],
+        serde_json::json!({
+            "rate_card": "rate_exact",
+            "currency": "USD",
+            "micros_per_hour": "45000",
+            "display": "$0.045",
+            "quoted_at": "2026-08-23T05:00:00Z"
+        })
+    );
+}
+
+/// The exact document a client parses.
+///
+/// One test on each side of the wire, over the same JSON. This one asserts the
+/// backend emits it; `web/src/sdk/sessions.test.ts` asserts the client reads
+/// that document back into the model its surfaces draw.
+///
+/// Field-by-field assertions on one side and a hand-written fixture on the
+/// other are how the two drift: each stays green while disagreeing about a
+/// name. Sharing the document is what stops that.
+#[test]
+fn a_view_carries_the_agent_configuration_a_client_draws() {
+    let s = Session {
+        id: SessionId("sesn_1".into()),
+        owner: layer2_core::SubjectId("subject-a".into()),
+        kernel: layer2_core::KernelId::new("codex"),
+        status: layer2_core::SessionStatus::Ready,
+        recovery_state: layer2_core::RecoveryState::Normal,
+        stop_reason: None,
+        options: layer2_core::AgentOptions {
+            model: Some("gpt-5-codex".into()),
+            reasoning_effort: layer2_core::ReasoningEffort::XHigh,
+            permission: layer2_core::PermissionMode::Unrestricted,
+            credential: layer2_core::CredentialMode::Own,
+            size: Some(layer2_core::SessionSize::new(1_500, 3_072).expect("valid size")),
+            ..Default::default()
+        },
+        environment_profile: None,
+        geometry: TerminalGeometry::new(120, 40).expect("valid"),
+        last_seq: 3,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: Some(vec![layer2_core::GrantedSkill {
+            id: layer2_core::SkillId::new("skl_nyxid"),
+            version: Some("0.5".into()),
+        }]),
+        pricing: None,
+        created_at: "2026-08-12T00:00:00Z".into(),
+    };
+    let json = serde_json::to_value(SessionView::from(s)).expect("serializes");
+
+    assert_eq!(json["agent"]["model"], "gpt-5-codex");
+    // Not `xhigh`. `as_str` spells it that way and serde does not, and only
+    // serde reaches a client — see `option_wire_names_are_what_clients_read`.
+    assert_eq!(json["agent"]["reasoning_effort"], "x_high");
+    assert_eq!(json["agent"]["permission"], "unrestricted");
+    assert_eq!(json["agent"]["credential"], "own");
+    assert_eq!(json["agent"]["size"]["cpu_millis"], 1_500);
+    assert_eq!(json["agent"]["size"]["memory_mib"], 3_072);
+    assert_eq!(json["agent"]["skills"][0]["id"], "skl_nyxid");
+    // The version that arrived, recorded when the pack was fetched. Asking the
+    // registry now would answer with whatever is current, which is a different
+    // fact and wrong for any session that has been running a while.
+    assert_eq!(json["agent"]["skills"][0]["version"], "0.5");
+    // Unnamed until `skilled` has asked the catalogue, and absent rather than
+    // null so a client tells "no name" from "the name is empty".
+    assert!(json["agent"]["skills"][0].get("name").is_none());
+}
+
+#[test]
+fn a_session_with_no_recorded_skills_carries_no_skills_field() {
+    /*
+     * Absent and empty are different answers all the way to the wire.
+     *
+     * A session created before the grant was recorded has nothing to say;
+     * one that was given no skills has said something. A client draws the
+     * two differently, so collapsing them here would make that impossible.
+     */
+    let s = Session {
+        id: SessionId("sesn_1".into()),
+        owner: layer2_core::SubjectId("subject-a".into()),
+        kernel: layer2_core::KernelId::new("codex"),
+        status: layer2_core::SessionStatus::Ready,
+        recovery_state: layer2_core::RecoveryState::Normal,
+        stop_reason: None,
+        options: layer2_core::AgentOptions::default(),
+        environment_profile: None,
+        geometry: TerminalGeometry::default(),
+        last_seq: 0,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: None,
+        pricing: None,
+        created_at: "2026-08-12T00:00:00Z".into(),
+    };
+    let unrecorded = serde_json::to_value(SessionView::from(s.clone())).expect("serializes");
+    assert!(
+        unrecorded["agent"].get("skills").is_none(),
+        "nothing recorded, so nothing on the wire: {unrecorded}"
+    );
+
+    let given_none = Session {
+        granted_skills: Some(Vec::new()),
+        ..s
+    };
+    let json = serde_json::to_value(SessionView::from(given_none)).expect("serializes");
+    assert_eq!(
+        json["agent"]["skills"],
+        serde_json::json!([]),
+        "given none is an answer and must be sent: {json}"
+    );
+
+    // And the defaults are named rather than omitted: a client that draws
+    // "not reported" for an absent field would draw it for every session
+    // nobody configured, which is most of them.
+    assert_eq!(json["agent"]["permission"], "guarded");
+    assert_eq!(json["agent"]["credential"], "delegated");
+    assert_eq!(json["agent"]["reasoning_effort"], "high");
+    assert!(
+        json["agent"].get("model").is_none(),
+        "no model chosen is absent, not empty: {json}"
+    );
 }
 
 /// What a session reports it may reach — the other half of its capabilities.
@@ -171,6 +618,8 @@ mod reach {
 
     fn session_with(granted: Option<Vec<ServiceId>>) -> Session {
         Session {
+            granted_skills: None,
+            pricing: None,
             id: SessionId("sesn_1".into()),
             owner: layer2_core::SubjectId("subject-a".into()),
             kernel: layer2_core::KernelId::new("example-runtime"),
@@ -218,6 +667,7 @@ mod reach {
             None,
             Some(Arc::new(catalogue)),
             Default::default(),
+            Arc::new(layer2_core::PlatformSettingsService::unconfigured()),
         )
     }
 
@@ -228,6 +678,52 @@ mod reach {
                 layer2_core::Capability::ManageOwnEnvironmentProfiles,
             ]),
         )
+    }
+
+    /// A directory that knows nobody, which is all these need.
+    struct NoDirectory;
+
+    #[async_trait::async_trait]
+    impl layer2_core::UserDirectoryStore for NoDirectory {
+        async fn record_sign_in(
+            &self,
+            _user: &layer2_core::RegisteredUser,
+        ) -> Result<(), layer2_core::StoreError> {
+            Ok(())
+        }
+        async fn recent(
+            &self,
+            _query: &layer2_core::DirectoryQuery,
+        ) -> Result<Vec<layer2_core::RegisteredUser>, layer2_core::StoreError> {
+            Ok(Vec::new())
+        }
+        async fn by_subjects(
+            &self,
+            _subjects: &[layer2_core::SubjectId],
+        ) -> Result<Vec<layer2_core::RegisteredUser>, layer2_core::StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// The step a handler must not skip when answering with a session.
+    ///
+    /// `From<Session>` seeds `reach` empty for `reached` to fill, and an empty
+    /// reach is a real answer here — it means the session reaches nothing. So
+    /// a handler that answered before filling it said something false about
+    /// every session it had just created, and both ends were reading their own
+    /// contract correctly. `viewed` is the one path that cannot skip it.
+    #[tokio::test]
+    async fn rendering_a_session_reports_what_it_was_granted() {
+        let views = super::viewed(
+            &environments(Catalogue::default()),
+            &layer2_core::UserDirectory::new(Arc::new(NoDirectory)),
+            &caller(),
+            None,
+            vec![session_with(Some(vec![ServiceId::new("chrono-llm")]))],
+        )
+        .await;
+        assert_eq!(views[0].reach.len(), 1, "the granted service is reported");
+        assert_eq!(views[0].reach[0].id, "chrono-llm");
     }
 
     async fn rendered(session: Session, catalogue: Catalogue) -> serde_json::Value {
