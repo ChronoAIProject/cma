@@ -63,10 +63,7 @@ fn this_kernel_advertises_only_what_was_proven_of_it() {
         !c.steer,
         "a prompt sent mid-turn is queued for the next one"
     );
-    assert!(
-        !c.resources,
-        "the runtime watch has not been demonstrated yet"
-    );
+    assert!(c.resources, "the hosted runtime reports its resource use");
 }
 
 #[tokio::test]

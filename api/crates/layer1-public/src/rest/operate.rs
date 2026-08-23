@@ -32,8 +32,8 @@ use axum::{
     Json,
 };
 use layer2_core::{
-    format_usd, ApprovalDecision, CoreError, SessionCapability, SessionId, SessionService, Spend,
-    TerminalGeometry, Usage, CURRENCY,
+    format_usd, ApprovalDecision, CoreError, ResourceReading, ResourceStatus, SessionCapability,
+    SessionId, SessionService, Spend, TerminalGeometry, Usage, CURRENCY,
 };
 use serde::{Deserialize, Serialize};
 
@@ -118,6 +118,92 @@ impl From<Usage> for UsageView {
             output_tokens: usage.output_tokens,
             context_used: usage.context_used,
             context_window: usage.context_window,
+        }
+    }
+}
+
+/// One resource reading in REST's snake-case vocabulary.
+#[derive(Debug, Serialize)]
+pub(super) struct ResourceReadingView {
+    cpu_millis_used: Option<u32>,
+    cpu_millis_limit: Option<u32>,
+    memory_bytes_used: Option<u64>,
+    memory_bytes_limit: Option<u64>,
+    memory_bytes_peak: Option<u64>,
+    stall_permille: Option<u16>,
+    ceiling_hits: Option<u64>,
+    allocation_failures: Option<u64>,
+    kills: Option<u64>,
+    received_bytes: Option<u64>,
+    sent_bytes: Option<u64>,
+    received_bytes_per_second: Option<u64>,
+    sent_bytes_per_second: Option<u64>,
+    interval_ms: Option<u64>,
+}
+
+impl From<ResourceReading> for ResourceReadingView {
+    fn from(reading: ResourceReading) -> Self {
+        let ResourceReading {
+            cpu_millis_used,
+            cpu_millis_limit,
+            memory_bytes_used,
+            memory_bytes_limit,
+            memory_bytes_peak,
+            stall_permille,
+            ceiling_hits,
+            allocation_failures,
+            kills,
+            received_bytes,
+            sent_bytes,
+            received_bytes_per_second,
+            sent_bytes_per_second,
+            interval_ms,
+        } = reading;
+        Self {
+            cpu_millis_used,
+            cpu_millis_limit,
+            memory_bytes_used,
+            memory_bytes_limit,
+            memory_bytes_peak,
+            stall_permille,
+            ceiling_hits,
+            allocation_failures,
+            kills,
+            received_bytes,
+            sent_bytes,
+            received_bytes_per_second,
+            sent_bytes_per_second,
+            interval_ms,
+        }
+    }
+}
+
+/// What is known about a session's resource use at this moment.
+#[derive(Debug, Serialize)]
+pub(super) struct ResourceStatusView {
+    reading: Option<ResourceReadingView>,
+    observed_at: Option<String>,
+    reason: Option<&'static str>,
+}
+
+impl From<ResourceStatus> for ResourceStatusView {
+    fn from(status: ResourceStatus) -> Self {
+        match status {
+            ResourceStatus::Held(held) => Self {
+                reading: Some(held.reading.into()),
+                observed_at: Some(held.observed_at),
+                reason: None,
+            },
+            ResourceStatus::Awaiting => Self {
+                reading: None,
+                observed_at: None,
+                reason: Some("no_reading_yet"),
+            },
+            ResourceStatus::Unreported => Self {
+                reading: None,
+                observed_at: None,
+                reason: Some("runtime_does_not_report"),
+            },
         }
     }
 }
@@ -271,6 +357,16 @@ pub(super) async fn usage(
 ) -> Result<Json<UsageView>, Problem> {
     let usage = service.get_usage(&caller, &SessionId(id)).await?;
     Ok(Json(usage.into()))
+}
+
+/// What this session is using right now, or why no reading exists.
+pub(super) async fn resources(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Json<ResourceStatusView>, Problem> {
+    let status = service.last_reading(&caller, &SessionId(id)).await?;
+    Ok(Json(status.into()))
 }
 
 /// What this session has accrued for reserved capacity.

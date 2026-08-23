@@ -56,10 +56,7 @@ fn this_kernel_advertises_only_what_was_proven_of_it() {
     );
     assert!(!c.steer, "the bridge accepts nothing mid-turn");
     assert!(!c.usage, "the bridge reports no token counts");
-    assert!(
-        !c.resources,
-        "the runtime watch has not been demonstrated yet"
-    );
+    assert!(c.resources, "the hosted runtime reports its resource use");
 }
 
 #[tokio::test]

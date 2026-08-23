@@ -66,7 +66,7 @@ impl KernelAdapter for CodexAdapter {
             interrupt: true,
             // Reported per turn, with the context window alongside.
             usage: true,
-            resources: false,
+            resources: true,
         }
     }
 
