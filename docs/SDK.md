@@ -1,10 +1,10 @@
-# The CMA client SDK
+# The CMA (ChronoAI Managed Agent) client SDK
 
 A TypeScript client for CMA's public interfaces, in `web/src/sdk/`.
 
 ## Why it exists
 
-CMA (ChronoAI Managed Agent) is a backend service whose clients are other products' frontends and
+CMA is a backend service whose clients are other products' frontends and
 backends (`CLAUDE.md` §1). `web/` is the reference client, not the only one, and
 `acp-kernel`'s stated exit criterion is that a product frontend can build a chat
 interface on the public interfaces alone. Nobody had tested that claim.

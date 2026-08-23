@@ -1,6 +1,6 @@
 # Web Style
 
-**This document is the single source of truth for all CMA frontend design and style.**
+**This document is the single source of truth for all CMA (ChronoAI Managed Agent) frontend design and style.**
 
 No colour, spacing value, type scale step, radius, component pattern, or interaction rule may be
 introduced in `web/` unless it appears here. If a design need is not covered, extend this document
