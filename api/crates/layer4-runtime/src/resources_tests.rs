@@ -44,6 +44,34 @@ impl Fixture {
         fixture
     }
 
+    fn production_v1(name: &str) -> Self {
+        let fixture = Self::new(name);
+        fixture.write(
+            "proc/self/cgroup",
+            "7:pids:/guest\n6:memory:/guest\n5:job:/guest\n4:devices:/guest\n\
+             3:cpuset:/guest\n2:cpuacct:/guest\n1:cpu:/guest\n",
+        );
+        // gVisor presents the guest's controller as the mount root even though
+        // /proc/self/cgroup carries a membership name below it.
+        fixture.write("cgroup/memory/memory.usage_in_bytes", "402653184\n");
+        fixture.write(
+            "cgroup/memory/memory.limit_in_bytes",
+            "9223372036854775807\n",
+        );
+        fixture.write("cgroup/memory/memory.max_usage_in_bytes", "530579456\n");
+        fixture.write("cgroup/cpuacct/cpuacct.usage", "12000000999\n");
+        fixture.write("cgroup/cpu/cpu.cfs_quota_us", "-1\n");
+        fixture.write("cgroup/cpu/cpu.cfs_period_us", "100000\n");
+        fixture.write(
+            "proc/net/dev",
+            "Inter-|   Receive                                                |  Transmit\n\
+             face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n\
+               lo: 1024 1 0 0 0 0 0 0 1024 1 0 0 0 0 0 0\n\
+             eth0: 8388608 1 0 0 0 0 0 0 2097152 1 0 0 0 0 0 0\n",
+        );
+        fixture
+    }
+
     fn path(&self, relative: &str) -> PathBuf {
         self.root.join(relative)
     }
@@ -96,6 +124,163 @@ fn a_complete_reading_carries_every_number_the_kernel_offered() {
     assert_eq!(frame.kills, Some(1));
     assert_eq!(frame.received_bytes, Some(8_388_608));
     assert_eq!(frame.sent_bytes, Some(2_097_152));
+    assert!(frame.has_observations());
+}
+
+#[test]
+fn a_production_shaped_cgroup_v1_reads_usage_but_not_hidden_limits() {
+    let fixture = Fixture::production_v1("production-v1");
+    let now = Instant::now();
+    let frame = fixture.sampler(now).sample(now);
+
+    assert_eq!(frame.cpu_usage_usec, Some(12_000_000));
+    assert_eq!(frame.cpu_millis_limit, None);
+    assert_eq!(frame.memory_bytes_used, Some(402_653_184));
+    assert_eq!(frame.memory_bytes_limit, None);
+    assert_eq!(frame.memory_bytes_peak, Some(530_579_456));
+    assert_eq!(frame.stall_permille, None);
+    assert_eq!(frame.ceiling_hits, None);
+    assert_eq!(frame.allocation_failures, None);
+    assert_eq!(frame.kills, None);
+    assert_eq!(frame.received_bytes, Some(8_388_608));
+    assert_eq!(frame.sent_bytes, Some(2_097_152));
+    assert!(frame.has_observations());
+}
+
+#[test]
+fn standard_nested_cgroup_v1_memberships_are_resolved_below_each_mount() {
+    let fixture = Fixture::new("nested-v1");
+    fixture.write(
+        "proc/self/cgroup",
+        "9:memory:/kubepods/pod-x\n8:cpu,cpuacct:/kubepods/pod-x\n",
+    );
+    fixture.write(
+        "cgroup/memory/kubepods/pod-x/memory.usage_in_bytes",
+        "268435456\n",
+    );
+    fixture.write(
+        "cgroup/memory/kubepods/pod-x/memory.limit_in_bytes",
+        "536870912\n",
+    );
+    fixture.write(
+        "cgroup/cpu,cpuacct/kubepods/pod-x/cpuacct.usage",
+        "2500000000\n",
+    );
+    fixture.write(
+        "cgroup/cpu,cpuacct/kubepods/pod-x/cpu.cfs_quota_us",
+        "50000\n",
+    );
+    fixture.write(
+        "cgroup/cpu,cpuacct/kubepods/pod-x/cpu.cfs_period_us",
+        "100000\n",
+    );
+    // A mount-root fallback must not win before the actual combined-controller
+    // membership has been checked.
+    fixture.write("cgroup/cpu/cpu.cfs_quota_us", "100000\n");
+    fixture.write("cgroup/cpu/cpu.cfs_period_us", "100000\n");
+    fixture.write("cgroup/cpuacct/cpuacct.usage", "9000000000\n");
+    let now = Instant::now();
+    let frame = fixture.sampler(now).sample(now);
+
+    assert_eq!(frame.cpu_usage_usec, Some(2_500_000));
+    assert_eq!(frame.cpu_millis_limit, Some(500));
+    assert_eq!(frame.memory_bytes_used, Some(268_435_456));
+    assert_eq!(frame.memory_bytes_limit, Some(536_870_912));
+}
+
+#[test]
+fn an_existing_v1_membership_never_falls_back_to_parent_counters() {
+    let fixture = Fixture::new("v1-no-parent-fallback");
+    fixture.write("proc/self/cgroup", "6:memory:/sandbox\n");
+    fixture.write("cgroup/memory/memory.usage_in_bytes", "9999\n");
+    std::fs::create_dir_all(fixture.path("cgroup/memory/sandbox"))
+        .expect("the real membership directory exists");
+    let now = Instant::now();
+    assert_eq!(fixture.sampler(now).sample(now).memory_bytes_used, None);
+}
+
+#[test]
+fn cgroup_v1_unlimited_memory_encodings_are_absent() {
+    let fixture = Fixture::production_v1("v1-unlimited-memory");
+    let now = Instant::now();
+    for sentinel in [
+        9_223_372_036_854_775_807_u64,
+        9_223_372_036_854_771_712,
+        9_223_372_036_854_710_272,
+        u64::MAX,
+    ] {
+        fixture.write(
+            "cgroup/memory/memory.limit_in_bytes",
+            &format!("{sentinel}\n"),
+        );
+        assert_eq!(fixture.sampler(now).sample(now).memory_bytes_limit, None);
+    }
+}
+
+#[test]
+fn cgroup_v1_cpu_usage_conversion_handles_the_numeric_boundary() {
+    let fixture = Fixture::production_v1("v1-cpuacct-boundary");
+    fixture.write("cgroup/cpuacct/cpuacct.usage", &format!("{}\n", u64::MAX));
+    let now = Instant::now();
+    assert_eq!(
+        fixture.sampler(now).sample(now).cpu_usage_usec,
+        Some(u64::MAX / 1_000)
+    );
+}
+
+#[test]
+fn invalid_cgroup_v1_usage_counters_are_independent_absences() {
+    let fixture = Fixture::production_v1("invalid-v1-usage");
+    let now = Instant::now();
+    for value in ["-1\n", "not-a-number\n", "18446744073709551616\n"] {
+        fixture.write("cgroup/memory/memory.usage_in_bytes", value);
+        let frame = fixture.sampler(now).sample(now);
+        assert_eq!(frame.memory_bytes_used, None);
+        assert_eq!(frame.cpu_usage_usec, Some(12_000_000));
+    }
+    fixture.write("cgroup/memory/memory.usage_in_bytes", "402653184\n");
+    for value in ["-1\n", "not-a-number\n", "18446744073709551616\n"] {
+        fixture.write("cgroup/cpuacct/cpuacct.usage", value);
+        let frame = fixture.sampler(now).sample(now);
+        assert_eq!(frame.cpu_usage_usec, None);
+        assert_eq!(frame.memory_bytes_used, Some(402_653_184));
+    }
+}
+
+#[test]
+fn invalid_cgroup_v1_cpu_limits_are_absent() {
+    let fixture = Fixture::production_v1("invalid-v1-cpu-limit");
+    let now = Instant::now();
+    for quota in ["-1\n", "-2\n", "not-a-number\n", "18446744073709551615\n"] {
+        fixture.write("cgroup/cpu/cpu.cfs_quota_us", quota);
+        assert_eq!(fixture.sampler(now).sample(now).cpu_millis_limit, None);
+    }
+    fixture.write("cgroup/cpu/cpu.cfs_period_us", "1000\n");
+    fixture.write("cgroup/cpu/cpu.cfs_quota_us", "4294967295\n");
+    assert_eq!(
+        fixture.sampler(now).sample(now).cpu_millis_limit,
+        Some(u32::MAX)
+    );
+    fixture.write("cgroup/cpu/cpu.cfs_quota_us", "4294967296\n");
+    assert_eq!(fixture.sampler(now).sample(now).cpu_millis_limit, None);
+    fixture.write("cgroup/cpu/cpu.cfs_quota_us", "50000\n");
+    fixture.write("cgroup/cpu/cpu.cfs_period_us", "0\n");
+    assert_eq!(fixture.sampler(now).sample(now).cpu_millis_limit, None);
+    std::fs::remove_file(fixture.path("cgroup/cpu/cpu.cfs_period_us"))
+        .expect("processor period fixture is removed");
+    assert_eq!(fixture.sampler(now).sample(now).cpu_millis_limit, None);
+}
+
+#[test]
+fn missing_cgroup_v1_controllers_do_not_hide_a_readable_one() {
+    let fixture = Fixture::new("partial-v1");
+    fixture.write("proc/self/cgroup", "6:memory:/guest\n");
+    fixture.write("cgroup/memory/memory.usage_in_bytes", "1234\n");
+    let now = Instant::now();
+    let frame = fixture.sampler(now).sample(now);
+    assert_eq!(frame.memory_bytes_used, Some(1_234));
+    assert_eq!(frame.cpu_usage_usec, None);
+    assert_eq!(frame.cpu_millis_limit, None);
 }
 
 #[test]
@@ -214,6 +399,78 @@ fn traffic_is_totalled_across_every_interface_that_is_not_loopback() {
 }
 
 #[test]
+fn proc_net_dev_is_used_when_sysfs_has_no_readable_interface() {
+    let fixture = Fixture::complete("proc-network-fallback");
+    std::fs::remove_file(fixture.path("net/eth0/statistics/tx_bytes"))
+        .expect("the complete sysfs pair is broken");
+    fixture.write(
+        "proc/net/dev",
+        "Inter-| Receive | Transmit\n\
+         face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n\
+           lo: 999 1 0 0 0 0 0 0 999 1 0 0 0 0 0 0\n\
+         eth0: 1000 1 0 0 0 0 0 0 2000 1 0 0 0 0 0 0\n\
+         ens5: 3000 1 0 0 0 0 0 0 4000 1 0 0 0 0 0 0\n",
+    );
+    let now = Instant::now();
+    let frame = fixture.sampler(now).sample(now);
+    assert_eq!(frame.received_bytes, Some(4_000));
+    assert_eq!(frame.sent_bytes, Some(6_000));
+}
+
+#[test]
+fn proc_network_rows_are_validated_and_summed_saturating() {
+    let fixture = Fixture::complete("proc-network-validation");
+    std::fs::remove_dir_all(fixture.path("net")).expect("sysfs fixture is removed");
+    fixture.write(
+        "proc/net/dev",
+        &format!(
+            "Inter-| Receive | Transmit\n\
+             face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n\
+               lo: 9 1 0 0 0 0 0 0 9 1 0 0 0 0 0 0\n\
+             bad+0: 900 1 0 0 0 0 0 0 900 1 0 0 0 0 0 0\n\
+             short0: 7 1 0\n\
+             broken0: nope 1 0 0 0 0 0 0 8 1 0 0 0 0 0 0\n\
+             partial0: 7 nope 0 0 0 0 0 0 8 1 0 0 0 0 0 0\n\
+             extra0: 7 1 0 0 0 0 0 0 8 1 0 0 0 0 0 0 9\n\
+             eth0: {} 1 0 0 0 0 0 0 {} 1 0 0 0 0 0 0\n\
+             veth0@if3: 2 1 0 0 0 0 0 0 3 1 0 0 0 0 0 0\n",
+            u64::MAX,
+            u64::MAX
+        ),
+    );
+    let now = Instant::now();
+    let frame = fixture.sampler(now).sample(now);
+    assert_eq!(frame.received_bytes, Some(u64::MAX));
+    assert_eq!(frame.sent_bytes, Some(u64::MAX));
+}
+
+#[test]
+fn sysfs_is_preferred_to_proc_so_traffic_is_not_counted_twice() {
+    let fixture = Fixture::complete("sysfs-network-precedence");
+    fixture.write("proc/net/dev", "eth0: 1 1 0 0 0 0 0 0 2 1 0 0 0 0 0 0\n");
+    let now = Instant::now();
+    let frame = fixture.sampler(now).sample(now);
+    assert_eq!(frame.received_bytes, Some(8_388_608));
+    assert_eq!(frame.sent_bytes, Some(2_097_152));
+}
+
+#[test]
+fn proc_network_with_no_usable_non_loopback_row_is_absent() {
+    let fixture = Fixture::complete("empty-proc-network");
+    std::fs::remove_dir_all(fixture.path("net")).expect("sysfs fixture is removed");
+    fixture.write(
+        "proc/net/dev",
+        "Inter-| Receive | Transmit\n\
+           lo: 9 1 0 0 0 0 0 0 9 1 0 0 0 0 0 0\n\
+         broken0: 7 1 0\n",
+    );
+    let now = Instant::now();
+    let frame = fixture.sampler(now).sample(now);
+    assert_eq!(frame.received_bytes, None);
+    assert_eq!(frame.sent_bytes, None);
+}
+
+#[test]
 fn an_interface_whose_counters_cannot_be_read_contributes_nothing_rather_than_zero() {
     let fixture = Fixture::complete("unreadable-interface");
     fixture.write("net/ens5/statistics/rx_bytes", "1000\n");
@@ -259,6 +516,37 @@ fn a_pod_whose_kernel_exposes_nothing_says_nothing_rather_than_zero() {
         .sampler(started)
         .sample(started + Duration::from_millis(42));
     assert_eq!(rendered(&frame), json!({ "uptimeMs": 42 }));
+    assert!(!frame.has_observations());
+}
+
+#[test]
+fn every_resource_field_independently_makes_a_frame_observable() {
+    let fixture = Fixture::new("observation-predicate");
+    fixture.write("proc/self/cgroup", "0::/\n");
+    std::fs::create_dir_all(fixture.path("cgroup")).expect("empty cgroup fixture is created");
+    let now = Instant::now();
+    let mut frame = fixture.sampler(now).sample(now);
+    assert!(!frame.has_observations());
+
+    macro_rules! observed {
+        ($field:ident, $value:expr) => {{
+            frame.$field = Some($value);
+            assert!(frame.has_observations(), stringify!($field));
+            frame.$field = None;
+        }};
+    }
+    observed!(cpu_usage_usec, 1);
+    observed!(cpu_millis_limit, 1);
+    observed!(memory_bytes_used, 1);
+    observed!(memory_bytes_limit, 1);
+    observed!(memory_bytes_peak, 1);
+    observed!(stall_permille, 1);
+    observed!(ceiling_hits, 1);
+    observed!(allocation_failures, 1);
+    observed!(kills, 1);
+    observed!(received_bytes, 1);
+    observed!(sent_bytes, 1);
+    assert!(!frame.has_observations());
 }
 
 #[test]
