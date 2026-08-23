@@ -1,7 +1,7 @@
 # Public routing for the control plane.
 #
 # The gateway itself is shared infrastructure and lives outside this
-# repository; these routes attach to it and are chrono-bot's own, which is why
+# repository; these routes attach to it and are CMA's own, which is why
 # they are declared here. They were previously applied by hand, so the address
 # the service answers on had no source of truth and could drift silently from
 # the origin and redirect URI the code is configured with.
@@ -12,11 +12,11 @@
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: chrono-bot-api
+  name: cma-api
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: chrono-bot-api
-    app.kubernetes.io/part-of: chrono-bot
+    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/part-of: cma
 spec:
   parentRefs:
     - name: chronoai-gateway
@@ -32,7 +32,7 @@ spec:
       backendRefs:
         - group: ""
           kind: Service
-          name: chrono-bot-api
+          name: cma-api
           port: 80
           weight: 1
 ---
