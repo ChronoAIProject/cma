@@ -68,6 +68,7 @@ const CAPABLE: SessionCapabilities = {
   steer: true,
   interrupt: true,
   usage: true,
+  resources: false,
   concurrentInput: 'enqueue',
 };
 
