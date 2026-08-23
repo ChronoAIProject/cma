@@ -54,33 +54,172 @@ value and a theme never names a component.
 **A component referencing a static token is a defect.** The static tier exists so the alias tier has
 something to point at; reaching past the alias is how a surface ends up unable to change theme.
 
-Ramps: `neutral`, `neutral-bluish` (the workhorse), `blue`, `deepseek`, `green`, `amber`, `red`.
+The Harness ramps (`neutral`, `neutral-bluish`, `blue`, `deepseek`, and `green`) retire. The palette
+is now first-party and comes from two reference libraries: **Inkwell** for light and **Lumen** for
+dark. The raw ramps are declared once and are available to either theme, even where one theme is their
+main consumer. A ramp and step expand directly to a static token name: for example, `paper 50` below
+is `--dsw-static-paper-50`.
 
-The alias tier carries the decisions:
+| Ramp    | Steps, from lightest or most vivid to deepest                                                                                                                      |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `paper` | `0 #FFFBF2`, `50 #FAF2E0`, `100 #F5EAD3`, `200 #EFE4CB`, `250 #EFE2C6`, `300 #E5D8BC`, `400 #CFBE99`, `500 #B9A57C`                                                |
+| `ink`   | `50 #FDF8EC`, `200 #B7AB92`, `300 #8C8474`, `350 #756D5E`, `500 #4C5A68`, `800 #0E61AC`, `850 #0A4C88`, `900 #073A69`, `950 #15283C`                               |
+| `coal`  | `50 #EDF2E2`, `300 #A9B199`, `450 #7D876F`, `500 #6B7361`, `650 #3F4630`, `700 #333A26`, `750 #21251A`, `800 #191C14`, `850 #121410`, `900 #0C0D0A`, `950 #060606` |
+| `lime`  | `300 #D7FF7D`, `400 #C3FD43`, `500 #AEE734`, `600 #8FC121`, `900 #24300F`                                                                                          |
+| `moss`  | `100 #EDF6E7`, `400 #5F963B`, `500 #3E7A22`, `600 #2D6017`, `900 #1C2E14`                                                                                          |
+| `red`   | `100 #F8E4DE`, `300 #FF806F`, `400 #FF5A45`, `500 #D7604A`, `600 #BC3B26`, `700 #A42D1B`, `900 #3A1711`                                                            |
+| `amber` | `100 #F5E6C4`, `300 #FFC45A`, `400 #FFB020`, `500 #D18B12`, `600 #A9720B`, `700 #875A08`, `900 #33260C`                                                            |
 
-- **Backgrounds.** `bg-base` is the page. `bg-layer-1/2/3` step upward — but only in dark, where they
-  climb a luminance ladder (`bluish-875·850·800` over a `950` ground). **In light all three are the
-  same white as the page**, and that is deliberate rather than an omission: on a light ground the
-  separation is carried by the border and the shadow, and tinting the layers as well would say the
-  same thing twice. In dark a shadow is invisible, so luminance is the only separation left.
+`moss` replaces the old generic green ramp. Light success uses its paper-compatible green; dark
+success uses `lime`, where success and the theme accent deliberately coincide.
 
-  The consequence is worth stating where somebody will read it before wondering: a surface whose only
-  distinction is `bg-layer-2` has no visible container in light. A pill is exactly this — in light it
-  is its text, and in dark it is a filled capsule. Anything that must read as a container in both
-  themes carries a border, not a fill.
+### The complete alias contract
 
-- **Labels.** `label-primary`, `-secondary`, `-tertiary` — three ranks and no more.
-- **Borders.** `border-l1` through `-l4`, black at 4–16% in light and white at 6–20% in dark.
-- **Brand primary is a neutral**, near-black in light and near-white in dark. **Blue is not the
-  primary** — it lives in `state-business-primary` and means _running_, _current_, _send_. A
-  interface whose main action is the same colour as its status has no way to distinguish them.
-- **States.** `state-error-primary`, `-success-primary`, `-warn-primary`.
+The following tables are exhaustive. Values labelled **derived** have no direct reference token; the
+derivation is still fixed here so implementation never has to guess. Component sheets keep these
+names while their values change, which lets the rebrand land surface by surface without inventing a
+second vocabulary.
+
+| Alias                                 | Light — Inkwell                                            | Dark — Lumen                                             |
+| ------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------- |
+| `--dsw-alias-bg-base`                 | `#FAF2E0`                                                  | `#060606`                                                |
+| `--dsw-alias-bg-layer-1`              | `#FFFBF2`                                                  | `#0C0D0A`                                                |
+| `--dsw-alias-bg-layer-2`              | `#F5EAD3`                                                  | `#121410`                                                |
+| `--dsw-alias-bg-layer-3`              | `#EFE2C6`                                                  | `#191C14`                                                |
+| `--dsw-alias-bg-mask-1`               | `rgba(46,36,18,.42)`                                       | `rgba(3,3,3,.72)`                                        |
+| `--dsw-alias-bg-mask-2`               | `rgba(46,36,18,.24)` **derived**, a quieter warm scrim     | `rgba(3,3,3,.48)` **derived**                            |
+| `--dsw-alias-bg-mask-3`               | `rgba(46,36,18,.60)` **derived**, the strongest warm scrim | `rgba(3,3,3,.84)` **derived**                            |
+| `--dsw-alias-bg-mask-photo`           | `rgba(21,40,60,.88)` **derived**                           | `rgba(3,3,3,.92)` **derived**                            |
+| `--dsw-alias-bg-mask-drop`            | `rgba(255,251,242,.74)` **derived**                        | `rgba(12,13,10,.74)` **derived**                         |
+| `--dsw-alias-bg-module-platform`      | `#F5EAD3`                                                  | `#121410`                                                |
+| `--dsw-alias-bg-multi-select`         | `#F5EAD3`                                                  | `#191C14`                                                |
+| `--dsw-alias-bg-overlay`              | `#EFE2C6`                                                  | `#333A26`                                                |
+| `--dsw-alias-bg-skeleton`             | `rgba(122,96,52,.10)` **derived** from the warm shadow hue | `rgba(255,255,255,.08)` **derived** from Lumen's shimmer |
+| `--dsw-alias-border-inverted`         | `rgba(21,40,60,.06)` **derived**                           | `rgba(237,242,226,.08)` **derived**                      |
+| `--dsw-alias-border-inverted2`        | `rgba(21,40,60,.08)` **derived**                           | `rgba(237,242,226,.10)` **derived**                      |
+| `--dsw-alias-border-l1`               | `#EFE4CB` **derived**, one paper step before `line`        | `#191C14` **derived**, the adjacent coal hairline        |
+| `--dsw-alias-border-l2-darkmode-thin` | `#E5D8BC`                                                  | `#21251A`                                                |
+| `--dsw-alias-border-l2`               | `#E5D8BC`                                                  | `#21251A`                                                |
+| `--dsw-alias-border-l3`               | `#CFBE99`                                                  | `#333A26`                                                |
+| `--dsw-alias-border-l4`               | `#B9A57C`, the reference input-hover line                  | `#3F4630` **derived**, one coal step beyond `line-2`     |
+
+| Alias                                        | Light — Inkwell                   | Dark — Lumen                        |
+| -------------------------------------------- | --------------------------------- | ----------------------------------- |
+| `--dsw-alias-brand-primary`                  | `#0E61AC`                         | `#C3FD43`                           |
+| `--dsw-alias-brand-primary-invert`           | `#FDF8EC`                         | `#060606`                           |
+| `--dsw-alias-brand-text`                     | `#0E61AC`                         | `#C3FD43`                           |
+| `--dsw-alias-button-contrast-fill`           | `#15283C`                         | `#EDF2E2`                           |
+| `--dsw-alias-button-elevated-fill`           | `#FFFBF2`                         | `#191C14`                           |
+| `--dsw-alias-button-floating-fill`           | `#FFFBF2`                         | `#121410`                           |
+| `--dsw-alias-button-floating-hover`          | `#F5EAD3`                         | `#191C14`                           |
+| `--dsw-alias-button-ghost-active-border`     | `#CFBE99`                         | `#333A26`                           |
+| `--dsw-alias-button-ghost-active-fill`       | `#F5EAD3`                         | `#191C14`                           |
+| `--dsw-alias-button-ghost-active-hover`      | `#EFE2C6`                         | `#21251A`                           |
+| `--dsw-alias-button-info-fill`               | `#0E61AC`                         | `#C3FD43`                           |
+| `--dsw-alias-button-info-hover`              | `#0A4C88`                         | `#AEE734`                           |
+| `--dsw-alias-button-primary-dimmed`          | `#E5D8BC` **derived**             | `#333A26` **derived**               |
+| `--dsw-alias-button-primary-fill`            | `#0E61AC`                         | `#C3FD43`                           |
+| `--dsw-alias-button-primary-hover`           | `#0A4C88`                         | `#AEE734`                           |
+| `--dsw-alias-button-primary-active`          | `#073A69`                         | `#8FC121`                           |
+| `--dsw-alias-button-tool-bar-fill-invisible` | `rgba(21,40,60,.12)` **derived**  | `rgba(237,242,226,.12)` **derived** |
+| `--dsw-alias-button-tool-bar-fill`           | `rgba(21,40,60,.64)` **derived**  | `rgba(237,242,226,.32)` **derived** |
+| `--dsw-alias-button-tool-bar-hover`          | `rgba(21,40,60,.78)` **derived**  | `rgba(237,242,226,.46)` **derived** |
+| `--dsw-alias-interactive-bg-active`          | `rgba(122,96,52,.14)` **derived** | `rgba(255,255,255,.08)` **derived** |
+| `--dsw-alias-interactive-bg-hover`           | `rgba(122,96,52,.08)` **derived** | `rgba(255,255,255,.04)` **derived** |
+| `--dsw-alias-interactive-bg-hover-accent`    | `rgba(14,97,172,.08)`             | `rgba(195,253,67,.10)`              |
+| `--dsw-alias-interactive-bg-hover-danger`    | `rgba(188,59,38,.09)`             | `rgba(255,90,69,.10)`               |
+| `--dsw-alias-interactive-bg-hover-solid`     | `#F5EAD3` **derived**             | `#191C14` **derived**               |
+
+| Alias                                          | Light — Inkwell                                | Dark — Lumen                                  |
+| ---------------------------------------------- | ---------------------------------------------- | --------------------------------------------- |
+| `--dsw-alias-label-caption`                    | `#756D5E` **derived**, AA small-text ink       | `#7D876F` **derived**, AA small-text ink      |
+| `--dsw-alias-label-dimmed`                     | `#B7AB92` **derived**, disabled/non-text only  | `#4B523E` **derived**, disabled/non-text only |
+| `--dsw-alias-label-primary`                    | `#15283C`                                      | `#EDF2E2`                                     |
+| `--dsw-alias-label-primary-bluish`             | `#15283C`                                      | `#EDF2E2`                                     |
+| `--dsw-alias-label-primary-dimmed`             | `#756D5E` **derived**                          | `#7D876F` **derived**                         |
+| `--dsw-alias-label-primary-foreground`         | `#FDF8EC`                                      | `#060606`                                     |
+| `--dsw-alias-label-primary-inverted`           | `#FDF8EC`                                      | `#060606`                                     |
+| `--dsw-alias-label-secondary`                  | `#4C5A68`                                      | `#A9B199`                                     |
+| `--dsw-alias-label-tertiary`                   | `#8C8474`                                      | `#6B7361`                                     |
+| `--dsw-alias-markdown-citation`                | `#F5EAD3` **derived**                          | `#191C14` **derived**                         |
+| `--dsw-alias-markdown-code-block`              | `#F5EAD3`                                      | `#060606`                                     |
+| `--dsw-alias-markdown-code-block-banner`       | `#F5EAD3`                                      | `#121410`                                     |
+| `--dsw-alias-markdown-code-segment-selected`   | `#FFFBF2`                                      | `#191C14`                                     |
+| `--dsw-alias-markdown-code-segment-unselected` | `#EFE2C6`                                      | `#121410`                                     |
+| `--dsw-alias-markdown-inline-code`             | `#EFE2C6`                                      | `#191C14`                                     |
+| `--dsw-alias-markdown-placeholder`             | `#F5EAD3`                                      | `#121410`                                     |
+| `--dsw-alias-markdown-tag`                     | `#EFE2C6`                                      | `#191C14`                                     |
+| `--dsw-alias-scrollbar-bg-l1`                  | `#CFBE99`                                      | `#333A26`                                     |
+| `--dsw-alias-scrollbar-bg-l2`                  | `#B9A57C` **derived**, one stronger paper step | `#3F4630` **derived**, one stronger coal step |
+| `--dsw-alias-scrollbar-hover-l1`               | `#0E61AC`                                      | `#8FC121`                                     |
+| `--dsw-alias-scrollbar-hover-l2`               | `#0A4C88` **derived**, one stronger ink step   | `#AEE734` **derived**, one brighter lime step |
+| `--dsw-alias-state-business-primary`           | `#0E61AC`                                      | `#C3FD43`                                     |
+| `--dsw-alias-state-business-tertiary`          | `rgba(14,97,172,.15)`                          | `rgba(195,253,67,.18)`                        |
+| `--dsw-alias-state-error-primary`              | `#BC3B26`                                      | `#FF5A45`                                     |
+| `--dsw-alias-state-error-secondary`            | `#D7604A`                                      | `#FF806F`                                     |
+| `--dsw-alias-state-success-primary`            | `#3E7A22`                                      | `#C3FD43`                                     |
+| `--dsw-alias-state-success-secondary`          | `#5F963B`                                      | `#AEE734`                                     |
+| `--dsw-alias-state-success-tertiary`           | `#EDF6E7`                                      | `#24300F`                                     |
+| `--dsw-alias-state-warn-label`                 | `#875A08` **derived**, AA small-text amber     | `#FFB020`                                     |
+| `--dsw-alias-state-warn-primary`               | `#A9720B`                                      | `#FFB020`                                     |
+| `--dsw-alias-state-warn-secondary`             | `#D18B12`                                      | `#FFC45A`                                     |
+| `--dsw-alias-state-warn-tertiary`              | `#F5E6C4`                                      | `#33260C`                                     |
+| `--dsw-alias-toast-bg`                         | `#15283C` **derived**                          | `#121410` **derived**                         |
+| `--dsw-alias-tooltip-bg`                       | `#15283C`, the Inkwell tip                     | `#C3FD43`, the Lumen tip                      |
+
+| Specific token                                  | Light — Inkwell                    | Dark — Lumen             |
+| ----------------------------------------------- | ---------------------------------- | ------------------------ |
+| `--dsw-specific-bubble`                         | `rgba(14,97,172,.08)` over layer 1 | `#121410`                |
+| `--dsw-specific-bubble-highlight`               | `rgba(14,97,172,.15)`              | `rgba(195,253,67,.18)`   |
+| `--dsw-specific-input-major`                    | `#FFFBF2`                          | `#121410`                |
+| `--dsw-specific-login-input`                    | `#FFFBF2`                          | `#121410`                |
+| `--dsw-specific-menu`                           | `#EFE2C6` (`bg-layer-3`)           | `#191C14` (`bg-layer-3`) |
+| `--dsw-specific-selector`                       | `#F5EAD3` **derived**              | `#191C14` **derived**    |
+| `--dsw-specific-sidebar-fill`                   | `#F5EAD3`                          | `#0C0D0A`                |
+| `--dsw-specific-sidebar-nav-item-active`        | `#EFE2C6` **derived**              | `#21251A` **derived**    |
+| `--dsw-specific-sidebar-nav-item-active-accent` | `rgba(14,97,172,.15)`              | `rgba(195,253,67,.18)`   |
+| `--dsw-specific-sidebar-nav-item-hover`         | `#F5EAD3` **derived**              | `#191C14` **derived**    |
+| `--dsw-specific-tip`                            | `#F5EAD3` **derived**              | `#191C14` **derived**    |
+
+`--dsw-alias-brand-primary-new-colorprimary-new-color` is retired. Its malformed exported name had
+zero consumers under `web/src`; retaining it would preserve no compatibility. Every other alias and
+specific name above survives.
+
+### What the palette means
+
+- **Backgrounds.** Inkwell reverses the old light-theme rule: cards are visibly lighter than the
+  cream ground, while grooves are darker. Lumen climbs from near-black through green-shifted coal.
+- **Primary actions use the accent.** `brand-primary` and `button-primary-fill` are ink blue in
+  light and lime in dark. This deliberately reverses the old neutral-primary doctrine.
+- **Neutral interaction stays neutral.** Generic hover and active fills use warm brown alpha in
+  light and white alpha in dark. Only an explicitly accent interaction takes the blue/lime wash.
+- **Status remains semantic.** Warning is `#A9720B` light / `#FFB020` dark; error is `#BC3B26` /
+  `#FF5A45`; success is moss `#3E7A22` in light and the same lime as the accent in dark. The light
+  asymmetry is required because blue is not success.
+- **Glow is dark-only.** Lumen may use the `rgba(195,253,67,.35)` family on the primary hover,
+  focus, live dot, progress fill, tab underline, and signed-out mark. Accent covers no more than 8%
+  of the viewport. Inkwell never glows; it uses warm shadow.
+- **Selection and focus follow the accent.** `::selection` is accent ground with
+  `label-primary-foreground`. The global `--focus-ring` remains the same whole-value double ring:
+  `0 0 0 2px bg-base, 0 0 0 4px state-business-primary`.
+
+Measured on the base grounds, primary text is 13.45:1 light / 17.75:1 dark, secondary text is
+6.34:1 / 9.10:1, the accent is 5.67:1 / 16.84:1, and light success is 4.70:1. The fixed reference
+tertiaries are 3.32:1 / 4.10:1 and therefore carry only non-essential or sufficiently large text;
+required small metadata uses `label-caption`, measured at 4.59:1 / 5.37:1. `label-dimmed` is a
+disabled or non-text paint and never the sole readable account of state.
+
+The four former vendored sheets (`design-platform.css`, `effects-typography.css`, `scrollbar.css`,
+and `shiki.css`) keep their filenames but become first-party token sheets governed here. The
+"kept verbatim" policy retires. `web/src/styles/vendor/LICENSE-deepseek-harness.txt` remains because
+the icon components under `web/src/ui/icons/` are still vendored under that licence.
 
 Spacing, radius and z-index have **no theme tokens**. They are literal pixels in the component sheet
 that uses them, which is this language's own idiom: a spacing scale invites a component to pick the
 step above when the one it needs is not there.
 
-Radii come from a fixed set — 4, 6, 8, 10, 12, 14, 16, 999, 50%. The z ladder is: content 0–10,
+Geometry never changes with the appearance. Radii come from the Lumen set — 4, 6, 7, 8, 10, 12,
+16, 999, 50% — and apply in both themes. The z ladder is: content 0–10,
 chrome 2 and 20, tooltip and menu 100, submenu 101, modal 1000, toast and onboarding 1100.
 
 ---
@@ -91,10 +230,12 @@ chrome 2 and 20, tooltip and menu 100, submenu 101, modal 1000, toast and onboar
 load-bearing rather than stylistic: sheets that style the scrollbar resolve against the same element
 the tokens are declared on, and an `html`-scoped rule cannot see them.
 
-The preference is `light | dark | system`, defaulting to `system`. An inline script immediately after
-`<body>` resolves it before first paint — reading the stored preference, resolving `system` through
-`prefers-color-scheme`, setting `color-scheme` on the document element and toggling the dark
-attribute on `body`. Without it the first paint is the wrong theme and the correction is visible.
+Inkwell is `light`; Lumen is `dark`. The preference is `light | dark | system`, defaulting to
+`system`, and is stored at `localStorage['chrono-bot:appearance']`. An inline script immediately
+after `<body>` resolves it before first paint — reading the stored preference, resolving `system`
+through `prefers-color-scheme`, setting `color-scheme` on the document element and toggling
+`data-ds-dark-theme` on `body`. Without it the first paint is the wrong theme and the correction is
+visible.
 
 While the preference is `system`, a `change` listener re-applies it, so a session left open across
 sunset follows the machine.
@@ -103,9 +244,23 @@ sunset follows the machine.
 
 ## 4. Typography
 
-**The system stack, and no interface webfont.** The face a platform already renders is the one that
-costs nothing and never arrives late. Only the code face is downloaded, because column widths in a
-terminal cannot be left to whatever a platform calls monospace.
+The interface has a self-hosted face for each appearance. This deliberately reverses the former
+no-interface-webfont rule:
+
+| Role      | Light — Inkwell                                                                                                                                                                                      | Dark — Lumen                                                                                                                                                                                |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Interface | `'Familjen Grotesk', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` | `'Archivo', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` |
+| Code      | `'IBM Plex Mono', 'SF Mono', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                                                                          | `'JetBrains Mono', 'SF Mono', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                                                                |
+
+Familjen Grotesk, Archivo, and JetBrains Mono are variable WOFF2 files. IBM Plex Mono has no official
+variable release, so weights 400, 500, and 600 are separate static WOFF2 files. Every family is OFL,
+is stored under `web/src/assets/fonts/` with its licence beside it, and uses `font-display: swap`.
+There is no font `@import`, Google Fonts link, or third-party request. The exact file list is tested.
+
+The terminal is the exception to theme switching: its JavaScript-side font stack remains the current
+terminal stack in both themes because a canvas cell's metrics must not change when appearance does.
+It is also the only stack permitted a final bare `monospace` fallback. Everywhere else, bare
+`monospace` is forbidden because Windows may resolve it to a CJK serif.
 
 The ramp is declared as **composite `font` shorthands** rather than loose size and leading tokens:
 one name carries weight, size and line-height together, so a step cannot be half-applied.
@@ -131,37 +286,81 @@ different objects, and treating them alike is what makes a long answer tiring.
 **Four weights: 400, 500, 600, 700.** An intermediate weight is not available. A non-variable face
 snaps one unpredictably, so asking for 510 is asking for a surprise.
 
+The reference voice sits around that existing composite ramp:
+
+| Use                  | Light — Inkwell                          | Dark — Lumen                                       |
+| -------------------- | ---------------------------------------- | -------------------------------------------------- |
+| Body                 | 15px / 1.62                              | 15px / 1.6                                         |
+| Display              | 44px, 700, `-0.035em`                    | 56px, 900, `-0.02em`; Archivo may set `"wdth" 118` |
+| H1                   | 32px, 700, `-0.03em`                     | 32px, 800, `-0.03em`                               |
+| H2                   | 22px, 600, `-0.02em`                     | 22px, 700, `-0.02em`                               |
+| Kicker / field label | 10.5–11px mono, 500, uppercase, `0.14em` | 10.5–11px mono, 500, uppercase, `0.14em`           |
+
+`0.14em` is the one adopted label tracking value even though the references vary from `0.12em` to
+`0.16em`. Letter spacing is otherwise zero unless this document names a display or label exception.
+
 ---
 
 ## 5. Depth
 
-Three shadow levels, all near-black at low alpha, and **no dark-theme variants**: a black shadow on a
-dark ground does nothing, so dark separates by luminance and by hairline instead.
+Depth changes with appearance. Inkwell shadows with warm brown, never black; Lumen separates by coal
+luminance and black depth, then adds lime glow only to an accent element named in §2.
 
-That is why a floating surface declares **both** a shadow and a 1px border. In light the shadow does
-the work and the border is transparent; in dark the border does it and the shadow is invisible. One
-rule, two behaviours, and no component needs a media query of its own.
+| Whole-value token           | Light — Inkwell                                                      | Dark — Lumen                            |
+| --------------------------- | -------------------------------------------------------------------- | --------------------------------------- |
+| `--dsw-shadow-lv1`          | `0 1px 2px rgba(122,96,52,.10)`                                      | `0 1px 2px rgba(0,0,0,.45)` **derived** |
+| `--dsw-shadow-lv1-blur`     | `0 4px 12px rgba(122,96,52,.08)` **derived**                         | `0 8px 20px -8px #000` **derived**      |
+| `--dsw-shadow-lv2`          | `0 2px 4px rgba(122,96,52,.10), 0 8px 20px -8px rgba(122,96,52,.22)` | `0 20px 44px -14px #000`                |
+| `--dsw-shadow-lv3`          | `0 18px 44px -14px rgba(82,62,30,.32)`                               | `0 40px 90px -30px #000`                |
+| `--dsw-shadow-accent-hover` | the warm `--dsw-shadow-lv2` value                                    | `0 6px 26px -8px rgba(195,253,67,.35)`  |
+| `--dsw-glow-accent`         | `none`                                                               | `0 0 14px rgba(195,253,67,.35)`         |
+| `--dsw-ring-accent-soft`    | `0 0 0 3px rgba(14,97,172,.08)`                                      | `0 0 0 3px rgba(195,253,67,.10)`        |
 
-Borders are always 1px. There is no heavier border anywhere in the product.
+Every shadow, glow, and ring is a whole-value token. Component sheets never assemble a `box-shadow`
+themselves. A floating surface still carries a 1px border as well as shadow, so its edge survives on
+either ground. Ordinary borders are 1px; a named 2px leading state rule is a marker, not a second
+general border weight.
+
+The reasoning fades remain tied to their surface: light fades from `#FAF2E0` and its selected paper
+surface; dark fades from `#060606` and its selected coal surface. Their existing `20.19%` stop and
+transparent end remain unchanged.
 
 ---
 
 ## 6. Scrollbars
 
-8px wide, a 4px-radius thumb, a transparent track and corner. The thumb is a token so it follows the
-theme.
+10px wide in both themes, with a `99px` thumb radius and transparent track and corner. Level 1 uses
+`scrollbar-bg-l1` / `scrollbar-hover-l1`; an elevated surface uses the stronger level 2 pair. The
+reference libraries paint the track and cut a 3px track-coloured border into the thumb; both are
+deliberately dropped. An app scrollport is not a document page, and a transparent track leaves its
+surface continuous.
 
 **A scrollbar is drawn only while the pointer is inside its region**, and lingers briefly after it
 leaves. A permanently visible scrollbar is chrome competing with content in a surface whose whole job
-is reading.
+is reading. The WebKit and Firefox implementations stay mutually exclusive; drawing both produces
+two different widths in engines that support both selector families.
 
 ---
 
 ## 7. Code and syntax
 
-Syntax colours are their own token set with nine roles per theme, and they are **adopted whole rather
-than restyled**. A palette chosen by someone who thought about contrast across a hundred languages is
-worth more than one assembled here from the ramps.
+Syntax colours are first-party and palette-consistent, with nine roles per theme:
+
+| Role                              | Light — Inkwell | Dark — Lumen |
+| --------------------------------- | --------------- | ------------ |
+| `--shiki-token-constant`          | `#0E61AC`       | `#AEE734`    |
+| `--shiki-token-string`            | `#557A2E`       | `#E7D98A`    |
+| `--shiki-token-comment`           | `#8C8474`       | `#6B7361`    |
+| `--shiki-token-keyword`           | `#0E61AC`       | `#C3FD43`    |
+| `--shiki-token-parameter`         | `#BC3B26`       | `#FF806F`    |
+| `--shiki-token-function`          | `#7B3F93`       | `#9ACBFF`    |
+| `--shiki-token-string-expression` | `#3E7A22`       | `#D7FF7D`    |
+| `--shiki-token-punctuation`       | `#4C5A68`       | `#A9B199`    |
+| `--shiki-token-link`              | `#0A4C88`       | `#AEE734`    |
+
+These roles remain dormant in conversation rendering. **Agent content still takes no colour.** The
+palette exists for the code primitive, but the chat surface does not syntax-highlight what the agent
+wrote. Code-block and terminal chrome re-colour through aliases; content stays faithful.
 
 Code blocks take a 12px radius on their own ground, a sticky banner carrying the language and a copy
 control, and a body at 13/22 that wraps rather than clipping.
@@ -274,18 +473,21 @@ fallbacks, because it renders before the token sheets are guaranteed to have arr
 
 ## 12. Controls
 
-One capsule button in four variants — `primary` on the neutral brand fill, `ghost` (the default),
-`outline`, and `toolbar`. Two heights: 36px, and 28px for a compact row. Disabled is 0.4 opacity and
-a not-allowed cursor, never removal.
+One shared button in five variants — accent `primary`, `ghost` (the default), `outline`, `toolbar`,
+and tinted `danger`. The standard control is 40px high at radius 10; compact is 32px at radius 6.
+An icon-only button uses the same fixed width as its height. Disabled is 0.4 opacity and a
+not-allowed cursor, never removal.
 
 Two heights and no third. A third is one everything else can then reach for, which is how a row ends
 up with three controls on two baselines. A surface that genuinely needs its own proportions declares
 them in its own sheet, where the decision is local and a reviewer can find it — never by widening the
 shared set.
 
-There is no destructive variant. A red button is a colour a person can click as fast as any other, so
-it was never the safeguard it looked like; what protects a destructive act is the second step in front
-of it, described below.
+Primary takes `button-primary-fill`, on-accent ink, and `--dsw-shadow-accent-hover`; pressed takes
+`button-primary-active`. Danger takes danger ink, a danger-tinted border, and a danger-wash ground at
+rest, then a stronger wash and solid danger edge on hover. **Danger is not the safeguard.** A coloured
+button is as quick to click as any other; the acknowledgement step below still protects an action that
+loses something, and its final confirm remains the ordinary primary.
 
 ### 12.1 Badges and state
 
@@ -297,10 +499,10 @@ the row.
 
 A **state dot** is reinforcement and never the signal — it is `aria-hidden`, and every caller pairs it
 with the word, so a state reads the same to somebody who cannot distinguish the colours. Three of its
-four states are a solid core inside a same-coloured halo. The fourth is not a colour: _running_ is a
-claim about right now, and a still dot cannot say whether it is still true, so it is a chase around
-the eight cells of a 3×3 grid — phased at mount so it is already moving, and stopped entirely under
-`prefers-reduced-motion`.
+four states are a solid core inside a same-coloured halo. The fourth is not colour alone: _running_ is
+a claim about right now, so its solid live core sends one expanding ping ring on a quiet loop. Under
+`prefers-reduced-motion: reduce` the ring is absent and the labelled core stays still. This replaces
+the eight-cell 3×3 chase with the reference libraries' simpler liveness signal.
 
 A state that has ended draws **no dot at all**. Every state the dot has asserts something — succeeding,
 needing you, running, failed — and a finished session asserts none of them; painting it green because
@@ -308,10 +510,11 @@ green was the nearest colour would claim it finished well, which is a different 
 
 ### 12.2 Fields
 
-A 32px field at radius 8, with its border on the **wrapper** rather than on the input. That is what
+A 44px field at radius 10, with its border on the **wrapper** rather than on the input. That is what
 lets a glyph sit inside the field instead of beside it, and it is why a field with an icon and one
-without focus identically. Everything the control says about itself — focus, invalidity — is said with
-the edge it already has, never with a ring outside it that would make the control appear to grow.
+without focus identically. A label is the §4 mono 10.5px uppercase voice at `0.14em`. Focus swaps the
+edge to the accent and adds `--dsw-ring-accent-soft`; because the ring is a token and does not enter
+layout, the control does not grow. Invalidity uses the same edge and the danger wash.
 
 This is not the composer. A message box grows with what is typed into it and is a different control
 with different rules; sharing one would make every search box growable.
@@ -319,7 +522,9 @@ with different rules; sharing one would make every search box growable.
 ### 12.3 The dropdown
 
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
-fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 10.
+fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
+radius wins for both appearances; geometry never flips with theme. Hover is an accent wash plus
+accent ink, while a danger row uses the danger wash and danger ink.
 
 Rows are reachable by arrow keys, Home and End, and **wrap** rather than stopping dead — a list that
 stops at the last row puts the first one four presses away in a menu of five. Opening a value picker
@@ -356,11 +561,14 @@ the width is measured with the position.
 
 ### 12.4 Dialogs, and confirming something irreversible
 
-One card: 380px at radius 24 on layer 2, behind a mask that **blurs as well as dims** — dimming alone
+One card: 440px at radius 16 on layer 2, behind the theme's `bg-mask-1` and a blur — dimming alone
 leaves the page behind legible enough to keep reading, which is the one thing a dialog exists to stop.
 It portals out of the page, because an ancestor that establishes a stacking context leaves sticky
 chrome floating above the mask and no z-index can reach past it. The page behind does not scroll while
 it is open.
+
+The two named wide forms remain 700px and 1000px. Every size is capped to the viewport; 440px is the
+base, not a minimum that can overflow a phone.
 
 Closed means **unmounted**, not hidden: a mounted dialog keeps its focus trap armed and steals focus
 from the page it is not covering. Focus is trapped inside it, Escape closes it, and focus returns to
@@ -399,11 +607,11 @@ A 748px reading axis. The scroller pads to it, rows are neutral flow items, and 
 a sticky seat under a short fade mask so text passes beneath it rather than colliding with it.
 
 **The two roles are told apart by shape.** The owner's turn is a right-aligned bubble on its own
-ground, capped at the smaller of 525px and 82% of the column, at a 22px radius. The agent's turn is
-unboxed and runs the full column at 16/28. Shape carrying the distinction is what lets the ink stop
+accent wash, capped at the smaller of 525px and 82% of the column, at a 22px radius. The agent's turn
+is unboxed and runs the full column at 16/28. Shape carrying the distinction is what lets the ink stop
 carrying it — and §1's fidelity rule means no colour is applied to what the agent wrote.
 
-Markdown is rendered properly: headings on the long-form ramp, links in business blue underlined on
+Markdown is rendered properly: headings on the long-form ramp, links in the theme accent underlined on
 hover only, lists with real nesting, blockquotes on a 2px rule, inline code on its own ground, tables
 that scroll inside their own frame rather than widening the column, and images at an 8px radius.
 
@@ -416,9 +624,11 @@ An action the API does not project is **omitted entirely** — never drawn disab
 for something that will never work is the absence rule broken in a costume.
 
 The composer is a 22px capsule on its own ground with a 1px border and a shadow, growing to a cap and
-then scrolling inside itself. Its send control is a 34px circle on the business fill; while a turn
-runs it becomes _stop_. There is no separate interrupt button — the same seat, two meanings, which is
-the one place in the product where a control changes what it does.
+then scrolling inside itself. Its caret and 34px circular send control use the theme accent; while a
+turn runs the control becomes _stop_. The composer keeps its existing focus exception: focus swaps
+the border to accent but adds no outer or soft ring, because the growing message box is already the
+reading column's dominant edge. There is no separate interrupt button — the same seat, two meanings,
+which is the one place in the product where a control changes what it does.
 
 ### A runtime that was lost
 
@@ -512,6 +722,40 @@ The kernel's own screen, unmediated. A hairline frame, the code face, and the pa
 the same alias tokens the rest of the product uses — so a session's colour vocabulary is the same on
 both planes.
 
+xterm renders to canvas and cannot resolve CSS variables, so these literals are authoritative and
+are test-pinned to the aliases they duplicate. Every ANSI slot is a six-digit hex; selection is the
+accent at 25% alpha.
+
+| Slot          | Light — Inkwell       | Dark — Lumen           |
+| ------------- | --------------------- | ---------------------- |
+| background    | `#FFFBF2`             | `#0C0D0A`              |
+| foreground    | `#15283C`             | `#EDF2E2`              |
+| cursor        | `#0E61AC`             | `#C3FD43`              |
+| selection     | `rgba(14,97,172,.25)` | `rgba(195,253,67,.25)` |
+| black         | `#15283C`             | `#060606`              |
+| red           | `#BC3B26`             | `#FF5A45`              |
+| green         | `#3E7A22`             | `#C3FD43`              |
+| yellow        | `#A9720B`             | `#FFB020`              |
+| blue          | `#0E61AC`             | `#72B7FF`              |
+| magenta       | `#7B3F93`             | `#E69AF2`              |
+| cyan          | `#0E766E`             | `#69D7C6`              |
+| white         | `#4C5A68`             | `#A9B199`              |
+| brightBlack   | `#8C8474`             | `#6B7361`              |
+| brightRed     | `#982D1C`             | `#FF806F`              |
+| brightGreen   | `#2D6017`             | `#D7FF7D`              |
+| brightYellow  | `#875A08`             | `#FFC45A`              |
+| brightBlue    | `#073A69`             | `#9ACBFF`              |
+| brightMagenta | `#603074`             | `#F0BCF7`              |
+| brightCyan    | `#0A5B55`             | `#9AE8DC`              |
+| brightWhite   | `#15283C`             | `#EDF2E2`              |
+
+`cursorAccent` is the theme background. The semantic slots stay in lockstep with §2: green is
+`state-success-primary`, yellow is `state-warn-primary`, red is `state-error-primary`, white is
+`label-secondary`, and brightBlack is `label-tertiary`. No greyscale slot equals its own ground, and
+the light palette contains no dark cursor value. The terminal card itself uses the code-block ground:
+light `#F5EAD3`, dark `#060606`; the xterm canvas inside it uses the background row above, leaving a
+small intentional code-block ring around the canvas.
+
 **It is reached, never chosen.** A session starts as a conversation and a profile does not ask which
 plane it wants: the question arrives before anybody has seen the session, and the answer costs a
 rotation to change. The overflow menu carries one entry naming the act rather than the destination —
@@ -528,8 +772,10 @@ already existed, previously paid by whoever clicked a tab that looked free.
 
 ## 14a. Motion
 
-One curve and three durations, from the tokens. A hand-written `cubic-bezier` in a component sheet is
-a fourth curve nobody chose, and the suite refuses it.
+One curve, `cubic-bezier(0.4, 0, 0.2, 1)`, and three durations, from the tokens. The references use
+`.2,.7,.3,1`; the visible difference is too small to justify changing every transition, so the
+existing curve stays deliberately. A hand-written `cubic-bezier` in a component sheet is a fourth
+curve nobody chose, and the suite refuses it.
 
 **Motion is the default and `reduce` removes it.** Never the other way round: `prefers-reduced-motion:
 no-preference` matches only where somebody has explicitly expressed none, so a platform that does not
@@ -587,7 +833,9 @@ carries a `reduce` block.
 
 ## 15. Accessibility
 
-- Text contrast meets WCAG AA in **both** themes. Measured ratios are recorded in §2.
+- Required text contrast meets WCAG AA in **both** themes. Measured ratios and the restrictions on
+  tertiary and dimmed paint are recorded in §2; neither may carry the sole small-text account of a
+  fact.
 - Semantic HTML before ARIA. Landmarks on every page.
 - Every view is fully keyboard operable, including the terminal, which must be escapable by keyboard
   alone.
@@ -853,6 +1101,13 @@ The mark, at the size a mark is worth showing at, and one thing to do.
 | Expansion               | 12px mono, `0.18em`, uppercase                   |
 | **Time to interactive** | **0ms — nothing here waits on the animation**    |
 
+This is the only surface allowed the references' signature texture. In light, the cream ground takes
+Inkwell ruled paper: a 28px vertical rhythm with a one-pixel blue-ink rule at 7% alpha and the single
+warm red margin rule from the reference. In dark, the near-black ground takes Lumen's 18px dot grid,
+one low-alpha light pixel per cell. The dark mark may take `--dsw-glow-accent`; the light mark takes
+warm shadow and never glow. Every signed-in working surface, including every empty state, stays flat
+on `bg-base`.
+
 One centred column: the animated mark, the wordmark, "ChronoAI Managed Agent", a prompt with its
 sign-in key on the same line, and one line of what the service is. No frame — §9's frame is three
 columns of session, and a visitor has no sessions.
@@ -889,6 +1144,7 @@ animated file adds timing and changes no path, so the two can never drift into b
 | `cma-mark.svg`           | sidebar, and anywhere the mark sits in chrome |
 | `cma-mark-animated.svg`  | the signed-out surface, once                  |
 | `cma-favicon.svg`        | the browser tab                               |
+| `appicon-*`              | installed application and device chrome       |
 | `cma-lockup-horizontal*` | anywhere outside the product                  |
 
 The animated mark draws its arc, then its base, then its lenses, and afterwards a highlight crosses
@@ -905,12 +1161,21 @@ honours `prefers-reduced-motion` and SMIL cannot read it; under that preference 
 finished, not slowed. Chrome uses the still file — a logo that replays its entrance on every
 navigation is the motion §14a exists to refuse.
 
-The brand blue is `#2F5BEA` and is not themed. It is a logo, and a mark that changes colour with the
-appearance is two marks.
+The geometry never changes: arc, four-peak base, two lenses, and bridge are re-inked rather than
+redrawn. The mark takes the theme accent, `#0E61AC` in light and `#C3FD43` in dark. This deliberately
+reverses the former fixed-blue rule: the two design languages use ink and light differently, and a
+mark that ignored that would be the one foreign-coloured object on each surface.
 
-The wordmark is set live in the product's own face rather than shipped as paths, so it stays
-selectable text and inherits the theme. `chrono-bot` in mono stays for anything naming the
-repository, the images or the API — those are identifiers, not the product's name.
+The favicon contains both accent treatments and selects with `prefers-color-scheme`, so the browser
+tab agrees before application JavaScript runs. The app icon is the fixed cross-theme exception:
+lime `#C3FD43` on a `#060606` tile, because operating-system chrome does not expose the application's
+resolved body theme. Horizontal lockups ship in the corresponding light and dark accent treatments;
+their path geometry remains identical.
+
+The wordmark is set live in the theme's interface face rather than shipped as paths, so it stays
+selectable text and changes from Familjen Grotesk to Archivo with the appearance. `chrono-bot` in
+mono stays for anything naming the repository, the images or the API — those are identifiers, not
+the product's name.
 
 **Set live, the wordmark is set the way the lockup sets it: weight 700 at `--track-display`.** The
 shipped lockup tracks its own CMA at `-1.6` on a 54px face, which is `-0.030em`, and
@@ -996,3 +1261,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-23 | Added §13's quiet, dismissible runtime-loss notice. It sits at the head of the reading column above any refusal it may explain and above the message stream, and it uses status semantics and the quiet notice rather than failure ink because reconciliation starts a replacement and §16 says a session being restored is not a failure. Required the time to say when the service noticed the loss rather than claiming when the runtime died, with no time invented where none was recorded, and required the notice to say plainly that the agent conversation does not cross the loss and begins again from what was captured. |
 | 2026-08-23 | Added §12.5 for a dialog that asks in steps. The card replaces its own body instead of opening another dialog, keeps one width throughout, uses a secondary Back key and the ordinary primary action to proceed, and states an accepted rate without inventing a projected total. |
 | 2026-08-23 | Added §13a for a session's live resources and memory pressure. Readings sit at the foot of the conversation column beside usage, while an actionable pressure episode sits at its head as a still, dismissible failure notice. Memory and CPU receive a neutral 2px progress hairline only when the service supplies a ceiling; unbounded network figures and bounded readings without ceilings carry no track, so shape preserves the difference rather than inventing a limit. Fixed the exact language for an ungranted capability, an older runtime that cannot report, a reading still awaited, a missing figure, and the first CPU rate that is still measuring, with absence never rendered as zero. Required progressbar semantics and visible pressure words so colour is never the only account, and allowed one fade at final position while forbidding flashing, pulsing, keyframes, and loops because urgency is already carried by placement, words, and failure ink.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-08-23 | Replaced the Harness visual language with Inkwell for light and Lumen for dark, taking the palette, type voice, warm-paper depth and bounded lime glow from `/Users/chronoai/code/work/inkwell-ui.html` and `/Users/chronoai/code/work/lumen-ui.html`. Reversed five doctrines deliberately: primary controls now use the theme accent instead of a neutral; shared controls adopt 40/32px heights and 10/6px radii; the unchanged CMA geometry is re-inked blue or lime with the appearance instead of fixed blue; self-hosted interface webfonts return as Familjen Grotesk/IBM Plex Mono and Archivo/JetBrains Mono; and success is asymmetric, moss green in light while Lumen's lime is both accent and live green. Kept the three-tier token architecture and every consumed alias and specific name while replacing their values, because stable role names let the palette land before each surface restyle without a second migration vocabulary; retired only the malformed, grep-proven unused `brand-primary-new-colorprimary-new-color` alias and retained the deepseek-harness licence for the still-vendored icons.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
