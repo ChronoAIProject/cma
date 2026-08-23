@@ -29,6 +29,8 @@ use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 pub(crate) struct FakeStore {
     pub(crate) sessions: Mutex<HashMap<String, SessionRecord>>,
     pub(crate) events: Mutex<Vec<StoredEvent>>,
+    /// Successful record writes, so idempotent migrations can be asserted.
+    pub(crate) upserts: std::sync::atomic::AtomicUsize,
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
@@ -51,6 +53,8 @@ impl FakeStore {
 impl SessionStore for FakeStore {
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         self.guard().await?;
+        self.upserts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.sessions
             .lock()
             .await
