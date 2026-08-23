@@ -1,5 +1,5 @@
 /*
- * The approval card — docs/Web_Style.md §18.3, amended.
+ * The approval card — docs/Web_Style.md §13.
  *
  * The highest-stakes control in the product, and it takes the composer's own
  * seat: an approval in the stream scrolls away, and the one thing somebody
@@ -34,17 +34,17 @@
  * approvals does not shuffle horizontally as the minutes change.
  */
 .approval__asked {
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
 .approval__eyebrow {
   align-self: flex-start;
   margin: 0;
-  padding: 2px var(--space-2);
-  background: var(--accent-wash);
-  border-radius: var(--radius-sm);
-  color: var(--dsw-alias-state-warn-primary);
+  padding: 2px 8px;
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
+  border-radius: 6px;
   font-size: 12px;
   line-height: 18px;
 }
@@ -55,9 +55,9 @@
  */
 .approval__question {
   margin: 0;
-  color: var(--ink);
-  font-size: calc(var(--text-title) + 1px);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 18px;
+  line-height: 28px;
   text-wrap: pretty;
 }
 
@@ -69,11 +69,11 @@
 .approval__answers {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
 }
 
 .approval__aside {
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
 }

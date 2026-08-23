@@ -1,5 +1,5 @@
 /*
- * The reasoning row — docs/Web_Style.md §18.8.
+ * The reasoning row — docs/Web_Style.md §13.
  *
  * A row rather than a pill, because it carries a line of the agent's own
  * words: a pill sized to its label would truncate every one of them to
@@ -36,8 +36,7 @@
 }
 
 .thinking__key:hover {
-  color: var(--ink-2);
-  border-color: var(--rule-2);
+  color: var(--dsw-alias-label-primary);
 }
 
 .thinking__key:focus-visible {
@@ -53,14 +52,14 @@
 .thinking__body {
   align-self: stretch;
   max-height: 120px;
-  padding: var(--space-3);
+  padding: 12px;
   overflow-y: auto;
-  color: var(--ink-3);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
 }
 
 .thinking__glyph {
