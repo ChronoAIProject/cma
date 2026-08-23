@@ -149,6 +149,50 @@ describe('the button', () => {
   });
 });
 
+describe('the shared component vocabulary', () => {
+  it('uses no migration-shim property except the shared focus ring', () => {
+    const tokens = readFileSync(join(SRC, 'styles', 'tokens.css'), 'utf8');
+    const migration = tokens.slice(tokens.indexOf('Migration shim'));
+    const shimBody = /body\s*\{([\s\S]*?)\n\}/.exec(migration)?.[1] ?? '';
+    const shimNames = new Set(
+      [...shimBody.matchAll(/^\s*(--[a-z0-9-]+):/gm)].map((match) => match[1]),
+    );
+    shimNames.delete('--focus-ring');
+
+    const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    const references = [...components.matchAll(/var\((--[a-z0-9-]+)/g)].map((match) => match[1]);
+    expect(references.filter((name) => shimNames.has(name))).toEqual([]);
+  });
+
+  it('keeps the four cross-sheet transition owners in one shared rule', () => {
+    const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    expect(css).toMatch(/\.button,\s*\.pill,\s*\.row-item,\s*\.input\s*\{\s*transition:/);
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.button,\s*\.pill,\s*\.row-item,\s*\.input\s*\{\s*transition: none/,
+    );
+  });
+
+  it('pins the field, failure, progress, and skeleton idioms to their aliases', () => {
+    const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    expect(css).toMatch(
+      /\.field__label\s*\{[^}]*font-family: var\(--ds-font-family-code\)[^}]*font-size: 10\.5px[^}]*letter-spacing: 0\.14em/,
+    );
+    expect(css).toMatch(
+      /\.notice--fail\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-left: 2px solid var\(--dsw-alias-state-error-primary\)/,
+    );
+    expect(css).toMatch(
+      /\.progress__fill\s*\{[^}]*background: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-glow-accent\)/,
+    );
+    expect(css).toMatch(/\.skeleton\s*\{[^}]*background: var\(--dsw-alias-bg-skeleton\)/);
+    expect(css).toMatch(
+      /\.skeleton::after\s*\{[^}]*animation: skeleton-shimmer 1\.6s var\(--ds-ease-in-out\) infinite/,
+    );
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.skeleton::after\s*\{[^}]*display: none[^}]*animation: none/,
+    );
+  });
+});
+
 describe('the value picker', () => {
   const OPTIONS = [
     { value: 'a', label: 'Codex' },
