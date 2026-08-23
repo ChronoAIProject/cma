@@ -83,7 +83,7 @@ async fn resumability_is_claimed_because_the_log_is_what_makes_it_true() {
 async fn the_projection_is_versioned_rather_than_the_protocol() {
     // This protocol is pre-1.0 with no version distinct from its package
     // semver, so there is nothing to claim conformance to. What is versioned
-    // is chrono-bot's own projection.
+    // is CMA's own projection.
     let doc = document().await;
     let conforms = doc["conformsTo"].as_array().expect("a list");
     assert!(conforms
