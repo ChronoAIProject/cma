@@ -240,6 +240,10 @@ mod tests {
         let keys = vec![
             ("key-for-session".into(), key_name("production", &session)),
             (
+                "legacy-key-for-session".into(),
+                "chrono-bot:production:sesn_restarted".into(),
+            ),
+            (
                 "key-for-another-session".into(),
                 key_name("production", &SessionId("sesn_other".into())),
             ),
@@ -259,7 +263,10 @@ mod tests {
 
         auth.release(&session).await;
 
-        assert_eq!(deleted.lock().await.as_slice(), ["key-for-session"]);
+        assert_eq!(
+            deleted.lock().await.as_slice(),
+            ["key-for-session", "legacy-key-for-session"]
+        );
         server.abort();
     }
 
