@@ -122,6 +122,15 @@ pub enum AdapterError {
     /// sandbox.
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    /// Something answered, and refused for want of room.
+    ///
+    /// A reply came back, so this is never evidence a runtime is gone -- the
+    /// same reasoning as `Rejected`, from which it is split for one reason:
+    /// retrying it is pointless on the timescale a retry loop works at.
+    /// Capacity is freed by somebody stopping something, not by waiting three
+    /// seconds and asking again.
+    #[error("no room for a runtime this size: {0}")]
+    AtCapacity(String),
     /// The provider cannot answer this question at all.
     ///
     /// Distinct from a failure: nothing went wrong, the capability is simply
@@ -144,6 +153,7 @@ impl AdapterError {
         match self {
             Self::Unavailable(m) => Self::Unavailable(format!("{what}: {m}")),
             Self::Rejected(m) => Self::Rejected(format!("{what}: {m}")),
+            Self::AtCapacity(m) => Self::AtCapacity(format!("{what}: {m}")),
             Self::Unsupported(m) => Self::Unsupported(format!("{what}: {m}")),
         }
     }

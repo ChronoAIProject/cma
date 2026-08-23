@@ -63,6 +63,19 @@ pub enum CoreError {
     #[error("{}", session_limit_message(*limit, *live))]
     SessionLimitReached { limit: u32, live: u32 },
 
+    /// This deployment has no room left for a session that size.
+    ///
+    /// Distinct from a per-owner limit: the caller is not over an allowance of
+    /// their own and cannot necessarily clear this by stopping their own work.
+    /// Distinct from `RuntimeUnavailable`: nothing is broken.
+    #[error("no room for a session of {requested_cpu_millis}m CPU and {requested_memory_mib}MiB: {free_cpu_millis}m CPU and {free_memory_mib}MiB free")]
+    DeploymentAtCapacity {
+        requested_cpu_millis: u64,
+        requested_memory_mib: u64,
+        free_cpu_millis: u64,
+        free_memory_mib: u64,
+    },
+
     /// A session size with a zero figure was supplied.
     #[error("invalid session size: {0}")]
     InvalidSessionSize(#[from] InvalidSessionSize),
@@ -186,6 +199,7 @@ impl CoreError {
             Self::InvalidPressurePolicy(_) => "invalid_pressure_policy",
             Self::SizeOutOfBounds(_) => "size_out_of_bounds",
             Self::SessionLimitReached { .. } => "session_limit_reached",
+            Self::DeploymentAtCapacity { .. } => "deployment_at_capacity",
             Self::InvalidSessionSize(_) => "invalid_session_size",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::RuntimeRefused(_) => "runtime_refused",
@@ -250,6 +264,12 @@ mod tests {
                 maximum: 4_000,
             }),
             CoreError::SessionLimitReached { limit: 3, live: 3 },
+            CoreError::DeploymentAtCapacity {
+                requested_cpu_millis: 1_000,
+                requested_memory_mib: 1_024,
+                free_cpu_millis: 500,
+                free_memory_mib: 512,
+            },
             CoreError::InvalidSessionSize(SessionSize::new(0, 512).expect_err("zero CPU fails")),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
@@ -280,6 +300,7 @@ mod tests {
                 | CoreError::InvalidPressurePolicy(_)
                 | CoreError::SizeOutOfBounds(_)
                 | CoreError::SessionLimitReached { .. }
+                | CoreError::DeploymentAtCapacity { .. }
                 | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)

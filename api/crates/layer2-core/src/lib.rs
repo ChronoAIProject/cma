@@ -18,6 +18,7 @@ pub mod clock;
 pub mod conversation;
 mod conversation_log;
 mod credentials;
+pub mod deployment_capacity;
 pub mod directory;
 pub mod environment;
 mod environment_catalog;
@@ -69,6 +70,8 @@ mod test_support;
 mod allowance_tests;
 #[cfg(test)]
 mod capacity_bounds_service_tests;
+#[cfg(test)]
+mod deployment_capacity_tests;
 #[cfg(test)]
 mod limits_rotation_tests;
 #[cfg(test)]
@@ -127,6 +130,7 @@ pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use clock::rfc3339_at;
 pub use conversation::{ApprovalDecision, Usage};
+pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
     MAX_DIRECTORY_LIMIT,
