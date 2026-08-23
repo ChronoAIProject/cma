@@ -48,16 +48,17 @@ pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
 
 /// How long a minted session credential is kept before it is replaced.
 ///
-/// The platform issues these for a day. Replacing at half that means one is
-/// swapped twice over its life, and a lifetime shortened upstream would have
-/// to halve before a session ever presented a credential already refused.
+/// The platform does not give these keys an expiry. Twelve hours is a local
+/// rotation cadence: it limits how long one value is used without pretending
+/// the provider will invalidate it on that schedule.
 const CREDENTIAL_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// One pass: renew what is close to expiry, then push it into live sessions.
 async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
-    // Credentials replaced on an earlier pass. Taken back now rather than when
-    // they were replaced, so the sessions holding them had a full sweep to
-    // receive the value that supersedes them.
+    // Credentials queued on an earlier pass or release. Replaced credentials
+    // wait so the sessions holding them have a full sweep to receive the value
+    // that supersedes them; released credentials wait for an owner token when
+    // release could not attempt the revoke itself.
     let taken = auth.take_back_superseded().await;
     if taken > 0 {
         tracing::info!(
