@@ -197,4 +197,35 @@ impl SessionService {
             .map(|entry| entry.resources.subscribe())
             .ok_or(CoreError::SessionNotFound)
     }
+
+    /// What is known about a session's resource use right now.
+    ///
+    /// Scoped exactly like `subscribe_resources`: seeing the session and
+    /// holding the named ability are both required. A session with no live
+    /// entry answers `Awaiting`; a point read can report that nothing is held
+    /// even though there is no channel to subscribe to.
+    pub async fn last_reading(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<crate::resources::ResourceStatus, CoreError> {
+        let record = self.record(id).await?;
+        if !caller.may_read_owned_by(&record.session.owner) {
+            return Err(CoreError::Forbidden);
+        }
+        record
+            .session
+            .capabilities
+            .require(crate::capabilities::Capability::Resources)?;
+
+        let entries = self.entries.read().await;
+        Ok(match entries.get(id) {
+            Some(entry) => match &entry.last_reading {
+                Some(held) => crate::resources::ResourceStatus::Held(held.clone()),
+                None if entry.readings_unreported => crate::resources::ResourceStatus::Unreported,
+                None => crate::resources::ResourceStatus::Awaiting,
+            },
+            None => crate::resources::ResourceStatus::Awaiting,
+        })
+    }
 }

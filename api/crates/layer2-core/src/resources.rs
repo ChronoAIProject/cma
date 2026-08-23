@@ -52,6 +52,18 @@ pub struct HeldReading {
     pub observed_at: String,
 }
 
+/// What is known about a session's resource use right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)] // The public contract carries HeldReading whole.
+pub enum ResourceStatus {
+    /// A reading was taken: the newest one and when it arrived.
+    Held(HeldReading),
+    /// Reading was started and nothing has arrived yet.
+    Awaiting,
+    /// This session cannot report what it is using.
+    Unreported,
+}
+
 /// Translate a lower-layer sample into the core's vocabulary.
 ///
 /// This is a field-for-field move: it computes nothing and preserves every
@@ -128,4 +140,23 @@ pub(crate) fn spawn_resource_watch(
 
         tracing::info!(session_id = %id, "resource reading watch ended");
     });
+}
+
+impl SessionService {
+    /// The last reading held for a session, if any was ever held.
+    ///
+    /// There is no caller because reconciliation establishes facts across all
+    /// owners without a request on the line. `None` remains an honest absence;
+    /// it is never replaced with an all-zero reading.
+    ///
+    /// Read this before removing the live entry. The hold exists only in this
+    /// process and deliberately disappears with it.
+    #[allow(dead_code)] // Consumed by the reconciliation event that follows this issue.
+    pub(crate) async fn held_reading(&self, id: &SessionId) -> Option<HeldReading> {
+        self.entries
+            .read()
+            .await
+            .get(id)
+            .and_then(|entry| entry.last_reading.clone())
+    }
 }
