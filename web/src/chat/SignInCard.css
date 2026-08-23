@@ -1,5 +1,5 @@
 /*
- * The sign-in card — §18 and §20.
+ * The sign-in card — docs/Web_Style.md §13.
  *
  * Built on the approval card's idiom, because it is the same kind of object: a
  * thing the session has stopped on, sitting in the stream where it stopped,
@@ -12,30 +12,30 @@
 .signin {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-rest);
+  gap: 12px;
+  padding: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: 12px;
+  box-shadow: var(--dsw-glow-accent);
 }
 
 .signin__eyebrow {
   align-self: flex-start;
   margin: 0;
-  padding: 2px var(--space-2);
-  background: var(--accent-wash);
-  border-radius: var(--radius-sm);
-  color: var(--dsw-alias-label-tertiary);
+  padding: 2px 8px;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 6px;
   font-size: 12px;
   line-height: 18px;
 }
 
 .signin__what {
   margin: 0;
-  color: var(--ink);
-  font-size: var(--text-title);
-  line-height: var(--leading-tight);
+  color: var(--dsw-alias-label-primary);
+  font-size: 17px;
+  line-height: 20px;
 }
 
 /*
@@ -46,18 +46,18 @@
  */
 .signin__coderow {
   display: flex;
-  gap: var(--space-3);
+  gap: 12px;
   align-items: center;
-  padding: var(--space-3);
-  background: var(--inset);
-  border-radius: var(--radius-md);
+  padding: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 10px;
 }
 
 .signin__code {
   flex: 1;
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-display);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 64px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.12em;
   user-select: all;
@@ -65,7 +65,7 @@
 
 .signin__go {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
 }
@@ -77,9 +77,9 @@
  */
 .signin__link {
   overflow: hidden;
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
   text-decoration: underline;
   text-underline-offset: 2px;
   white-space: nowrap;
@@ -88,13 +88,13 @@
 
 .signin__link:focus-visible {
   outline: none;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   box-shadow: var(--focus-ring);
 }
 
 .signin__note {
   margin: 0;
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
