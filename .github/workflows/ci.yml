@@ -269,12 +269,12 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: chrono-bot-${{ matrix.component }}:ci
+          tags: cma-${{ matrix.component }}:ci
           cache-from: type=gha,scope=${{ matrix.component }}
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: chrono-bot-${{ matrix.component }}:ci
+          image-ref: cma-${{ matrix.component }}:ci
           format: table
           severity: HIGH,CRITICAL
           exit-code: "1"
