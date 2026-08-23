@@ -16,7 +16,9 @@ use axum::{
     routing::get,
     Router,
 };
-use layer2_core::{AttachmentClaim, Caller, CoreError, SessionId, SessionService};
+use layer2_core::{
+    AttachmentClaim, Caller, CoreError, ResourceReading, ResourceStatus, SessionId, SessionService,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthenticatedCaller;
@@ -136,6 +138,11 @@ enum ServerControl {
         cols: u16,
         rows: u16,
         snapshot: bool,
+        /// Whether readings were available when this attachment opened.
+        ///
+        /// A resource watch refused after this frame can still stop later. A
+        /// client that needs the current distinction uses REST's point read.
+        resources: bool,
         #[serde(rename = "conformsTo")]
         conforms_to: &'static [&'static str],
         limits: Limits,
@@ -145,6 +152,36 @@ enum ServerControl {
         detail: String,
     },
     Pong,
+    Resources {
+        #[serde(rename = "cpuMillisUsed")]
+        cpu_millis_used: Option<u32>,
+        #[serde(rename = "cpuMillisLimit")]
+        cpu_millis_limit: Option<u32>,
+        #[serde(rename = "memoryBytesUsed")]
+        memory_bytes_used: Option<u64>,
+        #[serde(rename = "memoryBytesLimit")]
+        memory_bytes_limit: Option<u64>,
+        #[serde(rename = "memoryBytesPeak")]
+        memory_bytes_peak: Option<u64>,
+        #[serde(rename = "stallPermille")]
+        stall_permille: Option<u16>,
+        #[serde(rename = "ceilingHits")]
+        ceiling_hits: Option<u64>,
+        #[serde(rename = "allocationFailures")]
+        allocation_failures: Option<u64>,
+        #[serde(rename = "kills")]
+        kills: Option<u64>,
+        #[serde(rename = "receivedBytes")]
+        received_bytes: Option<u64>,
+        #[serde(rename = "sentBytes")]
+        sent_bytes: Option<u64>,
+        #[serde(rename = "receivedBytesPerSecond")]
+        received_bytes_per_second: Option<u64>,
+        #[serde(rename = "sentBytesPerSecond")]
+        sent_bytes_per_second: Option<u64>,
+        #[serde(rename = "intervalMs")]
+        interval_ms: Option<u64>,
+    },
 }
 
 impl ServerControl {
@@ -155,6 +192,51 @@ impl ServerControl {
                 .into(),
         )
     }
+
+    /// Carry one core reading whole, preserving every absence as `null`.
+    fn from_reading(reading: ResourceReading) -> Self {
+        let ResourceReading {
+            cpu_millis_used,
+            cpu_millis_limit,
+            memory_bytes_used,
+            memory_bytes_limit,
+            memory_bytes_peak,
+            stall_permille,
+            ceiling_hits,
+            allocation_failures,
+            kills,
+            received_bytes,
+            sent_bytes,
+            received_bytes_per_second,
+            sent_bytes_per_second,
+            interval_ms,
+        } = reading;
+        Self::Resources {
+            cpu_millis_used,
+            cpu_millis_limit,
+            memory_bytes_used,
+            memory_bytes_limit,
+            memory_bytes_peak,
+            stall_permille,
+            ceiling_hits,
+            allocation_failures,
+            kills,
+            received_bytes,
+            sent_bytes,
+            received_bytes_per_second,
+            sent_bytes_per_second,
+            interval_ms,
+        }
+    }
+}
+
+/// Whether a ready frame may promise resource frames for this attachment.
+fn reports_resources(subscribed: bool, status: Result<ResourceStatus, CoreError>) -> bool {
+    subscribed
+        && matches!(
+            status,
+            Ok(ResourceStatus::Held(_) | ResourceStatus::Awaiting)
+        )
 }
 
 /// What the terminal route is served from.
