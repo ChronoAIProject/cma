@@ -12,6 +12,7 @@ mod lanes;
 mod link;
 mod prelude;
 mod pty;
+mod resources;
 mod upstream;
 
 use std::net::SocketAddr;
