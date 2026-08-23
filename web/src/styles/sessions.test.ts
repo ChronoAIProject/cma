@@ -87,7 +87,9 @@ describe('the migrated session surfaces', () => {
     );
 
     const terminal = /\.node \.terminal\s*\{([^}]*)\}/.exec(canvas)?.[1] ?? '';
+    expect(terminal).toContain('min-width: 0');
     expect(terminal).not.toMatch(/(?:background|color|filter|opacity):/);
+    expect(canvas).toMatch(/\.node__body\s*\{[^}]*overflow: hidden/);
     expect(recap).toMatch(
       /\.recap__dot\s*\{[^}]*background: var\(--dsw-alias-state-success-primary\)/,
     );
