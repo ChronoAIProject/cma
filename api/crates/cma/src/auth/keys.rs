@@ -45,6 +45,15 @@ use serde::Deserialize;
 /// Where keys are minted, relative to the platform root.
 const KEYS_PATH: &str = "/api/v1/api-keys";
 
+/// Ownership prefix on every key minted after the CMA migration.
+const KEY_NAME_PREFIX: &str = "cma";
+
+/// Ownership prefix on keys minted before the CMA migration.
+///
+/// These credentials do not expire, so reclamation must keep recognising the
+/// old prefix until provider listings prove none remain on any owner's account.
+const LEGACY_KEY_NAME_PREFIX: &str = "chrono-bot";
+
 /// Where the platform's whole catalogue of services is listed.
 ///
 /// What a person choosing among services is shown: it carries the names and
@@ -111,13 +120,18 @@ struct ServiceRow {
 /// reclaiming another's keys on a platform account they share; the session
 /// identifier is what says whose it is once this process has forgotten.
 pub fn key_name(deployment: &str, session: &SessionId) -> String {
-    format!("chrono-bot:{deployment}:{}", session.0)
+    format!("{KEY_NAME_PREFIX}:{deployment}:{}", session.0)
 }
 
 /// The session a key was minted for, if this deployment minted it.
 pub fn session_of(deployment: &str, name: &str) -> Option<SessionId> {
-    let prefix = format!("chrono-bot:{deployment}:");
-    name.strip_prefix(&prefix).map(|s| SessionId(s.to_string()))
+    [KEY_NAME_PREFIX, LEGACY_KEY_NAME_PREFIX]
+        .into_iter()
+        .find_map(|product| {
+            let prefix = format!("{product}:{deployment}:");
+            name.strip_prefix(&prefix)
+                .map(|session| SessionId(session.to_string()))
+        })
 }
 
 /// Mints and reclaims per-session credentials on the identity platform.
@@ -535,11 +549,19 @@ mod tests {
     }
 
     #[test]
-    fn a_key_carries_the_deployment_and_the_session_it_belongs_to() {
+    fn a_new_key_carries_the_deployment_and_the_session_it_belongs_to() {
         let name = key_name("chrono-bot-prod", &SessionId("sesn_abc".into()));
-        assert_eq!(name, "chrono-bot:chrono-bot-prod:sesn_abc");
+        assert_eq!(name, "cma:chrono-bot-prod:sesn_abc");
         assert_eq!(
             session_of("chrono-bot-prod", &name),
+            Some(SessionId("sesn_abc".into()))
+        );
+    }
+
+    #[test]
+    fn a_legacy_key_still_belongs_to_the_session_it_names() {
+        assert_eq!(
+            session_of("chrono-bot-prod", "chrono-bot:chrono-bot-prod:sesn_abc"),
             Some(SessionId("sesn_abc".into()))
         );
     }
@@ -550,6 +572,10 @@ mod tests {
         // control plane deleting credentials out from under another's sessions.
         let theirs = key_name("chrono-bot-staging", &SessionId("sesn_abc".into()));
         assert_eq!(session_of("chrono-bot-prod", &theirs), None);
+        assert_eq!(
+            session_of("chrono-bot-prod", "chrono-bot:chrono-bot-staging:sesn_abc"),
+            None
+        );
     }
 
     #[test]
@@ -603,6 +629,41 @@ mod tests {
 
         assert_eq!(listed.len(), 125);
         assert_eq!(listed[124].1, SessionId("sesn_124".into()));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_listing_correlates_both_generations_of_key_name() {
+        let keys = serde_json::json!({
+            "keys": [
+                {
+                    "id": "new-key",
+                    "name": key_name("production", &SessionId("sesn_new".into()))
+                },
+                {
+                    "id": "legacy-key",
+                    "name": "chrono-bot:production:sesn_legacy"
+                },
+                {
+                    "id": "another-deployment",
+                    "name": "chrono-bot:staging:sesn_legacy"
+                }
+            ]
+        });
+        let (base, server) = platform(StatusCode::OK, keys).await;
+
+        let listed = issuer(&base)
+            .minted_here("owner-access")
+            .await
+            .expect("complete key listing");
+
+        assert_eq!(
+            listed,
+            vec![
+                ("new-key".into(), SessionId("sesn_new".into())),
+                ("legacy-key".into(), SessionId("sesn_legacy".into())),
+            ]
+        );
         server.abort();
     }
 
