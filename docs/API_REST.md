@@ -841,20 +841,20 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 
 | Permission | Capability | What it opens |
 |---|---|---|
-| `chrono-bot:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
-| `chrono-bot:admin:users` | read the user directory | `GET /api/v1/admin/users` |
-| `chrono-bot:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
-| `chrono-bot:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
-| `chrono-bot:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
-| `chrono-bot:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
+| `cma:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
+| `cma:admin:users` | read the user directory | `GET /api/v1/admin/users` |
+| `cma:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
+| `cma:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
+| `cma:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
+| `cma:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
 
-`chrono-bot:admin:events` opens the durable event log of a session the caller does not own (`GET /api/v1/sessions/{id}/events`). It is not implied by `chrono-bot:admin:sessions`: knowing which sessions exist and reading everything one of them has ever done are different questions, and the second is the one the log answers.
+`cma:admin:events` opens the durable event log of a session the caller does not own (`GET /api/v1/sessions/{id}/events`). It is not implied by `cma:admin:sessions`: knowing which sessions exist and reading everything one of them has ever done are different questions, and the second is the one the log answers.
 
 Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the two controls — a caller ending their own session does that at `/api/v1/sessions/{id}/terminate`. That is what lets the whole segment be restricted in front of the service without the gateway and the application disagreeing about who may call it.
 
-**Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `chrono-bot:admin:sessions`. A caller who also holds `chrono-bot:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
+**Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `cma:admin:sessions`. A caller who also holds `cma:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
 
 **No read is unbounded.** `GET /api/v1/admin/users` and `GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default to 100.
 
@@ -869,8 +869,8 @@ PATCH /api/v1/admin/settings
 POST  /api/v1/admin/settings/reset
 ```
 
-All four routes require `chrono-bot:admin:settings`, which appears to clients
-as the `configure_platform` capability. The product wildcard `chrono-bot:*`
+All four routes require `cma:admin:settings`, which appears to clients as the
+`configure_platform` capability. The product wildcard `cma:*`
 grants it. A signed-in caller without it receives `403` with a problem type
 ending `/not-an-operator`; these routes name no protected identifier, so they
 never disguise that refusal as `404`.
@@ -1231,7 +1231,7 @@ copy a rate, a monetary amount, or any administrator-authored briefing prose.
 
 **`detail` never contains a secret.** What may be recorded is an allowlist in the core, and there is no key in it for an environment variable's value, a credential, a token, a cookie or a header. A bundle of variables is described by how many it carried, never by what they were. Newest first; `limit` is clamped by the service. Entries expire on a schedule the deployment sets (`CHRONO_ACTIVITY_RETENTION_DAYS`, ninety days by default).
 
-Reading requires `chrono-bot:admin:activity`. There is no per-caller view: an ordinary caller cannot read the log at all, not even their own entries. What happened to their own session is in that session's event stream, which is theirs.
+Reading requires `cma:admin:activity`. There is no per-caller view: an ordinary caller cannot read the log at all, not even their own entries. What happened to their own session is in that session's event stream, which is theirs.
 
 ### Live runtimes
 
