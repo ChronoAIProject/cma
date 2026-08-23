@@ -1,0 +1,7 @@
+{
+  "name": "@chronoai/cma-sdk",
+  "version": "0.0.0-dev",
+  "description": "TypeScript client SDK for CMA",
+  "private": true,
+  "type": "module"
+}
