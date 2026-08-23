@@ -368,8 +368,6 @@
  * ground in Inkwell and primary ink in Lumen.
  */
 .rail__ghost {
-  --rail-sweep: color-mix(in srgb, var(--dsw-alias-bg-base) 65%, transparent);
-
   position: relative;
   height: 32px;
   overflow: hidden;
@@ -378,16 +376,26 @@
   border-radius: 8px;
 }
 
-body[data-ds-dark-theme] .rail__ghost {
-  --rail-sweep: color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent);
-}
-
 .rail__ghost::after {
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent, var(--rail-sweep), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 65%, transparent),
+    transparent
+  );
   content: '';
   animation: rail-sweep 2.6s var(--ds-ease-in-out) infinite;
+}
+
+body[data-ds-dark-theme] .rail__ghost::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent),
+    transparent
+  );
 }
 
 @keyframes rail-sweep {

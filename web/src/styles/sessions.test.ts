@@ -34,14 +34,12 @@ describe('the migrated session surfaces', () => {
 
   it('keeps rail loading visible in both appearances and still on reduced motion', () => {
     const rail = readSheet('sessions', 'SessionRail.css');
+    expect(rail).toMatch(/\.rail__ghost\s*\{[^}]*background: var\(--dsw-alias-bg-skeleton\)/);
     expect(rail).toMatch(
-      /\.rail__ghost\s*\{[^}]*--rail-sweep: color-mix\(in srgb, var\(--dsw-alias-bg-base\) 65%, transparent\)[^}]*background: var\(--dsw-alias-bg-skeleton\)/,
+      /\.rail__ghost::after\s*\{[^}]*color-mix\(in srgb, var\(--dsw-alias-bg-base\) 65%, transparent\)[^}]*animation: rail-sweep 2\.6s var\(--ds-ease-in-out\) infinite/,
     );
     expect(rail).toMatch(
-      /body\[data-ds-dark-theme\] \.rail__ghost\s*\{[^}]*--rail-sweep: color-mix\(in srgb, var\(--dsw-alias-label-primary\) 5%, transparent\)/,
-    );
-    expect(rail).toMatch(
-      /\.rail__ghost::after\s*\{[^}]*var\(--rail-sweep\)[^}]*animation: rail-sweep 2\.6s var\(--ds-ease-in-out\) infinite/,
+      /body\[data-ds-dark-theme\] \.rail__ghost::after\s*\{[^}]*color-mix\(in srgb, var\(--dsw-alias-label-primary\) 5%, transparent\)/,
     );
     expect(rail).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.rail__ghost::after\s*\{[^}]*animation: none[^}]*content: none/,
