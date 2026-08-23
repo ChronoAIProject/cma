@@ -35,6 +35,7 @@ mod log;
 mod platform;
 pub mod platform_service;
 mod pressure;
+mod pressure_service;
 mod pricing;
 mod provision;
 mod provision_failure;
@@ -72,6 +73,8 @@ mod capacity_bounds_service_tests;
 mod limits_rotation_tests;
 #[cfg(test)]
 mod limits_tests;
+#[cfg(test)]
+mod pressure_service_tests;
 #[cfg(test)]
 mod pressure_settings_tests;
 #[cfg(test)]
