@@ -117,6 +117,17 @@ fn one_of_every_kind() -> Vec<EventKind> {
             request_id: "r-1".into(),
             allowed: true,
         },
+        EventKind::MemoryPressureOpened {
+            used_bytes: 850,
+            limit_bytes: 1_000,
+            occupancy_permille: 850,
+        },
+        EventKind::MemoryPressureClosed {
+            peak_bytes: 970,
+            limit_bytes: 1_000,
+            peak_permille: 970,
+            duration_seconds: 181,
+        },
         EventKind::RuntimeLost {
             runtime_id: "sbx_1".into(),
             cause: Some(RuntimeLossCause::OutOfMemory),
@@ -159,6 +170,8 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::TerminalResized { .. }
             | EventKind::ApprovalRequested { .. }
             | EventKind::ApprovalResolved { .. }
+            | EventKind::MemoryPressureOpened { .. }
+            | EventKind::MemoryPressureClosed { .. }
             | EventKind::RuntimeLost { .. }
             | EventKind::PlaneChanged { .. }
             | EventKind::SignInRequired { .. } => {}

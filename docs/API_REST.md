@@ -366,6 +366,30 @@ data: {"seq":1045,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","
 
 `runtime_lost` carries `runtime_id`, the opaque identifier of the runtime that is gone, and `cause` where the service could establish one. The cause is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`; when nothing supplied a reason, `cause` is omitted rather than invented.
 
+Memory pressure is recorded as two edge-triggered events. Raw resource
+readings are never written to the event log: each reading replaces the prior
+live value, while an episode is something that happened once and must survive
+a reconnect.
+
+```json
+{"type":"memory_pressure_opened","used_bytes":912680550,"limit_bytes":1073741824,"occupancy_permille":850}
+{"type":"memory_pressure_closed","peak_bytes":1041529569,"limit_bytes":1073741824,"peak_permille":970,"duration_seconds":181}
+```
+
+`memory_pressure_opened` appears only after occupancy has stayed at or above
+the configured entry threshold for the configured consecutive-reading dwell;
+a brief build spike therefore produces no event. `memory_pressure_closed`
+appears after occupancy has stayed below the exit threshold and the settle
+floor has elapsed. It carries the episode's peak and a duration measured by a
+monotonic clock, not by subtracting the event timestamps.
+
+For client folding, an open episode ends as soon as the session leaves an
+interactive status, even if no close was written (for example, if the control
+plane stopped during the episode). A second `memory_pressure_opened` without a
+close replaces the first; pressure is state, not a stack. A reading with no
+memory figure or no limit says nothing about pressure and neither opens nor
+closes an episode.
+
 ---
 
 ## 5. Approvals
