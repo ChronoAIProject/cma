@@ -49,6 +49,7 @@ impl IntoResponse for Problem {
             CoreError::SessionLimitReached { .. } => {
                 (StatusCode::CONFLICT, "session-limit-reached")
             }
+            CoreError::DeploymentAtCapacity { .. } => super::deployment_capacity::status_and_slug(),
             CoreError::RuntimeUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
             }
@@ -107,6 +108,18 @@ impl IntoResponse for Problem {
                     object.insert("limit".into(), (*limit).into());
                     object.insert("live".into(), (*live).into());
                 }
+                CoreError::DeploymentAtCapacity {
+                    requested_cpu_millis,
+                    requested_memory_mib,
+                    free_cpu_millis,
+                    free_memory_mib,
+                } => super::deployment_capacity::insert_fields(
+                    object,
+                    *requested_cpu_millis,
+                    *requested_memory_mib,
+                    *free_cpu_millis,
+                    *free_memory_mib,
+                ),
                 CoreError::PriceChanged { quoted, in_force } => {
                     object.insert("quoted_rate_card".into(), quoted.clone().into());
                     object.insert("rate_card".into(), in_force.clone().into());
@@ -184,6 +197,12 @@ mod tests {
                 maximum: 4_000,
             }),
             CoreError::SessionLimitReached { limit: 3, live: 3 },
+            CoreError::DeploymentAtCapacity {
+                requested_cpu_millis: 2_000,
+                requested_memory_mib: 4_096,
+                free_cpu_millis: 500,
+                free_memory_mib: 1_024,
+            },
             CoreError::InvalidSessionSize(SessionSize::new(0, 512).unwrap_err()),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
@@ -211,6 +230,7 @@ mod tests {
                 | CoreError::InvalidPressurePolicy(_)
                 | CoreError::SizeOutOfBounds(_)
                 | CoreError::SessionLimitReached { .. }
+                | CoreError::DeploymentAtCapacity { .. }
                 | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
@@ -321,6 +341,29 @@ mod tests {
         assert_eq!(body["live"], 4);
     }
 
+    #[tokio::test]
+    async fn deployment_capacity_is_a_503_with_all_four_figures_and_never_a_404() {
+        let (status, body) = rendered(CoreError::DeploymentAtCapacity {
+            requested_cpu_millis: 2_000,
+            requested_memory_mib: 4_096,
+            free_cpu_millis: 750,
+            free_memory_mib: 1_536,
+        })
+        .await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_ne!(status, StatusCode::NOT_FOUND);
+        assert!(body["type"]
+            .as_str()
+            .unwrap()
+            .ends_with("/deployment-at-capacity"));
+        assert_eq!(body["code"], "deployment_at_capacity");
+        assert_eq!(body["requested_cpu_millis"], 2_000);
+        assert_eq!(body["requested_memory_mib"], 4_096);
+        assert_eq!(body["free_cpu_millis"], 750);
+        assert_eq!(body["free_memory_mib"], 1_536);
+    }
+
     #[test]
     fn a_problem_document_uses_its_registered_media_type() {
         let response =
@@ -340,6 +383,24 @@ mod tests {
             }
             let (_, body) = rendered(error).await;
             for field in ["limit", "live"] {
+                assert!(body.get(field).is_none(), "unexpected {field} in {body}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn deployment_capacity_fields_are_absent_from_every_other_problem() {
+        for error in every_variant() {
+            if matches!(error, CoreError::DeploymentAtCapacity { .. }) {
+                continue;
+            }
+            let (_, body) = rendered(error).await;
+            for field in [
+                "requested_cpu_millis",
+                "requested_memory_mib",
+                "free_cpu_millis",
+                "free_memory_mib",
+            ] {
                 assert!(body.get(field).is_none(), "unexpected {field} in {body}");
             }
         }

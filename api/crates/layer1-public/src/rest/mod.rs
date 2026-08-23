@@ -21,6 +21,7 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 
 mod allowance;
+mod deployment_capacity;
 mod events;
 mod operate;
 mod problems;
