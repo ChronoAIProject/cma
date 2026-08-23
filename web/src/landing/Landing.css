@@ -22,7 +22,29 @@
   justify-content: center;
   min-height: 100dvh;
   padding: 32px var(--page-gutter);
-  background: var(--dsw-alias-bg-base);
+  background-color: var(--dsw-alias-bg-base);
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 27px,
+      color-mix(in srgb, var(--dsw-alias-state-business-primary) 7%, transparent) 27px 28px
+    ),
+    linear-gradient(
+      to right,
+      transparent 0 47px,
+      color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent) 47px 48px,
+      transparent 48px
+    );
+}
+
+/* Lumen's signature is one quiet point of light in each 18px cell. */
+body[data-ds-dark-theme] .landing {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 18px 18px;
 }
 
 .landing__stack {
@@ -61,7 +83,7 @@
   aspect-ratio: 100 / 69;
   overflow: hidden;
   color: var(--dsw-alias-brand-primary);
-  filter: none;
+  filter: drop-shadow(var(--dsw-shadow-lv1-blur));
   /*
    * The bob begins where the drawing ends. The mark's own file draws its arc,
    * then its base, then its lenses, and fades in the bridge last at 1.78s over
@@ -125,10 +147,16 @@ body[data-ds-dark-theme] .landing__mark {
 .landing__word {
   margin: 20px 0 0;
   color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
   font-weight: 700;
   font-size: clamp(40px, 9vmin, 72px);
   line-height: 1.05;
   letter-spacing: -0.03em;
+  font-variation-settings: var(--ds-font-variation-display);
+}
+
+body[data-ds-dark-theme] .landing__word {
+  font-weight: 900;
 }
 
 .landing__expand {
@@ -159,21 +187,19 @@ body[data-ds-dark-theme] .landing__mark {
 .landing__prompt {
   flex: 1 1 260px;
   min-width: 0;
-  height: 36px;
-  padding: 0 14px;
+  height: 44px;
+  padding: 0 16px;
   color: var(--dsw-alias-label-primary);
   font-size: 14px;
   font-family: inherit;
   line-height: 20px;
-  background: var(--dsw-alias-bg-base);
-  /*
-   * A border, not a fill. In light theme every layer token resolves to the
-   * page ground, so a field distinguished only by `bg-layer-2` is invisible
-   * there and appears only in dark.
-   */
+  background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
-  transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out);
+  transition:
+    background var(--ds-transition-duration) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration) var(--ds-ease-in-out),
+    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .landing__prompt::placeholder {
@@ -182,13 +208,18 @@ body[data-ds-dark-theme] .landing__mark {
 
 .landing__prompt:focus-visible {
   outline: none;
-  border-color: var(--dsw-alias-brand-primary);
-  box-shadow: var(--focus-ring);
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-ring-accent-soft);
+}
+
+.landing__prompt:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l3);
 }
 
 .landing__prompt:disabled {
   color: var(--dsw-alias-label-tertiary);
-  cursor: default;
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 @media (prefers-reduced-motion: reduce) {
