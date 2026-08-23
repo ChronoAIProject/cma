@@ -8,7 +8,55 @@ use super::*;
 use crate::bridge::Outbound;
 use crate::conversation_link::{gap, outbound};
 use crate::lanes::{LANE_CONVERSATION, LANE_CONVERSATION_GAP};
+use std::path::PathBuf;
 use std::time::Duration;
+
+struct ResourceFixture {
+    root: PathBuf,
+}
+
+impl ResourceFixture {
+    fn new(name: &str, observed: bool) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "chrono-link-resources-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("proc/self")).expect("proc fixture is created");
+        std::fs::create_dir_all(root.join("cgroup")).expect("cgroup fixture is created");
+        std::fs::write(root.join("proc/self/cgroup"), "0::/\n")
+            .expect("membership fixture is written");
+        if observed {
+            std::fs::write(root.join("cgroup/memory.current"), "1\n")
+                .expect("resource fixture is written");
+        }
+        Self { root }
+    }
+
+    fn roots(&self) -> crate::resources::Roots {
+        crate::resources::Roots {
+            proc: self.root.join("proc"),
+            cgroup_mount: self.root.join("cgroup"),
+            net: self.root.join("net"),
+        }
+    }
+}
+
+impl Drop for ResourceFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn resource_state(name: &str, observed: bool) -> (AppState, ResourceFixture) {
+    let fixture = ResourceFixture::new(name, observed);
+    let mut state = AppState::for_test(&[]);
+    state.resources = std::sync::Arc::new(crate::resources::Sampler::new(
+        fixture.roots(),
+        std::time::Instant::now(),
+    ));
+    (state, fixture)
+}
 
 /// A link opened with these query values, as the control plane would.
 fn params(wire: Option<u32>, lanes: Option<&str>) -> AttachParams {
@@ -213,7 +261,7 @@ fn assert_telemetry_frame(message: tokio_tungstenite::tungstenite::Message) {
 
 #[tokio::test]
 async fn a_link_that_names_a_cadence_is_a_telemetry_link_and_takes_no_pty() {
-    let state = AppState::for_test(&[]);
+    let (state, _resources) = resource_state("telemetry-link", true);
     let inspected = state.clone();
     let (address, server) = serve(state).await;
     let mut socket = telemetry_link(address, 2000).await;
@@ -241,7 +289,7 @@ async fn a_cadence_outside_what_this_pod_serves_is_clamped_and_not_refused() {
         crate::telemetry::clamp_interval_ms(3_600_000),
         crate::telemetry::MAX_INTERVAL_MS
     );
-    let state = AppState::for_test(&[]);
+    let (state, _resources) = resource_state("clamped-telemetry", true);
     let (address, server) = serve(state).await;
     for requested in [1, 3_600_000] {
         let mut socket = telemetry_link(address, requested).await;
@@ -256,7 +304,7 @@ async fn a_cadence_outside_what_this_pod_serves_is_clamped_and_not_refused() {
 
 #[tokio::test]
 async fn readiness_declares_the_lane_this_image_serves() {
-    let state = AppState::for_test(&[]);
+    let (state, _resources) = resource_state("readiness-observed", true);
     let (address, server) = serve(state).await;
     let ready: serde_json::Value = reqwest::get(format!("http://{address}/readyz"))
         .await
@@ -266,5 +314,37 @@ async fn readiness_declares_the_lane_this_image_serves() {
         .expect("readiness is JSON");
     assert_eq!(ready["prelude"], true);
     assert_eq!(ready["resources"], true);
+    server.abort();
+}
+
+#[tokio::test]
+async fn readiness_does_not_advertise_an_uptime_only_sampler() {
+    let (state, _resources) = resource_state("readiness-empty", false);
+    let (address, server) = serve(state).await;
+    let ready: serde_json::Value = reqwest::get(format!("http://{address}/readyz"))
+        .await
+        .expect("readiness is reachable")
+        .json()
+        .await
+        .expect("readiness is JSON");
+    assert_eq!(ready["resources"], false);
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_uptime_only_sample_is_not_sent_as_telemetry() {
+    let (state, _resources) = resource_state("empty-telemetry", false);
+    let (address, server) = serve(state).await;
+    let mut socket = telemetry_link(address, crate::telemetry::MIN_INTERVAL_MS).await;
+    assert!(matches!(
+        next_client_message(&mut socket).await,
+        tokio_tungstenite::tungstenite::Message::Text(_)
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(400), socket.next())
+            .await
+            .is_err(),
+        "no uptime-only telemetry frame should arrive"
+    );
     server.abort();
 }

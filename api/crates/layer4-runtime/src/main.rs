@@ -577,6 +577,10 @@ async fn prelude_write(
 
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     let live = state.registry.len().await;
+    let reports_resources = state
+        .resources
+        .sample(std::time::Instant::now())
+        .has_observations();
     // Whether a credential is held, never which one: an operator needs to know
     // if calls would fail, not what the value is.
     axum::Json(serde_json::json!({
@@ -589,13 +593,11 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": true,
-        // Declared so a control plane can tell an image that serves the
-        // telemetry lane from one that does not. It must never open such a
-        // link on a guess: a pod that predates this reads any `lanes` value it
-        // does not know as the terminal, so an ungated attach starts a second
-        // agent process in a conversation-plane sandbox and resizes the screen
-        // of a terminal-plane one.
-        "resources": true,
+        // Declared only when this pod has observed something useful. The route
+        // existing proves a wire version, not that this guest exposes any
+        // counter. A control plane must still never open the link on a guess:
+        // an older pod reads an unfamiliar lane as the terminal.
+        "resources": reports_resources,
     }))
 }
 
