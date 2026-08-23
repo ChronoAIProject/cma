@@ -5,7 +5,7 @@ members = [
     "crates/layer2-core",
     "crates/layer3-adapter",
     "crates/layer4-runtime",
-    "crates/chrono-bot",
+    "crates/cma",
 ]
 
 [workspace.package]
