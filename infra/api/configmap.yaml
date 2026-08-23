@@ -156,7 +156,7 @@ data:
   # a session on an image nobody maintains, and forbids interrupting it to fix
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:680fbde"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:v0.6.0"
   # What a session reserves when its profile names no size: the deployment's
   # own reservation.
   #
