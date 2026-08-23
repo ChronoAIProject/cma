@@ -1,5 +1,5 @@
 /*
- * The composer — docs/Web_Style.md §18.4.
+ * The composer — docs/Web_Style.md §13.
  *
  * A card at the foot of the reading column, on the raised ground inside the
  * panel radius, resting: the field, then a row carrying what the session's
@@ -130,7 +130,7 @@
  */
 .composer__row {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   min-width: 0;
   padding: 0 16px 10px;
@@ -162,16 +162,16 @@
  */
 .composer--refused {
   align-items: flex-start;
-  background: var(--surface);
+  background: var(--dsw-alias-bg-layer-1);
   border-style: dashed;
-  box-shadow: var(--lift-none);
+  box-shadow: none;
 }
 
 .composer__refusal {
   margin: 0;
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 /*
