@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -12,6 +14,9 @@ const KERNELS: readonly KernelOffer[] = [
   { id: 'codex', modes: ['terminal', 'conversation'] },
   { id: 'claude-code', modes: ['conversation'] },
 ];
+
+const css = () =>
+  readFileSync(resolve(process.cwd(), 'src/environment/EnvironmentProfiles.css'), 'utf8');
 
 function open(store = createMockProfileStore(), onClose = vi.fn(), kernels = KERNELS) {
   return {
@@ -442,5 +447,44 @@ describe('the profile sessions start from', () => {
     await user.click(moved[0]!);
 
     expect(screen.getAllByText('default')).toHaveLength(1);
+  });
+});
+
+describe('the environment appearance', () => {
+  it('leaves shared Input paint at 44px and gives raw textareas the same language', () => {
+    const sheet = css();
+    const placement = /\.field__input\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(placement.trim()).toBe('width: 100%;');
+    expect(sheet).toMatch(
+      /textarea\.field__input\s*\{[^}]*min-height: 88px[^}]*background: var\(--dsw-alias-bg-layer-1\)[^}]*border: 1px solid var\(--dsw-alias-border-l2\)[^}]*border-radius: 10px/,
+    );
+    expect(sheet).toMatch(
+      /textarea\.field__input:focus-visible\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
+    );
+    expect(sheet).toMatch(
+      /textarea\.field__input\[aria-invalid='true'\]\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-color: var\(--dsw-alias-state-error-primary\)/,
+    );
+  });
+
+  it('keeps selection rows readable across pointer, keyboard, and fixed choices', () => {
+    const sheet = css();
+    expect(sheet).toMatch(
+      /\.selection\s*\{[^}]*background: var\(--dsw-alias-bg-layer-1\)[^}]*border-radius: 10px/,
+    );
+    expect(sheet).toMatch(
+      /\.selection__row:hover\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover\)/,
+    );
+    expect(sheet).toMatch(
+      /\.selection__row:focus-within\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-accent\)/,
+    );
+    expect(sheet).toMatch(
+      /\.selection__row input\s*\{[^}]*accent-color: var\(--dsw-alias-state-business-primary\)/,
+    );
+  });
+
+  it('moves profile facts above their controls in the compact dialog', () => {
+    expect(css()).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.profiles__row\s*\{[^}]*flex-wrap: wrap[^}]*\}[\s\S]*\.profiles__text\s*\{[^}]*flex-basis: 100%/,
+    );
   });
 });
