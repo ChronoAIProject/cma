@@ -264,4 +264,14 @@ textarea.field__input[aria-invalid='true'] {
   .profiles__text {
     flex-basis: 100%;
   }
+
+  /* Keep both 44px fields usable without pushing the value past the dialog. */
+  .pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .pair > .field__input:first-child {
+    grid-column: 1 / -1;
+  }
 }

@@ -487,4 +487,10 @@ describe('the environment appearance', () => {
       /@media \(max-width: 29\.999rem\)[\s\S]*\.profiles__row\s*\{[^}]*flex-wrap: wrap[^}]*\}[\s\S]*\.profiles__text\s*\{[^}]*flex-basis: 100%/,
     );
   });
+
+  it('stacks a variable name above its value and controls in the compact editor', () => {
+    expect(css()).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.pair\s*\{[^}]*display: grid[^}]*grid-template-columns: minmax\(0, 1fr\) auto auto[^}]*\}[\s\S]*\.pair > \.field__input:first-child\s*\{[^}]*grid-column: 1 \/ -1/,
+    );
+  });
 });
