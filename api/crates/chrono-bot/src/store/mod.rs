@@ -10,6 +10,7 @@ pub mod directory;
 pub mod environment;
 mod event_doc;
 pub mod mongo;
+pub mod settings;
 pub mod token;
 
 use std::time::Duration;
@@ -22,6 +23,7 @@ pub use context::ChronoStorageContextStore;
 pub use directory::MongoUserDirectoryStore;
 pub use environment::MongoEnvironmentProfileStore;
 pub use mongo::MongoSessionStore;
+pub use settings::MongoPlatformSettingsStore;
 
 /// Everything this deployment keeps in MongoDB.
 ///
@@ -37,6 +39,8 @@ pub struct MongoStores {
     pub activity: MongoActivityStore,
     /// Who has used the service.
     pub users: MongoUserDirectoryStore,
+    /// Deployment-wide settings changed by administrators.
+    pub settings: MongoPlatformSettingsStore,
 }
 
 /// Open every MongoDB-backed store over one connection.
@@ -62,5 +66,6 @@ pub async fn connect(
         profiles: MongoEnvironmentProfileStore::open(&client, database).await?,
         activity: MongoActivityStore::open(&client, database, activity_retention).await?,
         users: MongoUserDirectoryStore::open(&client, database).await?,
+        settings: MongoPlatformSettingsStore::open(&client, database).await?,
     })
 }

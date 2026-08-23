@@ -1,157 +1,51 @@
 /**
- * Session model, mirroring docs/API_Overview.md.
+ * How a session's state is drawn — `Web_Style.md` §11.
  *
- * This is a projection of the core Layer 2 model for display purposes. It must
- * not invent state the core does not have.
+ * The model itself is the SDK's (`sdk/types.ts`) and is re-exported here so
+ * this stays the one import a surface needs. What is left is presentation:
+ * which semantic token paints a lifecycle, and what a tab calls it. Neither is
+ * anything the control plane said, which is exactly why they did not travel
+ * with the model.
  */
 
-import type { SessionCapabilities } from '../agui';
+export * from '../sdk/types';
 
-/**
- * Lifecycle: provisioning -> ready -> running <-> idle -> terminated.
- *
- * `rotating` sits across the top of that: a running session being moved onto
- * an updated runtime. It is a state of its own because the session is neither
- * usable nor stopped while it happens, and calling it either would be a lie
- * the owner acts on.
- */
-export type SessionLifecycle =
-  'provisioning' | 'ready' | 'running' | 'rotating' | 'idle' | 'terminated';
-
-/**
- * Why a session stopped, where the control plane says.
- *
- * Only `error` is distinguished here, because it is the only one that changes
- * what the interface should do: a session that failed stays visible so its
- * owner can find out why.
- */
-export type StopReason = 'error' | 'other';
-
-/**
- * The two planes a session can be reached on.
- *
- * Exclusive by construction: `capabilities.rs` fixes the granted set at
- * creation and a session holds one or the other. Moving between them is a
- * rotation and never a toggle — the session is captured, its runtime is
- * replaced, and it resumes from the capture (§18.6).
- */
-export type SessionPlane = 'terminal' | 'conversation';
-
-/** The kernels the control plane can run. */
-export type Kernel = 'codex' | 'claude-code';
-
-/**
- * A runtime this deployment can start a session on, and what it can be.
- *
- * Read from `GET /api/v1/kernels` rather than listed here, because which
- * runtimes exist and what each can serve are facts about a deployment. A list
- * kept in the client is wrong the first time one changes, and being wrong here
- * means offering somebody a session the control plane will refuse.
- */
-export interface KernelOffer {
-  readonly id: string;
-  /** The planes this runtime can serve. Empty means it can serve none. */
-  readonly modes: readonly SessionPlane[];
-}
-
-/**
- * One service a session's credential may reach.
- *
- * Identifiers always; a name and a description only when the caller's own
- * service catalogue offered them. A catalogue that could not be asked costs
- * the names and not the answer, so a service with no name is still a service
- * this session reaches.
- */
-export interface SessionService {
-  readonly id: string;
-  /** What the owner recognises it by, when the catalogue said. */
-  readonly name?: string;
-  readonly description?: string;
-  /**
-   * Whether the platform mandates it.
-   *
-   * Drawn as fixed rather than as something the owner chose, matching how the
-   * picker already treats the entries that cannot be unticked — for the same
-   * stated reason: a person deciding what a session may touch should see the
-   * whole answer.
-   */
-  readonly mandated: boolean;
-}
-
-export interface Session {
-  readonly id: string;
-  readonly kernel: Kernel;
-  readonly lifecycle: SessionLifecycle;
-  /** Epoch ms the session was created, for the tab's age readout. */
-  readonly createdAt: number;
-  /** Why it stopped, when it has. */
-  readonly stopReason?: StopReason;
-  /** Which runtime version is serving it. */
-  readonly runtimeVersion?: string;
-  /** How many times it has been moved onto a newer runtime. */
-  readonly rotations?: number;
-  /**
-   * Epoch ms of the snapshot the current runtime resumed from.
-   *
-   * The honest part of a rotation: it says how much of the session was carried
-   * across, so anything the agent did in the seconds after it can be
-   * recognised as missing rather than silently absent.
-   */
-  readonly rotatedAt?: number;
-  /**
-   * Who started the session, as they should be shown.
-   *
-   * Absent when the control plane would not name them: naming somebody is its
-   * own grant, and a caller who does not hold it is told nothing rather than
-   * handed an identifier. Never fall back to the subject — it is not a name
-   * and reads as a rendering fault when drawn as one.
-   */
-  readonly creator?: SessionCreator;
-  /**
-   * What this session's credential may reach.
-   *
-   * `undefined` and `[]` are different facts and must not be drawn alike.
-   * Undefined means the control plane did not report it — an older build, or a
-   * projection this one does not carry — and the honest answer is that we do
-   * not know. Empty means this session reaches nothing, which is a real answer
-   * somebody can act on.
-   */
-  readonly reach?: readonly SessionService[];
-  /**
-   * Which plane this session is drawn on — `Web_Style.md` §1 and §18.
-   *
-   * A property of the session, decided when it was created, and not a view and
-   * not a preference. The client reads it and draws what it implies; there is
-   * nothing here to toggle, because the two planes are exclusive by
-   * construction in the core.
-   *
-   * Absent when the control plane did not say. A session whose plane is not
-   * reported falls back to the terminal, which is what every session was
-   * before the conversation plane existed — the safe direction, since a
-   * terminal drawn for a conversation session shows an empty screen and a
-   * conversation drawn for a terminal session shows nothing at all.
-   */
-  readonly plane?: SessionPlane;
-  /**
-   * What this session was granted, read once at the boundary.
-   *
-   * #116: components ask "may this session steer" rather than trying and
-   * handling a refusal. Held on the session because it is a fact about the
-   * session, decided at creation and changed only by an explicit, recorded act
-   * of its owner — moving it between planes, which is a rotation and arrives
-   * as a new record rather than as an edit to this one.
-   */
-  readonly capabilities: SessionCapabilities;
-}
-
-/** How the person who started a session is drawn. */
-export interface SessionCreator {
-  readonly displayName?: string;
-  readonly avatarUrl?: string;
-}
+import type { StateDotState } from '../ui/StateDot';
+import type {
+  CredentialMode,
+  PermissionMode,
+  ReasoningEffort,
+  SessionLifecycle,
+} from '../sdk/types';
 
 /** Which semantic token paints a lifecycle state. */
 export type StateTone = 'live' | 'wait' | 'fail' | 'ended';
+
+/**
+ * The design's state vocabulary for one of ours — `Web_Style.md` §7.
+ *
+ * `undefined` for a session that has ended, and deliberately: the dot's four
+ * states all assert something about right now — succeeding, needing you,
+ * running, failed — and a terminated session asserts none of them. Painting
+ * it green because green was the nearest colour would claim it finished well,
+ * which is a different fact and one this layer does not have.
+ */
+export function stateDotFor(tone: StateTone): StateDotState | undefined {
+  switch (tone) {
+    case 'live':
+      return 'ongoing';
+    case 'wait':
+      return 'warning';
+    case 'fail':
+      return 'error';
+    case 'ended':
+      return undefined;
+    default: {
+      const exhaustive: never = tone;
+      return exhaustive;
+    }
+  }
+}
 
 /**
  * `idle` is the state most often misread. A session whose bot pod was
@@ -190,11 +84,107 @@ export function labelFor(lifecycle: SessionLifecycle): string {
     case 'rotating':
       return 'updating';
     case 'idle':
-      return 'idle';
+      return 'paused';
     case 'terminated':
       return 'ended';
     default: {
       const exhaustive: never = lifecycle;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * What the interface calls a permission mode, and whether it is the alarming
+ * one.
+ *
+ * `unrestricted` is marked here rather than at each surface that draws it, for
+ * the reason the core exposes `is_unrestricted` at all: which mode is the
+ * exceptional choice is one decision, and a surface deciding it for itself is
+ * a surface that will one day disagree with another.
+ *
+ * The sentence is the part worth having. "Guarded" alone tells somebody the
+ * name of a setting they did not choose and cannot look up from here.
+ */
+export function permissionWords(mode: PermissionMode): {
+  readonly name: string;
+  readonly note: string;
+  readonly exceptional: boolean;
+} {
+  switch (mode) {
+    case 'guarded':
+      return {
+        name: 'Guarded',
+        note: 'Asks before anything outside its workspace',
+        exceptional: false,
+      };
+    case 'autonomous':
+      return {
+        name: 'Autonomous',
+        note: 'Acts inside its workspace without asking',
+        exceptional: false,
+      };
+    case 'unrestricted':
+      return {
+        name: 'Unrestricted',
+        note: 'Asks for nothing, and confines nothing',
+        exceptional: true,
+      };
+    default: {
+      const exhaustive: never = mode;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * What the interface calls a reasoning effort.
+ *
+ * `x_high` is spelled that way on the wire and nowhere else. Somebody reading
+ * a panel should not have to know that.
+ */
+export function effortWords(effort: ReasoningEffort): string {
+  switch (effort) {
+    case 'minimal':
+      return 'Minimal';
+    case 'low':
+      return 'Low';
+    case 'medium':
+      return 'Medium';
+    case 'high':
+      return 'High';
+    case 'x_high':
+      return 'Maximum';
+    default: {
+      const exhaustive: never = effort;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * What the interface calls a credential mode — whose model bill a turn lands on.
+ *
+ * Named for the thing rather than the mechanism, because "delegated" is our
+ * word and the question somebody is asking is whose account is paying.
+ */
+export function credentialWords(mode: CredentialMode): {
+  readonly name: string;
+  readonly note: string;
+} {
+  switch (mode) {
+    case 'delegated':
+      return {
+        name: 'ChronoAI managed',
+        note: 'Runs on the platform account, under your entitlements',
+      };
+    case 'own':
+      return {
+        name: 'Your own account',
+        note: 'Signed in inside the sandbox, with the model vendor directly',
+      };
+    default: {
+      const exhaustive: never = mode;
       return exhaustive;
     }
   }

@@ -53,7 +53,7 @@ export interface MockOptions {
  * is the property the surface is being tested against.
  */
 export class MockSession {
-  /** Frames the session has "already emitted", in sequence order. */
+  /** Durable frames the session has already emitted, in sequence order. */
   #delivered: Record<string, unknown>[] = [];
   #cursorAtDrop = 0;
   #dropsRemaining: number;
@@ -82,6 +82,12 @@ export class MockSession {
       open: (_session, onFrame, onDrop) => {
         let stopped = false;
         void (async () => {
+          // Let the connection take its initial history snapshot before a
+          // zero-speed replay fills the live queue. Without this, durable
+          // frames after a liveness frame appeared in history first and the
+          // liveness frame was delivered at the end instead of where it
+          // happened.
+          await Promise.resolve();
           // Replay from where the last connection got to, which is what a
           // real stream does: it carries what happens next, and the past is
           // read from the log.
@@ -106,7 +112,13 @@ export class MockSession {
               onDrop('the mock dropped the stream');
               return;
             }
-            this.#delivered.push(frame.event);
+            // Liveness is never history. Recording it here makes the
+            // connection deliver it once from history and once from the live
+            // stream, and makes a reload show reasoning the protocol never
+            // persisted.
+            if (frame.event['chrono:live'] !== true) {
+              this.#delivered.push(frame.event);
+            }
             onFrame(frame.event);
           }
         })();
@@ -141,11 +153,13 @@ export class MockSession {
    * Emit a frame that is not in the transcript.
    *
    * For the cases a recording cannot express — an approval answered *now*, a
-   * turn steered mid-flight. It goes into history like any other, so a
-   * reconnect finds it.
+   * turn steered mid-flight. A durable frame goes into history so a reconnect
+   * finds it; liveness remains live-only, like it does on the wire.
    */
   emit(event: Record<string, unknown>, onFrame: (raw: unknown) => void): void {
-    this.#delivered.push(event);
+    if (event['chrono:live'] !== true) {
+      this.#delivered.push(event);
+    }
     onFrame(event);
   }
 }

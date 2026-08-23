@@ -1,0 +1,20 @@
+/*
+ * A destructive question asked where it was raised — `docs/Web_Style.md` §12.4.
+ *
+ * A row rather than a card, because it replaces the keys it is asking about
+ * rather than covering them. The question carries the error colour: it is the
+ * only thing on the row saying that the next press is not reversible.
+ */
+
+.confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.confirm__question {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}

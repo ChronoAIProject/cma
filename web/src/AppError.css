@@ -1,0 +1,49 @@
+/*
+ * The surface shown when the control plane cannot be reached.
+ *
+ * The one screen the restyle never reached, and the only one that appears
+ * when the service is already having a bad day — `nyxid.ts` routes here rather
+ * than to the landing, because unreachable is not signed out. So it is the
+ * whole of what a visitor knows about whether the product works, and an
+ * unstyled fragment in the corner of a white page reads as a crash rather than
+ * as a service that is briefly down and knows it.
+ *
+ * Composed rather than alarmed. Nothing here is red: the situation is
+ * recoverable and usually momentary, and a page that shouts at somebody who
+ * can only reload is spending their attention on a decision they do not have.
+ */
+
+.app-error {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  /* Fills the page it is given, like every other surface under `#root`. */
+  height: 100%;
+  padding: 20px;
+  text-align: center;
+  background: var(--dsw-alias-bg-base);
+}
+
+/*
+ * The control plane's own sentence, at the interface body size. It says which
+ * part failed, and rewording it into a category would lose the one detail
+ * worth having.
+ */
+.app-error__what {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+/* The recovery line sits under it and quieter — it is the same sentence every
+   time, so it should not compete with the one that is not. */
+.app-error__next {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}

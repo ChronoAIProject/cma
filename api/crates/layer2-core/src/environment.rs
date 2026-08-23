@@ -29,7 +29,9 @@ use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
 pub use crate::environment_catalog::{
     CatalogError, CatalogService, CatalogSkill, ServiceAvailability, ServiceCatalog, SkillCatalog,
 };
-pub use crate::environment_values::{EnvironmentVariable, ServiceId, SkillId, SoftwarePackage};
+pub use crate::environment_values::{
+    EnvironmentVariable, GrantedSkill, ServiceId, SkillId, SoftwarePackage,
+};
 
 use crate::environment_values::{MAX_ENTRIES, MAX_NAME, MAX_VALUE};
 use crate::options::{CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
@@ -74,6 +76,17 @@ pub struct AgentConfiguration {
     /// Whose model access it spends.
     #[serde(default)]
     pub credential: CredentialMode,
+    /// How much a session started from this profile reserves.
+    ///
+    /// Part of the profile for the reason everything else here is: two
+    /// sessions started from one profile must be the same session twice, and
+    /// a session that got half the memory is not.
+    ///
+    /// `None` means this deployment's own reservation, which is what every
+    /// profile stored before this field meant and still means. It is not zero,
+    /// and it is not a size this layer invented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<crate::size::SessionSize>,
     /// Whether a session's tool bodies are recorded in its durable log.
     ///
     /// Off by default for the same reason it is on the session's own options:
@@ -113,6 +126,18 @@ pub struct EnvironmentProfileSpec {
     /// be a narrower session but a broken one.
     #[serde(default)]
     pub services: Vec<ServiceId>,
+    /// Standing instructions the owner wants every session to start with.
+    ///
+    /// Theirs alone. What this platform has to tell an agent — that it is
+    /// already authenticated, which services it may reach, which commands
+    /// will refuse it — is composed separately and cannot be edited from
+    /// here, because a session that was talked out of knowing those things
+    /// spends its first minutes rediscovering them badly.
+    ///
+    /// Empty is the ordinary case: a profile that adds nothing still gets
+    /// everything the platform says.
+    #[serde(default)]
+    pub agent_notes: String,
 }
 
 impl EnvironmentProfileSpec {
@@ -212,10 +237,33 @@ pub struct EnvironmentProfile {
     /// Platform services a session started with this profile may reach.
     #[serde(default)]
     pub services: Vec<ServiceId>,
+    /// Standing instructions the owner wants every session to start with.
+    ///
+    /// Theirs alone. What this platform has to tell an agent — that it is
+    /// already authenticated, which services it may reach, which commands
+    /// will refuse it — is composed separately and cannot be edited from
+    /// here, because a session that was talked out of knowing those things
+    /// spends its first minutes rediscovering them badly.
+    ///
+    /// Empty is the ordinary case: a profile that adds nothing still gets
+    /// everything the platform says.
+    #[serde(default)]
+    pub agent_notes: String,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
     /// Last modification timestamp, RFC 3339 in UTC.
     pub updated_at: String,
+    /// Whether its owner has made this the profile their sessions start from.
+    ///
+    /// At most one of a subject's profiles holds it. Kept here rather than as
+    /// a pointer beside the subject because it is a fact about the profile
+    /// that is read whenever the profile is — a separate record would have to
+    /// be fetched to answer a question the list already answers.
+    ///
+    /// `#[serde(default)]` so a profile stored before this reads back as not
+    /// the default, which is the right answer for every one of them.
+    #[serde(default)]
+    pub preferred: bool,
 }
 
 impl EnvironmentProfile {
@@ -240,6 +288,7 @@ impl EnvironmentProfile {
             variables: self.variables.clone(),
             packages: self.packages.clone(),
             services: self.services.clone(),
+            agent_notes: self.agent_notes.clone(),
         }
     }
 }
@@ -349,6 +398,13 @@ pub struct ResolvedEnvironment {
     pub packages: Vec<String>,
     /// Skill identifiers to load.
     pub skills: Vec<String>,
+    /// Standing instructions the owner wrote, carried verbatim.
+    ///
+    /// Not read here. What the platform tells an agent about itself is
+    /// composed where the hosting facts are known, and this is appended to it
+    /// rather than merged with it — the owner adds to what a session is told
+    /// and cannot edit it.
+    pub agent_notes: String,
 }
 
 impl ResolvedEnvironment {
@@ -365,6 +421,7 @@ impl ResolvedEnvironment {
                 .collect(),
             packages: spec.packages.iter().map(|p| p.requirement()).collect(),
             skills: spec.agent.skills.iter().map(|s| s.0.clone()).collect(),
+            agent_notes: spec.agent_notes.clone(),
         }
     }
 
@@ -374,6 +431,9 @@ impl ResolvedEnvironment {
     /// choosing a profile is not opting out of the platform.
     pub fn baseline_only(baseline: &Baseline) -> Self {
         Self {
+            // No profile means no instructions of the owner's own. What the
+            // platform says is added later either way.
+            agent_notes: String::new(),
             variables: BTreeMap::new(),
             packages: baseline
                 .packages()
@@ -395,6 +455,7 @@ impl From<ResolvedEnvironment> for layer3_adapter::RuntimeEnvironment {
             variables: value.variables,
             packages: value.packages,
             skills: value.skills,
+            agent_notes: value.agent_notes,
         }
     }
 }

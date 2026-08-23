@@ -32,8 +32,8 @@ use axum::{
     Json,
 };
 use layer2_core::{
-    ApprovalDecision, CoreError, SessionCapability, SessionId, SessionService, TerminalGeometry,
-    Usage,
+    format_usd, ApprovalDecision, CoreError, ResourceReading, ResourceStatus, SessionCapability,
+    SessionId, SessionService, Spend, TerminalGeometry, Usage, CURRENCY,
 };
 use serde::{Deserialize, Serialize};
 
@@ -107,6 +107,8 @@ pub(super) struct UsageView {
     input_tokens: u64,
     output_tokens: u64,
     context_used: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window: Option<u64>,
 }
 
 impl From<Usage> for UsageView {
@@ -115,6 +117,131 @@ impl From<Usage> for UsageView {
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
             context_used: usage.context_used,
+            context_window: usage.context_window,
+        }
+    }
+}
+
+/// One resource reading in REST's snake-case vocabulary.
+#[derive(Debug, Serialize)]
+pub(super) struct ResourceReadingView {
+    cpu_millis_used: Option<u32>,
+    cpu_millis_limit: Option<u32>,
+    memory_bytes_used: Option<u64>,
+    memory_bytes_limit: Option<u64>,
+    memory_bytes_peak: Option<u64>,
+    stall_permille: Option<u16>,
+    ceiling_hits: Option<u64>,
+    allocation_failures: Option<u64>,
+    kills: Option<u64>,
+    received_bytes: Option<u64>,
+    sent_bytes: Option<u64>,
+    received_bytes_per_second: Option<u64>,
+    sent_bytes_per_second: Option<u64>,
+    interval_ms: Option<u64>,
+}
+
+impl From<ResourceReading> for ResourceReadingView {
+    fn from(reading: ResourceReading) -> Self {
+        let ResourceReading {
+            cpu_millis_used,
+            cpu_millis_limit,
+            memory_bytes_used,
+            memory_bytes_limit,
+            memory_bytes_peak,
+            stall_permille,
+            ceiling_hits,
+            allocation_failures,
+            kills,
+            received_bytes,
+            sent_bytes,
+            received_bytes_per_second,
+            sent_bytes_per_second,
+            interval_ms,
+        } = reading;
+        Self {
+            cpu_millis_used,
+            cpu_millis_limit,
+            memory_bytes_used,
+            memory_bytes_limit,
+            memory_bytes_peak,
+            stall_permille,
+            ceiling_hits,
+            allocation_failures,
+            kills,
+            received_bytes,
+            sent_bytes,
+            received_bytes_per_second,
+            sent_bytes_per_second,
+            interval_ms,
+        }
+    }
+}
+
+/// What is known about a session's resource use at this moment.
+#[derive(Debug, Serialize)]
+pub(super) struct ResourceStatusView {
+    reading: Option<ResourceReadingView>,
+    observed_at: Option<String>,
+    reason: Option<&'static str>,
+}
+
+impl From<ResourceStatus> for ResourceStatusView {
+    fn from(status: ResourceStatus) -> Self {
+        match status {
+            ResourceStatus::Held(held) => Self {
+                reading: Some(held.reading.into()),
+                observed_at: Some(held.observed_at),
+                reason: None,
+            },
+            ResourceStatus::Awaiting => Self {
+                reading: None,
+                observed_at: None,
+                reason: Some("no_reading_yet"),
+            },
+            ResourceStatus::Unreported => Self {
+                reading: None,
+                observed_at: None,
+                reason: Some("runtime_does_not_report"),
+            },
+        }
+    }
+}
+
+/// Reserved-capacity spend derived from one session's durable history.
+#[derive(Debug, Serialize)]
+pub(super) struct SpendView {
+    priced: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_card: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    currency: Option<&'static str>,
+    /// Decimal strings keep monetary integers out of JavaScript numbers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    micros_per_hour: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accrued_micros: Option<String>,
+    /// Rendered by the same integer formatter used for the quoted rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    billable_seconds: Option<u64>,
+    accruing: bool,
+    unbounded_intervals: u32,
+}
+
+impl From<Spend> for SpendView {
+    fn from(spend: Spend) -> Self {
+        Self {
+            currency: spend.priced.then_some(CURRENCY),
+            rate_card: spend.rate_card.map(|id| id.0),
+            micros_per_hour: spend.micros_per_hour.map(|value| value.to_string()),
+            accrued_micros: spend.accrued_micros.map(|value| value.to_string()),
+            display: spend.accrued_micros.map(format_usd),
+            billable_seconds: spend.billable_seconds,
+            priced: spend.priced,
+            accruing: spend.accruing,
+            unbounded_intervals: spend.unbounded_intervals,
         }
     }
 }
@@ -230,6 +357,26 @@ pub(super) async fn usage(
 ) -> Result<Json<UsageView>, Problem> {
     let usage = service.get_usage(&caller, &SessionId(id)).await?;
     Ok(Json(usage.into()))
+}
+
+/// What this session is using right now, or why no reading exists.
+pub(super) async fn resources(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Json<ResourceStatusView>, Problem> {
+    let status = service.last_reading(&caller, &SessionId(id)).await?;
+    Ok(Json(status.into()))
+}
+
+/// What this session has accrued for reserved capacity.
+pub(super) async fn spend(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Json<SpendView>, Problem> {
+    let spend = service.get_spend(&caller, &SessionId(id)).await?;
+    Ok(Json(spend.into()))
 }
 
 /// Redirect a turn already in progress.

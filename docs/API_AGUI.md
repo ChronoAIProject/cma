@@ -70,7 +70,7 @@ Content-Type: application/json
   ],
   "tools": [],
   "context": [],
-  "forwardedProps": { "kernel": "codex", "llmSource": "chrono" }
+  "forwardedProps": { "environmentProfile": "envp_7dec1b0ca73c46b88121b259577bbe96" }
 }
 ```
 
@@ -82,7 +82,13 @@ Content-Type: application/json
 | `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the profile it names or from what the deployment configured, and no interface chooses one |
 | `resume` | Present only when answering an interrupt — see §4 |
 
-`forwardedProps` is ignored on an existing thread because `kernel` and `llmSource` are frozen at session creation. Changing them requires a new thread.
+`forwardedProps` is ignored on an existing thread because what it sets is frozen at session creation. Changing it requires a new thread.
+
+`environmentProfile` is the one property in it this service reads. `kernel` is accepted and ignored, as the table above says; `llmSource` was named here as though it were honoured and frozen, and has never existed anywhere in the service — the same phantom `docs/API_REST.md` carried as `llm_source`. Both are gone from the example above, so it now shows only what sending actually does something.
+
+Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is chrono-bot's own, so an unknown field there is refused by name.
+
+One consequence worth stating, because a client cannot discover it here: **this interface never reports which kernel a session ended up on.** No event and no state patch carries it. Over REST the created session echoes its `kernel` back, so a caller could notice; here there is nothing to notice, which is what makes the declaration above the only signal there is. `GET /api/v1/sessions/{id}` is where to look.
 
 ---
 
@@ -96,7 +102,7 @@ chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative l
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
 | Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
-| State | `STATE_DELTA` | usage, boundaries where conversation was lost, and plane changes |
+| State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
 
 Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
 
@@ -169,6 +175,41 @@ The lane also carries the agent's reasoning:
 
 Declared as `chrono:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
 
+Resource readings are cursorless state on this lane too. Each reading is one
+whole-object replace, never a set of field patches:
+
+```json
+{ "type": "STATE_DELTA", "chrono:live": true, "delta": [{
+  "op": "replace", "path": "/resources", "value": {
+    "cpuMillisUsed": 340, "cpuMillisLimit": 1000,
+    "memoryBytesUsed": 892211200, "memoryBytesLimit": 1073741824,
+    "memoryBytesPeak": 930086912, "stallPermille": 12,
+    "ceilingHits": 0, "allocationFailures": 0, "kills": 0,
+    "receivedBytes": 18442, "sentBytes": 9120,
+    "receivedBytesPerSecond": 420, "sentBytesPerSecond": 110,
+    "intervalMs": 2000
+  }
+}] }
+```
+
+All fourteen keys are always present. An unread level, an absent limit, and a
+rate with no predecessor are each `null`, never omitted and never zero. A
+reading replaces its predecessor whole so a dropped frame self-heals on the
+next one, and so `/resources` remains reconstructible without a
+`STATE_SNAPSHOT`.
+
+The conversation-liveness receiver and resource receiver are independent in
+the service, so a two-second gauge cannot spend the lag budget reserved for a
+message being typed. They share the same cursorless wire treatment once
+merged onto this stream.
+
+This lane alone cannot distinguish "no reading has arrived yet" from "this
+session's current runtime cannot ever report one". That status changes at most
+once during bring-up and does not earn a second stream path; call the public
+`GET /api/v1/sessions/{id}/resources` point read once when the surface mounts
+and again after a reconnect. A third-party frontend can make exactly the same
+call as the reference client.
+
 ### Committed text arrives whole, not as tokens
 
 On the durable lane, `TEXT_MESSAGE_CONTENT` carries the finished message rather than a stream of deltas. The token-level pieces are the live lane above, and they are deliberately not part of the durable log: numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time.
@@ -177,7 +218,19 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
-**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A stretch of conversation the runtime had to drop arrives the same way, appended to `/gaps` — shown as a boundary rather than a stream that silently skips.
+**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. The current reading is written at `/usage/contextUsed`; the ceiling it is drawn from is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
+
+Memory pressure is durable state folded from those ephemeral readings. An
+opening edge replaces `/memoryPressure` with `usedBytes`, `limitBytes`,
+`occupancyPermille`, and `since`, where `since` is the durable event's own
+timestamp. A closing edge replaces the path with `null`, never removes it: a
+client that joined after the open may not have the path, and RFC 6902 would
+reject removing it. Neither edge ends the run; a squeeze is something to show
+while the agent remains working, not a `RUN_ERROR`.
+
+When the agent summarises the conversation to make room, a patch is appended to `/contextCompactions/-` with `was`, `now`, and `window` where a ceiling was stated. `window` is omitted rather than null where none is known. This is a durable boundary and precedes the lower `/usage/contextUsed` reading that revealed it, so a replay explains why the conversation became smaller instead of leaving its reader to infer that from the figures.
+
+A stretch of conversation the runtime had to drop also arrives as a state patch, appended to `/gaps` — shown as a boundary rather than a stream that silently skips.
 
 **A plane change lands there too**, appended to `/planeChanges`:
 
@@ -188,6 +241,16 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 ```
 
 `snapshotAt` is the moment the conversation was captured, and it is where history stops being continuous: anything the agent did after it did not travel. Draw the boundary — a client that skips it silently leaves its reader to conclude the agent forgot something.
+
+**A lost runtime is appended to `/runtimeLosses/-`:**
+
+```json
+{ "delta": [ { "op": "add", "path": "/runtimeLosses/-", "value": {
+  "runtime": "runtime_01K35QJ0", "cause": "out_of_memory", "noticedAt": "2026-08-23T04:12:00Z"
+} } ] }
+```
+
+`cause` is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`, and is `null` where the service could establish no reason. `noticedAt` is when the service established that the runtime was lost, up to one reconciliation sweep after it actually stopped; it is not a claimed time of death. Do not draw the loss as the session having failed: a replacement runtime is started. The agent's conversation does **not** cross a runtime it lost, however, so it begins again from the terminal context that was captured rather than resuming that conversation.
 
 **The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
 
@@ -304,6 +367,7 @@ GET /api/v1/agui/capabilities
                         "approveWithEdits": false, "interventions": false },
     "execution":      { "codeExecution": true, "sandboxed": true },
     "custom":         { "chrono:terminal": false, "chrono:usage": true,
+                        "chrono:resources": true,
                         "chrono:changePlane": false, "chrono:planeChangeObserved": true }
   },
   "conformsTo": [

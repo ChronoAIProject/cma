@@ -1,9 +1,11 @@
 import { useCallback } from 'react';
 import {
+  ApiError,
   changePlane,
   createSession,
   deleteSession,
   reviveSession,
+  SessionLimitReached,
   stopSession,
 } from '../api/client';
 import type { Session, SessionLifecycle, SessionPlane } from './types';
@@ -60,11 +62,13 @@ interface SessionActionHandles {
   readonly report: (cause: unknown, failed: string, unchanged: string) => void;
   readonly applyLifecycle: (id: string, lifecycle: SessionLifecycle) => void;
   readonly setFocusHistory: React.Dispatch<React.SetStateAction<readonly string[]>>;
+  /** Re-read the caller's advisory allowance after an action settles. */
+  readonly refreshAllowance: () => void;
 }
 
 export interface SessionActions {
   /** Start a session and put it at the head of the list. */
-  readonly start: (environmentProfile?: string | null) => Promise<void>;
+  readonly start: (environmentProfile?: string | null, quotedRateCard?: string) => Promise<void>;
   /** Release the sandbox, keeping the session readable and revivable. */
   readonly endSession: (id: string) => Promise<void>;
   /** Give a stopped session a sandbox again, under the same identifier. */
@@ -87,22 +91,36 @@ export function useSessionActions({
   report,
   applyLifecycle,
   setFocusHistory,
+  refreshAllowance,
 }: SessionActionHandles): SessionActions {
   const start = useCallback(
-    async (environmentProfile: string | null = null) => {
+    async (environmentProfile: string | null = null, quotedRateCard?: string) => {
       setNotice(null);
       try {
         // Returns as soon as the session exists, before its runtime does, so the
         // tab appears immediately and reports its own progress.
-        const session = await createSession(INITIAL_COLS, INITIAL_ROWS, environmentProfile);
+        const session = await createSession(
+          INITIAL_COLS,
+          INITIAL_ROWS,
+          environmentProfile,
+          quotedRateCard,
+        );
         setSessions((prev) => [session, ...prev]);
         select(session.id);
         setOpeningForId((prev) => prev ?? session.id);
       } catch (cause) {
-        report(cause, 'Starting a session failed.', 'No session was created.');
+        // A changed price belongs in the still-open confirmation card, where a
+        // fresh quote can be shown. Reporting it behind that card would leave a
+        // stale failure notice after the owner accepts the new rate.
+        if (!(cause instanceof ApiError && cause.code === 'price_changed')) {
+          report(cause, 'Starting a session failed.', 'No session was created.');
+        }
+        throw cause;
+      } finally {
+        refreshAllowance();
       }
     },
-    [report, select, setNotice, setOpeningForId, setSessions],
+    [refreshAllowance, report, select, setNotice, setOpeningForId, setSessions],
   );
 
   /** End the open session, leaving it readable. */
@@ -120,12 +138,13 @@ export function useSessionActions({
         await stopSession(id);
         applyLifecycle(id, 'idle');
       } catch (cause) {
-        report(cause, 'Ending the session failed.', 'The session keeps running.');
+        report(cause, 'Pausing the session failed.', 'The session keeps running.');
       } finally {
+        refreshAllowance();
         setActing(false);
       }
     },
-    [applyLifecycle, report, setActing, setNotice],
+    [applyLifecycle, refreshAllowance, report, setActing, setNotice],
   );
 
   /** Give a stopped session a sandbox again, and follow it back up. */
@@ -139,12 +158,21 @@ export function useSessionActions({
         // progress of a revive is the progress of a start, because it is one.
         setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...revived } : s)));
       } catch (cause) {
-        report(cause, 'Reviving the session failed.', 'The session stays stopped.');
+        if (cause instanceof SessionLimitReached) {
+          setNotice({
+            failed: cause.message,
+            unchanged: 'The session stays stopped.',
+            code: 'session_limit_reached',
+          });
+        } else {
+          report(cause, 'Reviving the session failed.', 'The session stays stopped.');
+        }
       } finally {
+        refreshAllowance();
         setActing(false);
       }
     },
-    [report, setActing, setNotice, setSessions],
+    [refreshAllowance, report, setActing, setNotice, setSessions],
   );
 
   /**
@@ -206,11 +234,13 @@ export function useSessionActions({
       } catch (cause) {
         report(cause, 'Deleting the session failed.', 'The session and its history are untouched.');
       } finally {
+        refreshAllowance();
         setActing(false);
       }
     },
     [
       activeId,
+      refreshAllowance,
       report,
       select,
       sessions,

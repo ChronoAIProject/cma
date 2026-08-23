@@ -1,6 +1,6 @@
 //! REST projection of the operator surface.
 //!
-//! Four reads and two controls, all under one path segment so a gateway can
+//! Operator reads and controls, all under one path segment so a gateway can
 //! restrict the whole surface as a unit and so an operator acting on somebody
 //! else's work is doing it at a deliberately different address from the one
 //! they use on their own.
@@ -29,13 +29,15 @@ use axum::{
 };
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, Caller, CoreError, DirectoryQuery,
-    ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId,
-    UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
+    PlatformSettingsService, ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId,
+    SessionService, SubjectId, UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
 use crate::rest::{Problem, PROBLEM_BASE};
+
+mod settings;
 
 /// What the operator surface reads from.
 ///
@@ -49,6 +51,8 @@ pub struct AdminState {
     pub activity: Arc<ActivityService>,
     /// Who has used the service.
     pub users: Arc<UserDirectory>,
+    /// Deployment-wide policy read and changed by administrators.
+    pub settings: Arc<PlatformSettingsService>,
 }
 
 /// A refusal that names no resource.
@@ -315,7 +319,7 @@ pub struct ActivityParams {
 /// surface lives under one segment precisely so a gateway can restrict it as a
 /// unit, and a route added outside that segment would escape whatever protects
 /// it without anything noticing.
-const OPERATOR_ROUTES: [&str; 6] = [
+const OPERATOR_ROUTES: [&str; 8] = [
     "/api/v1/admin/users",
     "/api/v1/admin/activity",
     "/api/v1/admin/runtimes",
@@ -325,10 +329,13 @@ const OPERATOR_ROUTES: [&str; 6] = [
     // session should be doing it somewhere a gateway can see.
     "/api/v1/admin/sessions/{id}/stop",
     "/api/v1/admin/sessions/{id}/terminate",
+    "/api/v1/admin/settings",
+    "/api/v1/admin/settings/reset",
 ];
 
 /// Routes this surface contributes.
 pub fn router(state: Arc<AdminState>) -> Router {
+    let settings = settings::router(Arc::clone(&state.settings));
     Router::new()
         .route(OPERATOR_ROUTES[0], get(users))
         .route(OPERATOR_ROUTES[1], get(activity))
@@ -337,6 +344,7 @@ pub fn router(state: Arc<AdminState>) -> Router {
         .route(OPERATOR_ROUTES[4], post(stop))
         .route(OPERATOR_ROUTES[5], post(terminate))
         .with_state(state)
+        .merge(settings)
 }
 
 async fn users(

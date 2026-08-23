@@ -156,13 +156,14 @@ data:
   # a session on an image nobody maintains, and forbids interrupting it to fix
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:v0.3.0"
-  # What one session reserves, and therefore how many run at once.
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/chrono-bot-runtime:680fbde"
+  # What a session reserves when its profile names no size: the deployment's
+  # own reservation.
   #
-  # The namespace carries a ResourceQuota, and these divide into it: at 2 CPU
-  # and 4Gi a quota of 20 CPU and 40Gi held nine sessions, and the tenth was
-  # refused by the admission controller while its owner watched it sit in
-  # "provisioning". At these figures the same quota holds twenty.
+  # The namespace carries a ResourceQuota, so dividing it by these figures is
+  # now a lower bound on capacity rather than an exact session count: a profile
+  # may ask for another reservation. Nothing bounds that per-session request
+  # yet; administrator-set bounds are the follow-up.
   #
   # Requests and limits are the same value at the provider, so this is a
   # reservation rather than a ceiling to burst against. Raising it costs
@@ -206,7 +207,7 @@ data:
   # calls and approvals. A session is checked against its kernel's abilities
   # before it exists, so a mode no kernel here can serve is refused at creation
   # rather than discovered by whoever tries to use the session.
-  CHRONO_DEFAULT_AGENT_MODE: "terminal"
+  CHRONO_DEFAULT_AGENT_MODE: "conversation"
   CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"
   CHRONO_DEFAULT_AGENT_EFFORT: "high"
   # "guarded" is ask-first. The cautious answer is the default answer, because
@@ -230,4 +231,11 @@ data:
   #
   # Named the way a person reads them; the identifiers the provider wants are
   # resolved when a credential is minted.
-  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api"
+  #
+  # ornn and ornn-api are two services, not one name spelled twice. ornn-api
+  # answers the skill registry this service itself searches; ornn is the skill
+  # runtime an agent calls, and it is the one the baseline skills above tell the
+  # agent to reach for. Scoping to only the first produced sessions that could
+  # be told a skill exists and were then refused when they tried to use it —
+  # "API key scope forbidden" from the provider, on every call.
+  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api,ornn"

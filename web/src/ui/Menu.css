@@ -1,0 +1,144 @@
+/*
+ * The dropdown — `docs/Web_Style.md` §12.3.
+ *
+ * The card carries its own scrollbar elevation rather than leaving it to the
+ * page's: a menu floats above whatever is behind it, so a thumb tinted for
+ * the page reads as the wrong weight on the card. The custom properties are
+ * declared here and inherit down to whichever descendant actually scrolls.
+ */
+
+.menu-root {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 218px;
+  max-width: 360px;
+  max-height: calc(100vh - 24px);
+  padding: 4px;
+  overflow-y: auto;
+  background: var(--dsw-specific-menu);
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 12px;
+  box-shadow: var(--dsw-shadow-lv3);
+
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/*
+ * Portalled: fixed in the viewport with coordinates supplied inline, so the
+ * in-place offsets above do not apply. It layers above the modal, because a
+ * trigger inside a dialog still expects its menu on top of it.
+ */
+.menu--portal {
+  position: fixed;
+  top: auto;
+  left: auto;
+  z-index: 1100;
+}
+
+.menu__item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.menu__item:hover:not([aria-disabled='true']) {
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.menu__item:focus-visible {
+  outline: none;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.menu__item[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menu--dense .menu__item {
+  padding-block: 5px;
+}
+
+.menu--dense .menu__label {
+  padding-block: 4px;
+}
+
+.menu__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.menu__itemlabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Selection is the trailing check and nothing else. A fill would make a
+ * selected row and a hovered row the same colour, so moving the pointer down
+ * the list would look like the selection following it.
+ */
+.menu__check {
+  flex: none;
+  color: var(--dsw-alias-label-primary);
+}
+
+.menu__item--danger {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.menu__item--danger .menu__icon {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.menu__item--danger:hover:not([aria-disabled='true']),
+.menu__item--danger:focus-visible {
+  color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+}
+
+.menu__label {
+  padding: 8px 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.menu__separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--dsw-alias-border-l1);
+}

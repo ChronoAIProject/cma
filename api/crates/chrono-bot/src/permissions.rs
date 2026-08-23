@@ -39,6 +39,23 @@ pub mod permission {
     /// is the only one of these that changes anything. A role handed out so
     /// somebody can watch the service should not also let them stop it.
     pub const ADMIN_CONTROL: &str = "chrono-bot:admin:control";
+    /// Read and change settings that apply to the whole deployment.
+    ///
+    /// Separate from `ADMIN_CONTROL` for the same reason that one is separate
+    /// from the monitoring set, and further still: stopping a session affects
+    /// the session stopped, while changing a platform setting affects every
+    /// session created afterwards, including ones belonging to people who
+    /// will never meet whoever changed it.
+    pub const ADMIN_SETTINGS: &str = "chrono-bot:admin:settings";
+    /// Create and revive sessions past the deployment's live-session limit.
+    ///
+    /// Its own string rather than part of any admin bundle. Every other
+    /// `admin:` permission here either observes across subjects or acts on
+    /// somebody else's session; this one does neither, and reaches nothing but
+    /// how many sessions its own holder may have at once. Bundling it with a
+    /// monitoring role would hand unlimited session creation to somebody who
+    /// asked to watch the service.
+    pub const ADMIN_UNLIMITED_SESSIONS: &str = "chrono-bot:admin:unlimited-sessions";
 }
 
 /// Wildcard the provider issues across everything it serves.
@@ -67,6 +84,39 @@ const OWN_WORK: [Capability; 4] = [
     Capability::TerminateOwnSession,
     Capability::ManageOwnEnvironmentProfiles,
 ];
+
+/// Whether a grant naming this product reaches `capability`.
+///
+/// A match rather than a list, and exhaustive rather than defaulted: a
+/// capability added to the core stops this file compiling until somebody
+/// decides. The list this replaced could silently narrow the wildcard.
+///
+/// Every arm answers `true` today, and that is not a reason to delete the
+/// question. Translation here is deny-by-default; granting whatever the enum
+/// happens to hold would invert that and hand out an undecided capability by
+/// inheritance. The value is the arm somebody has to type, not its answer.
+const fn product_wildcard_reaches(capability: Capability) -> bool {
+    match capability {
+        // The caller's own work. Reached here too, because a wildcard naming
+        // this product that granted less than the provider's plain wildcard
+        // would be a narrower grant with a wider name.
+        Capability::CreateSession
+        | Capability::UseOwnSessions
+        | Capability::TerminateOwnSession
+        | Capability::ManageOwnEnvironmentProfiles => true,
+        // Everything outside the ordinary own-work grant. Only a grant naming
+        // this product reaches these; that is the distinction this file exists
+        // to draw.
+        Capability::ReadAllSessions
+        | Capability::ReadRuntimeInventory
+        | Capability::ReadEventLog
+        | Capability::ReadActivityLog
+        | Capability::ReadUserDirectory
+        | Capability::ConfigurePlatform
+        | Capability::ControlAnySession
+        | Capability::ExceedSessionLimit => true,
+    }
+}
 
 /// Translate provider permissions into the capabilities the core enforces.
 ///
@@ -112,6 +162,8 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::ADMIN_ACTIVITY => granted.push(Capability::ReadActivityLog),
             permission::ADMIN_USERS => granted.push(Capability::ReadUserDirectory),
             permission::ADMIN_CONTROL => granted.push(Capability::ControlAnySession),
+            permission::ADMIN_SETTINGS => granted.push(Capability::ConfigurePlatform),
+            permission::ADMIN_UNLIMITED_SESSIONS => granted.push(Capability::ExceedSessionLimit),
             _ => {}
         }
     }
@@ -122,17 +174,15 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
     }
 
     // A wildcard naming this product is the only thing that crosses subjects
-    // without saying which capability it means.
+    // without saying which capability it means. What it reaches is decided
+    // one capability at a time above, so a new one cannot join by accident or
+    // be left out in silence.
     if everything {
-        granted.extend(OWN_WORK);
-        granted.extend([
-            Capability::ReadAllSessions,
-            Capability::ReadRuntimeInventory,
-            Capability::ReadEventLog,
-            Capability::ReadActivityLog,
-            Capability::ReadUserDirectory,
-            Capability::ControlAnySession,
-        ]);
+        granted.extend(
+            Capability::ALL
+                .into_iter()
+                .filter(|capability| product_wildcard_reaches(*capability)),
+        );
     }
 
     Authorization::from_capabilities(granted)
@@ -246,6 +296,79 @@ mod tests {
     }
 
     #[test]
+    fn a_monitoring_role_does_not_gain_unlimited_sessions() {
+        // Privileged monitoring is still only monitoring. Deriving this
+        // exemption from the catch-all privilege predicate would silently hand
+        // session-limit bypass to a role whose purpose is to watch the service.
+        let monitoring = capabilities_from_permissions([
+            permission::ADMIN_SESSIONS,
+            permission::ADMIN_SANDBOXES,
+            permission::ADMIN_EVENTS,
+            permission::ADMIN_ACTIVITY,
+            permission::ADMIN_USERS,
+        ]);
+        assert!(!monitoring.allows(Capability::ExceedSessionLimit));
+
+        let control = capabilities_from_permissions([permission::ADMIN_CONTROL]);
+        assert!(
+            !control.allows(Capability::ExceedSessionLimit),
+            "control over another subject's session is not a limit exemption"
+        );
+    }
+
+    #[test]
+    fn the_settings_role_does_not_gain_unlimited_sessions() {
+        // Authoring the deployment's limit and being exempt from it are
+        // separate decisions, so the settings grant must not imply the latter.
+        let a = capabilities_from_permissions([permission::ADMIN_SETTINGS]);
+        assert!(!a.allows(Capability::ExceedSessionLimit));
+    }
+
+    #[test]
+    fn the_daily_user_set_does_not_gain_unlimited_sessions() {
+        // Everyday session use reaches only the holder's own work; it must not
+        // quietly opt that holder out of a deployment-wide policy.
+        let a = capabilities_from_permissions([
+            permission::SESSION_CREATE,
+            permission::SESSION_USE,
+            permission::SESSION_TERMINATE,
+        ]);
+        assert!(!a.allows(Capability::ExceedSessionLimit));
+    }
+
+    #[test]
+    fn the_providers_own_wildcard_does_not_gain_unlimited_sessions() {
+        // The provider-wide wildcard represents ordinary work across a shared
+        // provider. Only a permission naming this product may grant an
+        // exemption from this product's deployment policy.
+        let a = capabilities_from_permissions([WILDCARD]);
+        assert!(!a.allows(Capability::ExceedSessionLimit));
+    }
+
+    #[test]
+    fn the_permission_grants_this_and_nothing_else() {
+        // The exemption is deliberately unbundled. Walking the maintained set
+        // makes any accidental second grant visible as the capability itself.
+        let a = capabilities_from_permissions([permission::ADMIN_UNLIMITED_SESSIONS]);
+        for capability in Capability::ALL {
+            assert_eq!(
+                a.allows(capability),
+                capability == Capability::ExceedSessionLimit,
+                "the unlimited-sessions permission grants {capability:?} incorrectly"
+            );
+        }
+        assert_eq!(a.capabilities().count(), 1);
+    }
+
+    #[test]
+    fn an_unrecognised_permission_still_grants_nothing() {
+        // Translation is deny-by-default. A singular near miss must not be
+        // guessed into the deployment-wide exemption.
+        let a = capabilities_from_permissions(["chrono-bot:admin:unlimited-session"]);
+        assert_eq!(a.capabilities().count(), 0);
+    }
+
+    #[test]
     fn the_platform_wildcard_grants_a_caller_their_own_work() {
         let a = capabilities_from_permissions(["*"]);
         for c in [
@@ -278,26 +401,82 @@ mod tests {
             !a.is_privileged(),
             "a caller entitled on the provider is not an operator here"
         );
+        assert_eq!(
+            a.capabilities().count(),
+            OWN_WORK.len(),
+            "the provider's wildcard reaches a caller's own work and stops there"
+        );
     }
 
     #[test]
     fn a_product_wildcard_grants_everything_here() {
         // Named this product, so it is a decision about this product.
         let a = capabilities_from_permissions(["chrono-bot:*"]);
-        for c in [
-            Capability::CreateSession,
-            Capability::UseOwnSessions,
-            Capability::TerminateOwnSession,
-            Capability::ManageOwnEnvironmentProfiles,
-            Capability::ReadAllSessions,
-            Capability::ReadRuntimeInventory,
-            Capability::ReadEventLog,
-            Capability::ReadActivityLog,
-            Capability::ReadUserDirectory,
-            Capability::ControlAnySession,
-        ] {
+        for c in Capability::ALL {
             assert!(a.allows(c), "the product wildcard must grant {c:?}");
         }
+        // Against the enum, deliberately. Counting the grant against the list
+        // that produced it compares a thing with itself and cannot fail from
+        // an omission, which is the omission this test exists to catch.
+        assert_eq!(
+            a.capabilities().count(),
+            Capability::ALL.len(),
+            "the wildcard must grant every capability this product has and no more"
+        );
+    }
+
+    #[test]
+    fn the_product_wildcard_grants_exactly_what_it_says_it_reaches() {
+        // The grant and the decision are two expressions of one fact, and a
+        // test that reads only one cannot notice them parting.
+        let a = capabilities_from_permissions(["chrono-bot:*"]);
+        for c in Capability::ALL {
+            assert_eq!(
+                a.allows(c),
+                product_wildcard_reaches(c),
+                "{c:?} is granted differently from how it is decided"
+            );
+        }
+    }
+
+    #[test]
+    fn changing_the_platform_needs_a_permission_that_names_it() {
+        // The blast radius is what makes this worth its own test: this is the
+        // one capability that changes what every session created afterwards is
+        // told, including sessions belonging to people who will never meet
+        // whoever changed it.
+        let named = capabilities_from_permissions([permission::ADMIN_SETTINGS]);
+        assert!(named.allows(Capability::ConfigurePlatform));
+        assert!(
+            named.capabilities().count() == 1,
+            "naming one permission grants one capability, not a bundle"
+        );
+
+        // Everything a caller could plausibly hold that is not it.
+        for held in [
+            vec![permission::ADMIN_SESSIONS],
+            vec![permission::ADMIN_CONTROL],
+            vec![permission::ADMIN_ACTIVITY],
+            vec![permission::ADMIN_USERS],
+            vec![permission::SESSION_CREATE, permission::SESSION_USE],
+            // Entitled on the shared provider, which says nothing about here.
+            vec!["*"],
+            vec![],
+        ] {
+            let a = capabilities_from_permissions(held.clone());
+            assert!(
+                !a.allows(Capability::ConfigurePlatform),
+                "{held:?} must not reach the platform's own settings"
+            );
+        }
+    }
+
+    #[test]
+    fn configuring_the_platform_is_privileged() {
+        // `is_privileged` has no production caller: it is the catch-all two
+        // other tests lean on to notice a capability that reaches past its
+        // caller's own work. A new one left out of it disarms them silently.
+        assert!(Capability::ConfigurePlatform.is_privileged());
     }
 
     #[test]

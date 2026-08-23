@@ -7,15 +7,23 @@
 mod bridge;
 mod carry;
 mod conversation;
+mod conversation_link;
 mod lanes;
 mod link;
 mod prelude;
 mod pty;
+mod resources;
+mod telemetry;
 mod upstream;
 
 use std::net::SocketAddr;
 
-use axum::{extract::State, response::IntoResponse, routing::get, Router};
+use axum::{
+    extract::State,
+    response::IntoResponse,
+    routing::{get, post},
+    Router,
+};
 use tokio::sync::Mutex;
 
 use crate::bridge::Bridge;
@@ -65,15 +73,56 @@ pub(crate) struct AppState {
     /// a handover possible over HTTP at all: the conversation can arrive after
     /// the pod is running and still be there before the agent reads it.
     resuming: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// What the model endpoint last refused with, if anything.
+    ///
+    /// Read when a conversation ends badly, so the owner is told the agent
+    /// could not reach its model rather than being shown an empty turn.
+    pub(crate) model_fault: upstream::UpstreamFault,
     /// The kernel's conversation bridge, once anything has asked for one.
     ///
     /// Started lazily, exactly as the pty is, and for the same reason: a pod
     /// runs one session on one plane, and starting a process nothing is going
     /// to talk to would put a kernel on the model endpoint for no reason.
     conversation: std::sync::Arc<Mutex<Option<std::sync::Arc<Bridge>>>>,
+    /// This pod's view of its own consumption.
+    ///
+    /// One per pod rather than one per link: the cgroup is resolved once, its
+    /// one log line is emitted at boot where an operator sees it whether or not
+    /// anything ever attaches, and `uptimeMs` counts from when this supervisor
+    /// started rather than from when somebody last connected.
+    resources: std::sync::Arc<resources::Sampler>,
 }
 
 impl AppState {
+    /// An otherwise-inert pod that may run these programs.
+    ///
+    /// For tests that exercise the control lane, which needs the allowlist and
+    /// nothing else: no pty is started and no bridge is spawned.
+    #[cfg(test)]
+    pub(crate) fn for_test(commands: &[&str]) -> Self {
+        Self {
+            registry: PtyRegistry::new(),
+            command: std::sync::Arc::new(std::sync::Mutex::new(
+                commands.first().unwrap_or(&"").to_string(),
+            )),
+            commands: commands.iter().map(|c| (*c).to_string()).collect(),
+            credential: CredentialHolder::new(),
+            home: std::path::PathBuf::from("/home/chrono"),
+            snapshot_dir: None,
+            resume_args: None,
+            snapshot_named: false,
+            resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            // Nothing has been refused, which is the honest state for a pod
+            // that has made no upstream call.
+            model_fault: upstream::UpstreamFault::default(),
+            conversation: std::sync::Arc::new(Mutex::new(None)),
+            resources: std::sync::Arc::new(resources::Sampler::new(
+                resources::Roots::default(),
+                std::time::Instant::now(),
+            )),
+        }
+    }
+
     /// The kernel's conversation bridge, started if it is not already running.
     ///
     /// Lazy for the same reason the pty is: a pod hosts one session on one
@@ -83,7 +132,14 @@ impl AppState {
     async fn conversation_bridge(&self) -> std::io::Result<std::sync::Arc<Bridge>> {
         let mut held = self.conversation.lock().await;
         if let Some(running) = held.as_ref() {
-            return Ok(std::sync::Arc::clone(running));
+            // A cached bridge whose process has gone is not a bridge. Handing
+            // it back gave a conversation that accepted prompts and answered
+            // none — the agent was dead and nothing said so.
+            if !running.is_ended() {
+                return Ok(std::sync::Arc::clone(running));
+            }
+            tracing::warn!("the conversation bridge had ended; starting a fresh one");
+            *held = None;
         }
         if self.registry.is_running().await {
             // One session, one plane. A pod driving a terminal and a
@@ -217,6 +273,12 @@ async fn main() {
         .expect("CHRONO_UPSTREAM_BIND must be a socket address");
     let upstream_base = std::env::var("CHRONO_UPSTREAM_BASE_URL").unwrap_or_default();
 
+    // What the model endpoint last refused with, if it has refused anything.
+    // Held here so the link can report it: the proxy is the only thing that
+    // always learns of such a refusal, and an agent's own account of one is
+    // unreliable and sometimes absent.
+    let mut model_fault = upstream::UpstreamFault::default();
+
     if upstream_base.trim().is_empty() {
         // Without an upstream the agent can still run interactively; it simply
         // has nothing to call. Saying so beats a confusing failure mid-turn.
@@ -224,7 +286,7 @@ async fn main() {
             "CHRONO_UPSTREAM_BASE_URL is unset; the agent will start but has no model endpoint"
         );
     } else {
-        spawn_credential_proxy(
+        model_fault = spawn_credential_proxy(
             "model",
             proxy_bind,
             upstream_base.clone(),
@@ -265,8 +327,13 @@ async fn main() {
         );
     }
 
+    let resources = std::sync::Arc::new(resources::Sampler::new(
+        resources::Roots::default(),
+        std::time::Instant::now(),
+    ));
     let state = AppState {
         registry: PtyRegistry::new(),
+        model_fault: model_fault.clone(),
         command: std::sync::Arc::new(std::sync::Mutex::new(command.clone())),
         commands,
         credential,
@@ -276,6 +343,7 @@ async fn main() {
         snapshot_named,
         resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
         conversation: std::sync::Arc::new(Mutex::new(None)),
+        resources,
     };
 
     let app = Router::new()
@@ -288,6 +356,11 @@ async fn main() {
             "/runtime/conversation",
             get(conversation_snapshot).post(conversation_restore),
         )
+        // Files a kernel needs before it reads anything. Taken here rather
+        // than through the environment because what they carry does not fit
+        // there: one skill alone is larger than a single environment string
+        // may be, and the pod would fail to start with nothing naming why.
+        .route("/runtime/prelude", post(prelude_write))
         .with_state(state);
 
     tracing::info!(%bind, %command, "runtime supervisor listening");
@@ -436,24 +509,70 @@ fn spawn_credential_proxy(
     bind: std::net::SocketAddr,
     upstream_base: String,
     credential: CredentialHolder,
-) {
+) -> upstream::UpstreamFault {
     let state = UpstreamState::new(upstream_base.clone(), credential);
+    let fault = state.fault();
     let app = Router::new()
         .fallback(axum::routing::any(upstream::proxy))
         .with_state(state);
+    let reported = fault.clone();
     tokio::spawn(async move {
         match tokio::net::TcpListener::bind(bind).await {
             Ok(listener) => {
                 tracing::info!(proxy = name, %bind, upstream = %upstream_base, "credential proxy listening");
                 if let Err(e) = axum::serve(listener, app).await {
                     tracing::error!(proxy = name, error = %e, "credential proxy stopped");
+                    // A proxy that stopped is a model endpoint the agent can
+                    // no longer reach at all, which is worth saying in the
+                    // same words as a refusal.
+                    reported.set(format!("the {name} endpoint stopped being reachable: {e}"));
                 }
             }
             Err(e) => {
-                tracing::error!(proxy = name, %bind, error = %e, "credential proxy cannot bind")
+                tracing::error!(proxy = name, %bind, error = %e, "credential proxy cannot bind");
+                reported.set(format!("the {name} endpoint could not be started: {e}"));
             }
         }
     });
+    fault
+}
+
+/// Take files a kernel needs and put them on disk.
+///
+/// Refused once the agent has started: it reads what it was given at startup,
+/// so a write landing afterwards is a file the session was promised and is not
+/// using. Saying so is better than writing it and letting somebody believe it
+/// took effect.
+///
+/// The supervisor reads none of this. It is told paths and bodies and writes
+/// them, exactly as it is told what to run and where a conversation lives —
+/// a kernel that changes what it needs must not be able to break the pod.
+async fn prelude_write(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    if state.registry.is_running().await || state.conversation.lock().await.is_some() {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+    let files = match prelude::unpack(&body) {
+        Ok(files) => files,
+        Err(why) => return (axum::http::StatusCode::UNPROCESSABLE_ENTITY, why).into_response(),
+    };
+    let home = std::path::PathBuf::from(
+        std::env::var("HOME").unwrap_or_else(|_| "/home/chrono".to_string()),
+    );
+    match prelude::write_all(&home, &files) {
+        Ok(written) => (axum::http::StatusCode::OK, format!("{written}")).into_response(),
+        Err(e) => {
+            // Loud: the session was told it would have these.
+            tracing::error!(error = %e, "cannot write the prelude");
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
 }
 
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
@@ -464,6 +583,19 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         "status": "ready",
         "runtimes": live,
         "credential": state.credential.is_set().await,
+        // Declared so a control plane can tell an image that takes a prelude
+        // from one that does not. §6 makes the runtime image a separate
+        // deliberate bump, so the two versions genuinely coexist, and a POST
+        // to a router without the route answers 404 — which the adapter reads
+        // as a sandbox that is gone and replaces a healthy one.
+        "prelude": true,
+        // Declared so a control plane can tell an image that serves the
+        // telemetry lane from one that does not. It must never open such a
+        // link on a guess: a pod that predates this reads any `lanes` value it
+        // does not know as the terminal, so an ungated attach starts a second
+        // agent process in a conversation-plane sandbox and resizes the screen
+        // of a terminal-plane one.
+        "resources": true,
     }))
 }
 

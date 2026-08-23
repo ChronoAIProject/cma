@@ -23,14 +23,14 @@ pub struct Config {
     pub sandbox_api_key: String,
     /// Image each sandbox runs.
     pub sandbox_image: String,
-    /// CPU each sandbox reserves, in Kubernetes quantity form.
+    /// CPU a sandbox reserves when its session names no size, in Kubernetes quantity form.
     ///
     /// Configuration rather than a constant because it decides how many
     /// sessions a deployment can run at once: the namespace has a quota, and
     /// this figure divides into it. Sizing that from a rebuild means a session
     /// nobody can start until an image ships.
     pub sandbox_cpu: String,
-    /// Memory each sandbox reserves, in Kubernetes quantity form.
+    /// Memory a sandbox reserves when its session names no size, in Kubernetes quantity form.
     ///
     /// The tighter of the two in practice. The agent is what runs here, and
     /// an allowance it cannot work within is not a smaller session but a
@@ -127,6 +127,23 @@ pub struct Config {
     pub auth_mode: AuthMode,
 }
 
+/// Services every session's credential may reach when a deployment names none.
+///
+/// Named the way a person reads them; the identifiers the provider wants are
+/// resolved when a credential is minted.
+///
+/// `ornn` and `ornn-api` are two services, not one name spelled twice.
+/// `ornn-api` answers the skill registry this service itself searches to show
+/// somebody what they may pick; `ornn` is the skill runtime the agent calls
+/// once it has picked, and it is the one the baseline skills tell it to reach
+/// for. A baseline naming only the registry mints a credential the provider
+/// refuses on every call the agent actually makes.
+///
+/// A constant rather than a literal at the use site so the default is a thing
+/// a test can hold, instead of a string a test would have to repeat — which
+/// would pin the test to itself and nothing else.
+const BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
+
 impl Config {
     /// Read configuration from the environment.
     pub fn from_env() -> Result<Self, String> {
@@ -137,10 +154,10 @@ impl Config {
             "http://opensandbox-server.opensandbox-system.svc.cluster.local",
         );
         let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
-        // What one session costs the namespace quota. Read as opaque strings
-        // and handed to the provider unchanged: these are Kubernetes
-        // quantities, and parsing them here would only add a way to be wrong
-        // about a syntax this service does not own.
+        // What a sandbox costs the namespace quota when its session names no
+        // size. Read as opaque strings and handed to the provider unchanged:
+        // these are Kubernetes quantities, and parsing them here would only
+        // add a way to be wrong about a syntax this service does not own.
         let sandbox_cpu = var_or("CHRONO_SANDBOX_CPU", "1");
         let sandbox_memory = var_or("CHRONO_SANDBOX_MEMORY", "1Gi");
         // How the agent is told to continue a conversation rather than start
@@ -155,21 +172,33 @@ impl Config {
         // genuinely mandates nothing sets the keys to a single space.
         let baseline_packages = list_or("CHRONO_BASELINE_PACKAGES", "nyxid");
         let baseline_skills = list_or("CHRONO_BASELINE_SKILLS", "nyxid,ornn-agent-manual-cli");
-        // Named the way a person reads them; the identifiers the provider
-        // wants are resolved when a credential is minted.
-        let baseline_services = list_or("CHRONO_BASELINE_SERVICES", "chrono-llm,ornn-api");
+        let baseline_services = list_or("CHRONO_BASELINE_SERVICES", BASELINE_SERVICES);
         // What a session is when nobody chose anything. Each key is read on
         // its own and a value the software does not recognise is refused
         // rather than silently replaced: a deployment that meant "ask first"
         // and typed it wrong must be told, not quietly made autonomous.
         let default_agent = layer2_core::AgentConfiguration {
             kernel: layer2_core::KernelId::new(var_or("CHRONO_DEFAULT_AGENT_KERNEL", "codex")),
-            mode: parse_enum("CHRONO_DEFAULT_AGENT_MODE", "terminal")?,
+            // Conversation, not terminal. The conversation plane is the
+            // surface this product is for: it is where approvals are answered,
+            // where tool calls read as structure, and where a failure can be
+            // explained rather than printed. A terminal is the escape hatch.
+            //
+            // Only the deployment default moves. `SessionMode`'s serde default
+            // stays Terminal deliberately — it is what every record written
+            // before the field existed means, and reading those back as
+            // conversations would silently change what they are.
+            mode: parse_enum("CHRONO_DEFAULT_AGENT_MODE", "conversation")?,
             model: Some(var_or("CHRONO_DEFAULT_AGENT_MODEL", "gpt-5.6-sol"))
                 .filter(|m| !m.trim().is_empty()),
             reasoning_effort: parse_enum("CHRONO_DEFAULT_AGENT_EFFORT", "high")?,
             permission: parse_enum("CHRONO_DEFAULT_AGENT_PERMISSION", "guarded")?,
             credential: parse_enum("CHRONO_DEFAULT_AGENT_CREDENTIAL", "delegated")?,
+            // No key for this, deliberately. `None` already means
+            // CHRONO_SANDBOX_CPU / CHRONO_SANDBOX_MEMORY, so a
+            // CHRONO_DEFAULT_AGENT_SIZE would be a second way to say the same
+            // thing that could disagree with the first.
+            size: None,
             record_tool_bodies: false,
             // The baseline skills are what every session carries anyway, so a
             // profile-less session carries exactly them and nothing else.
@@ -421,6 +450,24 @@ mod tests {
         // An env var set to the empty string is a common deployment mistake and
         // must behave as absent rather than producing an empty bind address.
         assert_eq!(var_or("CHRONO_TEST_ABSENT_KEY", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn the_baseline_reaches_the_skill_runtime_and_not_only_its_registry() {
+        // `ornn` and `ornn-api` are two services. The registry is what this
+        // service searches to show a person what they may pick; the runtime is
+        // what the agent calls once it has picked. A baseline naming only the
+        // registry mints a credential the provider refuses on every call the
+        // agent actually makes — the failure this pins.
+        let baseline = list_or("CHRONO_TEST_ABSENT_SERVICES", BASELINE_SERVICES);
+        assert!(
+            baseline.iter().any(|s| s == "ornn"),
+            "the skill runtime must be reachable, got {baseline:?}"
+        );
+        assert!(
+            baseline.iter().any(|s| s == "ornn-api"),
+            "the skill registry must stay reachable, got {baseline:?}"
+        );
     }
 
     #[test]

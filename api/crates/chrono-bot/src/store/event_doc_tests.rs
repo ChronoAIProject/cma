@@ -4,10 +4,10 @@
 //! under test is the decision between "history from a newer writer" and
 //! "damage", and that decision is made entirely on the shape of one document.
 
-use layer2_core::{Event, EventKind, SessionId, StoredEventKind};
+use layer2_core::{Event, EventKind, RuntimeLossCause, SessionId, StoredEventKind};
 use mongodb::bson::{doc, Bson};
 
-use super::{from_document, to_document};
+use super::{from_document, from_document_before_context_compaction, to_document};
 
 fn event(seq: u64, kind: EventKind) -> Event {
     Event {
@@ -86,11 +86,21 @@ fn every_current_variant_survives_the_round_trip() {
             input_tokens: 1234,
             output_tokens: 56,
             context_used: 1290,
+            context_window: Some(258_400),
+        },
+        EventKind::ContextCompacted {
+            was: 198_000,
+            now: 42_100,
+            window: Some(200_000),
         },
         EventKind::ConversationGap { frames: 7 },
         EventKind::ApprovalResolved {
             request_id: "req-1".into(),
             allowed: false,
+        },
+        EventKind::RuntimeLost {
+            runtime_id: "sbx_1".into(),
+            cause: Some(RuntimeLossCause::OutOfMemory),
         },
     ];
 
@@ -107,6 +117,44 @@ fn every_current_variant_survives_the_round_trip() {
                 panic!("{kind:?} was read back as an unknown kind tagged {tag}")
             }
         }
+    }
+}
+
+#[test]
+fn a_runtime_loss_is_known_while_a_foreign_loss_tag_stays_unknown() {
+    let known = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 8_i64,
+        "kind": {
+            "type": "runtime_lost",
+            "runtime_id": "sbx_1",
+            "cause": "failed",
+        },
+    })
+    .expect("this build owns runtime_lost");
+    match known.kind {
+        StoredEventKind::Known(EventKind::RuntimeLost { runtime_id, cause }) => {
+            assert_eq!(runtime_id, "sbx_1");
+            assert_eq!(cause, Some(RuntimeLossCause::Failed));
+        }
+        other => panic!("expected a known runtime loss, got {other:?}"),
+    }
+
+    let future = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 9_i64,
+        "kind": {
+            "type": "runtime_lost_with_a_newer_verdict",
+            "runtime_id": "sbx_2",
+        },
+    })
+    .expect("a future tag is still readable history");
+    match future.kind {
+        StoredEventKind::Unknown { tag, payload } => {
+            assert_eq!(tag, "runtime_lost_with_a_newer_verdict");
+            assert_eq!(payload["runtime_id"], "sbx_2");
+        }
+        other => panic!("expected an unknown future event, got {other:?}"),
     }
 }
 
@@ -201,6 +249,52 @@ fn an_event_written_before_a_field_existed_still_reads() {
             assert!(detail.is_none());
         }
         other => panic!("expected a status change, got {other:?}"),
+    }
+}
+
+#[test]
+fn usage_written_before_context_windows_existed_still_reads() {
+    let read = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 5_i64,
+        "kind": {
+            "type": "usage_reported",
+            "input_tokens": 1234_i64,
+            "output_tokens": 56_i64,
+            "context_used": 1290_i64,
+        },
+    })
+    .expect("usage from before the ceiling existed is ordinary history");
+
+    match read.kind {
+        StoredEventKind::Known(EventKind::UsageReported { context_window, .. }) => {
+            assert_eq!(context_window, None);
+        }
+        other => panic!("expected a usage report, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_reader_predating_compaction_skips_the_new_boundary() {
+    let read = from_document_before_context_compaction(doc! {
+        "session_id": "s-1",
+        "seq": 6_i64,
+        "kind": {
+            "type": "context_compacted",
+            "was": 198_000_i64,
+            "now": 42_100_i64,
+            "window": 200_000_i64,
+        },
+    })
+    .expect("a future event kind is not corruption");
+
+    match read.kind {
+        StoredEventKind::Unknown { tag, payload } => {
+            assert_eq!(tag, "context_compacted");
+            assert_eq!(payload["was"], 198_000);
+            assert_eq!(payload["now"], 42_100);
+        }
+        other => panic!("expected an unknown future event, got {other:?}"),
     }
 }
 

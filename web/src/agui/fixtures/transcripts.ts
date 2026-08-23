@@ -16,6 +16,31 @@ import type { Frame, Transcript } from './types';
 
 const THREAD = 'sesn_01JD8Z3K7';
 
+const FULL_CONVERSATION_MARKDOWN = [
+  '## Conversation surface review',
+  '',
+  'The shell now keeps **agent prose neutral** while its frame uses the new design aliases.',
+  'Read the [review log](https://example.test/review) for the measured checks.',
+  '',
+  '> Review note',
+  '> - Preserve the live and replayed shape.',
+  '> - Keep links in the prose ink.',
+  '',
+  '```ts',
+  "const surface = { theme: 'Inkwell', ready: true };",
+  '```',
+  '',
+  '| Check | Result |',
+  '| --- | --- |',
+  '| Owner bubble | Fixed |',
+  '| Shim sweep | Clean |',
+  '',
+  '![Conversation surface diagram](https://example.test/conversation-surface.png)',
+  '',
+  '- [x] Replayed from history',
+  '- [ ] Approved for release',
+].join('\n');
+
 /** One frame, with the gap before it. */
 function frame(afterMs: number, event: Record<string, unknown>): Frame {
   return { afterMs, event: { threadId: THREAD, ...event } };
@@ -261,8 +286,8 @@ export const REPORTS_USAGE: Transcript = {
       type: 'STATE_DELTA',
       runId: 'run_9',
       seq: 2,
-      patch: [
-        { op: 'replace', path: '/usage/tokens', value: 1840 },
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 1840 },
         { op: 'replace', path: '/usage/cost', value: '0.014' },
       ],
     }),
@@ -285,12 +310,111 @@ export const REPORTS_USAGE: Transcript = {
       type: 'STATE_DELTA',
       runId: 'run_9',
       seq: 6,
-      patch: [
-        { op: 'replace', path: '/usage/tokens', value: 2310 },
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 2310 },
         { op: 'replace', path: '/usage/cost', value: '0.019' },
       ],
     }),
     frame(20, { type: 'RUN_FINISHED', runId: 'run_9', seq: 7, outcome: { type: 'end_turn' } }),
+  ],
+};
+
+/** A context reading accompanied by the ceiling the runtime stated. */
+export const CONTEXT_WITH_WINDOW: Transcript = {
+  name: 'context-with-window',
+  about: 'Context fullness arrives with the window it is drawn from.',
+  provenance: 'authored',
+  source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
+  frames: [
+    frame(0, { type: 'RUN_STARTED', runId: 'run_context_window', seq: 1 }),
+    frame(80, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_window',
+      seq: 2,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 1840 },
+        { op: 'replace', path: '/usage/outputTokens', value: 260 },
+        { op: 'replace', path: '/usage/contextUsed', value: 42_100 },
+        { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
+      ],
+    }),
+    frame(20, {
+      type: 'RUN_FINISHED',
+      runId: 'run_context_window',
+      seq: 3,
+      outcome: { type: 'end_turn' },
+    }),
+  ],
+};
+
+/** A context reading from a runtime that stated no ceiling. */
+export const CONTEXT_WITHOUT_WINDOW: Transcript = {
+  name: 'context-without-window',
+  about: 'Context fullness arrives without an invented ceiling.',
+  provenance: 'authored',
+  source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
+  frames: [
+    frame(0, { type: 'RUN_STARTED', runId: 'run_context_open', seq: 1 }),
+    frame(80, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_open',
+      seq: 2,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 1840 },
+        { op: 'replace', path: '/usage/outputTokens', value: 260 },
+        { op: 'replace', path: '/usage/contextUsed', value: 42_100 },
+      ],
+    }),
+    frame(20, {
+      type: 'RUN_FINISHED',
+      runId: 'run_context_open',
+      seq: 3,
+      outcome: { type: 'end_turn' },
+    }),
+  ],
+};
+
+/** A context fall, projected before the reading that revealed it. */
+export const CONTEXT_COMPACTS: Transcript = {
+  name: 'context-compacts',
+  about: 'The agent summarises a nearly full conversation to make room.',
+  provenance: 'authored',
+  source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
+  frames: [
+    frame(0, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_compacts',
+      seq: 1,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 14_200 },
+        { op: 'replace', path: '/usage/outputTokens', value: 3100 },
+        { op: 'replace', path: '/usage/contextUsed', value: 198_000 },
+        { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
+      ],
+    }),
+    frame(80, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_compacts',
+      seq: 2,
+      delta: [
+        {
+          op: 'add',
+          path: '/contextCompactions/-',
+          value: { was: 198_000, now: 42_100, window: 200_000 },
+        },
+      ],
+    }),
+    frame(20, {
+      type: 'STATE_DELTA',
+      runId: 'run_context_compacts',
+      seq: 3,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 14_200 },
+        { op: 'replace', path: '/usage/outputTokens', value: 3100 },
+        { op: 'replace', path: '/usage/contextUsed', value: 42_100 },
+        { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
+      ],
+    }),
   ],
 };
 
@@ -358,7 +482,7 @@ export const ROTATES: Transcript = {
       type: 'STATE_DELTA',
       runId: 'run_11',
       seq: 5,
-      patch: [
+      delta: [
         {
           op: 'add',
           path: '/gaps/-',
@@ -423,6 +547,235 @@ export const UNKNOWN_KIND: Transcript = {
   ],
 };
 
+/**
+ * The complete conversation review surface in one canonical transcript.
+ *
+ * The final frame leaves an approval in the composer's seat. Before it, the
+ * second run pauses after a live reasoning frame, so a browser can inspect
+ * both liveness and the identical durable result without private test-only
+ * component wiring.
+ */
+export const FULL_CONVERSATION: Transcript = {
+  name: 'full-conversation',
+  about:
+    'Owner and agent turns, rich markdown, tools, reasoning, sign-in, gap, failure, usage, and approval.',
+  provenance: 'authored',
+  source: 'docs/API_AGUI.md sections 3-4; docs/Web_Style.md section 13',
+  frames: [
+    frame(0, {
+      type: 'RUN_STARTED',
+      runId: 'run_full_1',
+      seq: 1,
+      timestamp: '2026-08-23T10:00:00Z',
+    }),
+    frame(40, {
+      type: 'TEXT_MESSAGE_START',
+      runId: 'run_full_1',
+      seq: 2,
+      messageId: 'full_user_1',
+      role: 'user',
+      timestamp: '2026-08-23T10:00:01Z',
+    }),
+    frame(40, {
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: 'run_full_1',
+      seq: 3,
+      messageId: 'full_user_1',
+      delta: 'Review the conversation surface in both appearances.',
+    }),
+    frame(20, {
+      type: 'TEXT_MESSAGE_END',
+      runId: 'run_full_1',
+      seq: 4,
+      messageId: 'full_user_1',
+    }),
+    frame(80, {
+      type: 'TEXT_MESSAGE_START',
+      runId: 'run_full_1',
+      seq: 5,
+      messageId: 'full_agent_1',
+      role: 'assistant',
+      timestamp: '2026-08-23T10:00:02Z',
+    }),
+    frame(140, {
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: 'run_full_1',
+      seq: 6,
+      messageId: 'full_agent_1',
+      delta: FULL_CONVERSATION_MARKDOWN,
+    }),
+    frame(20, {
+      type: 'TEXT_MESSAGE_END',
+      runId: 'run_full_1',
+      seq: 7,
+      messageId: 'full_agent_1',
+    }),
+    frame(80, {
+      type: 'TOOL_CALL_START',
+      runId: 'run_full_1',
+      seq: 8,
+      toolCallId: 'full_tool_ok',
+      'chrono:toolKind': 'file_read',
+      toolCallName: 'web/src/chat/MessageStream.css',
+      timestamp: '2026-08-23T10:00:03Z',
+    }),
+    frame(40, {
+      type: 'TOOL_CALL_ARGS',
+      runId: 'run_full_1',
+      seq: 9,
+      toolCallId: 'full_tool_ok',
+      delta: '{"line_start":1,"line_end":120}',
+      'chrono:truncated': false,
+    }),
+    frame(100, {
+      type: 'TOOL_CALL_RESULT',
+      runId: 'run_full_1',
+      seq: 10,
+      toolCallId: 'full_tool_ok',
+      content: '.turn { display: flex; }',
+      'chrono:truncated': false,
+    }),
+    frame(30, {
+      type: 'TOOL_CALL_END',
+      runId: 'run_full_1',
+      seq: 11,
+      toolCallId: 'full_tool_ok',
+      'chrono:status': 'ok',
+      output: '120 lines read',
+      timestamp: '2026-08-23T10:00:04Z',
+    }),
+    frame(80, {
+      type: 'TOOL_CALL_START',
+      runId: 'run_full_1',
+      seq: 12,
+      toolCallId: 'full_tool_failed',
+      'chrono:toolKind': 'shell',
+      toolCallName: 'npm run visual:proof',
+      timestamp: '2026-08-23T10:00:05Z',
+    }),
+    frame(120, {
+      type: 'TOOL_CALL_END',
+      runId: 'run_full_1',
+      seq: 13,
+      toolCallId: 'full_tool_failed',
+      'chrono:status': 'failed',
+      output: 'The first capture used the stale cascade.',
+      timestamp: '2026-08-23T10:00:06Z',
+    }),
+    frame(60, {
+      type: 'STATE_DELTA',
+      runId: 'run_full_1',
+      seq: 14,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 6210 },
+        { op: 'replace', path: '/usage/outputTokens', value: 1840 },
+        { op: 'replace', path: '/usage/contextUsed', value: 24_800 },
+        { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
+        { op: 'replace', path: '/usage/cost', value: '0.087' },
+        {
+          op: 'replace',
+          path: '/signIn',
+          value: {
+            url: 'https://auth.example.test/device',
+            code: 'ABCD-EFGH',
+            message: 'Connect the account used by this review session.',
+          },
+        },
+        {
+          op: 'add',
+          path: '/gaps/-',
+          value: { rotatedAt: '2026-08-23T09:58:00Z', reason: 'runtime_version' },
+        },
+      ],
+    }),
+    frame(100, {
+      type: 'RUN_ERROR',
+      runId: 'run_full_1',
+      seq: 15,
+      message: 'The first visual proof used an obsolete stylesheet.',
+      capability: 'render_current_styles',
+      code: 'tool_execution_failed',
+      timestamp: '2026-08-23T10:00:07Z',
+    }),
+    frame(260, {
+      type: 'RUN_STARTED',
+      runId: 'run_full_2',
+      seq: 16,
+      timestamp: '2026-08-23T10:00:08Z',
+    }),
+    frame(40, {
+      type: 'TEXT_MESSAGE_START',
+      runId: 'run_full_2',
+      seq: 17,
+      messageId: 'full_user_2',
+      role: 'user',
+      timestamp: '2026-08-23T10:00:09Z',
+    }),
+    frame(40, {
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: 'run_full_2',
+      seq: 18,
+      messageId: 'full_user_2',
+      delta: 'Retry against the current bundle and keep the failure in the record.',
+    }),
+    frame(20, {
+      type: 'TEXT_MESSAGE_END',
+      runId: 'run_full_2',
+      seq: 19,
+      messageId: 'full_user_2',
+    }),
+    frame(160, {
+      type: 'REASONING_MESSAGE_CONTENT',
+      runId: 'run_full_2',
+      seq: 19,
+      messageId: 'full_reasoning_1',
+      delta: 'Comparing the live stream with the replayed transcript.',
+      'chrono:live': true,
+    }),
+    frame(1800, {
+      type: 'TEXT_MESSAGE_START',
+      runId: 'run_full_2',
+      seq: 20,
+      messageId: 'full_agent_2',
+      role: 'assistant',
+      timestamp: '2026-08-23T10:00:11Z',
+    }),
+    frame(120, {
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: 'run_full_2',
+      seq: 21,
+      messageId: 'full_agent_2',
+      delta: 'The current bundle now produces the same durable markup after reconnect.',
+    }),
+    frame(20, {
+      type: 'TEXT_MESSAGE_END',
+      runId: 'run_full_2',
+      seq: 22,
+      messageId: 'full_agent_2',
+    }),
+    frame(80, {
+      type: 'RUN_FINISHED',
+      runId: 'run_full_2',
+      seq: 23,
+      timestamp: '2026-08-23T10:00:12Z',
+      outcome: {
+        type: 'interrupt',
+        interrupts: [
+          {
+            id: 'full_approval_1',
+            reason: 'chrono:release_review',
+            message: 'Approve the restyled conversation surface?',
+            options: [
+              { decision: 'allow', label: 'Approve', affirmative: true },
+              { decision: 'deny', label: 'Keep reviewing' },
+            ],
+          },
+        ],
+      },
+    }),
+  ],
+};
+
 /** Every fixture, so a test can walk them without listing them again. */
 export const TRANSCRIPTS: readonly Transcript[] = [
   PLAIN_TURN,
@@ -432,9 +785,13 @@ export const TRANSCRIPTS: readonly Transcript[] = [
   APPROVAL_DENIED,
   INTERRUPTED_TURN,
   REPORTS_USAGE,
+  CONTEXT_WITH_WINDOW,
+  CONTEXT_WITHOUT_WINDOW,
+  CONTEXT_COMPACTS,
   NO_USAGE,
   ROTATES,
   UNKNOWN_KIND,
+  FULL_CONVERSATION,
 ];
 
 export function transcriptNamed(name: string): Transcript {

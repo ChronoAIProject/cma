@@ -38,7 +38,7 @@ A request with neither credential is `401`. A request whose credential is valid 
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
-| Idempotency | `Idempotency-Key` required on every side-effecting `POST` |
+| Idempotency | **Not implemented.** No route reads `Idempotency-Key`; sending one is harmless and does nothing. This row previously said it was required on every side-effecting `POST`, which was never true — §9 asks for an absence to be declared rather than discovered |
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
@@ -52,43 +52,131 @@ Every response carries `X-Request-Id`. Include it in any support report.
 
 ```http
 POST /api/v1/sessions
-Idempotency-Key: <client-generated-uuid>
 Content-Type: application/json
 
 {
-  "llm_source": "chrono",
-  "environment": "default",
-  "workspace": { "type": "git", "url": "https://github.com/org/repo", "ref": "main" },
-  "concurrent_input": "enqueue",
-  "metadata": { "origin": "nyxid-chat" }
+  "cols": 120,
+  "rows": 32,
+  "environment_profile": "envp_7dec1b0ca73c46b88121b259577bbe96",
+  "quoted_rate_card": "rate_9f2c4d71"
 }
 ```
 
-| Field | Required | Notes |
-|---|---|---|
-| `llm_source` | yes | `chrono` (brokered through NyxID) or `own` (the user's own account) |
-| `environment` | no | Name of a pre-provisioned environment profile. **Never carries secret values** — it selects a profile provisioned out of band |
-| `workspace` | no | Omit for an empty workspace |
-| `concurrent_input` | no | `reject` \| `enqueue` \| `interrupt` \| `rollback`. Default `enqueue`. Immutable for the session's life |
-| `metadata` | no | Opaque to chrono-bot; echoed back |
+| Field                 | Required | Notes                                                                                                                                         |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
+| `rows`                | no       | Initial terminal height                                                                                                                         |
+| `environment_profile` | no       | Id of a profile from `GET /api/v1/environment-profiles`. **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
+| `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
+
+**These four are the whole body.** An earlier version of this section
+documented `llm_source` as required, along with `environment`, `workspace`,
+`concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
+side-effecting `POST`. None of them has ever existed in the service. They were
+accepted and discarded in silence, so a caller who built to that contract got a
+working session and no indication that most of what they sent went nowhere.
+They are now refused by name, which is why the list above is exact rather than
+aspirational.
+
+The profile is the whole description of the session — which agent, which model,
+how freely it acts, whose access it spends, what it carries, and how much CPU
+and memory it reserves — so nothing else about the agent is sent here. The size
+is the profile's: omitting `agent.size` takes the deployment's reservation, and
+the answer is frozen for the life of the session, including across a rotation.
 
 **A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
 
-`llm_source` and `environment` are **frozen at creation**, as is the kernel they resolve to. Changing any of them means a new session.
+**A field this endpoint does not know is refused, not ignored.** Sending `"kernel"` is the obvious thing to try, because `GET /api/v1/kernels` enumerates them — so it answers `422` with `invalid_request`, naming the field and listing what it would have accepted. It used to be discarded, and the session came back `201` on whichever kernel the profile actually resolved to, which is a request answered differently from how it was asked. To choose a kernel, name an environment profile whose `agent.kernel` is the one you want; `GET /api/v1/environment-profiles` shows each profile's.
 
-**`201 Created`**
+A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
+
+The profile is **frozen at creation**, as is the kernel it resolves to. Changing either means a new session.
+
+**`201 Created`** — the shape below was read off a live deployment rather than
+composed here, because the previous example carried an `llm_source` field the
+service does not send and spelled `recovery_state` as an object it does not use.
 
 ```json
 {
-  "id": "sesn_01JD8Z3K7",
+  "id": "sesn_1c83fa5f89e84f2da092398e669a12f6",
   "status": "provisioning",
-  "recovery_state": { "state": "normal", "reason": null },
+  "recovery_state": "normal",
   "kernel": "codex",
-  "llm_source": "chrono",
+  "cols": 120,
+  "rows": 32,
   "last_seq": 0,
-  "created_at": "2026-08-12T09:14:22Z"
+  "created_at": "2026-08-19T11:38:12Z",
+  "conforms_to": [
+    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
+    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation"
+  ],
+  "reach": []
 }
 ```
+
+`conforms_to` is what this session was granted, and is how a client learns what
+it may ask for without trying. `runtime_version`, `rotations` and `rotated_at`
+appear once a session has been moved, and are absent before that because a
+session that has never been rotated has nothing to explain.
+
+A priced session also carries the price settled when it was created:
+
+```json
+{
+  "pricing": {
+    "rate_card": "rate_9f2c4d71",
+    "currency": "USD",
+    "micros_per_hour": "45000",
+    "display": "$0.045",
+    "quoted_at": "2026-08-23T05:00:00Z"
+  }
+}
+```
+
+This is part of the session record, not a fresh lookup. The card may have been
+retired since creation and the session still carries the rate it accepted.
+`pricing` is omitted for a session created before pricing was recorded or on a
+deployment with no configured price. Omission means **not priced**; it never
+means zero or free.
+
+### Live-session allowance
+
+```http
+GET /api/v1/sessions/allowance
+```
+
+```json
+{ "limit": 3, "live": 2, "exempt": false }
+```
+
+This is the authenticated caller's own allowance, including for an operator
+who may read other owners' sessions. `limit` is absent when this deployment has
+set no limit. `exempt` is true only for a caller explicitly allowed to exceed
+the limit; it is not inferred from an absent limit.
+
+`live` counts records whose desired state wants a runtime: `provisioning`,
+`ready`, `running`, and `rotating`. It is read from the session record, never
+from provider inventory. An `idle` (paused) session consumes no slot, nor does
+a terminated one. Reviving a paused session is checked as a new ask, which is
+what prevents pause and revive from walking around the limit.
+
+**This is advisory.** It exists so a client can offer only what will be
+permitted, rather than offering everything and letting people discover
+refusals by hitting them. The core checks again on the create or revive request
+that uses it, so a client that ignored this answer, or fabricated one, would
+gain nothing. Hiding a control is a courtesy; it is not access control.
+
+Lowering a limit is **not retroactive**. Existing work is never stopped, and a
+control-plane restart, reconciliation sweep, or runtime rotation brings every
+recorded live session back regardless of the new limit. An owner already over
+the limit cannot create or revive until enough sessions have been paused or
+ended to put them below it. Repeating revive on a session that already wants a
+runtime remains a no-op and does not consume a second slot.
+
+Enforcement serialises asks by one subject inside each control-plane replica.
+Across replicas it is best-effort: concurrent asks can overshoot the configured
+limit by a bounded amount. This is a policy limit, not a security boundary; a
+hard distributed limit requires a conditional write in the session store.
 
 ### Read, list, stop, revive, delete
 
@@ -101,7 +189,12 @@ GET    /api/v1/sessions/{id}/transcript
 DELETE /api/v1/sessions/{id}
 ```
 
-`stop` releases the runtime and keeps the session: it goes `idle`, stays listed, stays readable, and nothing is being paid for. `revive` gives it a runtime again under the same id, with the same history and the same options — reviving never mints a new session.
+`stop` releases the runtime and keeps the session: it goes `idle`, stays listed,
+stays readable, and nothing is being paid for. `revive` gives it a runtime
+again under the same id, with the same history and the same options — reviving
+never mints a new session. When the owner is at or over their live-session
+limit, revive returns the same typed refusal as create and the session stays
+paused.
 
 `DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
 
@@ -264,6 +357,39 @@ data: {"session_id":"sesn_01JD8Z3K7","seq":1044,"type":"approval.requested",
 
 Delta events (`output.delta`, `thinking.delta`) are **stream-only and never persisted**. They exist for liveness. Anything durable arrives as a semantic event.
 
+A runtime the service established as lost arrives in an unnamed SSE frame with the core kind nested under `event`, exactly as the implementation sends it:
+
+```text
+id: 1045
+data: {"seq":1045,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","runtime_id":"runtime_01K35QJ0","cause":"out_of_memory"}}
+```
+
+`runtime_lost` carries `runtime_id`, the opaque identifier of the runtime that is gone, and `cause` where the service could establish one. The cause is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`; when nothing supplied a reason, `cause` is omitted rather than invented.
+
+Memory pressure is recorded as two edge-triggered events. Raw resource
+readings are never written to the event log: each reading replaces the prior
+live value, while an episode is something that happened once and must survive
+a reconnect.
+
+```json
+{"type":"memory_pressure_opened","used_bytes":912680550,"limit_bytes":1073741824,"occupancy_permille":850}
+{"type":"memory_pressure_closed","peak_bytes":1041529569,"limit_bytes":1073741824,"peak_permille":970,"duration_seconds":181}
+```
+
+`memory_pressure_opened` appears only after occupancy has stayed at or above
+the configured entry threshold for the configured consecutive-reading dwell;
+a brief build spike therefore produces no event. `memory_pressure_closed`
+appears after occupancy has stayed below the exit threshold and the settle
+floor has elapsed. It carries the episode's peak and a duration measured by a
+monotonic clock, not by subtracting the event timestamps.
+
+For client folding, an open episode ends as soon as the session leaves an
+interactive status, even if no close was written (for example, if the control
+plane stopped during the episode). A second `memory_pressure_opened` without a
+close replaces the first; pressure is state, not a stack. A reading with no
+memory figure or no limit says nothing about pressure and neither opens nor
+closes an episode.
+
 ---
 
 ## 5. Approvals
@@ -309,21 +435,200 @@ A session with no terminal capability is refused here with `capability_unsupport
 
 ---
 
-## 7. Usage
+## 7. Pricing and usage
+
+### Quote a new session
+
+```http
+GET /api/v1/pricing/quote?environment_profile=envp_7dec1b0ca73c46b88121b259577bbe96
+```
+
+The route is authenticated. `environment_profile` is optional; omission asks
+for the deployment's unqualified session, exactly as omission on create does.
+The service resolves the profile's actual authored size and computes the quote
+with integer micro-USD arithmetic:
+
+```json
+{
+  "rate_card": "rate_9f2c4d71",
+  "currency": "USD",
+  "cpu_millis": 1000,
+  "memory_mib": 1024,
+  "micros_per_hour": "45000",
+  "display": "$0.045",
+  "per": "hour",
+  "quoted_at": "2026-08-23T05:00:00Z"
+}
+```
+
+`micros_per_hour` is a decimal string so its complete integer survives clients
+whose JSON numbers are binary floating point. `display` is the lossless string
+the service will reconcile against; clients render it verbatim and perform no
+rounding. The only currency is USD. Memory is priced in GiB, with 1,024 MiB per
+GiB.
+
+There is deliberately no raw CPU/memory query. A quote accepts an environment
+profile because it must price the size the service will actually provision,
+not a hypothetical size a client assembled separately. If a price is
+configured but the selected session has no authored size, the route returns
+`422 invalid_request`, naming the missing administrator-declared assumed
+session size. The service does not parse opaque deployment quantity strings or
+invent a default.
+
+Where no price list is configured, the successful response is exactly:
+
+```json
+{ "priced": false }
+```
+
+That is not a zero quote and is never rendered as `$0.00`. The deployment is
+working and has stated no price.
+
+This route quotes a **new** session. There is no route to re-quote a session
+that already exists, deliberately: its `pricing` field is the rate pinned at
+creation, and looking up the current card would give the wrong answer as soon
+as prices change.
+
+Send the returned `rate_card` as `quoted_rate_card` on `POST /api/v1/sessions`.
+The amount pinned on the new session is computed from that same sealed card and
+resolved size. If another card came into force between the two requests,
+creation returns `409 price_changed` and writes no session; read a fresh quote
+and ask the owner again.
+
+### Runtime usage
 
 ```http
 GET /api/v1/sessions/{id}/usage
 ```
 
 ```json
-{ "input_tokens": 184203, "output_tokens": 9877, "context_used": 41204 }
+{ "input_tokens": 184203, "output_tokens": 9877, "context_used": 41204, "context_window": 200000 }
 ```
 
 Requires the `usage` capability. Not every kernel reports token counts, and one that does not returns the typed capability error rather than a plausible zero.
 
-`input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall — a conversation that was compacted genuinely holds less than it did.
+`context_window` is the ceiling the runtime stated for `context_used`. The key is absent where the runtime states none and is never zero; no interface estimates one.
 
-Monetary accounting is not served here yet. When it is, amounts will be **integer strings in minor units** — `"412"` is $4.12 — never floats.
+`input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall when the agent summarises the conversation to make room. Each such fall is recorded as a durable `context_compacted` event carrying the previous reading, the new reading and the stated ceiling where one is known.
+
+### Live sandbox resources
+
+```http
+GET /api/v1/sessions/{id}/resources
+```
+
+The latest reading is a point read beside `/usage`. It carries all fourteen
+figures the core holds, in REST's snake-case vocabulary:
+
+```json
+{
+  "reading": {
+    "cpu_millis_used": 340,
+    "cpu_millis_limit": 1000,
+    "memory_bytes_used": 892211200,
+    "memory_bytes_limit": 1073741824,
+    "memory_bytes_peak": 930086912,
+    "stall_permille": 12,
+    "ceiling_hits": 0,
+    "allocation_failures": 0,
+    "kills": 0,
+    "received_bytes": 18442,
+    "sent_bytes": 9120,
+    "received_bytes_per_second": 420,
+    "sent_bytes_per_second": 110,
+    "interval_ms": 2000
+  },
+  "observed_at": "2026-08-22T09:14:06Z",
+  "reason": null
+}
+```
+
+Every field is present. An unread level, an absent limit, and a rate without a
+predecessor are each `null`, never omitted and never zero. `observed_at` is the
+UTC RFC 3339 moment the reading reached the core.
+
+The route has five distinguishable answers:
+
+| Condition | Answer |
+|---|---|
+| The session was not granted `resources` | **422** `capability-unsupported`, with `"capability": "resources"`; never a 404 |
+| Granted, but no reading has arrived | **200**, `{"reading":null,"observed_at":null,"reason":"no_reading_yet"}` |
+| Granted, but this runtime cannot report | **200**, `{"reading":null,"observed_at":null,"reason":"runtime_does_not_report"}` |
+| A reading arrived without a ceiling | **200**, the complete reading with the limit field `null` and `reason:null` |
+| The caller cannot see the session | **404** `session-not-found`, indistinguishable from a missing id |
+
+A granted session declares
+`https://spec.chrono-ai.fun/chrono-bot/1.0/conf/resources` in its own
+`conforms_to` list. An older record whose resource grant was never written, or
+a session explicitly refused the grant, does not.
+
+### Reserved-capacity spend
+
+```http
+GET /api/v1/sessions/{id}/spend
+```
+
+This owner-only route reads what the session has accrued at the rate pinned
+when it was created. It is separate from `/usage`: this is the deployment's
+charge for reserved CPU and memory, while token usage and any model-vendor cost
+describe a different service and may be billed to a different party.
+
+A priced session returns:
+
+```json
+{
+  "priced": true,
+  "rate_card": "rate_9f2c4d71",
+  "currency": "USD",
+  "micros_per_hour": "45000",
+  "accrued_micros": "22500",
+  "display": "$0.0225",
+  "billable_seconds": 1800,
+  "accruing": true,
+  "unbounded_intervals": 0
+}
+```
+
+`micros_per_hour` and `accrued_micros` are decimal strings in micro-USD;
+`display` is rendered by the service from the same pinned integer and is what a
+client shows verbatim. The ledger has one-second resolution. It combines all
+billable seconds before dividing by 3,600, so the one final floor rounds toward
+the owner instead of losing a fraction independently at every transition.
+
+The charge is for the session's recorded reservation, not sampled CPU or
+memory utilisation. Requests and limits are the same at the provider boundary,
+but the provider does not echo the capacity it applied, so this service cannot
+claim that measured or provider-confirmed capacity is being billed. A rotation
+is one continuous session interval and overlapping runtimes cannot count a
+second twice.
+
+Accrual begins when the session first becomes `ready`. It remains open while
+the session is `ready`, `running`, `rotating`, or waiting for its owner to
+resolve an approval. Provisioning time and time after an owner stops or
+terminates the session are not charged. A sandbox that has died continues to
+accrue while the durable history still says the session holds capacity; the
+ledger stops only when the loss produces a durable closing transition. It does
+not infer a bill from transient provider observations.
+
+An interval with an absent, malformed, pre-creation, or future bound is skipped
+rather than guessed. `unbounded_intervals` counts those omissions. A non-zero
+value means the displayed figure covers less than the session's whole durable
+life and must not be presented as complete.
+
+A session created before pricing was recorded, or while no card was configured,
+returns exactly the non-monetary shape below. It is not a zero charge:
+
+```json
+{
+  "priced": false,
+  "accruing": false,
+  "unbounded_intervals": 0
+}
+```
+
+Price quotes, pinned session rates, and accrued amounts use micro-USD; `"412"`
+means $0.000412, never $4.12. Monetary values on the quote and spend routes are
+decimal strings, never binary floating-point numbers.
 
 ---
 
@@ -389,8 +694,8 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `401` | Missing or invalid NyxID credential |
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No such session, or not visible to this subject |
-| `409` | Conflicts with current state — turn in progress, session terminated |
-| `422` | Well-formed but semantically invalid — zero terminal dimension |
+| `409` | Conflicts with current state — turn in progress, session terminated, live-session limit reached, or the quoted rate card is no longer in force |
+| `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |
 | `429` | Rate limited; observe `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
 | `503` | Control plane recovering or failing over; retry |
@@ -403,6 +708,7 @@ Starting a session against a service can fail for three different reasons, and a
 
 | `code` | Status | What it means | What to do |
 |---|---|---|---|
+| `invalid_session_size` | `422` | A session size was sent with a zero CPU or memory figure. | Send both figures non-zero. **Retrying unchanged will not help.** |
 | `service_not_granted` | `422` | The owner has not granted this service. `detail` names it. | Grant it in NyxID. **Retrying will not help.** |
 | `service_catalogue_unavailable` | `503` | The catalogue could not be asked. The owner's services are fine. | **Retry.** Nothing is wrong with the session or the profile. |
 | — | — | This deployment has no catalogue at all. | Nothing. It is not an error: profiles still store selections and sessions still honour them, there is simply nothing to choose from. |
@@ -417,6 +723,79 @@ Told apart by `code` and by status, never by prose — a client matching on a se
 
 See `docs/Services.md` for the whole path.
 
+### Price-change refusal
+
+| `code` | Status | What it means | What to do |
+|---|---|---|---|
+| `price_changed` | `409` | The accepted rate card is no longer the card used for new work. | Read `/api/v1/pricing/quote` again and show the new `display` before retrying. |
+
+```json
+{
+  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/price-changed",
+  "title": "price changed",
+  "status": 409,
+  "detail": "the price changed: quoted against rate card rate_old, now rate_new",
+  "code": "price_changed",
+  "quoted_rate_card": "rate_old",
+  "rate_card": "rate_new"
+}
+```
+
+Both card ids are top-level fields so a client never parses the English
+`detail`. The refusal keys only on the rate-card id, never on the platform
+settings revision: editing a briefing or another unrelated setting is not a
+price change. It is a conflict rather than `429`; time does not clear it and no
+honest `Retry-After` exists. Creation is refused before an identifier is minted
+or a record is written.
+
+### Size-bound refusal
+
+`size_out_of_bounds` is a `422` response with problem type `size-out-of-bounds`. The request is well formed, but this deployment will not provision the size it states. Retrying the same request unchanged will not help.
+
+The problem document carries the refusal as top-level fields so a client never has to parse `detail`:
+
+| Field | Meaning |
+|---|---|
+| `dimension` | `cpu_millis` or `memory_mib`; the name includes the unit used by the three figures |
+| `requested` | The figure the profile asked for |
+| `minimum` | The inclusive lower bound currently configured for that dimension |
+| `maximum` | The inclusive upper bound currently configured for that dimension |
+
+The refusal happens when a session is created, before an identifier or record exists, not when its environment profile is saved. Bounds can change after a profile was authored, so an out-of-bounds profile remains writable and is logged as a warning; starting a session from it is the operation refused.
+
+These bounds apply only to a size the profile explicitly states. A profile with no `agent.size`, and a creation naming no profile, use this deployment's own sandbox reservation without being measured against the bounds. That reservation may lie outside the range an administrator has configured: the range governs what a caller may ask for, not the unnamed deployment default.
+
+### Live-session-limit refusal
+
+`session_limit_reached` is a `409` response with problem type
+`session-limit-reached`. The request is valid and can succeed after the owner
+pauses or ends enough sessions. It is not `429`: time does not clear this
+condition, so no honest `Retry-After` exists and automatic retry is not useful.
+
+```json
+{
+  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/session-limit-reached",
+  "title": "session limit reached",
+  "status": 409,
+  "detail": "3 of 3 sessions are already running for this owner; stop one before starting another",
+  "code": "session_limit_reached",
+  "limit": 3,
+  "live": 3
+}
+```
+
+`limit` and `live` are top-level integer fields so a client can act without
+parsing the English `detail`. If an administrator lowered the limit beneath an
+owner's current count, `live` may be greater than `limit`; the detail then says
+that nothing new starts until fewer than `limit` sessions are running.
+
+Creation is refused before an identifier is minted or a record is written.
+Revive is refused before the paused record changes, so its history remains
+readable and its state remains `idle`. The limit applies only where an owner is
+asking for another runtime; reconciliation and rotation never reach it. See
+the advisory allowance route in §2 for counting, non-retroactivity, and the
+cross-replica enforcement boundary.
+
 ---
 
 ## 10. Administration
@@ -430,6 +809,7 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 | `chrono-bot:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
 | `chrono-bot:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
 | `chrono-bot:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
+| `chrono-bot:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
 
@@ -442,6 +822,295 @@ Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the 
 **No read is unbounded.** `GET /api/v1/admin/users` and `GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default to 100.
 
 **Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists. That `404` is byte-for-byte the one a session that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
+
+### Platform settings
+
+```http
+GET   /api/v1/admin/settings
+PUT   /api/v1/admin/settings
+PATCH /api/v1/admin/settings
+POST  /api/v1/admin/settings/reset
+```
+
+All four routes require `chrono-bot:admin:settings`, which appears to clients
+as the `configure_platform` capability. The product wildcard `chrono-bot:*`
+grants it. A signed-in caller without it receives `403` with a problem type
+ending `/not-an-operator`; these routes name no protected identifier, so they
+never disguise that refusal as `404`.
+
+`GET` returns the complete current object, the revision a later write must
+name, and the complete object replaced by the most recent write when one
+exists:
+
+```json
+{
+  "revision": 12,
+  "settings": {
+    "briefing": {
+      "before": [
+        "# Working in this session",
+        "This session is already authenticated. Do not run `nyxid login`."
+      ],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": ["Continue with the owner's standing instructions."]
+    },
+    "pricing": { "cards": [] },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 4
+  },
+  "previous": {
+    "briefing": {
+      "before": ["# Working in this session"],
+      "reach_heading": "## Granted services",
+      "reach_lead": "The following service slugs are available.",
+      "reach_close": "Other services remain unavailable.",
+      "reach_none": "No services are available to this session.",
+      "after": []
+    },
+    "pricing": { "cards": [] },
+    "size_bounds": {
+      "min_cpu_millis": 500,
+      "max_cpu_millis": 3000,
+      "min_memory_mib": 512,
+      "max_memory_mib": 4096
+    },
+    "live_sessions": 3
+  }
+}
+```
+
+An untouched deployment answers at revision `0` with the shipped settings and
+omits `previous`. `previous` has no revision of its own and is not an automatic
+rollback: it is the full object available for inspection or recovery. To
+restore its PATCH-editable values, send them in a PATCH together with the
+current revision. Pricing history cannot be rolled back; a later rate is
+represented by another sealed card.
+
+`PUT` is a conditional replacement of the complete settings document. It is
+the route used to configure pricing, because a price card is durable history
+and is never treated as an ordinary field-level edit. Start from the complete
+`settings` object returned by `GET`, retain every existing card byte-for-byte
+and in order, and send it under `settings` with the revision that was read:
+
+```http
+PUT /api/v1/admin/settings
+Content-Type: application/json
+
+{
+  "expected_revision": 12,
+  "settings": {
+    "briefing": {
+      "before": ["# Working in this session"],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": []
+    },
+    "pricing": {
+      "cards": [
+        {
+          "id": "rate_9f2c4d71",
+          "effective_from": "2026-08-23T05:00:00Z",
+          "rate": {
+            "cpu_micros_per_cpu_hour": 40000,
+            "memory_micros_per_gib_hour": 5000
+          },
+          "retired_at": null
+        }
+      ]
+    },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 4
+  }
+}
+```
+
+The only currency is USD. The two rate figures are integer micro-USD per
+reserved CPU-hour and per reserved GiB-hour. An empty `cards` array means the
+deployment has configured no price, not a zero rate. A legitimate price change
+retires the current card and appends exactly one new card; the outgoing
+`retired_at` and incoming `effective_from` are the same instant. Existing cards
+cannot be removed, reordered, reopened, or have their timestamps or rates
+edited. Such a document is refused as `422 price_list_not_append_only` and the
+stored list remains unchanged.
+
+`PATCH` is conditional and setting-granular. Every request includes
+`expected_revision` and at least one setting. A setting that is omitted stays
+unchanged; one that is present replaces that setting as a whole.
+
+```http
+PATCH /api/v1/admin/settings
+Content-Type: application/json
+
+{
+  "expected_revision": 12,
+  "briefing": {
+    "before": [
+      "# Working in this session",
+      "This session is already authenticated. Do not run `nyxid login`."
+    ],
+    "reach_heading": "## What you can reach",
+    "reach_lead": "Use only the service slugs granted below.",
+    "reach_close": "Calls to every other service are refused.",
+    "reach_none": "No services were granted to this session.",
+    "after": ["Continue with the owner's standing instructions."]
+  },
+  "size_bounds": {
+    "min_cpu_millis": 250,
+    "max_cpu_millis": 4000,
+    "min_memory_mib": 256,
+    "max_memory_mib": 8192
+  },
+  "live_sessions": 5
+}
+```
+
+A successful write increments the revision and returns the same complete shape
+as `GET`. The object it replaced becomes `previous`:
+
+```json
+{
+  "revision": 13,
+  "settings": {
+    "briefing": {
+      "before": [
+        "# Working in this session",
+        "This session is already authenticated. Do not run `nyxid login`."
+      ],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": ["Continue with the owner's standing instructions."]
+    },
+    "pricing": { "cards": [] },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 5
+  },
+  "previous": {
+    "briefing": {
+      "before": [
+        "# Working in this session",
+        "This session is already authenticated. Do not run `nyxid login`."
+      ],
+      "reach_heading": "## What you can reach",
+      "reach_lead": "Use only the service slugs granted below.",
+      "reach_close": "Calls to every other service are refused.",
+      "reach_none": "No services were granted to this session.",
+      "after": ["Continue with the owner's standing instructions."]
+    },
+    "pricing": { "cards": [] },
+    "size_bounds": {
+      "min_cpu_millis": 250,
+      "max_cpu_millis": 4000,
+      "min_memory_mib": 256,
+      "max_memory_mib": 8192
+    },
+    "live_sessions": 4
+  }
+}
+```
+
+The three settings accepted by `PATCH` have distinct replacement rules.
+`pricing` is accepted only inside the complete document sent to `PUT`:
+
+| Setting         | PATCH rule                                                                                                                                                                                                                                                                       |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `briefing`      | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose.                                  |
+| `size_bounds`   | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
+| `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation.                                      |
+
+For example, this removes only the live-session limit and preserves the
+briefing and size bounds:
+
+```json
+{ "expected_revision": 13, "live_sessions": null }
+```
+
+The granted-services list is deliberately absent from every settings payload.
+When grants exist it is generated from the session's actual grants and inserted
+between `reach_lead` and `reach_close` while the briefing is rendered. With no
+grants, `reach_none` is rendered instead. A request cannot remove, replace, or
+forge the generated list; it controls only the prose around it.
+
+Only Codex currently reads the briefing document. Claude Code and the DeepSeek
+Harness do not receive it. The setting is read when a runtime is provisioned;
+changing it does not rewrite a runtime that is already running. Clearing the
+prose is permitted, but doing so removes the guidance that the session is
+already authenticated and that `nyxid login` will fail.
+
+The empty body below is not a valid no-op and returns `422 invalid_request`:
+
+```json
+{ "expected_revision": 12 }
+```
+
+Unknown fields are also refused. A malformed settings body never echoes the
+administrator's prose in its problem response.
+
+Every write is optimistic. A PUT, PATCH, or reset whose `expected_revision` is no
+longer current changes nothing and returns:
+
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
+
+{
+  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/settings-conflict",
+  "title": "settings conflict",
+  "status": 409,
+  "detail": "the platform's settings changed since they were read: these settings were changed by somebody else since you read them",
+  "code": "settings_conflict"
+}
+```
+
+On `settings_conflict`, read again and let the operator choose whether to load
+the current values or retain their draft and explicitly repeat the write
+against the new revision. A client must not silently retry with last-write-wins
+semantics.
+
+On a deployment with no settings store, `GET` still returns the shipped
+defaults at revision `0`; `PUT`, `PATCH`, and reset return `503
+settings_unavailable` rather than claiming an unwritten change succeeded. A
+configured store that cannot be read or written uses the same 503 code. These
+write routes return the 403 `not-an-operator` refusal described above when the
+caller lacks `configure_platform`, and a stale revision always returns the 409
+`settings_conflict` response without changing the stored document.
+
+Reset restores only the shipped briefing. It preserves the current size bounds
+and live-session limit, increments the revision, and records the complete
+pre-reset object as `previous`:
+
+```http
+POST /api/v1/admin/settings/reset
+Content-Type: application/json
+
+{ "expected_revision": 13 }
+```
+
+Its successful response has the same complete `revision`, `settings`, and
+`previous` shape as GET and PATCH. It is conditional in exactly the same way
+and returns `409 settings_conflict` rather than resetting a revision the caller
+did not inspect.
 
 ### Registered users
 
@@ -474,6 +1143,15 @@ GET /api/v1/admin/activity?actor=76fe9d91&limit=100
 ```
 
 Every request the control plane serves is recorded: who, when, what, with which parameters, and how it came out. `outcome` is one of `succeeded`, `denied` (turned away), `rejected` (sent something unusable), `failed` (our fault). `actor` is absent when the request carried no established identity — a refused caller is recorded precisely because they were refused.
+
+Settings reads are recorded as `platform_settings_read`; successful `PUT` and
+`PATCH` requests, and their refusals, are `platform_settings_write`. The reset
+route retains its more specific `platform_settings_reset` action. A successful
+write may carry `detail.setting`, a comma-joined list in declaration order of
+the settings that actually changed, such as `"briefing,pricing"`. When pricing
+changed it may also carry `detail.rate_card`, the identifier of the newly
+in-force sealed card. A no-op write invents neither detail. These entries never
+copy a rate, a monetary amount, or any administrator-authored briefing prose.
 
 **`detail` never contains a secret.** What may be recorded is an allowlist in the core, and there is no key in it for an environment variable's value, a credential, a token, a cookie or a header. A bundle of variables is described by how many it carried, never by what they were. Newest first; `limit` is clamped by the service. Entries expire on a schedule the deployment sets (`CHRONO_ACTIVITY_RETENTION_DAYS`, ninety days by default).
 
@@ -516,7 +1194,8 @@ A browser client asks who it is at `GET /auth/session`, and the answer says what
 ```json
 { "authenticated": true, "subject": "76fe9d91",
   "display_name": "Ada Lovelace", "email": "ada@example.com",
-  "capabilities": ["read_all_sessions", "read_user_directory", "control_any_session"] }
+  "capabilities": ["read_all_sessions", "read_user_directory", "control_any_session",
+                   "configure_platform"] }
 ```
 
 The names are the core's capabilities, not the identity provider's permissions: a client is never given the provider's vocabulary, because role names, their nesting and their wildcards belong to whoever issues them and change without this service moving. An unauthenticated caller gets `401` with `{"authenticated": false}` and no `capabilities` key at all — there is no identity to have an entitlement.

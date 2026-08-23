@@ -5,128 +5,416 @@
  * contained here rather than pushing the terminal down the document.
  */
 
+/*
+ * The list fills the column it is given. §9 moved the width decision into the
+ * frame's solver — which is what makes the column draggable — so a width
+ * declared here would be one the solver cannot honour, and the two would
+ * disagree at every size. The fill and the right border belong to the column
+ * as well, for the same reason.
+ */
 .rail {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1;
   flex-direction: column;
-  width: var(--rail-width);
   min-height: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--rule);
-}
-
-/*
- * The head band. Its height comes from .band--head, so it lands on the session
- * header's rule to the pixel; nothing here may add padding to the block axis,
- * because accumulated padding is exactly what lets two aligned columns drift
- * apart when one gains a longer label.
- */
-.rail__head {
-  gap: var(--space-2);
-}
-
-/*
- * The second band — the one documented exception to the row shape (§5). It
- * stacks rather than laying out in a row, and sits below the head band so the
- * head rule still runs straight across every column.
- */
-.rail__chrome {
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: stretch;
-  padding-block: var(--space-2);
-  border-bottom: 1px solid var(--rule);
-}
-
-/*
- * The filter pills and the sort control share one row. The pills are the
- * shared .tag vocabulary with counts; the row scrolls nothing and wraps
- * nothing — a filter row that re-wraps as counts change is a row that moves.
- */
-.rail__filters {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-  min-width: 0;
-}
-
-.rail__filter {
-  cursor: pointer;
 }
 
 /*
  * Rows are the shared .row-item vocabulary — 12px-padded, 12px-radius targets
  * (§12). The list carries the side padding that lets each row's radius show.
  */
-.rail__list {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin: 0;
-  padding: var(--space-2);
-  overflow-y: auto;
-  list-style: none;
-}
-
-/* The collapsed strip's dots keep their own geometry. */
-.rail__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-/* ── Collapsed, §7 ───────────────────────────────────────────────────────
- *
- * A handle, never nothing: 48px of strip keeping both bands, so the way back
- * is exactly where the panel was and the page's rules still line up.
- */
-
-.rail--collapsed {
-  width: var(--rail-collapsed);
-  align-items: center;
-}
-
-.rail--collapsed .rail__head,
-.rail__chrome--collapsed {
-  justify-content: center;
-  width: 100%;
-  padding-inline: 0;
-}
-
 /*
- * The summary of what the strip hides: the dots in state order and a count.
- * Collapsing gives up detail, not awareness.
+ * The list is the only thing in this column that scrolls, and its gutter is
+ * reserved whether or not a thumb is showing: without that, a list crossing
+ * the scroll threshold shifts every row sideways by the bar's width.
  */
-.rail__summary {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: center;
-  min-height: 0;
+/*
+ * One list per group, and none of them scrolls: `.rail__groups` is the single
+ * scrollport, so a long Active group and an open Terminated one share one
+ * scrollbar rather than nesting three. The gutter moved with it.
+ */
+.rail__list {
+  position: relative;
+  flex: none;
   margin: 0;
-  padding: var(--space-3) 0;
-  overflow-y: auto;
+  padding: 0 0 8px;
   list-style: none;
-}
-
-.rail__summaryitem {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: center;
-}
-
-.rail__summarycount {
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-3);
 }
 
 .rail__empty {
   margin: 0;
-  padding: var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  color: var(--ink-3);
+  padding: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/*
+ * The header — one 36px row. It had two bands; the new-session key went to
+ * the sidebar and the filters and the sort went onto the view-options card,
+ * and what that bought is this height going to the list.
+ */
+.rail__header {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  height: 36px;
+  padding: 0 4px 0 8px;
+}
+
+/*
+ * The row's control sits at its far edge, not against the label. `flex: 1` on
+ * the label with a 45% cap left the trigger stranded mid-row, reading as
+ * punctuation after the word rather than as the control for the row.
+ */
+.rail__optionsanchor {
+  margin-left: auto;
+}
+
+.rail__label {
+  flex: 1;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail__options {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.rail__options:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rail__options:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * A row and the menu anchored to it. The actions key is drawn only on hover
+ * or focus: a column of ellipses down the list is noise, and the row itself
+ * is what somebody is aiming at.
+ */
+.rail__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.row-item__more {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.rail__row:hover .row-item__more,
+.row-item__more:focus-visible,
+.row-item__more[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.row-item__more:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.row-item__more:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * The status slot is held whether or not there is a dot in it, so an ended
+ * session's title starts where every other one does.
+ */
+.row-item__dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+}
+
+/*
+ * A row — `docs/Web_Style.md` §10.
+ *
+ * 32px when it says only what a session is, and taller when it has something
+ * to add. That second line is what makes this a list of work rather than a
+ * list of times, so the row grows for it rather than truncating it away.
+ */
+.row-item {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 0 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 8px;
+  font-family: var(--dsw-font-family);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.row-item:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/*
+ * Selected takes the same fill as hover, deliberately. It is the row the
+ * centre column is already showing — the surface beside it is the loud
+ * signal, and a second one here would compete with it.
+ */
+.row-item[aria-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.row-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.row-item__subject {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * What the session last did. It never wraps: a row that grows with its
+ * longest sentence makes the list a different height every time it reloads.
+ */
+.row-item__activity {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-item__activity:empty {
+  display: none;
+}
+
+/* ── Groups ──────────────────────────────────────────────────────────────
+ *
+ * Active, Paused, Terminated. The list scrolls as one column rather than three,
+ * so a long Active group and an open Terminated one share a single scrollbar
+ * instead of nesting scrollports.
+ */
+.rail__groups {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.rail__group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+
+/*
+ * §14a: rows arriving fade, and nothing moves position. A row that slides in
+ * pushes everything under it, and a list that reflows while somebody is
+ * reading it is worse than one that simply appears.
+ */
+@keyframes row-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.rail__row {
+  animation: row-arrive var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail__row {
+    animation: none;
+  }
+}
+
+/*
+ * The header is the control. A separate chevron button would be a second
+ * target for one action, and the row is already the size of one.
+ */
+.rail__grouphead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail__grouphead {
+    transition: none;
+  }
+}
+
+.rail__grouphead:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rail__grouphead:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Points down when open and right when shut, which is the one convention for
+   a disclosure that needs no label. */
+.rail__groupmark {
+  flex: none;
+  transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.rail__groupmark--shut {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail__groupmark {
+    transition: none;
+  }
+}
+
+.rail__groupname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On the header, so a closed group still says how much is inside it. */
+.rail__groupcount {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * §14a: what a list looks like while it is being read.
+ *
+ * Rows where rows will be, rather than a sentence alone in an empty column —
+ * and never "No sessions yet.", which is an answer this surface does not have
+ * until the read returns.
+ *
+ * The sweep is the reasoning row's, on the same reasoning: it says the surface
+ * is live without claiming to know how far along anything is, which is what a
+ * filling bar would claim and nothing here could honour.
+ */
+.rail__waiting {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+/*
+ * The reference skeleton ground stays visible on the flat light ramp. Its
+ * sweep is composed from the appearance's own white-bearing alias: the page
+ * ground in Inkwell and primary ink in Lumen.
+ */
+.rail__ghost {
+  position: relative;
+  height: 32px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-skeleton);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.rail__ghost::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 65%, transparent),
+    transparent
+  );
+  content: '';
+  animation: rail-sweep 2.6s var(--ds-ease-in-out) infinite;
+}
+
+body[data-ds-dark-theme] .rail__ghost::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent),
+    transparent
+  );
+}
+
+@keyframes rail-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/*
+ * It stops entirely rather than slowing: an animation that never ends is
+ * exactly what a reduced-motion request is about. The rows stay, because they
+ * are what says the list is being read.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .rail__ghost::after {
+    animation: none;
+    content: none;
+  }
 }

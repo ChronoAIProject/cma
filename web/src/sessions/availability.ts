@@ -1,5 +1,44 @@
 import type { Session } from './types';
 
+/** What `GET /api/v1/sessions/allowance` permits this caller. */
+export interface Allowance {
+  /** Absent when the deployment sets no limit. */
+  readonly limit?: number;
+  readonly live: number;
+  readonly exempt: boolean;
+}
+
+/** Whether another session may be started, and why not. */
+export interface CreationAbility {
+  readonly canCreate: boolean;
+  /** Present exactly when `canCreate` is false, in the owner's terms. */
+  readonly reason?: string;
+}
+
+/**
+ * Decide whether to offer another session from one advisory answer.
+ *
+ * `undefined` means the client could not ask, and it enables: a failed
+ * courtesy read must not disable the only way to start work. The create
+ * request remains authoritative in every case.
+ */
+export function creationAbilityFor(allowance: Allowance | undefined): CreationAbility {
+  if (allowance === undefined || allowance.exempt || allowance.limit === undefined) {
+    return { canCreate: true };
+  }
+  const { limit, live } = allowance;
+  if (live < limit) {
+    return { canCreate: true };
+  }
+  return {
+    canCreate: false,
+    reason:
+      live === limit
+        ? `You have ${String(live)} of ${String(limit)} sessions running. Pause or end one to start another.`
+        : `You have ${String(live)} sessions running and the limit is ${String(limit)}. Pause or end sessions until fewer than ${String(limit)} are running.`,
+  };
+}
+
 /**
  * What can be done to a session in each of its states.
  *
@@ -35,7 +74,7 @@ export interface SessionAbilities {
   readonly reason?: string;
 }
 
-export function abilitiesFor(session: Session): SessionAbilities {
+export function abilitiesFor(session: Session, signingIn = false): SessionAbilities {
   switch (session.lifecycle) {
     case 'provisioning':
       // The sandbox is not there yet, so there is nothing to type into and
@@ -48,7 +87,15 @@ export function abilitiesFor(session: Session): SessionAbilities {
         canRevive: false,
         canDelete: true,
         listed: true,
-        reason: 'This session is still starting.',
+        /*
+         * A session waiting on its owner's sign-in is `provisioning` too, and
+         * telling them it is starting sends them to wait for something that
+         * is waiting for them. The abilities are identical either way — there
+         * is still nothing to type into — so only the sentence changes.
+         */
+        reason: signingIn
+          ? 'This session is waiting for you to sign in.'
+          : 'This session is still starting.',
       };
     case 'ready':
     case 'running':
@@ -88,7 +135,7 @@ export function abilitiesFor(session: Session): SessionAbilities {
         canRevive: true,
         canDelete: true,
         listed: true,
-        reason: 'This session is stopped. Revive it to carry on.',
+        reason: 'This session is paused. Resume it to carry on.',
       };
     case 'terminated':
       return {

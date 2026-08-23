@@ -70,11 +70,25 @@ pub struct Deployment {
     /// something it cannot be given, and is refused by name rather than started
     /// without it.
     pub provided_packages: Vec<String>,
-    /// Skills the agent in this image can already load, by identifier.
+    /// Where this kernel reads standing instructions, relative to the home.
     ///
-    /// Same rule and the same reason: no delivery channel exists, so anything
-    /// beyond this is a promise the session could not keep.
-    pub provided_skills: Vec<String>,
+    /// The kernel's own convention, which is why it is named in the kernel's
+    /// own directory. Empty means this kernel reads none, and the note below
+    /// is simply not written.
+    pub agent_notes: String,
+    /// Where this kernel reads its skills, relative to the pod's home.
+    ///
+    /// The kernel's own business, which is why it is set in the kernel's own
+    /// directory rather than decided here. Empty means this kernel has no
+    /// skills directory, and a session asking for skills on it is refused by
+    /// name rather than started without them.
+    ///
+    /// This replaced `provided_skills`, which listed what the image was said
+    /// to carry and was assigned the very list it was checked against — so a
+    /// skill could never be found missing, and none was ever installed. The
+    /// premise under it, that nothing can be delivered into a sandbox, was
+    /// already false: a conversation is handed to a pod exactly that way.
+    pub skills_root: String,
 }
 
 impl Deployment {
@@ -90,9 +104,20 @@ impl Deployment {
             ("TERM".to_string(), "xterm-256color".to_string()),
             // The supervisor forwards here and attaches the owner's credential.
             // The credential itself never travels as environment.
+            //
+            // Empty for a session spending its owner's own account, which
+            // stops the supervisor starting the credential proxy at all. That
+            // is a safety property rather than tidiness: with a proxy running
+            // and a configuration that no longer points at it, the platform's
+            // credential would be sitting one configuration mistake away from
+            // paying for a session its owner was told they were funding
+            // themselves. Nothing to point at is the stronger guarantee.
             (
                 "CHRONO_UPSTREAM_BASE_URL".to_string(),
-                self.upstream_base_url.clone(),
+                match spec.options.own_credential {
+                    true => String::new(),
+                    false => self.upstream_base_url.clone(),
+                },
             ),
             (
                 "CHRONO_UPSTREAM_MODEL".to_string(),
@@ -172,9 +197,10 @@ impl Deployment {
                 "this runtime's image does not carry {missing}, and software cannot be installed into a running sandbox"
             )));
         }
-        if let Some(missing) = absent(&environment.skills, &self.provided_skills) {
+        if !environment.skills.is_empty() && self.skills_root.trim().is_empty() {
             return Err(AdapterError::Unsupported(format!(
-                "this runtime's agent cannot load the skill {missing}, and skills cannot be delivered into a running sandbox"
+                "this runtime's agent reads no skills, so it cannot be given {}",
+                environment.skills.join(", ")
             )));
         }
         Ok(())

@@ -94,9 +94,9 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
 
 /// Apply what this deployment configures onto a kernel's own defaults.
 ///
-/// The sandbox's size and image, the identity platform, and what the image was
-/// built carrying are facts about this deployment rather than about an agent,
-/// so they are stated once and every kernel gets the same ones.
+/// The sandbox's default size and image, the identity platform, and what the
+/// image was built carrying are facts about this deployment rather than about
+/// an agent, so they are stated once and every kernel gets the same ones.
 ///
 /// Written as an overlay rather than as a constructor on purpose. A
 /// constructor here would return a whole `Deployment`, and every field it did
@@ -110,11 +110,12 @@ fn deploy(config: &Config, deployment: &mut Deployment) {
         ("memory".to_string(), config.sandbox_memory.clone()),
     ]);
     deployment.platform_base_url = config.platform_base_url.clone();
-    // What the image is built with, which is the same list this deployment
-    // promises every session. Stated to the adapter so a profile asking for
-    // anything else is refused at provision rather than started without it.
+    // What the image is built with. Skills are deliberately absent from this:
+    // they used to be assigned the very list they were checked against, so a
+    // skill could never be found missing — and none was ever installed. They
+    // are delivered now, so where each kernel reads them is that kernel's own
+    // business and is set in its own directory.
     deployment.provided_packages = config.baseline_packages.clone();
-    deployment.provided_skills = config.baseline_skills.clone();
 }
 
 #[cfg(test)]
@@ -159,27 +160,51 @@ mod tests {
 
     #[test]
     fn every_kernel_is_deployed_into_the_same_sandbox() {
-        // Sizing and the baseline are facts about this deployment rather than
-        // about an agent, so a kernel that got different ones would be a
-        // session whose cost and promises depended on which agent it picked.
+        // The image, the baseline and the deployment's default size are facts
+        // about this deployment rather than about an agent, so a kernel that
+        // got different ones would be a session whose cost and promises
+        // depended on which agent it picked.
+        //
+        // Per-session sizing moves this rather than retiring it. A session's
+        // size may now vary by owner, and must still never vary by kernel. What
+        // `deploy` writes here is the floor a session that states no size falls
+        // back to, and all three kernels must fall back to the same one.
         let config = deployment_config();
-        let mut codex = CodexSandboxSpec::default();
-        let mut claude_code = ClaudeCodeSandboxSpec::default();
-        deploy(&config, &mut codex.deployment);
-        deploy(&config, &mut claude_code.deployment);
+        let mut deployments = [
+            CodexSandboxSpec::default().deployment,
+            ClaudeCodeSandboxSpec::default().deployment,
+            DshSandboxSpec::default().deployment,
+        ];
+        for deployment in &mut deployments {
+            deploy(&config, deployment);
+        }
 
-        assert_eq!(
-            codex.deployment.shape.image,
-            claude_code.deployment.shape.image
-        );
-        assert_eq!(
-            codex.deployment.shape.resource_limits,
-            claude_code.deployment.shape.resource_limits
-        );
-        assert_eq!(
-            codex.deployment.provided_packages,
-            claude_code.deployment.provided_packages
-        );
+        for pair in deployments.windows(2) {
+            assert_eq!(pair[0].shape.image, pair[1].shape.image);
+            assert_eq!(pair[0].shape.resource_limits, pair[1].shape.resource_limits);
+            assert_eq!(
+                pair[0].shape.telemetry_interval_ms,
+                pair[1].shape.telemetry_interval_ms
+            );
+            assert_eq!(pair[0].provided_packages, pair[1].provided_packages);
+        }
+    }
+
+    #[test]
+    fn only_codex_declares_a_standing_instructions_file() {
+        // Shipping the setting before the other kernels read an instruction
+        // file was an explicit product decision. An empty path is the adapter's
+        // positive statement that no file is written for that kernel.
+        let mut codex = CodexSandboxSpec::default().deployment;
+        let mut claude_code = ClaudeCodeSandboxSpec::default().deployment;
+        let mut dsh = DshSandboxSpec::default().deployment;
+        for deployment in [&mut codex, &mut claude_code, &mut dsh] {
+            deploy(&deployment_config(), deployment);
+        }
+
+        assert_eq!(codex.agent_notes, "AGENTS.md");
+        assert!(claude_code.agent_notes.is_empty());
+        assert!(dsh.agent_notes.is_empty());
     }
 
     #[test]

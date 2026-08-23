@@ -1,10 +1,20 @@
 import { Suspense, lazy } from 'react';
-import { IntroTerminal } from './landing/IntroTerminal';
-import { PageFrame } from './shell/PageFrame';
+import { Landing } from './landing/Landing';
 import { useAuth } from './auth/context';
+/*
+ * Mount order matters — `docs/Web_Style.md` §2. The palette sheets must be
+ * parsed before anything reads an alias off them, and `tokens.css` first
+ * because the others reference the font stacks and the easing curve it
+ * declares.
+ */
 import './styles/tokens.css';
+import './styles/design-platform.css';
+import './styles/effects-typography.css';
+import './styles/scrollbar.css';
+import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
+import './AppError.css';
 
 /*
  * The console pulls in xterm.js, roughly 400KB before compression. A visitor
@@ -52,20 +62,20 @@ export function App() {
     case 'error':
       return (
         <main className="app-error" role="alert">
-          <p>{state.message}</p>
-          <p>Reload the page to try again.</p>
+          <p className="app-error__what">{state.message}</p>
+          <p className="app-error__next">Reload the page to try again.</p>
         </main>
       );
 
     case 'anonymous':
       return (
-        // The same frame as the signed-in state: a visitor and an owner are
-        // looking at one product, not two. No view switch, because a visitor
-        // has no views to move between — the switch is not navigation and is
-        // not drawn where there is nothing to select.
-        <PageFrame showing="Signed out">
-          <IntroTerminal />
-        </PageFrame>
+        /*
+         * No frame at all. §9's frame is three columns of session, and a
+         * visitor has no sessions — wrapping the landing in an empty sidebar
+         * and an empty details column would draw two panels that say nothing
+         * and cannot be opened.
+         */
+        <Landing />
       );
 
     default: {

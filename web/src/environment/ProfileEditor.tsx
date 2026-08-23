@@ -2,11 +2,11 @@ import { Button } from '../ui/Button';
 import { useId, useState } from 'react';
 import { ServicePicker } from './ServicePicker';
 import { SkillPicker } from './SkillPicker';
-import { Chip } from '../ui/Chip';
-import { Select } from '../ui/Select';
+import { Pill } from '../ui/Pill';
+import { Picker } from '../ui/Picker';
 import { CREDENTIALS, EFFORTS, PERMISSIONS } from '../sessions/options';
-import { kernelLabel, modesOf, planeRefusal, PLANES } from '../sessions/kernels';
-import type { KernelOffer, SessionPlane } from '../sessions/types';
+import { kernelLabel, planeRefusal } from '../sessions/kernels';
+import type { KernelOffer } from '../sessions/types';
 import type {
   CatalogSkill,
   MandatoryEntries,
@@ -15,6 +15,7 @@ import type {
   ProfileVariable,
 } from './types';
 import { isValidKey } from './types';
+import { Input } from '../ui/Input';
 
 /**
  * The profile form, in two halves.
@@ -70,10 +71,10 @@ export function ProfileEditor({
   const nameId = useId();
   const packagesId = useId();
   const kernelId = useId();
-  const planeId = useId();
   const modelId = useId();
   const effortId = useId();
   const permissionId = useId();
+  const notesId = useId();
   const credentialId = useId();
   /*
    * Which values are currently shown. A variable's value is where a user puts
@@ -116,9 +117,9 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={nameId}>
           Name
         </label>
-        <input
+        <Input
           id={nameId}
-          className="field__input"
+          placement="field__input"
           value={draft.name}
           onChange={(event) => {
             onChange({ ...draft, name: event.target.value });
@@ -132,7 +133,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={kernelId}>
           Agent
         </label>
-        <Select
+        <Picker
           id={kernelId}
           label="Agent"
           value={draft.agent.kernel}
@@ -141,30 +142,12 @@ export function ProfileEditor({
             onChange({ ...draft, agent: { ...draft.agent, kernel } });
           }}
         />
-      </div>
-
-      <div className="field">
-        <label className="field__label" htmlFor={planeId}>
-          Plane
-        </label>
         {/*
-         * On the profile because that is where the core keeps it: a session
-         * cannot be moved onto the other plane without being rotated, so two
-         * sessions started from one profile must agree about which they are.
+         * Under the agent, which is the only choice that can produce it now
+         * that the plane is not asked. A profile describes a conversation; a
+         * runtime that cannot hold one is refused by name here rather than at
+         * the moment somebody tries to start a session from it.
          */}
-        <Select
-          id={planeId}
-          label="Plane"
-          value={draft.agent.mode}
-          options={planeOptions(kernels, draft.agent.kernel)}
-          onChange={(mode: SessionPlane) => {
-            onChange({ ...draft, agent: { ...draft.agent, mode } });
-          }}
-        />
-        <span className="field__hint">
-          A terminal is a screen someone types at; a conversation is messages, tool calls and
-          approvals. Fixed for a session's life.
-        </span>
         {refusal === undefined ? null : (
           <p className="field__error" role="alert">
             {refusal}
@@ -176,9 +159,9 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={modelId}>
           Model
         </label>
-        <input
+        <Input
           id={modelId}
-          className="field__input"
+          placement="field__input"
           aria-describedby={`${modelId}-hint`}
           value={draft.agent.model ?? ''}
           onChange={(event) => {
@@ -198,7 +181,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={effortId}>
           Thinking effort
         </label>
-        <Select
+        <Picker
           id={effortId}
           label="Thinking effort"
           value={draft.agent.reasoningEffort}
@@ -216,7 +199,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={permissionId}>
           Permissions
         </label>
-        <Select
+        <Picker
           id={permissionId}
           label="Permissions"
           value={draft.agent.permission}
@@ -231,7 +214,7 @@ export function ProfileEditor({
         <label className="field__label" htmlFor={credentialId}>
           Model access
         </label>
-        <Select
+        <Picker
           id={credentialId}
           label="Model access"
           value={draft.agent.credential}
@@ -274,14 +257,36 @@ export function ProfileEditor({
         />
       </div>
 
+      <div className="field">
+        <label className="field__label" htmlFor={notesId}>
+          Standing instructions
+        </label>
+        <p className="field__hint">
+          Written into every session started from this profile, before the agent does anything.
+          Yours alone — the platform adds its own section above this one, telling the session it is
+          already signed in and which services it may reach. Platform administrators control that
+          section separately; this profile changes only your instructions.
+        </p>
+        <textarea
+          id={notesId}
+          className="field__input editor__notes"
+          rows={6}
+          value={draft.agentNotes}
+          placeholder="e.g. Always run the tests before saying you are done."
+          onChange={(event) => {
+            onChange({ ...draft, agentNotes: event.target.value });
+          }}
+        />
+      </div>
+
       <h3 className="editor__section">Environment configuration</h3>
       <div className="field">
         <label className="field__label" htmlFor={packagesId}>
           Software
         </label>
-        <input
+        <Input
           id={packagesId}
-          className="field__input"
+          placement="field__input"
           aria-describedby={`${packagesId}-hint`}
           value={chosen
             .map((p) => (p.version === undefined ? p.name : `${p.name}@${p.version}`))
@@ -300,9 +305,7 @@ export function ProfileEditor({
               {' '}
               Every session also carries{' '}
               {mandatory.packages.map((name) => (
-                <Chip inline key={name}>
-                  {name}
-                </Chip>
+                <Pill key={name}>{name}</Pill>
               ))}
             </>
           )}
@@ -320,8 +323,8 @@ export function ProfileEditor({
               // is named, and keying on a name that is being typed remounts
               // the field on every keystroke and loses the caret.
               <div className="pair" key={index}>
-                <input
-                  className="field__input"
+                <Input
+                  placement="field__input"
                   aria-label={`Variable ${index + 1} name`}
                   aria-invalid={variable.key.length > 0 && !isValidKey(variable.key)}
                   value={variable.key}
@@ -329,8 +332,8 @@ export function ProfileEditor({
                     setVariable(index, { ...variable, key: event.target.value });
                   }}
                 />
-                <input
-                  className="field__input"
+                <Input
+                  placement="field__input"
                   type={revealed.includes(index) ? 'text' : 'password'}
                   aria-label={`Variable ${index + 1} value`}
                   value={variable.value}
@@ -354,7 +357,7 @@ export function ProfileEditor({
                   </span>
                 </Button>
                 <Button
-                  tone="danger"
+                  variant="primary"
                   onClick={() => {
                     setRevealed((current) => current.filter((i) => i !== index));
                     onChange({
@@ -429,15 +432,4 @@ function kernelOptions(kernels: readonly KernelOffer[], chosen: string) {
     },
     ...offered,
   ];
-}
-
-/** The planes this runtime serves, with the rest shown refused rather than hidden (§7). */
-function planeOptions(kernels: readonly KernelOffer[], kernel: string) {
-  const modes = modesOf(kernels, kernel);
-  return PLANES.map((plane) => ({
-    value: plane.id,
-    label: plane.label,
-    unavailable:
-      modes === undefined || modes.includes(plane.id) ? undefined : `Not on ${kernelLabel(kernel)}`,
-  }));
 }

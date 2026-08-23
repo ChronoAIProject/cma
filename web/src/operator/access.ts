@@ -16,7 +16,7 @@ import type { AdminSession } from './types';
  */
 
 /** Which of the panel's views this is. */
-export type OperatorViewId = 'people' | 'activity' | 'namespace' | 'sessions';
+export type OperatorViewId = 'people' | 'activity' | 'namespace' | 'sessions' | 'settings';
 
 /** One view of the operator panel, and what a caller must hold to see it. */
 export interface OperatorView {
@@ -34,16 +34,18 @@ export interface OperatorView {
 }
 
 /**
- * The four views, in the order the panel offers them.
+ * The five views, in the order the panel offers them.
  *
- * People first because every other view names them, then what the service was
- * asked to do, then what is running, then the one view that acts.
+ * People first because every other record view names them, then what the
+ * service was asked to do, then what is running, then the view that acts on
+ * sessions. Deployment policy follows those operational records.
  */
 export const OPERATOR_VIEWS: readonly OperatorView[] = [
   { id: 'people', label: 'People', capability: 'read_user_directory' },
   { id: 'activity', label: 'Activity', capability: 'read_activity_log' },
   { id: 'namespace', label: 'Namespace', capability: 'read_runtime_inventory' },
   { id: 'sessions', label: 'Sessions', capability: 'read_all_sessions' },
+  { id: 'settings', label: 'Settings', capability: 'configure_platform' },
 ];
 
 /** The views this caller is offered. */
@@ -54,10 +56,11 @@ export function viewsFor(capabilities: readonly Capability[]): readonly Operator
 /**
  * Whether the panel is worth offering this caller at all.
  *
- * Read capabilities only. Somebody holding nothing but the power to stop a
+ * View capabilities only. Somebody holding nothing but the power to stop a
  * session cannot be shown one to stop — the panel has no view they may load —
- * and offering an empty dialog would be worse than not offering it: they would
- * open it looking for the thing they were told they could do.
+ * and offering an empty page would be worse than not offering it: they would
+ * open it looking for the thing they were told they could do. Configuring the
+ * platform is itself a view, so it does not require an unrelated read grant.
  */
 export function canOperate(capabilities: readonly Capability[]): boolean {
   return viewsFor(capabilities).length > 0;

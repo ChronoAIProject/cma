@@ -9,7 +9,11 @@
 
 use std::sync::Arc;
 
-use axum::{response::IntoResponse, routing::post, Router};
+use axum::{
+    response::IntoResponse,
+    routing::{post, put},
+    Router,
+};
 use layer2_core::{
     store::{ActivityStore, StoreError},
     ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, DetailKey,
@@ -19,7 +23,7 @@ use tokio::sync::Mutex;
 
 use super::ActivityRecorder;
 use crate::auth::{AuthMode, AuthState};
-use layer1_public::ActedUpon;
+use layer1_public::{ActedUpon, SettingsTouched};
 
 /// A store held in memory, so what was recorded can be read back exactly.
 #[derive(Default)]
@@ -287,4 +291,136 @@ async fn ending_your_own_session_names_nobody_else() {
     let entries = store.entries.lock().await.clone();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].detail.get(DetailKey::Subject), None);
+}
+
+/// Drive a settings write and carry only its handler-derived audit facts out.
+async fn call_settings(
+    store: Arc<FakeActivityStore>,
+    touched: Option<SettingsTouched>,
+    status: axum::http::StatusCode,
+    body: &'static str,
+) -> String {
+    let activity = ActivityService::new(Arc::clone(&store) as Arc<dyn ActivityStore>);
+    let auth = AuthState::new(
+        AuthMode::Trusted {
+            subject: "local-developer".into(),
+        },
+        None,
+    );
+    let seen = Arc::new(SeenBodies::default());
+
+    let app = Router::new()
+        .route(
+            "/api/v1/admin/settings",
+            put({
+                let seen = Arc::clone(&seen);
+                move |body: String| {
+                    let seen = Arc::clone(&seen);
+                    let touched = touched.clone();
+                    async move {
+                        seen.0.lock().await.push(body);
+                        let mut response = status.into_response();
+                        if let Some(touched) = touched {
+                            response.extensions_mut().insert(touched);
+                        }
+                        response
+                    }
+                }
+            }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            ActivityRecorder::new(activity),
+            super::record,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&auth),
+            crate::auth::attach_subject,
+        ));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port is available");
+    let addr = listener.local_addr().expect("the socket has an address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    reqwest::Client::new()
+        .put(format!("http://{addr}/api/v1/admin/settings"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("the request reaches the server");
+    server.abort();
+
+    let received = seen.0.lock().await.first().cloned().unwrap_or_default();
+    received
+}
+
+#[tokio::test]
+async fn a_settings_write_records_names_and_card_but_no_values_or_prose() {
+    const BODY: &str = r#"{"expected_revision":4,"settings":{"briefing":{"before":["private administrator wording"]},"pricing":{"cards":[{"micros":45000}]}}}"#;
+    let store = Arc::new(FakeActivityStore::default());
+    let seen = call_settings(
+        Arc::clone(&store),
+        Some(SettingsTouched {
+            changed: vec!["briefing", "pricing"],
+            rate_card: Some("rate_new".into()),
+        }),
+        axum::http::StatusCode::OK,
+        BODY,
+    )
+    .await;
+
+    assert_eq!(seen, BODY, "the handler must receive the body untouched");
+    let entries = store.entries.lock().await.clone();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry.action, ActivityAction::PlatformSettingsWrite);
+    assert_eq!(entry.outcome, ActivityOutcome::Succeeded);
+    assert_eq!(
+        entry.detail.get(DetailKey::Setting),
+        Some("briefing,pricing")
+    );
+    assert_eq!(entry.detail.get(DetailKey::RateCard), Some("rate_new"));
+    let rendered = serde_json::to_string(entry).expect("serialises");
+    assert!(!rendered.contains("private administrator wording"));
+    assert!(
+        !rendered.contains("45000"),
+        "a price reached the record: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn a_noop_settings_write_records_no_invented_detail() {
+    let store = Arc::new(FakeActivityStore::default());
+    call_settings(
+        Arc::clone(&store),
+        Some(SettingsTouched::default()),
+        axum::http::StatusCode::OK,
+        "{}",
+    )
+    .await;
+
+    let entries = store.entries.lock().await.clone();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].detail.is_empty());
+}
+
+#[tokio::test]
+async fn a_refused_settings_write_is_recorded_as_rejected() {
+    let store = Arc::new(FakeActivityStore::default());
+    call_settings(
+        Arc::clone(&store),
+        None,
+        axum::http::StatusCode::CONFLICT,
+        "{}",
+    )
+    .await;
+
+    let entries = store.entries.lock().await.clone();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].action, ActivityAction::PlatformSettingsWrite);
+    assert_eq!(entries[0].outcome, ActivityOutcome::Rejected);
 }

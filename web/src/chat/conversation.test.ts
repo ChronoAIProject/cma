@@ -16,18 +16,82 @@ import type { AguiEvent } from '../agui';
  * The run and thread identifiers are on every frame and matter to nothing this
  * reducer does, so they are filled in here rather than repeated in each case.
  */
-function delta(seq: number, path: string, value: Record<string, unknown>): AguiEvent {
+function delta(seq: number, path: string, value: unknown): AguiEvent {
   return {
     type: 'STATE_DELTA',
     seq,
     threadId: 'sesn_1',
     runId: 'run_1',
+    // A parsed event, not a wire frame: `delta` is what the service sends and
+    // `patch` is what this client calls it once read (sdk/wire.ts).
     patch: [{ op: 'add', path, value }],
   };
 }
 
 /** The stream as a client would have read it. */
 const stream = (events: readonly AguiEvent[]) => fold(events);
+
+describe('a runtime the session lost', () => {
+  it('folds the first loss into the conversation state', () => {
+    const state = stream([
+      delta(8, '/runtimeLosses/-', {
+        runtime: 'runtime-first',
+        cause: 'out_of_memory',
+        noticedAt: '2026-08-23T04:12:00Z',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toEqual({
+      runtime: 'runtime-first',
+      cause: 'out_of_memory',
+      noticedAt: '2026-08-23T04:12:00Z',
+      seq: 8,
+    });
+  });
+
+  it('lets the latest replayed loss supersede the first', () => {
+    const state = stream([
+      delta(8, '/runtimeLosses/-', {
+        runtime: 'runtime-first',
+        cause: 'failed',
+      }),
+      delta(19, '/runtimeLosses/-', {
+        runtime: 'runtime-second',
+        cause: 'displaced',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toEqual({
+      runtime: 'runtime-second',
+      cause: 'displaced',
+      noticedAt: undefined,
+      seq: 19,
+    });
+  });
+
+  it('ignores a malformed loss rather than building a partial fact', () => {
+    const state = stream([
+      delta(8, '/runtimeLosses/-', {
+        cause: 'failed',
+        noticedAt: '2026-08-23T04:12:00Z',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toBeUndefined();
+  });
+
+  it('continues to ignore an unrelated state path', () => {
+    const state = stream([
+      delta(8, '/somethingElse/-', {
+        runtime: 'not-a-runtime-loss',
+        cause: 'failed',
+      }),
+    ]);
+
+    expect(state.runtimeLoss).toBeUndefined();
+    expect(state.entries).toEqual([]);
+  });
+});
 
 describe('a plane change is a boundary', () => {
   it('draws where history stopped being continuous, and where the session went', () => {
@@ -63,6 +127,44 @@ describe('a plane change is a boundary', () => {
     expect(gaps).toHaveLength(2);
     expect(gaps[0]?.kind === 'gap' && gaps[0].movedTo).toBeUndefined();
     expect(gaps[1]).toMatchObject({ movedTo: 'terminal' });
+  });
+});
+
+describe('context readings and summary boundaries', () => {
+  it('keeps the last positive reading and the latest stated ceiling', () => {
+    const state = stream([
+      delta(1, '/usage/contextUsed', 198_000),
+      delta(2, '/usage/contextWindow', 200_000),
+      // Turn accounting has no context reading or ceiling. Its zero must not
+      // erase either fact already stated by the runtime update stream.
+      delta(3, '/usage/contextUsed', 0),
+      delta(4, '/usage/contextUsed', 42_100),
+    ]);
+
+    expect(state.usage).toMatchObject({ contextUsed: 42_100, contextWindow: 200_000 });
+  });
+
+  it('folds a complete summary boundary and drops incomplete ones', () => {
+    const state = stream([
+      delta(5, '/contextCompactions/-', { was: 198_000 }),
+      delta(6, '/contextCompactions/-', { now: 42_100 }),
+      delta(7, '/contextCompactions/-', {
+        was: 198_000,
+        now: 42_100,
+        window: 200_000,
+      }),
+    ]);
+
+    expect(state.entries).toEqual([
+      {
+        kind: 'contextCompaction',
+        id: 'context-compaction-7',
+        was: 198_000,
+        now: 42_100,
+        window: 200_000,
+        seq: 7,
+      },
+    ]);
   });
 });
 

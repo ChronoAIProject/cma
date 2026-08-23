@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { abilitiesFor, listable } from './availability';
+import { abilitiesFor, creationAbilityFor, listable } from './availability';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '../agui';
 
@@ -44,7 +44,7 @@ describe('what a session allows', () => {
     const can = abilitiesFor(session('idle'));
     expect(can.interactive).toBe(false);
     expect(can.canRevive).toBe(true);
-    expect(can.reason).toMatch(/revive/i);
+    expect(can.reason).toMatch(/resume/i);
   });
 
   it('keeps a stopped session in the list', () => {
@@ -102,6 +102,42 @@ describe('what a session allows', () => {
   });
 });
 
+describe('whether another session may be created', () => {
+  it('enables when the allowance could not be read', () => {
+    expect(creationAbilityFor(undefined)).toEqual({ canCreate: true });
+  });
+
+  it('enables an explicitly exempt caller', () => {
+    expect(creationAbilityFor({ limit: 3, live: 3, exempt: true })).toEqual({ canCreate: true });
+  });
+
+  it('enables when the deployment sets no limit', () => {
+    expect(creationAbilityFor({ live: 40, exempt: false })).toEqual({ canCreate: true });
+  });
+
+  it('enables while the caller remains below the limit', () => {
+    expect(creationAbilityFor({ limit: 3, live: 2, exempt: false })).toEqual({ canCreate: true });
+  });
+
+  it('disables at the limit and says how to make room', () => {
+    expect(creationAbilityFor({ limit: 3, live: 3, exempt: false })).toEqual({
+      canCreate: false,
+      reason: 'You have 3 of 3 sessions running. Pause or end one to start another.',
+    });
+  });
+
+  it('gives an owner already over the limit a distinct useful instruction', () => {
+    const atLimit = creationAbilityFor({ limit: 3, live: 3, exempt: false });
+    const overLimit = creationAbilityFor({ limit: 3, live: 4, exempt: false });
+    expect(overLimit).toEqual({
+      canCreate: false,
+      reason:
+        'You have 4 sessions running and the limit is 3. Pause or end sessions until fewer than 3 are running.',
+    });
+    expect(overLimit.reason).not.toBe(atLimit.reason);
+  });
+});
+
 describe('which sessions are listed', () => {
   it('drops sessions the owner ended', () => {
     // Asked for directly: an ended session must not stay in the left list.
@@ -133,5 +169,35 @@ describe('which sessions are listed', () => {
 
   it('handles an empty list', () => {
     expect(listable([])).toEqual([]);
+  });
+});
+
+/*
+ * A session waiting on its owner's sign-in — #361.
+ *
+ * It is `provisioning` and it takes no input, exactly like one whose sandbox
+ * is still being built, so nothing about what can be done changes. What
+ * changes is the sentence, and the sentence was sending people to wait for a
+ * thing that was waiting for them.
+ */
+describe('a session waiting for its owner to sign in', () => {
+  const provisioning = session('provisioning');
+
+  it('says it is waiting for them rather than that it is starting', () => {
+    expect(abilitiesFor(provisioning, true).reason).toBe(
+      'This session is waiting for you to sign in.',
+    );
+  });
+
+  it('still says it is starting when nothing is waiting on them', () => {
+    expect(abilitiesFor(provisioning).reason).toBe('This session is still starting.');
+  });
+
+  it('changes nothing about what can be done', () => {
+    // The distinction is what somebody is told, not what they may do: there is
+    // no runtime either way, so there is nothing to type into either way.
+    const plain = abilitiesFor(provisioning);
+    const waiting = abilitiesFor(provisioning, true);
+    expect({ ...waiting, reason: undefined }).toEqual({ ...plain, reason: undefined });
   });
 });

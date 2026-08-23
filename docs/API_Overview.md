@@ -134,6 +134,7 @@ The event log is the single source of truth and the reason every interface can b
   | `tool_call_started` · `tool_call_updated` | what it did, and where that got to |
   | `usage_reported` | totals, not deltas — a lost total is corrected by the next one |
   | `conversation_gap` | the boundary where part of a conversation was dropped rather than recorded |
+  | `runtime_lost` | the runtime under a session died, and why where the provider said |
   | `approval_requested` · `approval_resolved` | what it was blocked on, and how that was answered |
   | `terminal_attached` · `terminal_detached` · `terminal_resized` | who held the terminal, and at what size |
 

@@ -1,7 +1,10 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { Console } from '../Console';
 import { toSession } from '../api/client';
+import { ConversationSurface } from './ConversationSurface';
+import type { AguiTransport, OperationTransport } from '../agui';
 import type { Capability, User } from '../auth/types';
 
 /**
@@ -56,22 +59,83 @@ describe('the frame does not grow a third view', () => {
   it('still admits exactly two, and still carries no router', async () => {
     // §1, and this issue's own line: "this is not a third view and must not
     // become one." The frame is not navigation and the app has no router.
-    render(<Console user={user} onSignOut={() => {}} />);
-    const views = await screen.findByRole('group', { name: 'View' });
-
-    expect(within(views).getAllByRole('button')).toHaveLength(1);
-    expect(within(views).getByRole('button', { name: 'Sessions' })).toBeInTheDocument();
-  });
-
-  it('draws one rail, one session header and one sheet whatever the plane', async () => {
     const { container } = render(<Console user={user} onSignOut={() => {}} />);
     await waitFor(() => {
-      expect(container.querySelector('.console__body')).not.toBeNull();
+      expect(container.querySelector('.frame')).not.toBeNull();
     });
 
+    // Operations is the only other view there is, and this caller cannot
+    // reach it — so there is nowhere to go from here at all.
+    expect(screen.queryByRole('button', { name: 'Operations' })).toBeNull();
+  });
+
+  it('draws one sidebar, one rail and one session header whatever the plane', async () => {
+    const { container } = render(<Console user={user} onSignOut={() => {}} />);
+    await waitFor(() => {
+      expect(container.querySelector('.frame')).not.toBeNull();
+    });
+
+    expect(container.querySelectorAll('.sidebar')).toHaveLength(1);
     expect(container.querySelectorAll('.rail')).toHaveLength(1);
     expect(container.querySelectorAll('.sessionheader')).toHaveLength(1);
-    expect(container.querySelectorAll('.topbar')).toHaveLength(1);
-    expect(container.querySelectorAll('.statusband')).toHaveLength(1);
+  });
+});
+
+describe('runtime loss in the reading column', () => {
+  it('appears above the refusal it explains and above the message stream', async () => {
+    const person = userEvent.setup();
+    const session = toSession(payload('sesn_lost', ['conversation']));
+    const transport: AguiTransport = {
+      open: (_session, onFrame) => {
+        onFrame({
+          type: 'STATE_DELTA',
+          seq: 8,
+          threadId: 'sesn_lost',
+          runId: 'run_1',
+          delta: [
+            {
+              op: 'add',
+              path: '/runtimeLosses/-',
+              value: {
+                runtime: 'runtime-gone',
+                cause: 'failed',
+                noticedAt: '2026-08-23T04:12:00Z',
+              },
+            },
+          ],
+        });
+        return () => {};
+      },
+      history: () => Promise.resolve([]),
+    };
+    const operations: OperationTransport = {
+      send: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              code: 'capability_unsupported',
+              detail: 'capability not supported: conversation',
+            }),
+            { status: 422, headers: { 'content-type': 'application/problem+json' } },
+          ),
+        ),
+    };
+    render(
+      <ConversationSurface
+        session={session}
+        capabilities={session.capabilities}
+        transport={transport}
+        operations={operations}
+      />,
+    );
+
+    const loss = await screen.findByRole('status');
+    await person.type(screen.getByRole('textbox', { name: /message/i }), 'carry on');
+    await person.click(screen.getByRole('button', { name: /send message/i }));
+    const refusal = await screen.findByRole('alert');
+    const stream = screen.getByRole('log', { name: 'Conversation' });
+
+    expect(loss.compareDocumentPosition(refusal) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(loss.compareDocumentPosition(stream) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 });

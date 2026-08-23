@@ -1,0 +1,180 @@
+import { useState } from 'react';
+import { fullTimestamp } from '../sessions/sessionTime';
+import { IconCloseOutline16 } from '../ui/icons';
+import type { MemoryPressure, Resources as ResourceReading } from './conversation';
+import './Resources.css';
+
+interface ResourcesProps {
+  /** Whether the session was granted `resources` at all. */
+  readonly granted: boolean;
+  /** Whether this session's runtime image said it cannot report. */
+  readonly unreported?: boolean;
+  /** What has arrived, when anything has. */
+  readonly resources?: ResourceReading;
+  /** The open pressure episode, which gives the memory row its failure wording. */
+  readonly pressure?: MemoryPressure;
+}
+
+interface PressureNoticeProps {
+  readonly pressure?: MemoryPressure;
+}
+
+interface BoundedRowProps {
+  readonly label: string;
+  readonly used: number | undefined;
+  readonly limit: number | undefined;
+  readonly format: (value: number) => string;
+  readonly measuring?: boolean;
+  readonly pressure?: boolean;
+}
+
+const BYTE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB'] as const;
+
+/** Render one exact byte count without implying precision the reading lacks. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes.toLocaleString('en')} B`;
+  }
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1);
+  const amount = bytes / 1024 ** unit;
+  const figure =
+    amount < 100 ? amount.toFixed(1).replace(/\.0$/, '') : Math.round(amount).toLocaleString('en');
+  return `${figure} ${BYTE_UNITS[unit]}`;
+}
+
+/** Thousandths of a core, in the vocabulary container limits use. */
+function formatCpu(millis: number): string {
+  if (millis < 1000) {
+    return `${millis.toLocaleString('en')}m`;
+  }
+  const cores = millis / 1000;
+  const figure = cores.toFixed(1).replace(/\.0$/, '');
+  return `${figure} ${cores === 1 ? 'core' : 'cores'}`;
+}
+
+function percentage(used: number, limit: number): number {
+  if (limit === 0) {
+    return used === 0 ? 0 : 100;
+  }
+  return Math.min(100, Math.round((used / limit) * 100));
+}
+
+function BoundedRow({ label, used, limit, format, measuring, pressure }: BoundedRowProps) {
+  if (used === undefined) {
+    return (
+      <div className="resources__row">
+        <span className="resources__figure">
+          {label} · {measuring === true ? 'measuring' : 'not reported'}
+        </span>
+      </div>
+    );
+  }
+
+  const shownLabel = pressure === true ? `${label} under pressure` : label;
+  if (limit === undefined) {
+    return (
+      <div className="resources__row">
+        <span className="resources__figure">
+          {shownLabel} · {format(used)}, no ceiling reported
+        </span>
+      </div>
+    );
+  }
+
+  const percent = percentage(used, limit);
+  return (
+    <div className="resources__row">
+      <span className="resources__figure">
+        {shownLabel} · {format(used)} / {format(limit)}
+      </span>
+      <span
+        className="resources__track"
+        data-pressure={pressure === true ? 'true' : undefined}
+        role="progressbar"
+        aria-label={shownLabel}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <span className="resources__fill" style={{ width: `${String(percent)}%` }} />
+      </span>
+    </div>
+  );
+}
+
+/** A session's live CPU, memory, and unbounded network figures. */
+export function Resources({ granted, unreported, resources, pressure }: ResourcesProps) {
+  if (!granted) {
+    return <span className="resources__status">Resources not reported for this session</span>;
+  }
+  if (unreported === true) {
+    return (
+      <span className="resources__status">
+        This session's runtime cannot report what it is using
+      </span>
+    );
+  }
+  if (resources === undefined) {
+    return <span className="resources__status">Resources · waiting</span>;
+  }
+
+  const network =
+    resources.receivedBytes === undefined || resources.sentBytes === undefined
+      ? 'not reported'
+      : `↓ ${formatBytes(resources.receivedBytes)} · ↑ ${formatBytes(resources.sentBytes)}`;
+
+  return (
+    <div className="resources" aria-label="Resources">
+      <BoundedRow
+        label="Memory"
+        used={resources.memoryBytesUsed}
+        limit={resources.memoryBytesLimit}
+        format={formatBytes}
+        pressure={pressure !== undefined}
+      />
+      <BoundedRow
+        label="CPU"
+        used={resources.cpuMillisUsed}
+        limit={resources.cpuMillisLimit}
+        format={formatCpu}
+        measuring
+      />
+      <div className="resources__row">
+        <span className="resources__figure">Network · {network}</span>
+      </div>
+    </div>
+  );
+}
+
+/** The actionable, durable episode at the head of the reading column. */
+export function MemoryPressureNotice({ pressure }: PressureNoticeProps) {
+  const [dismissedSince, setDismissedSince] = useState<string | undefined>();
+  if (pressure === undefined || pressure.since === dismissedSince) {
+    return null;
+  }
+
+  const opened = Date.parse(pressure.since);
+  const openedAt = Number.isNaN(opened) ? pressure.since : fullTimestamp(opened);
+  return (
+    <div className="notice notice--fail chat__pressure" role="alert">
+      <div className="chat__pressure-copy">
+        <p className="notice__title">Memory pressure is high</p>
+        <p className="notice__detail">
+          {formatBytes(pressure.usedBytes)} used of {formatBytes(pressure.limitBytes)}. Opened at{' '}
+          <time dateTime={pressure.since}>{openedAt}</time>.
+        </p>
+      </div>
+      <button
+        type="button"
+        className="chat__pressure-dismiss"
+        aria-label="Dismiss memory pressure notice"
+        title="Dismiss memory pressure notice"
+        onClick={() => {
+          setDismissedSince(pressure.since);
+        }}
+      >
+        <IconCloseOutline16 size={14} />
+      </button>
+    </div>
+  );
+}

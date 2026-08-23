@@ -1,72 +1,148 @@
 /*
- * The composer — docs/Web_Style.md §18.4.
+ * The composer — docs/Web_Style.md §13.
  *
  * A card at the foot of the reading column, on the raised ground inside the
  * panel radius, resting: the field, then a row carrying what the session's
- * own policy means, interrupt while a turn is in flight, and the primary
- * send with its return hint.
+ * own policy means — and the send key beside the card rather than in it.
  */
 
+/*
+ * A row: the card takes the width it can, and the key sits at its end.
+ *
+ * Inside, the key floated over the bottom-right of a growing textarea, so a
+ * long draft pushed it down the column — the one control that commits the
+ * message moved while somebody was writing it. Outside it holds its place, and
+ * the pair keeps the reading column's width between them.
+ */
+/*
+ * Centred on each other, not aligned to a shared bottom edge.
+ *
+ * `flex-end` put the key against the card's bottom, which reads as level only
+ * while the field is one line — the card is a capsule with its own padding, so
+ * the key sat low against a rounded edge rather than on the same line as the
+ * text beside it. Centring holds as the field grows: the key stays on the
+ * middle of the box it belongs to, which is where the eye puts it.
+ */
 .composer-block {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  gap: 8px;
+  align-items: center;
 }
 
-.composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  background: var(--raised);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-rest);
+.composer-block > .composer {
+  flex: 1;
+  min-width: 0;
 }
 
 /*
- * The field grows to six lines and then scrolls inside itself. Borderless
+ * A capsule rather than a card. The radius is what makes it read as one
+ * control holding a field and its keys, rather than a panel with things
+ * arranged in it.
+ */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 0 0;
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 22px;
+  box-shadow: var(--dsw-shadow-lv2);
+}
+
+/*
+ * The field grows to six lines and then scrolls itself. Borderless
  * inside the card: the card is the field's edge.
+ *
+ * The cap counts both paddings. `border-box` includes them, so `6lh` plus one
+ * `--space-2` left room for about five and a half lines of text — the rule
+ * said six and the box delivered fewer, which is the kind of disagreement
+ * nobody reports and everybody feels.
+ */
+/*
+ * The card is the menu's anchor — §18.4. The list opens above the field, so
+ * the field's own card is what it is positioned against.
+ */
+.composer {
+  position: relative;
+}
+
+/*
+ * The field grows with what is typed and then scrolls inside itself, capped
+ * at fourteen lines. The cap is in line heights rather than pixels so it
+ * holds if the type scale moves.
  */
 .composer__field {
-  min-height: calc(var(--control-h) * 2);
-  max-height: calc(6lh + var(--space-2));
-  padding: var(--space-2);
+  min-height: 24px;
+  max-height: calc(14 * 24px);
+  padding: 4px 12px 0 16px;
   overflow-y: auto;
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-body);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 16px;
+  line-height: 24px;
   resize: none;
   background: none;
   border: 0;
+  outline: none;
+  /* The caret is the one blue thing in the field, and it marks where you are. */
+  caret-color: var(--dsw-alias-state-business-primary);
 }
 
 .composer__field::placeholder {
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-dimmed);
 }
 
+/*
+ * The field opts out of the global focus ring, and the capsule carries its
+ * focus instead.
+ *
+ * The ring is a square-cornered 4px halo drawn on the element that has focus
+ * — inside a 22px capsule that is a rectangle floating in a pill, which is
+ * what it looked like. A field's focus belongs to the control it is part of.
+ */
 .composer__field:focus-visible {
   outline: none;
+  box-shadow: none;
 }
 
+/*
+ * Focus is a border, not the ring.
+ *
+ * `--focus-ring` is a 4px double halo built for a discrete control somebody
+ * tabbed to. On a capsule the width of the reading column it is a permanent
+ * blue frame around the page's largest element, and `:focus-within` fires on
+ * a mouse click too — so it shouted on every interaction rather than marking
+ * a keyboard one. The field's own caret already says where the focus is.
+ */
 .composer:focus-within {
-  border-color: var(--rule-2);
-  box-shadow: var(--focus-ring);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
+/*
+ * Inset to the field's own left edge, and clear of the card's bottom corner.
+ *
+ * The row had no horizontal padding at all while the card has none either, so
+ * this sat flush against the border: the sentence started one pixel inside a
+ * 22px corner radius, drawn into the curve on two sides, and sixteen pixels
+ * out of line with the text it sits beneath. Measured, not inferred — under
+ * jsdom the row and the field report the same left edge and nothing is wrong.
+ */
 .composer__row {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   min-width: 0;
+  padding: 0 16px 10px;
 }
 
 /* What the policy means for the person typing, on the surface (§18.4). */
 .composer__note {
+  min-width: 0;
   overflow: hidden;
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -80,35 +156,87 @@
   min-width: 0;
 }
 
-.composer__hint {
-  color: var(--on-accent);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  opacity: 0.7;
-}
-
-/* Stated once, beneath the card. */
-.composer__keys {
-  margin: 0;
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  text-align: right;
-}
-
 /*
  * The refusal — §18.4: a dashed-border card carrying the reason and what to
  * do instead. Never merely inert.
  */
 .composer--refused {
   align-items: flex-start;
-  background: var(--surface);
+  background: var(--dsw-alias-bg-layer-1);
   border-style: dashed;
-  box-shadow: var(--lift-none);
+  box-shadow: none;
 }
 
 .composer__refusal {
   margin: 0;
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/*
+ * One key whose meaning follows the turn. A 34px circle, because it is the
+ * only thing on this row that is pressed often enough to be aimed at without
+ * looking.
+ */
+.composer__send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-info-fill);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.composer__send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.composer__send:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Stop keeps the same seat and the same size. Moving it would mean aiming
+ * somewhere new at exactly the moment somebody wants to stop something.
+ */
+.composer__send--stop {
+  background: var(--dsw-alias-label-primary);
+}
+
+/*
+ * Interrupt, where sending is still possible. Smaller than the send seat and
+ * beside it: they do different things, and the one that ends something should
+ * not be the one that is easiest to hit.
+ */
+.composer__interrupt {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.composer__interrupt:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.composer__interrupt:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }

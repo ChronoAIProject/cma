@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -12,6 +14,9 @@ const KERNELS: readonly KernelOffer[] = [
   { id: 'codex', modes: ['terminal', 'conversation'] },
   { id: 'claude-code', modes: ['conversation'] },
 ];
+
+const css = () =>
+  readFileSync(resolve(process.cwd(), 'src/environment/EnvironmentProfiles.css'), 'utf8');
 
 function open(store = createMockProfileStore(), onClose = vi.fn(), kernels = KERNELS) {
   return {
@@ -80,7 +85,6 @@ describe('EnvironmentProfiles', () => {
     expect(screen.getByRole('heading', { name: /environment configuration/i })).toBeInTheDocument();
     for (const label of [
       /^agent$/i,
-      /^plane$/i,
       /^model$/i,
       /thinking effort/i,
       /permissions/i,
@@ -341,15 +345,19 @@ describe('EnvironmentProfiles', () => {
 });
 
 describe('the plane a profile starts sessions on', () => {
-  it('saves the plane the profile was given', async () => {
-    // On the profile because that is where the core keeps it: two sessions
-    // started from one profile must agree about which plane they are.
+  /*
+   * It is not asked. A profile describes a conversation, and moving a session
+   * onto the terminal is a rotation its owner performs on a running session
+   * rather than a setting chosen before one exists — so the form does not put
+   * the question to somebody who has no way to judge the answer yet.
+   */
+  it('saves a conversation without asking which plane', async () => {
     const user = userEvent.setup();
     const { store } = open();
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
     await user.type(screen.getByLabelText(/^name$/i), 'reviewer');
-    await chooseOption(user, /^plane$/i, 'Conversation');
+    expect(screen.queryByLabelText(/^plane$/i)).toBeNull();
     await user.click(screen.getByRole('button', { name: /save profile/i }));
 
     await waitFor(async () => {
@@ -359,14 +367,20 @@ describe('the plane a profile starts sessions on', () => {
     expect(saved?.agent.mode).toBe('conversation');
   });
 
-  it('says why a runtime cannot serve the chosen plane', async () => {
+  it('says why a runtime cannot hold a conversation, under the agent', async () => {
+    // The refusal moved with the question. The agent is the only choice left
+    // that can produce one, so it is named there rather than beside a control
+    // that no longer exists.
     const user = userEvent.setup();
-    open();
+    open(createMockProfileStore(), vi.fn(), [
+      { id: 'codex', modes: ['conversation'] },
+      { id: 'claude-code', modes: ['terminal'] },
+    ]);
 
     await user.click(await screen.findByRole('button', { name: /new profile/i }));
     await chooseOption(user, /^agent$/i, 'Claude Code');
 
-    expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “terminal”/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/does not advertise “conversation”/i);
   });
 
   it('refuses nothing when this deployment’s runtimes could not be read', async () => {
@@ -379,5 +393,104 @@ describe('the plane a profile starts sessions on', () => {
 
     expect(screen.queryByRole('alert')).toBeNull();
     expect(chosenOption(/^agent$/i)).toContain('Codex');
+  });
+});
+
+/*
+ * Which profile an owner's sessions start from — #371.
+ *
+ * None is a real answer rather than a missing one: it means they have not
+ * chosen, and their sessions start from the deployment's own defaults.
+ */
+describe('the profile sessions start from', () => {
+  it('says which one it is on the row', async () => {
+    const user = userEvent.setup();
+    const store = createMockProfileStore();
+    open(store);
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'reviewer');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+    await user.click(await screen.findByRole('button', { name: 'Use by default' }));
+
+    expect(await screen.findByText('default')).toBeInTheDocument();
+  });
+
+  it('offers to stop using it, which returns to the deployment’s defaults', async () => {
+    // Clearing is a choice rather than the absence of one, so it has its own
+    // key rather than being reached by pressing the current default twice.
+    const user = userEvent.setup();
+    open(createMockProfileStore());
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'reviewer');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+    await user.click(await screen.findByRole('button', { name: 'Use by default' }));
+    await user.click(await screen.findByRole('button', { name: 'Stop using by default' }));
+
+    expect(await screen.findByRole('button', { name: 'Use by default' })).toBeInTheDocument();
+    expect(screen.queryByText('default')).toBeNull();
+  });
+
+  it('moves it rather than holding two', async () => {
+    const user = userEvent.setup();
+    open(createMockProfileStore());
+
+    for (const name of ['first', 'second']) {
+      await user.click(await screen.findByRole('button', { name: /new profile/i }));
+      await user.type(screen.getByLabelText(/^name$/i), name);
+      await user.click(screen.getByRole('button', { name: /save profile/i }));
+    }
+    const keys = await screen.findAllByRole('button', { name: 'Use by default' });
+    await user.click(keys[0]!);
+    const moved = await screen.findAllByRole('button', { name: 'Use by default' });
+    await user.click(moved[0]!);
+
+    expect(screen.getAllByText('default')).toHaveLength(1);
+  });
+});
+
+describe('the environment appearance', () => {
+  it('leaves shared Input paint at 44px and gives raw textareas the same language', () => {
+    const sheet = css();
+    const placement = /\.field__input\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(placement.trim()).toBe('width: 100%;');
+    expect(sheet).toMatch(
+      /textarea\.field__input\s*\{[^}]*min-height: 88px[^}]*background: var\(--dsw-alias-bg-layer-1\)[^}]*border: 1px solid var\(--dsw-alias-border-l2\)[^}]*border-radius: 10px/,
+    );
+    expect(sheet).toMatch(
+      /textarea\.field__input:focus-visible\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
+    );
+    expect(sheet).toMatch(
+      /textarea\.field__input\[aria-invalid='true'\]\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-color: var\(--dsw-alias-state-error-primary\)/,
+    );
+  });
+
+  it('keeps selection rows readable across pointer, keyboard, and fixed choices', () => {
+    const sheet = css();
+    expect(sheet).toMatch(
+      /\.selection\s*\{[^}]*background: var\(--dsw-alias-bg-layer-1\)[^}]*border-radius: 10px/,
+    );
+    expect(sheet).toMatch(
+      /\.selection__row:hover\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover\)/,
+    );
+    expect(sheet).toMatch(
+      /\.selection__row:focus-within\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-accent\)/,
+    );
+    expect(sheet).toMatch(
+      /\.selection__row input\s*\{[^}]*accent-color: var\(--dsw-alias-state-business-primary\)/,
+    );
+  });
+
+  it('moves profile facts above their controls in the compact dialog', () => {
+    expect(css()).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.profiles__row\s*\{[^}]*flex-wrap: wrap[^}]*\}[\s\S]*\.profiles__text\s*\{[^}]*flex-basis: 100%/,
+    );
+  });
+
+  it('stacks a variable name above its value and controls in the compact editor', () => {
+    expect(css()).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.pair\s*\{[^}]*display: grid[^}]*grid-template-columns: minmax\(0, 1fr\) auto auto[^}]*\}[\s\S]*\.pair > \.field__input:first-child\s*\{[^}]*grid-column: 1 \/ -1/,
+    );
   });
 });

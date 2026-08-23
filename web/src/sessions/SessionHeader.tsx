@@ -1,28 +1,28 @@
 import type { ReactNode } from 'react';
 import type { Session } from './types';
-import { labelFor, toneFor } from './types';
+import { labelFor, stateDotFor, toneFor } from './types';
+import { Pill } from '../ui/Pill';
+import { StateDot } from '../ui/StateDot';
 import { tabLabel } from './sessionTime';
-import { Chip } from '../ui/Chip';
 import './SessionHeader.css';
 
 /**
- * The head band of the column the session is drawn in — docs/Web_Style.md §5
- * and §12.
+ * The centre column's own header — `docs/Web_Style.md` §11.
  *
- * 52px, like every other column header, so its rule lands on the rail's to the
- * pixel and the page reads as one surface rather than two panels beside each
- * other.
+ * Not chrome. It belongs to the column beneath it and scrolls nothing: the
+ * crumb says which session is showing and the trailing cluster holds what acts
+ * on it.
  *
- * It carries the band's subject — the session time, at `lg`, the single
- * exception §5 allows to one type size per band — the facts that identify
- * which session the surface beneath is showing, and the session's lifecycle
- * controls.
+ * The controls are here rather than in the details column because §12 puts
+ * them "at the head of the surface they act on, visible without opening
+ * anything". In a panel they were reachable only by opening reference
+ * material, so ending a session meant first opening something nobody wanted
+ * to read.
  *
- * The controls are here rather than in the details sheet because §12 puts them
- * "at the head of the terminal they act on, visible without opening
- * anything". In the sheet they were reachable only by opening a panel that is
- * otherwise reference material, so ending a session meant first opening
- * something nobody wanted to read.
+ * **It carries no plane strip.** A session is a conversation; the terminal is
+ * something its owner deliberately moves it to, from the actions menu, and a
+ * pair of tabs made a rotation look like a view switch — free, instant, and
+ * reversible, which it is none of.
  */
 
 interface SessionHeaderProps {
@@ -36,47 +36,46 @@ interface SessionHeaderProps {
   readonly waiting?: boolean;
   /** The lifecycle controls that act on it. */
   readonly actions?: ReactNode;
-  /**
-   * The control that opens the session list, when the list is a drawer.
-   *
-   * §16 takes the rail out of the layout below 60rem, which leaves nothing in
-   * the layout to open it with. It goes at the head of the column the drawer
-   * covers, which is where somebody looks for the list.
-   */
-  readonly listHandle?: ReactNode;
 }
 
-export function SessionHeader({
-  session,
-  waiting = false,
-  actions,
-  listHandle,
-}: SessionHeaderProps) {
+export function SessionHeader({ session, waiting = false, actions }: SessionHeaderProps) {
   if (session === null) {
     return (
-      <div className="band band--head sessionheader">
-        {listHandle}
-        <span className="band__label">Session</span>
-        <span className="band__value">None open</span>
+      <div className="sessionheader">
+        <span className="sessionheader__crumb">No session open</span>
       </div>
     );
   }
 
+  const dot = stateDotFor(toneFor(session.lifecycle));
   return (
-    <div className="band band--head sessionheader">
-      {listHandle}
-      <span className="band__subject">{tabLabel(session.createdAt)}</span>
-      {/* §12: the status pill — the state as a dot and a word. */}
+    <div className="sessionheader">
+      <span className="sessionheader__crumb">{tabLabel(session.createdAt)}</span>
+      {/*
+        Which agent is answering, said once. It used to ride an eyebrow above
+        every agent turn, where it repeated identically down the whole column
+        and took a line of the reading measure each time. It is a fact about
+        the session, so it belongs with the session.
+      */}
+      <span className="sessionheader__kernel">{session.kernel}</span>
+
+      {/* The state as a dot and a word — colour is never the only signal. */}
       {waiting ? (
-        <Chip tone="wait">Waiting for you</Chip>
+        <Pill>
+          <StateDot state="warning" />
+          Waiting for you
+        </Pill>
       ) : (
-        <Chip tone={toneFor(session.lifecycle)}>{labelFor(session.lifecycle)}</Chip>
+        <Pill>
+          {dot === undefined ? null : <StateDot state={dot} />}
+          {labelFor(session.lifecycle)}
+        </Pill>
       )}
-      {/* The kernel and the plane, in mono, because both are identifiers. */}
-      <span className="band__label">{session.kernel}</span>
-      {session.plane === undefined ? null : <span className="band__label">{session.plane}</span>}
-      <span className="band__spacer" />
+
+      <span className="sessionheader__spacer" />
       {actions}
     </div>
   );
 }
+
+/** What a plane is called, from the one list that names them. */

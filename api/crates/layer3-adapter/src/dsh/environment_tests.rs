@@ -25,11 +25,14 @@ fn adapter(base: &str) -> DshAdapter {
 fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             mode: RuntimeMode::Conversation,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { UserEvent } from '@testing-library/user-event';
 import { App } from './App';
 import { MAX_LIVE_NODES } from './canvas/layout';
 import { AuthContextProvider } from './auth/context';
@@ -28,19 +29,36 @@ class FakeEventSource {
   static readonly CLOSED = 2;
   /** What the next session reports reaching. Not every start succeeds. */
   static outcome = 'ready';
+  /**
+   * A sign-in the next session stops to ask for, if any.
+   *
+   * Set, the stream reports the request and the session stays provisioning —
+   * which is what actually happens, because the kernel raises this from inside
+   * the conversation open and waits there. Announcing an outcome as well would
+   * model a session that signs itself in.
+   */
+  static signIn: { url: string; code?: string; message?: string } | null = null;
   readyState = 1;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
 
   constructor(readonly url: string) {
     streams.push(this);
-    // Announce the outcome on the next tick, as a real runtime would.
-    queueMicrotask(() => this.announce(FakeEventSource.outcome));
+    // Announce on the next tick, as a real runtime would.
+    queueMicrotask(() => {
+      if (FakeEventSource.signIn !== null) {
+        this.send({ type: 'sign_in_required', ...FakeEventSource.signIn });
+        return;
+      }
+      this.announce(FakeEventSource.outcome);
+    });
   }
   announce(status: string): void {
-    this.onmessage?.({
-      data: JSON.stringify({ seq: 2, event: { type: 'status_changed', status } }),
-    } as MessageEvent);
+    this.send({ type: 'status_changed', status });
+  }
+  /** One frame, in the shape the control plane serialises. */
+  send(event: unknown): void {
+    this.onmessage?.({ data: JSON.stringify({ seq: 2, event }) } as MessageEvent);
   }
   close(): void {
     this.readyState = FakeEventSource.CLOSED;
@@ -91,6 +109,10 @@ let created = 0;
  * another — cannot be reached from an owner with nothing running.
  */
 let listing: Record<string, unknown>[] = [];
+let allowanceAnswer: unknown = { live: 0, exempt: false };
+let allowanceFails = false;
+let allowanceReads = 0;
+let reviveProblem: { readonly status: number; readonly body: unknown } | null = null;
 
 /** `count` running sessions, distinguishable by start time as the rail shows them. */
 function seedSessions(count: number): void {
@@ -121,7 +143,12 @@ beforeEach(() => {
   created = 0;
   streams.length = 0;
   listing = [];
+  allowanceAnswer = { live: 0, exempt: false };
+  allowanceFails = false;
+  allowanceReads = 0;
+  reviveProblem = null;
   FakeEventSource.outcome = 'ready';
+  FakeEventSource.signIn = null;
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
@@ -131,6 +158,16 @@ beforeEach(() => {
       const json = (status: number, body: unknown) =>
         ({ ok: status < 400, status, json: async () => body }) as Response;
 
+      if (url.endsWith('/api/v1/sessions/allowance')) {
+        allowanceReads += 1;
+        if (allowanceFails) {
+          throw new Error('allowance unavailable');
+        }
+        return json(200, allowanceAnswer);
+      }
+      if (url.includes('/api/v1/pricing/quote')) {
+        return json(200, { priced: false });
+      }
       if (url.endsWith('/api/v1/sessions') && (init?.method ?? 'GET') === 'GET') {
         // Empty unless a test seeded a fleet, which is the fresh-owner case.
         return json(200, { sessions: listing });
@@ -148,6 +185,9 @@ beforeEach(() => {
           status: 'provisioning',
           created_at: new Date(0).toISOString(),
         });
+      }
+      if (url.endsWith('/revive') && init?.method === 'POST' && reviveProblem !== null) {
+        return json(reviveProblem.status, reviveProblem.body);
       }
       return json(404, {});
     }),
@@ -172,12 +212,26 @@ async function renderApp(provider: AuthProvider) {
   return result;
 }
 
+/** Choose an arrangement from the rail's view-options card. */
+async function arrange(user: UserEvent, name: 'List' | 'Canvas') {
+  await user.click(screen.getByRole('button', { name: 'View options' }));
+  await user.click(await screen.findByRole('menuitemradio', { name }));
+}
+
 /**
  * The console is code-split so the landing page does not carry xterm, which
  * means it arrives a dynamic import later than everything else.
+ *
+ * The wait is bounded well above the default, because what is being waited on
+ * is a whole chunk being transformed and evaluated while the rest of the suite
+ * competes for the same cores. At the default second this failed roughly one
+ * run in three — never because the console was absent, only because it had not
+ * finished arriving. A longer bound still fails if it never comes.
  */
 async function waitForConsole() {
-  return waitFor(() => screen.getByRole('tablist', { name: /sessions/i }));
+  // The rail groups by state, so there is a list per group rather than one
+  // named "Sessions". Active is the one that is always open.
+  return waitFor(() => screen.getByRole('tablist', { name: 'Active' }), { timeout: 10_000 });
 }
 
 /**
@@ -188,6 +242,7 @@ async function waitForConsole() {
  */
 async function startSession(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /new session/i }));
+  await user.click(await screen.findByRole('button', { name: /^continue$/i }));
   await user.click(await screen.findByRole('button', { name: /start session/i }));
 }
 
@@ -195,7 +250,7 @@ describe('App', () => {
   it('shows the introduction to a visitor who is not signed in', async () => {
     await renderApp(createMockAuthProvider());
 
-    expect(screen.getByLabelText(/what would you like chronobot to build/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/what would you like cma to build/i)).toBeInTheDocument();
   });
 
   it('shows the live console to a signed-in user', async () => {
@@ -226,6 +281,69 @@ describe('App', () => {
 
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
     expect(await screen.findByText(/start one from the left/i)).toBeInTheDocument();
+  });
+
+  it('reads the allowance once while restoring and leaves creation enabled when it fails', async () => {
+    allowanceFails = true;
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await waitFor(() => {
+      expect(allowanceReads).toBe(1);
+    });
+    expect(screen.getByRole('button', { name: /new session/i })).toBeEnabled();
+  });
+
+  it('carries an at-limit allowance to the sidebar and command bar', async () => {
+    allowanceAnswer = { limit: 3, live: 3, exempt: false };
+    const reason = 'You have 3 of 3 sessions running. Pause or end one to start another.';
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    const newSession = screen.getByRole('button', { name: /new session/i });
+    await waitFor(() => {
+      expect(newSession).toBeDisabled();
+    });
+    expect(newSession).toHaveAccessibleDescription(reason);
+
+    await user.click(screen.getByRole('button', { name: /find a session/i }));
+    const row = screen
+      .getAllByRole('option')
+      .find((option) => option.textContent?.includes('New session'));
+    expect(row).toHaveTextContent(reason);
+    const command = within(row as HTMLElement).getByRole('button');
+    expect(command).toBeDisabled();
+  });
+
+  it('renders a revive limit refusal verbatim and keeps the session paused', async () => {
+    listing = [
+      {
+        id: 'sesn_paused',
+        kernel: 'codex',
+        status: 'idle',
+        created_at: new Date(0).toISOString(),
+      },
+    ];
+    allowanceAnswer = { limit: 3, live: 2, exempt: false };
+    const detail =
+      '4 sessions are already running for this owner and the limit is 3; nothing new starts until fewer than 3 are running';
+    reviveProblem = {
+      status: 409,
+      body: { detail, code: 'session_limit_reached', limit: 3, live: 4 },
+    };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^resume$/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(detail)).toBeInTheDocument();
+    expect(alert).toHaveTextContent('session_limit_reached');
+    expect(alert).toHaveTextContent('The session stays stopped.');
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    expect(screen.getByRole('menuitem', { name: /^resume$/i })).toBeInTheDocument();
   });
 
   it('says a session is starting rather than appearing to hang', async () => {
@@ -264,7 +382,7 @@ describe('App', () => {
     await user.click(screen.getByRole('menuitem', { name: /sign out/i }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/what would you like chronobot to build/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/what would you like cma to build/i)).toBeInTheDocument();
     });
   });
 
@@ -331,7 +449,7 @@ describe('App', () => {
       expect(screen.getAllByRole('tab')).toHaveLength(1);
     });
 
-    await user.click(screen.getByRole('button', { name: 'Canvas' }));
+    await arrange(user, 'Canvas');
 
     // The session is a framed node now, and it is still the same session: the
     // rail still lists it and the details drawer still describes it when
@@ -344,11 +462,16 @@ describe('App', () => {
 
   it('opens in the arrangement this browser last chose', async () => {
     window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
+    const user = userEvent.setup();
 
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    expect(screen.getByRole('button', { name: 'Canvas' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'View options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Canvas' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 
   it('keeps showing a session that ended on its own', async () => {
@@ -368,16 +491,75 @@ describe('App', () => {
     expect(screen.queryByText('Attaching…')).toBeNull();
   });
 
+  it('shows the sign-in a session is waiting on, instead of a starting message', async () => {
+    /*
+     * #355. A kernel spending its owner's own account stops inside the
+     * conversation open to ask them to sign in, so the session is still
+     * `provisioning` — and that lifecycle drew a spinner reading "this can
+     * take a minute", indefinitely, for something that is not taking time and
+     * will never finish on its own. The request was arriving on the stream the
+     * whole time and being dropped.
+     */
+    FakeEventSource.signIn = {
+      url: 'https://auth.example.test/device',
+      code: 'WDJB-MJHT',
+      message: 'Sign in to continue',
+    };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Sign in to continue' })).toBeInTheDocument();
+    });
+    expect(screen.getByText('WDJB-MJHT')).toBeInTheDocument();
+    // The starting message is not merely redundant here, it is wrong: it tells
+    // somebody to wait for the thing they are being asked to do.
+    expect(screen.queryByText(/Starting a sandbox for this session/)).toBeNull();
+  });
+
+  it('clears the sign-in once the session moves on', async () => {
+    // A completed sign-in leaves a code that has already expired. Showing it
+    // afterwards asks somebody to enter something that cannot work.
+    FakeEventSource.signIn = { url: 'https://auth.example.test/device', code: 'WDJB-MJHT' };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+
+    await waitFor(() => {
+      expect(screen.getByText('WDJB-MJHT')).toBeInTheDocument();
+    });
+
+    const stream = streams[streams.length - 1];
+    if (stream === undefined) {
+      throw new Error('the progress stream was never opened');
+    }
+    await act(async () => {
+      stream.announce('ready');
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('WDJB-MJHT')).toBeNull();
+    });
+  });
+
   it('ignores a stored arrangement this build does not have', async () => {
     // Untrusted input: an older build, or another script on the origin, may
     // have written it. Falling through to the list is what keeps the console
     // from rendering a mode that does not exist.
     window.localStorage.setItem('chrono-bot:view-mode', 'split-screen');
+    const user = userEvent.setup();
 
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'View options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'List' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 
   it('reconnects one session without redialling the rest of the canvas', async () => {
@@ -390,7 +572,8 @@ describe('App', () => {
       expect(sockets).toHaveLength(3);
     });
 
-    await user.click(screen.getByRole('button', { name: /^reconnect/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^reconnect/i }));
 
     /*
      * One more socket, not four more. Reconnect is a per-session button in a
@@ -439,15 +622,15 @@ describe('App', () => {
     // Nothing stubs the stop endpoint, so the request comes back 404 — the
     // same shape as a 409, an expired token or a network blip. End lives in
     // the header's overflow menu now (§7).
-    await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /end session/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^pause session/i }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toBeInTheDocument();
     // A dismissible card at the head of the column, not a sentence in place
     // of the surface (§12). It names what was not changed and the API's code.
     expect(alert).toHaveClass('notice--fail');
-    expect(alert.textContent).toContain('Ending the session failed.');
+    expect(alert.textContent).toContain('Pausing the session failed.');
     expect(alert.textContent).toContain('The session keeps running.');
     expect(alert.textContent).toContain('HTTP 404');
     expect(within(alert).getByRole('button', { name: /dismiss/i })).toBeInTheDocument();
@@ -474,11 +657,12 @@ describe('App', () => {
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
 
-    await user.click(screen.getByRole('button', { name: /more actions/i }));
-    await user.click(screen.getByRole('menuitem', { name: /end session/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^pause session/i }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /^reconnect$/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^reconnect/i }));
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
@@ -504,9 +688,11 @@ describe('App', () => {
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
       await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
-    // Delete sits at the drawer's foot now (§12), so the drawer opens first.
-    await user.click(screen.getByRole('button', { name: /^details$/i }));
-    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    // Delete is in the session's lifecycle menu (§12), gated behind an
+    // acknowledgement (§7).
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete/i }));
+    await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /delete permanently/i }));
 
     await waitFor(() => {

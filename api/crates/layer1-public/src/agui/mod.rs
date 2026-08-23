@@ -31,10 +31,13 @@ use crate::rest::{Problem, SessionsState};
 use crate::{InterfaceProfile, Operation};
 
 mod capabilities;
+mod frame;
 mod live;
 mod project;
 mod replay;
+mod resources;
 mod run;
+mod run_ending;
 
 /// Routes this interface contributes.
 pub fn router(state: SessionsState) -> Router {
