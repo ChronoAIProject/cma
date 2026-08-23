@@ -2,13 +2,13 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import './Button.css';
 
 /**
- * The one button — `docs/Web_Style.md` §7.
+ * The one button — `docs/Web_Style.md` §12.
  *
  * A capsule, not a rectangle. The variants are fill families rather than
  * loudness levels: `primary` is the one action a surface exists for, `ghost`
  * is everything else and is the default, `outline` is the answer that is not
- * the primary one beside it, and `toolbar` is a control sitting on chrome
- * rather than on a page.
+ * the primary one beside it, `toolbar` is a control sitting on chrome rather
+ * than on a page, and `danger` is a tinted destructive action.
  *
  * Height lives on the control and every control is `box-sizing: border-box`,
  * because `outline` carries a 1px border and the others do not: under
@@ -18,9 +18,9 @@ import './Button.css';
  */
 
 /** The fill family, each backed by its own token set. */
-export type ButtonVariant = 'primary' | 'ghost' | 'outline' | 'toolbar';
+export type ButtonVariant = 'primary' | 'ghost' | 'outline' | 'toolbar' | 'danger';
 
-/** `md` is the 36px capsule; `sm` the 28px one for dense rows. */
+/** `md` is the 40px control; `sm` the 32px one for dense rows. */
 export type ButtonSize = 'md' | 'sm';
 
 interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
@@ -43,7 +43,7 @@ export function Button({
   ...rest
 }: ButtonProps) {
   /*
-   * No reason prop, deliberately. §7: why a control cannot be used is stated
+   * No reason prop, deliberately. §12: why a control cannot be used is stated
    * once per row, beside the controls it explains, and never stacked into
    * each one — which made every disabled control taller than its neighbour.
    */

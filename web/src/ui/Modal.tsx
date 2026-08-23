@@ -7,7 +7,7 @@ import { usePlateFocus } from './plate';
 import './Modal.css';
 
 /**
- * The product's one dialog — `docs/Web_Style.md` §7.
+ * The product's one dialog — `docs/Web_Style.md` §12.4.
  *
  * Portalled to `document.body`, which is not a detail: an ancestor that
  * establishes a stacking context leaves sticky page chrome floating above the
