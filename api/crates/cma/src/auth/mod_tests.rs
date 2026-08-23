@@ -15,16 +15,18 @@ fn headers_with_cookie(value: &str) -> HeaderMap {
 }
 
 #[test]
-fn the_session_cookie_is_found_among_others() {
-    let h = headers_with_cookie("theme=dark; chrono_bot_session=abc123; other=1");
-    assert_eq!(session_cookie(&h).as_deref(), Some("abc123"));
+fn canonical_and_legacy_cookies_are_read_in_migration_order() {
+    let h = headers_with_cookie(
+        "theme=dark; chrono_bot_session=legacy; cma_session=canonical; other=1",
+    );
+    assert_eq!(session_cookies(&h), ["canonical", "legacy"]);
 }
 
 #[test]
-fn a_missing_session_cookie_is_none() {
+fn a_missing_session_cookie_is_empty() {
     let h = headers_with_cookie("theme=dark; other=1");
-    assert_eq!(session_cookie(&h), None);
-    assert_eq!(session_cookie(&HeaderMap::new()), None);
+    assert!(session_cookies(&h).is_empty());
+    assert!(session_cookies(&HeaderMap::new()).is_empty());
 }
 
 #[tokio::test]
@@ -72,6 +74,48 @@ async fn an_issued_session_resolves_and_stops_resolving_after_logout() {
 
     auth.sessions.write().await.remove(&token);
     assert_eq!(auth.resolve(&h).await, None);
+}
+
+#[tokio::test]
+async fn a_legacy_cookie_still_resolves_during_the_compatibility_window() {
+    let auth = AuthState::new(
+        AuthMode::Provider {
+            base_url: "http://provider.invalid".into(),
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            public_url: "http://service.invalid".into(),
+        },
+        None,
+    );
+    let token = auth.issue_session(SubjectId("legacy-subject".into())).await;
+    let headers = headers_with_cookie(&format!("{LEGACY_SESSION_COOKIE}={token}"));
+
+    assert_eq!(
+        auth.resolve(&headers).await,
+        Some(SubjectId("legacy-subject".into()))
+    );
+}
+
+#[tokio::test]
+async fn an_invalid_canonical_cookie_does_not_hide_a_valid_legacy_cookie() {
+    let auth = AuthState::new(
+        AuthMode::Provider {
+            base_url: "http://provider.invalid".into(),
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            public_url: "http://service.invalid".into(),
+        },
+        None,
+    );
+    let legacy = auth.issue_session(SubjectId("legacy-subject".into())).await;
+    let headers = headers_with_cookie(&format!(
+        "{LEGACY_SESSION_COOKIE}={legacy}; {SESSION_COOKIE}=not-issued"
+    ));
+
+    assert_eq!(
+        auth.resolve(&headers).await,
+        Some(SubjectId("legacy-subject".into()))
+    );
 }
 
 #[tokio::test]
