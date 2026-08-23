@@ -107,8 +107,8 @@ service does not send and spelled `recovery_state` as an object it does not use.
   "last_seq": 0,
   "created_at": "2026-08-19T11:38:12Z",
   "conforms_to": [
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/conversation"
   ],
   "reach": []
 }
@@ -558,7 +558,7 @@ The route has five distinguishable answers:
 | The caller cannot see the session | **404** `session-not-found`, indistinguishable from a missing id |
 
 A granted session declares
-`https://spec.chrono-ai.fun/chrono-bot/1.0/conf/resources` in its own
+`https://spec.chrono-ai.fun/cma/1.0/conf/resources` in its own
 `conforms_to` list. An older record whose resource grant was never written, or
 a session explicitly refused the grant, does not.
 
@@ -640,13 +640,13 @@ GET /api/v1/conformance
 
 ```json
 { "conformsTo": [
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/rest-core",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/events-replay",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/steering",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/interrupt",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/usage"
+  "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/steering",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/usage"
 ] }
 ```
 
@@ -679,7 +679,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 
 ```json
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/turn-in-progress",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/turn-in-progress",
   "title": "A turn is already in progress",
   "status": 409,
   "detail": "Session sesn_01JD8Z3K7 has an active turn and its concurrent_input policy is 'reject'.",
@@ -731,7 +731,7 @@ See `docs/Services.md` for the whole path.
 
 ```json
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/price-changed",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/price-changed",
   "title": "price changed",
   "status": 409,
   "detail": "the price changed: quoted against rate card rate_old, now rate_new",
@@ -775,7 +775,7 @@ may release enough room.
 
 ```json
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/deployment-at-capacity",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/deployment-at-capacity",
   "title": "deployment at capacity",
   "status": 503,
   "detail": "no room for a session of 2000m CPU and 4096MiB: 750m CPU and 1536MiB free",
@@ -811,7 +811,7 @@ condition, so no honest `Retry-After` exists and automatic retry is not useful.
 
 ```json
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/session-limit-reached",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/session-limit-reached",
   "title": "session limit reached",
   "status": 409,
   "detail": "3 of 3 sessions are already running for this owner; stop one before starting another",
@@ -1151,7 +1151,7 @@ HTTP/1.1 409 Conflict
 Content-Type: application/problem+json
 
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/settings-conflict",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-conflict",
   "title": "settings conflict",
   "status": 409,
   "detail": "the platform's settings changed since they were read: these settings were changed by somebody else since you read them",

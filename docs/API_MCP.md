@@ -129,8 +129,8 @@ Returned from the discovery call at initialisation:
     "extensions": {
       "ai.chrono/profile": {
         "classes": [
-          "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/mcp-core",
-          "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals"
+          "https://spec.chrono-ai.fun/cma/1.0/conf/mcp-core",
+          "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
         ]
       },
       "ai.chrono/usage": { "perSession": true }

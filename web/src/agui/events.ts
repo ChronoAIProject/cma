@@ -143,7 +143,7 @@ export type RunOutcome =
  */
 export interface Interrupt {
   readonly id: string;
-  /** `confirmation`, or `chrono:<the runtime's own word>`. */
+  /** `confirmation`, or `cma:<the runtime's own word>`. */
   readonly reason: string;
   /** The kernel's own wording of what it wants. Rendered verbatim. */
   readonly message: string;
@@ -309,7 +309,7 @@ export function toEvent(raw: unknown): AguiEvent {
     runId: str(frame.runId),
     seq: num(frame.seq),
     timestamp: typeof frame.timestamp === 'string' ? frame.timestamp : undefined,
-    ephemeral: frame['chrono:live'] === true,
+    ephemeral: frame['cma:live'] === true,
   };
   const kind = str(frame.type);
 
@@ -330,7 +330,7 @@ export function toEvent(raw: unknown): AguiEvent {
         // which is the safer of the two to be wrong about: a handover drawn
         // as a failure is confusing, and a failure drawn as a handover tells
         // somebody their session is coming back when it is not.
-        returns: frame['chrono:returns'] === true,
+        returns: frame['cma:returns'] === true,
       };
     case 'TEXT_MESSAGE_START':
       return {
@@ -355,7 +355,7 @@ export function toEvent(raw: unknown): AguiEvent {
         toolCallId: str(frame.toolCallId),
         // The kernel's own word, verbatim (§3). A vocabulary this build has
         // not heard of is rendered as it arrived rather than mapped.
-        toolKind: str(frame['chrono:toolKind'] ?? frame.toolKind, 'tool'),
+        toolKind: str(frame['cma:toolKind'] ?? frame.toolKind, 'tool'),
         target: firstString(frame.toolCallName, frame.target),
       };
     case 'TOOL_CALL_ARGS':
@@ -364,14 +364,14 @@ export function toEvent(raw: unknown): AguiEvent {
         type: 'TOOL_CALL_ARGS',
         toolCallId: str(frame.toolCallId),
         delta: str(frame.delta),
-        truncated: frame['chrono:truncated'] === true,
+        truncated: frame['cma:truncated'] === true,
       };
     case 'TOOL_CALL_END':
       return {
         ...base,
         type: 'TOOL_CALL_END',
         toolCallId: str(frame.toolCallId),
-        status: str(frame['chrono:status'] ?? frame.status, 'finished'),
+        status: str(frame['cma:status'] ?? frame.status, 'finished'),
         output: typeof frame.output === 'string' ? frame.output : undefined,
       };
     case 'TOOL_CALL_RESULT':
@@ -380,7 +380,7 @@ export function toEvent(raw: unknown): AguiEvent {
         type: 'TOOL_CALL_RESULT',
         toolCallId: str(frame.toolCallId),
         content: str(frame.content),
-        truncated: frame['chrono:truncated'] === true,
+        truncated: frame['cma:truncated'] === true,
       };
     case 'REASONING_MESSAGE_CONTENT':
       return {
