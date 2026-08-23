@@ -278,7 +278,7 @@ describe('liveness is not history', () => {
   const typing = (inheritedSeq: number, body: string) => ({
     ...text(inheritedSeq, body),
     messageId: 'msg_live',
-    'chrono:live': true,
+    'cma:live': true,
   });
 
   it('delivers every piece, even though they all carry the same sequence', async () => {
