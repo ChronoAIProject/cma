@@ -120,6 +120,7 @@ pub(crate) fn conversing() -> KernelCapabilities {
         steer: false,
         interrupt: true,
         usage: true,
+        resources: false,
     }
 }
 

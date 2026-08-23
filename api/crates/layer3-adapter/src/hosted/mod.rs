@@ -22,6 +22,7 @@ mod handshake;
 mod inbound;
 mod link;
 mod loss;
+mod telemetry;
 pub(super) mod turn;
 
 use std::collections::BTreeMap;
@@ -122,6 +123,11 @@ pub struct SandboxShape {
     /// explicit act by the owner, and the reconciliation sweep is what reclaims
     /// sandboxes whose session is genuinely gone.
     pub timeout_seconds: Option<u64>,
+    /// How often to ask a runtime for a reading, or `None` never to ask.
+    ///
+    /// Asked at attach rather than baked into the image, so changing cadence
+    /// does not rotate and interrupt every live runtime.
+    pub telemetry_interval_ms: Option<u64>,
     /// Directory the agent works in, inside its sandbox.
     pub workspace: String,
 }
@@ -166,6 +172,9 @@ impl Default for SandboxShape {
                 ("memory".to_string(), "1Gi".to_string()),
             ]),
             timeout_seconds: None,
+            // Slow enough not to dominate an idle session's traffic, while
+            // bounding the last reading before a kill to two seconds of age.
+            telemetry_interval_ms: Some(2_000),
             workspace: "/home/chrono".into(),
         }
     }
