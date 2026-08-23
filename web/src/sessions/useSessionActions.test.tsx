@@ -6,6 +6,7 @@ import {
   changePlane,
   createSession,
   deleteSession,
+  DeploymentAtCapacity,
   reviveSession,
   SessionLimitReached,
   stopSession,
@@ -120,6 +121,28 @@ describe('refreshing the live-session allowance', () => {
     const { result, refreshAllowance } = renderActions();
     await act(() => result.current.actions.changeSessionPlane(PAUSED.id, 'conversation'));
     expect(refreshAllowance).not.toHaveBeenCalled();
+  });
+});
+
+describe('creation failures handled by the open dialog', () => {
+  it('does not leave a duplicate global notice for deployment capacity', async () => {
+    const refusal = new DeploymentAtCapacity(
+      503,
+      'this deployment has no room',
+      2_000,
+      4_096,
+      750,
+      1_536,
+    );
+    vi.mocked(createSession).mockRejectedValueOnce(refusal);
+    const { result, refreshAllowance, report } = renderActions();
+
+    await act(async () => {
+      await expect(result.current.actions.start()).rejects.toBe(refusal);
+    });
+
+    expect(report).not.toHaveBeenCalled();
+    expect(refreshAllowance).toHaveBeenCalledOnce();
   });
 });
 

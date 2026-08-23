@@ -66,6 +66,11 @@ export const MOCK_PLATFORM_SETTINGS: StoredPlatformSettings = {
       reachNone: 'This session was granted no services.',
       after: ['Continue with the work the owner requested.'],
     },
+    deploymentCapacity: {
+      cpuMillis: null,
+      memoryMib: null,
+      assumedSessionSize: null,
+    },
     sizeBounds: {
       minCpuMillis: 250,
       maxCpuMillis: 4000,
@@ -83,6 +88,13 @@ function copyBriefing(briefing: SessionBriefing): SessionBriefing {
 function copySettings(settings: PlatformSettings): PlatformSettings {
   return {
     briefing: copyBriefing(settings.briefing),
+    deploymentCapacity: {
+      ...settings.deploymentCapacity,
+      assumedSessionSize:
+        settings.deploymentCapacity.assumedSessionSize === null
+          ? null
+          : { ...settings.deploymentCapacity.assumedSessionSize },
+    },
     sizeBounds: { ...settings.sizeBounds },
     liveSessions: settings.liveSessions,
   };

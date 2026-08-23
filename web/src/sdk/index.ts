@@ -47,7 +47,7 @@
 
 export { Cma, createClient } from './client';
 export { resolveConfig, type ClientConfig, type Credential, type ResolvedConfig } from './config';
-export { ApiError, CapabilityRefused, SessionLimitReached } from './errors';
+export { ApiError, CapabilityRefused, DeploymentAtCapacity, SessionLimitReached } from './errors';
 export { request, type RequestOptions } from './http';
 export {
   readResources,
