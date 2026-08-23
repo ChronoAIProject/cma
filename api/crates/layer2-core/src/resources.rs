@@ -1,5 +1,13 @@
 //! Resource use in the core's own vocabulary.
 
+use std::sync::Arc;
+
+use layer3_adapter::{AdapterError, KernelAdapter, RuntimeHandle};
+use tokio::sync::mpsc;
+
+use crate::ids::SessionId;
+use crate::service::{SessionService, RESOURCE_BUFFER};
+
 /// What a session is using.
 ///
 /// Every field is optional because an unavailable level, an absent limit, and
@@ -65,4 +73,59 @@ pub(crate) fn reading_from(sample: layer3_adapter::ResourceSample) -> ResourceRe
         sent_bytes_per_second: sample.sent_bytes_per_second,
         interval_ms: sample.interval_ms,
     }
+}
+
+/// Watch a session for as long as it is this process's to watch.
+///
+/// Each reading takes the entries write lock once for a field assignment. No
+/// I/O occurs and no await is held under that guard.
+pub(crate) fn spawn_resource_watch(
+    service: Arc<SessionService>,
+    id: SessionId,
+    adapter: Arc<dyn KernelAdapter>,
+    handle: RuntimeHandle,
+) {
+    tokio::spawn(async move {
+        let (tx, mut rx) = mpsc::channel(RESOURCE_BUFFER);
+        match adapter.watch_resources(&handle, tx).await {
+            Ok(()) => {}
+            Err(AdapterError::Unsupported(reason)) => {
+                if let Some(entry) = service.entries.write().await.get_mut(&id) {
+                    entry.readings_unreported = true;
+                }
+                tracing::info!(
+                    session_id = %id,
+                    %reason,
+                    "this session does not report what it is using"
+                );
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "could not start watching what this session is using"
+                );
+                return;
+            }
+        }
+
+        while let Some(sample) = rx.recv().await {
+            let reading = reading_from(sample);
+            let resources = {
+                let mut entries = service.entries.write().await;
+                let Some(entry) = entries.get_mut(&id) else {
+                    break;
+                };
+                entry.last_reading = Some(HeldReading {
+                    reading: reading.clone(),
+                    observed_at: crate::clock::now_rfc3339(),
+                });
+                entry.resources.clone()
+            };
+            let _ = resources.send(reading);
+        }
+
+        tracing::info!(session_id = %id, "resource reading watch ended");
+    });
 }

@@ -474,6 +474,12 @@ impl SessionService {
             },
         );
         self.entries.write().await.insert(id.clone(), entry);
+        crate::resources::spawn_resource_watch(
+            Arc::clone(self),
+            id.clone(),
+            Arc::clone(adapter),
+            handle.clone(),
+        );
 
         // Both run for the session's life, independent of any client. A
         // session nobody is watching still paints its screen and still records
