@@ -42,13 +42,12 @@
 }
 
 /*
- * The running state. Its blue is the 450 step, which has no alias of its own —
- * `state-business-primary` is the 500 — so it is pinned to the static scale
- * here rather than approximated with the nearest alias.
+ * Running follows the theme accent through the business-state role. Components
+ * never reach through that role to a static ramp.
  */
 .statedot__chase {
   flex: none;
-  color: var(--dsw-static-deepseek-450);
+  color: var(--dsw-alias-state-business-primary);
 }
 
 .statedot__cell {
