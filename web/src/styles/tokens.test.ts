@@ -207,8 +207,8 @@ describe('the component layer', () => {
      * #111. The classes are gone and StateDot owns the colours now, so the
      * guard moves with them rather than retiring.
      *
-     * `ongoing` is not in the list: it is the animated chase, which takes its
-     * colour on the svg rather than through a state attribute.
+     * `ongoing` has the same state attribute as the static dots. Its core uses
+     * that colour while the one child ring supplies the liveness motion.
      */
     const css = readFileSync(join(SRC, 'ui', 'StateDot.css'), 'utf8');
     for (const state of ['done', 'warning', 'error']) {
@@ -217,7 +217,7 @@ describe('the component layer', () => {
       );
     }
     expect(css, 'the running state has no colour').toMatch(
-      /\.statedot__chase\s*\{[^}]*color: var\(--/,
+      /\.statedot\[data-state='ongoing'\]\s*\{[^}]*color: var\(--/,
     );
   });
 });
