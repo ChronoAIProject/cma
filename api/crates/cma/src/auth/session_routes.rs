@@ -9,12 +9,12 @@ use std::sync::Arc;
 
 use axum::{
     extract::State,
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 
-use super::{session_cookie, AuthState, SESSION_COOKIE};
+use super::{session_cookies, AuthState, LEGACY_SESSION_COOKIE, SESSION_COOKIE};
 
 pub(super) async fn session(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
     match auth.resolve(&headers).await {
@@ -49,20 +49,23 @@ pub(super) async fn session(State(auth): State<Arc<AuthState>>, headers: HeaderM
 }
 
 pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
-    if let Some(token) = session_cookie(&headers) {
+    for token in session_cookies(&headers) {
         auth.sessions.write().await.remove(&token);
     }
-    (
-        StatusCode::SEE_OTHER,
-        [
-            (
-                header::SET_COOKIE,
-                format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"),
-            ),
-            (header::LOCATION, "/".into()),
-        ],
-    )
-        .into_response()
+
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    for name in [SESSION_COOKIE, LEGACY_SESSION_COOKIE] {
+        response.headers_mut().append(
+            header::SET_COOKIE,
+            format!("{name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+                .parse()
+                .expect("a cookie name forms a header"),
+        );
+    }
+    response
+        .headers_mut()
+        .insert(header::LOCATION, HeaderValue::from_static("/"));
+    response
 }
 
 pub(super) fn urlencode(value: &str) -> String {
@@ -75,4 +78,59 @@ pub(super) fn urlencode(value: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthMode;
+
+    fn provider_auth() -> Arc<AuthState> {
+        AuthState::new(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "client".into(),
+                client_secret: "not-a-real-value".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_and_expires_both_cookie_generations() {
+        let auth = provider_auth();
+        let canonical = auth
+            .issue_session(layer2_core::SubjectId("canonical-subject".into()))
+            .await;
+        let legacy = auth
+            .issue_session(layer2_core::SubjectId("legacy-subject".into()))
+            .await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("{LEGACY_SESSION_COOKIE}={legacy}; {SESSION_COOKIE}={canonical}")
+                .parse()
+                .expect("valid cookie header"),
+        );
+
+        let response = logout(State(Arc::clone(&auth)), headers).await;
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/");
+        let expired = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().expect("visible cookie header"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            expired,
+            [
+                "cma_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+                "chrono_bot_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+            ]
+        );
+        assert!(auth.sessions.read().await.is_empty());
+    }
 }
