@@ -177,6 +177,39 @@ describe('the page frame', () => {
     );
   });
 
+  it('gives its sidebar subtree the derived rail state and overlays it below the centre floor', () => {
+    render(
+      <AppFrame
+        detailsOpen={false}
+        sidebar={({ collapsed, onToggle }) => (
+          <>
+            <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>
+            <button type="button" onClick={onToggle}>
+              {collapsed ? 'Show sessions' : 'Hide sessions'}
+            </button>
+          </>
+        )}
+        center={<p>surface</p>}
+      />,
+    );
+    measure(390);
+
+    expect(screen.getByText('sidebar rail')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Show sessions' })).toHaveLength(1);
+    act(() => {
+      screen.getByRole('button', { name: 'Show sessions' }).click();
+    });
+
+    expect(screen.getByText('sidebar panel')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Hide sessions' })).toHaveLength(1);
+    expect(document.querySelector('.frame')).toHaveAttribute('data-sidebar-overlay');
+
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    expect(css).toMatch(
+      /\.frame\[data-sidebar-overlay\] \.frame__center,\s*\.frame\[data-sidebar-overlay\] \.frame__details\s*\{[^}]*visibility: hidden/,
+    );
+  });
+
   it('offers no way back when the sidebar has not collapsed', () => {
     // The toggle exists to undo the automatic collapse. At a width where
     // nothing collapsed, it would be a second control for the same thing.
