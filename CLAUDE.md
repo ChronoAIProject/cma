@@ -1,10 +1,10 @@
-# chrono-bot
+# CMA
 
 Managed agent service by ChronoAI. This file is the contract for anyone — human or agent — working in this repository. Rules here are binding, not advisory.
 
 ---
 
-## 1. What chrono-bot is
+## 1. What CMA is
 
 A cloud-hosted service that runs coding-agent kernels (Codex, Claude Code, DeepSeek Harness) on ChronoAI infrastructure and exposes them over public interfaces. End users install nothing.
 
@@ -17,7 +17,7 @@ A cloud-hosted service that runs coding-agent kernels (Codex, Claude Code, DeepS
 
 The control plane never executes agent code. Bot pods never serve public traffic.
 
-**Consumers.** chrono-bot is a backend service. Its clients are other products' frontends and backends (NyxID Chat, FKST Chat). chrono-bot's own `web/` frontend is an operational dashboard, the terminal surface, and the **reference client for the priority-1 public interface**. It is not the primary interaction path.
+**Consumers.** CMA (ChronoAI Managed Agent) is a backend service. Its clients are other products' frontends and backends (NyxID Chat, FKST Chat). CMA's own `web/` frontend is an operational dashboard, the terminal surface, and the **reference client for the priority-1 public interface**. It is not the primary interaction path.
 
 **The chat surface may call no route a third-party client could not call.** It exists because everything it does is already in AG-UI. The moment it needs something AG-UI lacks, the answer is to add it to AG-UI, never to add it here.
 
@@ -91,7 +91,7 @@ Their cloud-side halves are still not here and cannot be: the IAM grant letting
 the service account read the secret, and the gateway the routes attach to, are
 infrastructure this repository consumes rather than owns.
 
-`infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the bot pod is scheduled by the sandbox provider, not by this repository. chrono-bot hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
+`infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the bot pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
 ### `docs/`
 
@@ -101,7 +101,7 @@ All documentation lives in `docs/`, and every file in it is markdown. No documen
 
 ## 3. The four-layer architecture
 
-chrono-bot is a four-layer system. **Source files are placed under their layer's directory.** The rule is: seeing a file's path must tell you which layer it belongs to, with no further reading.
+CMA is a four-layer system. **Source files are placed under their layer's directory.** The rule is: seeing a file's path must tell you which layer it belongs to, with no further reading.
 
 ```
 api/crates/
@@ -109,7 +109,7 @@ api/crates/
   layer2-core/       Layer 2 — core session model + events (control plane pod)
   layer3-adapter/    Layer 3 — ACP-shaped kernel adapters  (control plane pod)
   layer4-runtime/    Layer 4 — sandboxed agent runtime     (bot pod)
-  chrono-bot/        binary — wires layers 1-3 into the control plane
+  cma/               binary — wires layers 1-3 into the control plane
 ```
 
 ### Layer 1 — public interfaces (control plane pod)
@@ -215,7 +215,7 @@ Secrets are **referenced** in `secret.yaml`, never valued. No real secret value 
 
 ## 5. A session in progress is never interrupted
 
-**No deployment, upgrade, restart or rollout may interrupt a session its owner has not stopped.** This is a hard rule and outranks every convenience below it. A session that stops working because chrono-bot was upgraded is a defect of the same severity as losing the data.
+**No deployment, upgrade, restart or rollout may interrupt a session its owner has not stopped.** This is a hard rule and outranks every convenience below it. A session that stops working because CMA was upgraded is a defect of the same severity as losing the data.
 
 What "not interrupted" means, precisely:
 
@@ -308,7 +308,7 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/chrono-bot-{api,web,runtime}`, tagged with the version and with the short commit SHA. Both tags are immutable and neither is ever moved.
+- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime}`, tagged with the version and with the short commit SHA. Both tags are immutable and neither is ever moved.
 - An annotated tag `vX.Y.Z` and a GitHub release are created. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
