@@ -246,6 +246,24 @@ function readCss(): string {
   return readFileSync(resolve(process.cwd(), 'src/chat/MessageStream.css'), 'utf8');
 }
 
+describe('the stream stylesheet contract', () => {
+  it('uses the reference code frame and distinct failure and warning notices', () => {
+    const css = readCss();
+    expect(css).toMatch(
+      /\.codeblock\s*\{[^}]*background: var\(--dsw-alias-markdown-code-block\)[^}]*border: 1px solid var\(--dsw-alias-border-l1\)[^}]*border-radius: 12px/,
+    );
+    expect(css).toMatch(
+      /\.codeblock__head\s*\{[^}]*position: sticky[^}]*background: var\(--dsw-alias-markdown-code-block-banner\)/,
+    );
+    expect(css).toMatch(
+      /\.failure\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-left: 2px solid var\(--dsw-alias-state-error-primary\)/,
+    );
+    expect(css).toMatch(
+      /\.gap\s*\{[^}]*background: var\(--dsw-alias-state-warn-tertiary\)[^}]*border-left: 2px solid var\(--dsw-alias-state-warn-primary\)/,
+    );
+  });
+});
+
 describe('the plane-change boundary', () => {
   it('names where the session went and when history stopped being continuous', () => {
     // §18.6: a rule across the stream, labelled with the time in the display
