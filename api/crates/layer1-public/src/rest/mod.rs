@@ -15,7 +15,8 @@ use axum::{
 };
 use layer2_core::{
     Caller, CoreError, EnvironmentProfileService, PublicIdentity, Quote, Session,
-    SessionCapabilities, SessionId, SessionService, SessionSpec, TerminalGeometry, UserDirectory,
+    SessionCapabilities, SessionCapability, SessionId, SessionService, SessionSpec,
+    TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +62,10 @@ fn conformance_for(capabilities: &SessionCapabilities) -> Vec<String> {
         (capabilities.steer, "steering"),
         (capabilities.interrupt, "interrupt"),
         (capabilities.usage, "usage"),
+        (
+            capabilities.holds(SessionCapability::Resources),
+            "resources",
+        ),
     ] {
         if held {
             classes.push(format!("{CONF_BASE}/{class}"));
@@ -835,6 +840,7 @@ pub fn router(state: SessionsState) -> Router {
             post(operate::resolve_approval),
         )
         .route("/api/v1/sessions/{id}/usage", get(operate::usage))
+        .route("/api/v1/sessions/{id}/resources", get(operate::resources))
         .route("/api/v1/sessions/{id}/spend", get(operate::spend))
         .route("/api/v1/sessions/{id}/screen", get(screen))
         // What the session has shown, for one that has no runtime to attach

@@ -108,6 +108,84 @@ fn usage_omits_a_context_window_the_runtime_never_stated() {
     assert!(rendered.get("context_window").is_none());
 }
 
+fn empty_resource_reading() -> ResourceReading {
+    ResourceReading {
+        cpu_millis_used: None,
+        cpu_millis_limit: None,
+        memory_bytes_used: None,
+        memory_bytes_limit: None,
+        memory_bytes_peak: None,
+        stall_permille: None,
+        ceiling_hits: None,
+        allocation_failures: None,
+        kills: None,
+        received_bytes: None,
+        sent_bytes: None,
+        received_bytes_per_second: None,
+        sent_bytes_per_second: None,
+        interval_ms: None,
+    }
+}
+
+#[test]
+fn a_resource_body_carries_all_fourteen_fields_as_explicit_nulls() {
+    let rendered = serde_json::to_value(ResourceStatusView::from(ResourceStatus::Held(
+        layer2_core::HeldReading {
+            reading: empty_resource_reading(),
+            observed_at: "2026-08-23T09:14:06Z".into(),
+        },
+    )))
+    .expect("serializes");
+    let reading = rendered["reading"].as_object().expect("a reading object");
+
+    assert_eq!(reading.len(), 14, "got {reading:?}");
+    assert!(reading.values().all(serde_json::Value::is_null));
+    assert_eq!(rendered["observed_at"], "2026-08-23T09:14:06Z");
+    assert!(rendered["reason"].is_null());
+}
+
+#[test]
+fn awaiting_and_unreported_are_two_different_complete_answers() {
+    let awaiting = serde_json::to_value(ResourceStatusView::from(ResourceStatus::Awaiting))
+        .expect("serializes");
+    let unreported = serde_json::to_value(ResourceStatusView::from(ResourceStatus::Unreported))
+        .expect("serializes");
+
+    assert_eq!(
+        awaiting,
+        serde_json::json!({
+            "reading": null,
+            "observed_at": null,
+            "reason": "no_reading_yet",
+        })
+    );
+    assert_eq!(
+        unreported,
+        serde_json::json!({
+            "reading": null,
+            "observed_at": null,
+            "reason": "runtime_does_not_report",
+        })
+    );
+}
+
+#[test]
+fn a_reported_reading_with_no_ceiling_keeps_that_absence() {
+    let mut reading = empty_resource_reading();
+    reading.memory_bytes_used = Some(892_211_200);
+    let rendered = serde_json::to_value(ResourceStatusView::from(ResourceStatus::Held(
+        layer2_core::HeldReading {
+            reading,
+            observed_at: "2026-08-23T09:14:06Z".into(),
+        },
+    )))
+    .expect("serializes");
+
+    assert_eq!(rendered["reading"]["memory_bytes_used"], 892_211_200_u64);
+    assert!(rendered["reading"]["memory_bytes_limit"].is_null());
+    assert!(rendered["reason"].is_null());
+}
+
 #[test]
 fn spend_crosses_as_exact_decimal_strings_with_server_rendered_display() {
     let rendered = serde_json::to_value(SpendView::from(Spend {

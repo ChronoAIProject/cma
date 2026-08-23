@@ -5,6 +5,7 @@ import { SignInCard } from './SignInCard';
 import { Composer } from './Composer';
 import { Context } from './Context';
 import { Usage } from './Usage';
+import { MemoryPressureNotice, Resources } from './Resources';
 import { RuntimeLoss } from './RuntimeLoss';
 import { EMPTY, reduce, type Conversation } from './conversation';
 import { planeStateFor } from './planeState';
@@ -20,6 +21,7 @@ import {
   type SessionCapabilities,
 } from '../agui';
 import type { Session } from '../sessions/types';
+import { readSessionResources, type SessionResourceStatus } from '../api/client';
 import './ConversationSurface.css';
 import type { ToolCallEntry } from './conversation';
 
@@ -29,9 +31,9 @@ import type { ToolCallEntry } from './conversation';
  * The counterpart of `TerminalSurface`: the middle column draws one or the
  * other from what the session was granted, and neither knows the other exists.
  *
- * Everything it shows comes from AG-UI and from nothing else. A chat surface
- * reaching for a terminal route to fill a gap in the conversation has found a
- * hole in AG-UI, and the hole is the bug (`CLAUDE.md` §1).
+ * Live and durable state comes from AG-UI. One public REST point read tells an
+ * older runtime that will never report from one whose first reading is still
+ * due; every third-party client can make the same call (`CLAUDE.md` §1).
  */
 
 interface ConversationSurfaceProps {
@@ -46,6 +48,11 @@ interface ConversationSurfaceProps {
   readonly transport?: AguiTransport;
   /** Where operations go. Injected for the same reason. */
   readonly operations?: OperationTransport;
+  /** The public resource-status point read. Injected so lifecycle tests own it. */
+  readonly readResourceStatus?: (
+    id: string,
+    signal?: AbortSignal,
+  ) => Promise<SessionResourceStatus>;
   /**
    * Told when the session starts or stops waiting on an answer — §18.3: a
    * session waiting on one says so everywhere it appears, and the rail and
@@ -76,6 +83,7 @@ export function ConversationSurface({
   capabilities,
   transport = wireTransport,
   operations = fetchTransport,
+  readResourceStatus = readSessionResources,
   onWaitingChange,
   onInspect,
   inspectingId,
@@ -94,6 +102,7 @@ export function ConversationSurface({
   const [linkLost, setLinkLost] = useState(false);
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
   const [lossDismissed, setLossDismissed] = useState(false);
+  const [resourcesUnreported, setResourcesUnreported] = useState(false);
 
   const client = useMemo(
     () => new AguiOperations(session.id, operations),
@@ -138,16 +147,51 @@ export function ConversationSurface({
     // conversation is not cleared here: the surface is keyed on the session at
     // its call sites, so a different session is a different component rather
     // than this one being emptied and refilled.
+    const controller = new AbortController();
+    let closed = false;
+    let hasBeenLive = false;
+    let latestStatusRead = 0;
+
+    const refreshResourceStatus = async () => {
+      const read = ++latestStatusRead;
+      try {
+        const status = await readResourceStatus(session.id, controller.signal);
+        if (!closed && read === latestStatusRead) {
+          setResourcesUnreported(status.reason === 'runtime_does_not_report');
+        }
+      } catch {
+        // The stream remains authoritative for readings. A failed point read
+        // cannot turn an absence into either of the two sentences it distinguishes.
+      }
+    };
+
+    if (capabilities.resources) {
+      void refreshResourceStatus();
+    }
+
     const connection = new AguiConnection(transport, session.id);
-    return connection.subscribe(
+    const unsubscribe = connection.subscribe(
       (event) => {
         setConversation((state) => reduce(state, event));
       },
       (status) => {
         setLink(status);
+        if (status === 'live') {
+          // The first live edge belongs to the mount read above. Every later
+          // one follows a real drop and gets one fresh answer, never a poll.
+          if (hasBeenLive && capabilities.resources) {
+            void refreshResourceStatus();
+          }
+          hasBeenLive = true;
+        }
       },
     );
-  }, [session.id, transport]);
+    return () => {
+      closed = true;
+      controller.abort();
+      unsubscribe();
+    };
+  }, [capabilities.resources, readResourceStatus, session.id, transport]);
 
   /**
    * Run an operation and keep its refusal intact.
@@ -214,6 +258,8 @@ export function ConversationSurface({
           setLossDismissed(true);
         }}
       />
+
+      <MemoryPressureNotice pressure={conversation.memoryPressure} />
 
       {refusal === undefined ? null : (
         <div className="notice notice--fail conversation__refusal" role="alert">
@@ -293,6 +339,12 @@ export function ConversationSurface({
             />
           )}
           <Usage granted={capabilities.usage} usage={conversation.usage} />
+          <Resources
+            granted={capabilities.resources}
+            unreported={resourcesUnreported}
+            resources={conversation.resources}
+            pressure={conversation.memoryPressure}
+          />
           <Context granted={capabilities.usage} usage={conversation.usage} />
         </div>
       </div>
