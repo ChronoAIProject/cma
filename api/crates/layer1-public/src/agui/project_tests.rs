@@ -6,6 +6,7 @@
 //! stream fills with things that mean nothing to it.
 
 use super::*;
+use layer2_core::StopReason;
 
 /// A durable event as the log holds it.
 fn logged(seq: u64, kind: EventKind) -> Event {
@@ -430,6 +431,66 @@ fn a_lost_runtime_does_not_end_the_run() {
     });
 
     assert!(p.ending.is_none());
+}
+
+#[test]
+fn an_open_pressure_episode_is_durable_state_and_does_not_end_the_run() {
+    let mut event = logged(
+        51,
+        EventKind::MemoryPressureOpened {
+            used_bytes: 892_211_200,
+            limit_bytes: 1_073_741_824,
+            occupancy_permille: 830,
+        },
+    );
+    event.appended_at = "2026-08-23T09:14:06Z".into();
+
+    let p = project(&event, "run_1", "sesn_1");
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert_eq!(p.events[0].seq, Some(51), "the durable edge has a cursor");
+    assert_eq!(
+        p.events[0].body,
+        serde_json::json!({ "delta": [{
+            "op": "replace",
+            "path": "/memoryPressure",
+            "value": {
+                "usedBytes": 892_211_200_u64,
+                "limitBytes": 1_073_741_824_u64,
+                "occupancyPermille": 830,
+                "since": "2026-08-23T09:14:06Z",
+            },
+        }] })
+    );
+    assert!(p.ending.is_none(), "pressure is not a run failure");
+}
+
+#[test]
+fn a_closed_pressure_episode_clears_the_path_with_a_value() {
+    let p = projected(EventKind::MemoryPressureClosed {
+        peak_bytes: 966_367_641,
+        limit_bytes: 1_073_741_824,
+        peak_permille: 900,
+        duration_seconds: 180,
+    });
+    let patch = &p.events[0].body["delta"][0];
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert_eq!(patch["op"], "replace");
+    assert_ne!(patch["op"], "remove");
+    assert_eq!(patch["path"], "/memoryPressure");
+    assert!(patch["value"].is_null());
+    assert!(p.ending.is_none());
+}
+
+#[test]
+fn an_open_pressure_episode_without_an_old_append_time_carries_an_absent_since() {
+    let p = projected(EventKind::MemoryPressureOpened {
+        used_bytes: 800,
+        limit_bytes: 1_000,
+        occupancy_permille: 800,
+    });
+    assert!(p.events[0].body["delta"][0]["value"]["since"].is_null());
 }
 
 #[test]
