@@ -7,10 +7,13 @@
 mod bridge;
 mod carry;
 mod conversation;
+mod conversation_link;
 mod lanes;
 mod link;
 mod prelude;
 mod pty;
+mod resources;
+mod telemetry;
 mod upstream;
 
 use std::net::SocketAddr;
@@ -81,6 +84,13 @@ pub(crate) struct AppState {
     /// runs one session on one plane, and starting a process nothing is going
     /// to talk to would put a kernel on the model endpoint for no reason.
     conversation: std::sync::Arc<Mutex<Option<std::sync::Arc<Bridge>>>>,
+    /// This pod's view of its own consumption.
+    ///
+    /// One per pod rather than one per link: the cgroup is resolved once, its
+    /// one log line is emitted at boot where an operator sees it whether or not
+    /// anything ever attaches, and `uptimeMs` counts from when this supervisor
+    /// started rather than from when somebody last connected.
+    resources: std::sync::Arc<resources::Sampler>,
 }
 
 impl AppState {
@@ -106,6 +116,10 @@ impl AppState {
             // that has made no upstream call.
             model_fault: upstream::UpstreamFault::default(),
             conversation: std::sync::Arc::new(Mutex::new(None)),
+            resources: std::sync::Arc::new(resources::Sampler::new(
+                resources::Roots::default(),
+                std::time::Instant::now(),
+            )),
         }
     }
 
@@ -313,6 +327,10 @@ async fn main() {
         );
     }
 
+    let resources = std::sync::Arc::new(resources::Sampler::new(
+        resources::Roots::default(),
+        std::time::Instant::now(),
+    ));
     let state = AppState {
         registry: PtyRegistry::new(),
         model_fault: model_fault.clone(),
@@ -325,6 +343,7 @@ async fn main() {
         snapshot_named,
         resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
         conversation: std::sync::Arc::new(Mutex::new(None)),
+        resources,
     };
 
     let app = Router::new()
@@ -570,6 +589,13 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": true,
+        // Declared so a control plane can tell an image that serves the
+        // telemetry lane from one that does not. It must never open such a
+        // link on a guess: a pod that predates this reads any `lanes` value it
+        // does not know as the terminal, so an ungated attach starts a second
+        // agent process in a conversation-plane sandbox and resizes the screen
+        // of a terminal-plane one.
+        "resources": true,
     }))
 }
 
