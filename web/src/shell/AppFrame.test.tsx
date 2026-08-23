@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,6 +44,53 @@ function measure(width: number) {
 
 function tracks(): string {
   return (document.querySelector('.frame') as HTMLElement).style.gridTemplateColumns;
+}
+
+function pointer(type: string, clientX: number): Event {
+  const event = new Event(type, { bubbles: true });
+  Object.defineProperties(event, {
+    clientX: { value: clientX },
+    pointerId: { value: 1 },
+  });
+  return event;
+}
+
+function capturePointer(handle: HTMLElement): void {
+  let captured = false;
+  Object.defineProperties(handle, {
+    setPointerCapture: {
+      configurable: true,
+      value: () => {
+        captured = true;
+      },
+    },
+    hasPointerCapture: {
+      configurable: true,
+      value: () => captured,
+    },
+    releasePointerCapture: {
+      configurable: true,
+      value: () => {
+        captured = false;
+      },
+    },
+  });
+}
+
+function dragAcrossFrames(handle: HTMLElement, positions: readonly number[]): void {
+  capturePointer(handle);
+  act(() => {
+    handle.dispatchEvent(pointer('pointerdown', positions[0] ?? 0));
+  });
+  for (const position of positions.slice(1)) {
+    act(() => {
+      handle.dispatchEvent(pointer('pointermove', position));
+      vi.advanceTimersByTime(20);
+    });
+  }
+  act(() => {
+    handle.dispatchEvent(pointer('pointerup', positions.at(-1) ?? 0));
+  });
 }
 
 beforeEach(() => {
@@ -128,6 +177,39 @@ describe('the page frame', () => {
     );
   });
 
+  it('gives its sidebar subtree the derived rail state and overlays it below the centre floor', () => {
+    render(
+      <AppFrame
+        detailsOpen={false}
+        sidebar={({ collapsed, onToggle }) => (
+          <>
+            <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>
+            <button type="button" onClick={onToggle}>
+              {collapsed ? 'Show sessions' : 'Hide sessions'}
+            </button>
+          </>
+        )}
+        center={<p>surface</p>}
+      />,
+    );
+    measure(390);
+
+    expect(screen.getByText('sidebar rail')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Show sessions' })).toHaveLength(1);
+    act(() => {
+      screen.getByRole('button', { name: 'Show sessions' }).click();
+    });
+
+    expect(screen.getByText('sidebar panel')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Hide sessions' })).toHaveLength(1);
+    expect(document.querySelector('.frame')).toHaveAttribute('data-sidebar-overlay');
+
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    expect(css).toMatch(
+      /\.frame\[data-sidebar-overlay\] \.frame__center,\s*\.frame\[data-sidebar-overlay\] \.frame__details\s*\{[^}]*visibility: hidden/,
+    );
+  });
+
   it('offers no way back when the sidebar has not collapsed', () => {
     // The toggle exists to undo the automatic collapse. At a width where
     // nothing collapsed, it would be a second control for the same thing.
@@ -145,6 +227,31 @@ describe('the page frame', () => {
       'Resize the session list',
       'Resize the details column',
     ]);
+  });
+
+  it('draws a grip on the details edge only', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    const grips = [...css.matchAll(/\.frame__handle([^,{]*)::after/g)].map(
+      (match) => match[1] ?? '',
+    );
+    expect(grips.length).toBeGreaterThan(0);
+    expect(grips.every((selector) => selector.includes("[data-side='details']"))).toBe(true);
+    expect(css).toMatch(
+      /\.frame__handle\[data-side='details'\]::after\s*\{[^}]*width: 12px[^}]*height: 32px[^}]*border-radius: 10px/,
+    );
+  });
+
+  it('anchors a multi-frame drag to the width at pointer-down', () => {
+    renderFrame();
+    measure(1600);
+
+    const sidebar = screen.getByRole('separator', { name: 'Resize the session list' });
+    dragAcrossFrames(sidebar, [SIDEBAR_DEFAULT, 300, 320, 340]);
+    expect(tracks().startsWith('340px ')).toBe(true);
+
+    const details = screen.getByRole('separator', { name: 'Resize the details column' });
+    dragAcrossFrames(details, [1300, 1280, 1260, 1240]);
+    expect(tracks().endsWith(' 360px')).toBe(true);
   });
 
   it('offers no details handle when there is no details column', () => {

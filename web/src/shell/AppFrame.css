@@ -26,6 +26,7 @@
 }
 
 .frame__sidebar {
+  grid-column: 1;
   min-width: 0;
   overflow: hidden;
   background: var(--dsw-specific-sidebar-fill);
@@ -33,6 +34,7 @@
 }
 
 .frame__center {
+  grid-column: 2;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -40,9 +42,30 @@
 }
 
 .frame__details {
+  grid-column: 3;
   min-width: 0;
   overflow: hidden;
   border-left: 1px solid var(--dsw-alias-border-l2);
+}
+
+/*
+ * Below the centre's own floor, opening the sidebar cannot consume another
+ * 280px without turning the work into a column a word wide. It therefore sits
+ * over the still-mounted grid; the hidden columns return exactly as they were
+ * when the drawer closes.
+ */
+.frame[data-sidebar-overlay] .frame__sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 10;
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.frame[data-sidebar-overlay] .frame__center,
+.frame[data-sidebar-overlay] .frame__details {
+  visibility: hidden;
 }
 
 /*
