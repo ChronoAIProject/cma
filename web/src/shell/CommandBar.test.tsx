@@ -46,6 +46,19 @@ describe('the command bar', () => {
   it('uses the shared field geometry for its raw search control', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/shell/CommandBar.css'), 'utf8');
     expect(css).toMatch(/\.commandbar__field\s*\{[^}]*height: 44px[^}]*border-radius: 10px/);
+    expect(css).toMatch(
+      /\.commandbar__field\s*\{[^}]*background: var\(--dsw-alias-bg-layer-1\)[^}]*border: 1px solid var\(--dsw-alias-border-l2\)/,
+    );
+    expect(css).toMatch(
+      /\.commandbar__field:focus-visible\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
+    );
+  });
+
+  it('draws the keyboard cursor and hover with accent ink on the accent wash', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/CommandBar.css'), 'utf8');
+    expect(css).toMatch(
+      /\.commandbar__item:hover:not\(:disabled\),\s*\.commandbar__item--active:not\(:disabled\)\s*\{[^}]*color: var\(--dsw-alias-state-business-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-accent\)/,
+    );
   });
 
   it('reaches sessions, arrangements, new session and appearance — and no more', () => {
