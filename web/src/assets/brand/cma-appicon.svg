@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512" role="img" aria-label="CMA">
-  <rect width="100" height="100" rx="22" fill="#2F5BEA"></rect>
+  <rect width="100" height="100" rx="22" fill="#060606"></rect>
   <g transform="translate(50 50) scale(0.68) translate(-50 -50)">
-  <path d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round"></path>
-  <path d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
-  <rect x="30" y="38" width="17" height="12" rx="4" fill="#FFFFFF"></rect>
-  <rect x="53" y="38" width="17" height="12" rx="4" fill="#FFFFFF"></rect>
-  <path d="M46 44 L54 44" fill="none" stroke="#FFFFFF" stroke-width="4"></path>
+  <path d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="#C3FD43" stroke-width="11" stroke-linecap="round"></path>
+  <path d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="#C3FD43" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+  <rect x="30" y="38" width="17" height="12" rx="4" fill="#C3FD43"></rect>
+  <rect x="53" y="38" width="17" height="12" rx="4" fill="#C3FD43"></rect>
+  <path d="M46 44 L54 44" fill="none" stroke="#C3FD43" stroke-width="4"></path>
   </g>
 </svg>
