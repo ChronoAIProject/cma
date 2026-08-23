@@ -20,6 +20,13 @@ pub enum ProvisioningStage {
     RuntimeRequested,
     /// The provider gave us one.
     RuntimeCreated,
+    /// The session's skills are being put on its disk.
+    ///
+    /// Its own step because it is the one a person waits on that is neither
+    /// the provider nor the agent: skills are fetched and written before the
+    /// agent starts, and a session that appeared to hang here used to look
+    /// like a slow sandbox.
+    SkillsInstalled,
     /// Connecting to its terminal.
     Attaching,
     /// Usable.
@@ -28,10 +35,11 @@ pub enum ProvisioningStage {
 
 impl ProvisioningStage {
     /// Every stage, in the order they happen.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Accepted,
         Self::RuntimeRequested,
         Self::RuntimeCreated,
+        Self::SkillsInstalled,
         Self::Attaching,
         Self::Ready,
     ];
@@ -73,6 +81,14 @@ pub enum SessionStatus {
 }
 
 impl SessionStatus {
+    /// Every status for which `wants_runtime()` is true.
+    pub const WANTING_RUNTIME: [Self; 4] = [
+        Self::Provisioning,
+        Self::Ready,
+        Self::Running,
+        Self::Rotating,
+    ];
+
     /// Whether no further work can occur under this session id.
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Terminated)
@@ -145,6 +161,47 @@ impl StopReason {
     }
 }
 
+/// Why a session's runtime stopped, as far as the service could establish it.
+///
+/// Distinct from [`StopReason`], which is why a *session* stopped or paused --
+/// something its owner or its agent did. This is why the machine underneath it
+/// went away, which is nobody's decision and usually nobody's fault.
+///
+/// The core's own vocabulary. It is mapped from what the runtime layer
+/// reports, in the same shape `StartFailure::from_provisioning` already maps an
+/// adapter error, so no layer below this one is named in the durable log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeLossCause {
+    /// It was stopped for using more memory than it was allowed.
+    OutOfMemory,
+    /// It ran to the end and exited without reporting a failure.
+    Ended,
+    /// It exited reporting a failure.
+    Failed,
+    /// The machine under it went away.
+    Displaced,
+    /// Something was said about it and this build cannot read it.
+    ///
+    /// A different fact from saying nothing, and worth its own name: one means
+    /// the record is silent, the other means the record has a word in it that
+    /// this build has not been taught. Only the second is a thing to go and fix.
+    Unrecognised,
+}
+
+impl From<layer3_adapter::RuntimeLossReason> for RuntimeLossCause {
+    fn from(reason: layer3_adapter::RuntimeLossReason) -> Self {
+        use layer3_adapter::RuntimeLossReason as R;
+        match reason {
+            R::OutOfMemory => Self::OutOfMemory,
+            R::Completed => Self::Ended,
+            R::Failed => Self::Failed,
+            R::Displaced => Self::Displaced,
+            R::Unrecognised => Self::Unrecognised,
+        }
+    }
+}
+
 /// Operational health, reported alongside lifecycle so operators read this
 /// control plane the same way they read neighbouring ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,14 +254,32 @@ pub struct SessionSpec {
     /// at all.
     #[serde(default)]
     pub environment_profile: Option<EnvironmentProfileId>,
-    /// A credential the owner has delegated to the runtime, if any.
+    /// The caller's own credential, for asking the platform **as them**.
+    ///
+    /// Used to answer questions that depend on who is asking — which services
+    /// they have connected, which skills they can see — and to mint the
+    /// session's own key, which is done on their authority.
+    ///
+    /// **Never handed to the runtime.** It used to be: an interface put the
+    /// caller's own access token here and provisioning, finding the field
+    /// already filled, skipped minting entirely and gave the agent its owner's
+    /// whole identity. Every interactively created session ran that way, while
+    /// the machinery that mints a session-scoped key ran only for sessions the
+    /// controller recovered — the one path a person never takes.
     ///
     /// The core stores and forwards this without interpreting it. It is never
-    /// serialized back out, never logged, and never rendered by an interface:
-    /// it exists so the runtime can act on the owner's behalf, not so anything
-    /// here can read it.
+    /// serialized back out, never logged, and never rendered by an interface.
     #[serde(skip)]
-    pub subject_credential: Option<String>,
+    pub caller_credential: Option<String>,
+    /// The session's own credential, minted for it alone.
+    ///
+    /// Filled by the core during provisioning and never by a caller — an
+    /// interface that set this would be choosing what the agent may spend,
+    /// which is the decision the mint exists to make. Scoped to what the
+    /// session was granted, so a compromised agent reaches those services and
+    /// nothing else its owner can.
+    #[serde(skip)]
+    pub runtime_credential: Option<String>,
     /// The plane the caller asked for, when they asked for one.
     ///
     /// The exception to the rule above, and it is narrow: everything in
@@ -219,6 +294,12 @@ pub struct SessionSpec {
     /// way to say sends.
     #[serde(default)]
     pub requested_mode: Option<crate::options::SessionMode>,
+    /// The rate card the caller was quoted against, when they were quoted.
+    ///
+    /// `None` means the caller made no claim about a price and is not refused
+    /// for one. Clients written before pricing existed therefore keep working.
+    #[serde(default)]
+    pub quoted_rate_card: Option<crate::RateCardId>,
 }
 
 /// A session and everything the core knows about it.
@@ -313,6 +394,29 @@ pub struct Session {
     /// not.
     #[serde(default)]
     pub granted_services: Option<Vec<crate::environment::ServiceId>>,
+    /// The skills this session was given, settled when it was created.
+    ///
+    /// Recorded for the same reason its services are: the profile it came from
+    /// can be edited afterwards and this session's tools do not follow. It is
+    /// also the only honest answer to "what does this session have" — the
+    /// profile says what a *new* session would get.
+    ///
+    /// `None` means the grant predates this field, not that the session has no
+    /// skills; the two are told apart everywhere this is read.
+    pub granted_skills: Option<Vec<crate::environment::GrantedSkill>>,
+    /// What this session was priced at, settled when it was created.
+    ///
+    /// `None` is not zero and not free. It means this session was never priced,
+    /// either because it predates pricing or because its deployment had no
+    /// price list. That is a different fact from a rate of nothing, and the two
+    /// are told apart everywhere this is read.
+    ///
+    /// The card id makes the charge auditable against the list; the copied rate
+    /// makes it explainable when the list cannot be read. The list is platform
+    /// state a migration can lose; this record is what the owner is billed
+    /// against, so it carries both.
+    #[serde(default)]
+    pub pricing: Option<crate::SessionPricing>,
     /// Creation timestamp, RFC 3339 in UTC.
     pub created_at: String,
 }
@@ -360,9 +464,28 @@ mod tests {
             SessionStatus::Provisioning,
             SessionStatus::Ready,
             SessionStatus::Running,
+            SessionStatus::Rotating,
             SessionStatus::Idle,
         ] {
             assert!(!s.is_terminal(), "{s:?} must not be terminal");
+        }
+    }
+
+    #[test]
+    fn wanting_runtime_membership_matches_the_desired_state_predicate() {
+        for status in [
+            SessionStatus::Provisioning,
+            SessionStatus::Ready,
+            SessionStatus::Running,
+            SessionStatus::Rotating,
+            SessionStatus::Idle,
+            SessionStatus::Terminated,
+        ] {
+            assert_eq!(
+                SessionStatus::WANTING_RUNTIME.contains(&status),
+                status.wants_runtime(),
+                "membership and predicate disagree for {status:?}"
+            );
         }
     }
 
@@ -385,6 +508,8 @@ mod tests {
             rotated_at: None,
             capabilities: Default::default(),
             granted_services: None,
+            granted_skills: None,
+            pricing: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
         assert!(session.is_owned_by(&owner));

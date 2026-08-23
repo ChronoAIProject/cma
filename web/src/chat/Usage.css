@@ -1,20 +1,23 @@
 /*
- * Usage — docs/Web_Style.md §18.5.
+ * Usage — docs/Web_Style.md §13.
  *
- * Beneath the composer, outside its card, in the mono label size: the token
- * count with tabular figures, and the cost. Never estimated, and absence is
- * a fact rather than a zero.
+ * A quiet line centred under the composer: the token count with tabular
+ * figures, and the cost. Never estimated, and absence is a fact rather than
+ * a zero.
+ *
+ * Sentence case rather than uppercase mono. It is a fact about the session
+ * read in passing, not an identifier, and shouting it put more weight on the
+ * cost of the work than on the work.
  */
 
 .usage {
-  display: inline-flex;
-  gap: var(--space-3);
+  display: flex;
+  gap: 8px;
   align-items: baseline;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 20px;
 }
 
 .usage__tokens {

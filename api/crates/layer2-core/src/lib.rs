@@ -13,6 +13,7 @@ pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
 pub mod capabilities;
+mod capacity_bounds;
 pub mod clock;
 pub mod conversation;
 mod conversation_log;
@@ -24,18 +25,28 @@ pub mod environment_service;
 mod environment_values;
 pub mod error;
 pub mod event;
+mod event_kinds;
 pub mod ids;
 pub mod inventory;
 mod lease;
 mod lifecycle;
+mod limits;
 mod log;
+mod platform;
+pub mod platform_service;
+mod pressure;
+mod pressure_service;
+mod pricing;
 mod provision;
 mod provision_failure;
+mod provision_support;
 mod reading;
 mod readopt;
 pub mod reconcile;
+pub mod resources;
 mod rotate;
 mod sequence;
+mod spend;
 
 #[cfg(test)]
 #[path = "provision_tests.rs"]
@@ -53,6 +64,27 @@ mod screen_support;
 mod service_support;
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod allowance_tests;
+#[cfg(test)]
+mod capacity_bounds_service_tests;
+#[cfg(test)]
+mod limits_rotation_tests;
+#[cfg(test)]
+mod limits_tests;
+#[cfg(test)]
+mod pressure_service_tests;
+#[cfg(test)]
+mod pressure_settings_tests;
+#[cfg(test)]
+mod pressure_tests;
+#[cfg(test)]
+mod pricing_service_tests;
+#[cfg(test)]
+mod resources_tests;
+#[cfg(test)]
+mod spend_tests;
 
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
@@ -73,7 +105,9 @@ mod recovery_tests;
 #[path = "rotate_tests.rs"]
 mod rotate_tests;
 pub mod service;
+mod service_state;
 pub mod session;
+pub mod size;
 pub mod store;
 pub mod terminal;
 mod terminal_io;
@@ -99,21 +133,38 @@ pub use directory::{
 };
 pub use environment::{
     AgentConfiguration, Baseline, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
-    EnvironmentProfileSpec, EnvironmentVariable, ResolvedEnvironment, ServiceAvailability,
-    ServiceCatalog, ServiceId, SkillCatalog, SkillId, SoftwarePackage,
+    EnvironmentProfileSpec, EnvironmentVariable, GrantedSkill, ResolvedEnvironment,
+    ServiceAvailability, ServiceCatalog, ServiceId, SkillCatalog, SkillId, SoftwarePackage,
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
-pub use ids::EnvironmentProfileId;
-pub use ids::{KernelId, SessionId, SubjectId};
+pub use ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
+pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
+pub use platform::{
+    accrue, format_usd, Accrual, CapacityBounds, OutOfBounds, PlatformSettings, PriceList,
+    PriceListViolation, Quote, Rate, RateCard, RateCardId, SessionBriefing, SessionPricing,
+    SizeDimension, CURRENCY,
+};
+pub use platform_service::PlatformSettingsService;
+pub use pressure::{
+    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample, PressureTransition,
+};
 pub use reconcile::Reclaimed;
-pub use service::{AttachmentHandle, Deployment, Detached, ScreenFactory, SessionService};
-pub use session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+pub use resources::{HeldReading, ResourceReading, ResourceStatus};
+pub use service::{
+    AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
+};
+pub use session::{
+    RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus, StopReason,
+};
+pub use size::{InvalidSessionSize, SessionSize};
+pub use spend::Spend;
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
-    SessionStore, StoreError, UserDirectoryStore,
+    SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
 };
+pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

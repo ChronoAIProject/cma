@@ -1,5 +1,5 @@
 /*
- * The conversation surface — docs/Web_Style.md §18.
+ * The conversation surface — docs/Web_Style.md §13.
  *
  * The counterpart of the terminal surface: it fills the middle column and owns
  * its own overflow, because the page never scrolls (§5).
@@ -11,7 +11,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 /*
@@ -22,7 +22,16 @@
  */
 .conversation__refusal {
   flex: none;
-  margin: var(--space-3) var(--page-gutter) 0;
+  margin: 12px var(--page-gutter) 0;
+}
+
+/*
+ * Runtime-loss history sits above the refusal it may explain. The quiet notice
+ * owns its appearance; this class only gives it the surface's existing seat.
+ */
+.conversation__loss {
+  flex: none;
+  margin: 12px var(--page-gutter) 0;
 }
 
 /*
@@ -33,13 +42,13 @@
   display: flex;
   flex: none;
   justify-content: center;
-  padding: 0 var(--page-gutter) var(--space-4);
+  padding: 0 var(--page-gutter) 16px;
 }
 
 .conversation__footcolumn {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   width: 100%;
   max-width: var(--read-column);
 }

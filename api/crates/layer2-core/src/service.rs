@@ -9,190 +9,32 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use layer3_adapter::{KernelAdapter, RuntimeHandle, TerminalInput};
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use layer3_adapter::{KernelAdapter, TerminalInput};
+use tokio::sync::RwLock;
+#[cfg(test)]
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::authz::{Caller, Capability};
 use crate::capabilities::{servable_modes, SessionCapabilities};
 use crate::clock::now_rfc3339;
+use crate::environment::AgentConfiguration;
 use crate::environment_service::EnvironmentProfileService;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{KernelId, SessionId};
 use crate::options::{AgentOptions, SessionMode};
+use crate::platform::PlatformSettings;
+use crate::platform_service::PlatformSettingsService;
+use crate::pricing::{format_usd, Quote, SessionPricing, CURRENCY};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
-use crate::store::{ContextStore, CredentialSource, SessionRecord, SessionStore, StoreError};
-use crate::terminal::{ScreenModel, TerminalGeometry};
-
-/// How many output chunks a slow attached client may fall behind before it is
-/// dropped from the live fan-out. It can always recover from a fresh snapshot,
-/// so lagging is survivable; unbounded buffering is not.
-pub(crate) const LIVE_BUFFER: usize = 512;
+use crate::size::SessionSize;
+use crate::store::{SessionRecord, SessionStore, StoreError};
+#[cfg(test)]
+use crate::terminal::ScreenModel;
 
 pub use crate::lease::{AttachmentHandle, Detached};
-
-/// Builds a screen model at a given geometry.
-///
-/// Injected so the core never depends on a particular terminal parser.
-pub type ScreenFactory = Arc<dyn Fn(TerminalGeometry) -> Box<dyn ScreenModel> + Send + Sync>;
-
-/// Who currently holds a session's terminal.
-pub(crate) struct Attachment {
-    /// Which attachment this is, among those this session has issued.
-    pub(crate) generation: u64,
-    /// Signals the holder that the attachment has been taken from them, and why.
-    pub(crate) supersede: broadcast::Sender<crate::lease::Detached>,
-}
-
-/// Everything about a session that exists only while its runtime does.
-///
-/// Deliberately not persisted: a screen model, a socket and an attachment lease
-/// describe a live process, and a restarted one has none of them. They are
-/// rebuilt when a client attaches.
-pub(crate) struct SessionEntry {
-    pub(crate) session: Session,
-    /// Where this session's event sequence is handed out.
-    ///
-    /// Service-wide rather than per-entry, and held here so that numbering an
-    /// event needs nothing but the entry already in hand. The alternative —
-    /// numbering off `session.last_seq` — is what let a live session and a
-    /// provisioning path each advance their own copy and land on one number.
-    pub(crate) sequences: Arc<crate::sequence::Sequences>,
-    /// Owner-delegated credential last handed to the runtime. Held so a refresh
-    /// can be pushed without the caller tracking which sessions exist.
-    pub(crate) subject_credential: Option<String>,
-    /// The values the session was handed as environment, kept so a tool body
-    /// can be redacted of them before it is written. Values only: the core
-    /// needs to replace an exact value wherever a tool echoes one, and the key
-    /// is not what leaks.
-    pub(crate) environment_values: Vec<String>,
-    pub(crate) events: Vec<Event>,
-    pub(crate) screen: Arc<Mutex<Box<dyn ScreenModel>>>,
-    pub(crate) runtime: Option<RuntimeHandle>,
-    pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
-    /// Where this session's stored context lives, once any has been captured.
-    pub(crate) context_ref: Option<String>,
-    /// Transcript length at the last capture, so an unchanged one is not rewritten.
-    pub(crate) captured_len: usize,
-    pub(crate) live: broadcast::Sender<Vec<u8>>,
-    /// Liveness on the conversation plane: pieces of a message being assembled.
-    ///
-    /// Separate from the terminal's byte stream because the two are different
-    /// kinds of thing and a session has one plane or the other. Kept typed
-    /// rather than as bytes, because a token-level piece of a message is not a
-    /// screen and rendering it into one would be a decision the core has no
-    /// business making.
-    pub(crate) live_frames: broadcast::Sender<crate::event::LiveFrame>,
-    /// Input toward the session's conversation, when it holds one.
-    pub(crate) conversation: Option<mpsc::Sender<layer3_adapter::ConversationInput>>,
-    /// The message the agent is still assembling, and which one it is.
-    ///
-    /// A runtime streams a message in pieces and says nothing to mark the end
-    /// of one; what marks it is the next message starting, or the turn ending.
-    /// Held here so the finished message can be committed at that moment
-    /// rather than each piece being written down as though it were history.
-    pub(crate) assembling: Option<(Option<String>, String)>,
-    /// Decisions the runtime is blocked on, by the identifier that answers one.
-    ///
-    /// Held so an answer to something nothing is waiting for is refused rather
-    /// than forwarded: a runtime handed one will either ignore it or act on
-    /// the wrong thing, and neither is visible to whoever answered.
-    pub(crate) pending_approvals: HashSet<String>,
-    /// The live attachment, when one is held.
-    pub(crate) attached: Option<Attachment>,
-    /// How many attachments this session has issued.
-    ///
-    /// Monotonic rather than a count of live ones, so a replacement attachment
-    /// is never numbered the same as the one it replaced — which is the whole
-    /// basis on which a superseded holder's release is told apart from a real
-    /// one.
-    pub(crate) attachments_issued: u64,
-}
-
-/// What distinguishes one deployment of this service from another.
-///
-/// Grouped rather than passed alongside the ports because they are the same
-/// kind of thing — facts about this installation — and because a constructor
-/// taking eight positional arguments, most of them `Option<String>`, is one
-/// where two of them eventually get swapped without the compiler noticing.
-#[derive(Debug, Clone, Default)]
-pub struct Deployment {
-    /// The runtime version sessions are expected to be running.
-    ///
-    /// `None` disables rotation, which is what a deployment that does not
-    /// version its runtime image wants.
-    pub runtime_version: Option<String>,
-    /// Who this control plane says it is, on the runtimes it creates.
-    pub identity: Option<String>,
-    /// Whether runtimes carrying no identity are this control plane's to judge.
-    ///
-    /// True for the deployment that owns a provider. False for any additional
-    /// control plane sharing it, which must confine itself to what it created.
-    pub adopts_untagged: bool,
-}
-
-/// The core service.
-pub struct SessionService {
-    /// Live sessions, keyed by id. Only those with a running runtime appear.
-    pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
-    /// The single writer of every session's event sequence.
-    ///
-    /// Shared with each entry, so the conversation fold and the provisioning,
-    /// revival, retirement and rotation paths all number from one place. Two
-    /// of them numbering independently is what dropped a turn's events.
-    pub(crate) sequences: Arc<crate::sequence::Sequences>,
-    pub(crate) adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
-    pub(crate) screen_factory: ScreenFactory,
-    /// The durable record. Source of truth for anything that outlives a process.
-    pub(crate) store: Arc<dyn SessionStore>,
-    /// Where an agent's accumulated context is kept, when a deployment has one.
-    pub(crate) context: Option<Arc<dyn ContextStore>>,
-    /// Where to get an owner's credential when the owner is not here to give one.
-    pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
-    /// Sessions whose runtime has said it cannot be carried onto a newer one.
-    ///
-    /// Held in memory rather than recorded, deliberately: it is a fact about a
-    /// particular sandbox, not about the session, so it should not outlive the
-    /// sandbox. A restarted process asks again, which is right — by then the
-    /// runtime may well have been replaced by other means.
-    pub(crate) rotation_refused: RwLock<HashSet<SessionId>>,
-    /// Who this control plane says it is, on the runtimes it creates.
-    ///
-    /// A sandbox provider is shared: one key sees everything provisioned
-    /// against it, including runtimes belonging to another control plane
-    /// entirely. Without an identity on each one, a second control plane reads
-    /// every session it has never heard of as an orphan and tears it down.
-    pub(crate) identity: Option<String>,
-    /// Whether runtimes carrying no identity are this control plane's to judge.
-    ///
-    /// True for the deployment that owns a provider, so runtimes created before
-    /// identities were recorded are still reclaimed when they are genuinely
-    /// orphaned. False for any additional control plane sharing the same
-    /// provider, which must confine itself to what it created.
-    pub(crate) adopts_untagged: bool,
-    /// The environment profiles this service resolves sessions against.
-    pub(crate) environments: Arc<EnvironmentProfileService>,
-    /// The runtime version sessions are expected to be running.
-    ///
-    /// Held by the control plane rather than asked of each sandbox: this is
-    /// the version being deployed, and a session on anything else is one to
-    /// carry forward. `None` disables rotation entirely, which is what a
-    /// deployment that does not version its runtime image wants.
-    pub(crate) runtime_version: Option<String>,
-    /// Sessions this process is currently bringing up.
-    ///
-    /// Bring-up is detached and takes minutes, during which the record says
-    /// `provisioning` and no entry exists yet — which is indistinguishable, to
-    /// anything reading state, from a bring-up that died with an earlier
-    /// process. The controller would then start a second runtime for a session
-    /// that is already getting one. This set is the difference between the two.
-    pub(crate) starting: RwLock<HashSet<SessionId>>,
-    /// Milliseconds to wait before the first provisioning retry.
-    ///
-    /// Held here rather than as a constant so a test can exercise the retry
-    /// path without waiting out a delay meant for a provider under load.
-    pub(crate) retry_backoff_ms: std::sync::atomic::AtomicU64,
-}
+pub(crate) use crate::service_state::{Attachment, SessionEntry, LIVE_BUFFER, RESOURCE_BUFFER};
+pub use crate::service_state::{Deployment, ScreenFactory, SessionPorts, SessionService};
 
 impl SessionService {
     /// Build a service over a set of runtime implementations.
@@ -203,13 +45,19 @@ impl SessionService {
         adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
         screen_factory: ScreenFactory,
         store: Arc<dyn SessionStore>,
-        context: Option<Arc<dyn ContextStore>>,
-        credentials: Option<Arc<dyn CredentialSource>>,
+        ports: SessionPorts,
         environments: Arc<EnvironmentProfileService>,
         deployment: Deployment,
     ) -> Arc<Self> {
+        let SessionPorts {
+            context,
+            credentials,
+            skills,
+            settings,
+        } = ports;
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            skills,
             sequences: Arc::new(crate::sequence::Sequences::default()),
             starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
@@ -219,6 +67,8 @@ impl SessionService {
             context,
             credentials,
             environments,
+            settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
+            session_limit_guards: Default::default(),
             runtime_version: deployment.runtime_version,
             identity: deployment.identity,
             adopts_untagged: deployment.adopts_untagged,
@@ -277,6 +127,67 @@ impl SessionService {
         offerings
     }
 
+    /// Quote the size a new session will actually receive.
+    ///
+    /// `None` means this deployment has configured no price. A configured
+    /// price without a resolved size is refused rather than guessed: Layer 2
+    /// has no numeric representation of the deployment's opaque reservation.
+    pub async fn quote(
+        &self,
+        caller: &Caller,
+        profile: Option<&crate::ids::EnvironmentProfileId>,
+    ) -> Result<Option<Quote>, CoreError> {
+        caller.authorization.require(Capability::CreateSession)?;
+        let agent = self.environments.agent_for(caller, profile).await?;
+        let size = Self::resolve_size(&agent);
+        let settings = self.settings.for_provisioning().await;
+        Self::quote_from(&settings, size)
+    }
+
+    /// The one size resolution used by both quoting and creation.
+    ///
+    /// An authored profile size is the only typed size that exists today.
+    /// `None` remains the deployment's opaque reservation; this function does
+    /// not parse provider quantities or manufacture a default.
+    fn resolve_size(agent: &AgentConfiguration) -> Option<SessionSize> {
+        agent.size
+    }
+
+    fn quote_from(
+        settings: &PlatformSettings,
+        size: Option<SessionSize>,
+    ) -> Result<Option<Quote>, CoreError> {
+        let Some(card) = settings.pricing.in_force() else {
+            return Ok(None);
+        };
+        let Some(size) = size else {
+            return Err(CoreError::InvalidRequest(
+                "this priced session has no resolved size; an administrator must declare the deployment's assumed session size"
+                    .into(),
+            ));
+        };
+        let cpu_millis = size.cpu_millis();
+        let memory_mib = size.memory_mib();
+        let micros_per_hour = card
+            .rate
+            .micros_per_hour(cpu_millis, memory_mib)
+            .ok_or_else(|| {
+                CoreError::InvalidRequest(format!(
+                    "the configured rate for {cpu_millis}m CPU and {memory_mib} MiB exceeds the largest supported hourly price"
+                ))
+            })?;
+        Ok(Some(Quote {
+            rate_card: card.id.clone(),
+            rate: card.rate.clone(),
+            cpu_millis,
+            memory_mib,
+            micros_per_hour,
+            display: format_usd(micros_per_hour),
+            currency: CURRENCY,
+            quoted_at: now_rfc3339(),
+        }))
+    }
+
     /// Create a session and bring its runtime up in the background.
     ///
     /// Returns as soon as the session exists, before any runtime does. Bringing
@@ -310,6 +221,7 @@ impl SessionService {
             .environments
             .agent_for(caller, spec.environment_profile.as_ref())
             .await?;
+        let size = Self::resolve_size(&agent);
         let mut spec = spec;
         // Which plane a session is on is the exception, and only where no
         // profile was named.
@@ -340,6 +252,7 @@ impl SessionService {
             reasoning_effort: agent.reasoning_effort,
             permission: agent.permission,
             credential: agent.credential,
+            size,
             record_tool_bodies: agent.record_tool_bodies,
         };
 
@@ -381,11 +294,40 @@ impl SessionService {
         // perfectly and refuse every call the agent made on their behalf,
         // which is the failure this refusal exists to replace.
         self.environments
-            .refuse_ungranted(
-                caller,
-                spec.subject_credential.as_deref(),
-                &granted_services,
-            )
+            .refuse_ungranted(caller, spec.caller_credential.as_deref(), &granted_services)
+            .await?;
+
+        let (settings, settings_fallback) = self.settings.for_provisioning_observed().await;
+        if settings_fallback.is_none() {
+            if let Some(quoted) = spec.quoted_rate_card.as_ref() {
+                let in_force = settings.pricing.in_force().map(|card| &card.id);
+                if in_force != Some(quoted) {
+                    return Err(CoreError::PriceChanged {
+                        quoted: quoted.0.clone(),
+                        // A legitimate quote can only move to another card:
+                        // sealed history cannot become empty. This spelling
+                        // still gives a fabricated claim against an unpriced
+                        // deployment an actionable re-quote response.
+                        in_force: in_force
+                            .map(|id| id.0.clone())
+                            .unwrap_or_else(|| "unpriced".into()),
+                    });
+                }
+            }
+        }
+        let pricing = Self::quote_from(&settings, size)?.map(|quote| SessionPricing {
+            rate_card: quote.rate_card,
+            rate: quote.rate,
+            cpu_millis: quote.cpu_millis,
+            memory_mib: quote.memory_mib,
+            micros_per_hour: quote.micros_per_hour,
+            quoted_at: quote.quoted_at,
+        });
+        if let Some(size) = size {
+            settings.size_bounds.check(size)?;
+        }
+        let limit_guard = self
+            .refuse_at_session_limit(caller, settings.live_sessions)
             .await?;
 
         let geometry = spec.geometry.unwrap_or_default();
@@ -406,6 +348,22 @@ impl SessionService {
             rotated_at: None,
             capabilities,
             granted_services: Some(granted_services),
+            /*
+             * Not known yet, and deliberately not guessed.
+             *
+             * `agent.skills` here is the configuration's own list, before the
+             * baseline's mandated entries are folded in and before the
+             * registry has been asked — so writing it would record a set that
+             * is neither what was requested nor what arrives. Provisioning is
+             * the only place that knows which packs were actually fetched, and
+             * it is the only writer of this field.
+             *
+             * `None` until then says "not recorded", which is true for the
+             * seconds a session spends provisioning and stays true for one
+             * that never finished.
+             */
+            granted_skills: None,
+            pricing,
             created_at: now_rfc3339(),
         };
 
@@ -417,6 +375,14 @@ impl SessionService {
         let first = self.sequences.take(&id, 0, 3);
         record.session.last_seq = first + 2;
         self.store.upsert(&record).await.map_err(store_failed)?;
+        if let Some(error) = settings_fallback.as_ref() {
+            tracing::error!(
+                session_id = %id,
+                error = %error,
+                "the session was permanently recorded unpriced because platform settings could not be read"
+            );
+        }
+        limit_guard.record_written(self.store.as_ref()).await;
         self.append_durably(
             &id,
             vec![
@@ -509,24 +475,6 @@ impl SessionService {
 /// tell a client their work was gone when it is merely unreachable.
 pub(crate) fn store_failed(e: StoreError) -> CoreError {
     CoreError::RuntimeUnavailable(format!("session store: {e}"))
-}
-
-/// Pump runtime output into the screen model and out to any live subscriber.
-pub(crate) fn spawn_relay(
-    id: SessionId,
-    mut output: mpsc::Receiver<Vec<u8>>,
-    screen: Arc<Mutex<Box<dyn ScreenModel>>>,
-    live: broadcast::Sender<Vec<u8>>,
-) {
-    tokio::spawn(async move {
-        while let Some(chunk) = output.recv().await {
-            screen.lock().await.apply(&chunk);
-            // A send with no subscribers is not an error: the session is simply
-            // detached, and the screen model has already absorbed the bytes.
-            let _ = live.send(chunk);
-        }
-        tracing::info!(session_id = %id, "runtime output ended");
-    });
 }
 
 #[cfg(test)]

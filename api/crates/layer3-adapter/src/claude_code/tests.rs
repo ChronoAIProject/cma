@@ -20,11 +20,14 @@ fn adapter(base: &str) -> ClaudeCodeAdapter {
 fn conversation() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        skills: Vec::new(),
         reaches: Vec::new(),
+        platform_briefing: String::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),
         session_id: "sesn_x".into(),
         size: TermSize { cols: 80, rows: 24 },
+        capacity: None,
         subject_credential: None,
         options: RuntimeOptions {
             mode: RuntimeMode::Conversation,
@@ -53,6 +56,7 @@ fn this_kernel_advertises_only_what_was_proven_of_it() {
     );
     assert!(!c.steer, "the bridge accepts nothing mid-turn");
     assert!(!c.usage, "the bridge reports no token counts");
+    assert!(c.resources, "the hosted runtime reports its resource use");
 }
 
 #[tokio::test]
@@ -159,7 +163,11 @@ async fn a_conversation_against_a_dead_provider_reports_unavailable() {
     // This kernel does hold a conversation, so a caller has to be able to tell
     // "could not reach it" from "never could".
     let err = adapter("http://127.0.0.1:1")
-        .open_conversation(&RuntimeHandle("sbx-1".into()), &Default::default())
+        .open_conversation(
+            &RuntimeHandle("sbx-1".into()),
+            &Default::default(),
+            tokio::sync::mpsc::channel(1).0,
+        )
         .await
         .expect_err("a dead provider has no conversation to open");
     assert!(matches!(err, AdapterError::Unavailable(_)), "got {err:?}");

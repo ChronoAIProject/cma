@@ -8,7 +8,7 @@
 use futures_util::TryStreamExt;
 use layer2_core::{
     store::{SessionRecord, SessionStore, StoreError},
-    Event, SessionId, StoredEvent, SubjectId,
+    Event, Rate, RateCardId, SessionId, SessionPricing, SessionStatus, StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReplaceOptions};
@@ -20,11 +20,63 @@ use super::event_doc;
 const SESSIONS: &str = "sessions";
 const EVENTS: &str = "session_events";
 
+/// A granted skill as it is stored.
+///
+/// Two shapes, because records written before versions were carried hold a
+/// bare string. Reading accepts either; writing always produces the object, so
+/// the old shape disappears as records are rewritten rather than needing a
+/// migration nobody would run.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum StoredSkill {
+    Versioned {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    /// Written before this service recorded versions.
+    Bare(String),
+}
+
+/// A pinned session price in BSON-compatible signed integers.
+///
+/// BSON has no unsigned 64-bit integer, so this mirror is explicit and every
+/// conversion is checked. A price that cannot be represented is refused
+/// rather than clamped into a different charge.
+#[derive(Debug, Serialize, Deserialize)]
+struct PricingDoc {
+    rate_card: String,
+    cpu_micros_per_cpu_hour: i64,
+    memory_micros_per_gib_hour: i64,
+    cpu_millis: i64,
+    memory_mib: i64,
+    micros_per_hour: i64,
+    quoted_at: String,
+}
+
+impl StoredSkill {
+    fn into_granted(self) -> layer2_core::GrantedSkill {
+        match self {
+            Self::Versioned { id, version } => layer2_core::GrantedSkill {
+                id: layer2_core::SkillId::new(id),
+                version,
+            },
+            // Not "version unknown to the registry" but "this record predates
+            // us keeping it". Both render the same way, and neither invents one.
+            Self::Bare(id) => layer2_core::GrantedSkill {
+                id: layer2_core::SkillId::new(id),
+                version: None,
+            },
+        }
+    }
+}
+
 /// How a session record is shaped on the wire.
 ///
 /// A distinct type from the core's record on purpose: the core owns its model,
 /// and this owns how it is written. `_id` carries the session id so the
 /// database enforces uniqueness rather than the application.
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SessionDoc {
     #[serde(rename = "_id")]
@@ -75,6 +127,20 @@ struct SessionDoc {
     /// the other says the session may reach nothing.
     #[serde(default)]
     granted_services: Option<Vec<String>>,
+    /// The skills the session was given. Same distinction as above: absent
+    /// means the grant predates the field, empty means it was given none.
+    /// Each granted skill and the version that arrived.
+    ///
+    /// Records written before versions were carried hold bare strings, so the
+    /// read accepts either shape and treats a bare string as a skill whose
+    /// version was never recorded. Absent still means the grant itself was
+    /// never recorded, which is a third thing again.
+    #[serde(default)]
+    granted_skills: Option<Vec<StoredSkill>>,
+    /// What this session was priced at. Absent means it was never priced,
+    /// which is a different fact from a price of nothing.
+    #[serde(default)]
+    pricing: Option<PricingDoc>,
 }
 
 /// A MongoDB-backed session store.
@@ -192,6 +258,70 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
             .granted_services
             .as_ref()
             .map(|services| services.iter().map(|id| id.0.clone()).collect()),
+        granted_skills: s.granted_skills.as_ref().map(|skills| {
+            skills
+                .iter()
+                .map(|granted| StoredSkill::Versioned {
+                    id: granted.id.0.clone(),
+                    version: granted.version.clone(),
+                })
+                .collect()
+        }),
+        pricing: s.pricing.as_ref().map(pricing_to_doc).transpose()?,
+    })
+}
+
+fn pricing_to_doc(pricing: &SessionPricing) -> Result<PricingDoc, StoreError> {
+    Ok(PricingDoc {
+        rate_card: pricing.rate_card.0.clone(),
+        cpu_micros_per_cpu_hour: price_to_i64(pricing.rate.cpu_micros_per_cpu_hour)?,
+        memory_micros_per_gib_hour: price_to_i64(pricing.rate.memory_micros_per_gib_hour)?,
+        cpu_millis: capacity_to_i64(pricing.cpu_millis, "CPU millicores")?,
+        memory_mib: capacity_to_i64(pricing.memory_mib, "memory MiB")?,
+        micros_per_hour: price_to_i64(pricing.micros_per_hour)?,
+        quoted_at: pricing.quoted_at.clone(),
+    })
+}
+
+fn price_to_i64(value: u64) -> Result<i64, StoreError> {
+    i64::try_from(value).map_err(|_| {
+        StoreError::Malformed(format!("a price of {value} micro-USD cannot be stored"))
+    })
+}
+
+fn capacity_to_i64(value: u32, unit: &str) -> Result<i64, StoreError> {
+    i64::try_from(u64::from(value)).map_err(|_| {
+        StoreError::Malformed(format!(
+            "a session capacity of {value} {unit} cannot be stored"
+        ))
+    })
+}
+
+fn pricing_from_doc(pricing: PricingDoc) -> Result<SessionPricing, StoreError> {
+    Ok(SessionPricing {
+        rate_card: RateCardId(pricing.rate_card),
+        rate: Rate {
+            cpu_micros_per_cpu_hour: stored_price(pricing.cpu_micros_per_cpu_hour)?,
+            memory_micros_per_gib_hour: stored_price(pricing.memory_micros_per_gib_hour)?,
+        },
+        cpu_millis: stored_capacity(pricing.cpu_millis, "CPU millicores")?,
+        memory_mib: stored_capacity(pricing.memory_mib, "memory MiB")?,
+        micros_per_hour: stored_price(pricing.micros_per_hour)?,
+        quoted_at: pricing.quoted_at,
+    })
+}
+
+fn stored_price(value: i64) -> Result<u64, StoreError> {
+    u64::try_from(value).map_err(|_| {
+        StoreError::Malformed(format!("a stored price of {value} micro-USD is invalid"))
+    })
+}
+
+fn stored_capacity(value: i64, unit: &str) -> Result<u32, StoreError> {
+    u32::try_from(value).map_err(|_| {
+        StoreError::Malformed(format!(
+            "a stored session capacity of {value} {unit} is invalid"
+        ))
     })
 }
 
@@ -241,6 +371,10 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
             granted_services: d
                 .granted_services
                 .map(|services| services.into_iter().map(layer2_core::ServiceId).collect()),
+            granted_skills: d
+                .granted_skills
+                .map(|skills| skills.into_iter().map(StoredSkill::into_granted).collect()),
+            pricing: d.pricing.map(pricing_from_doc).transpose()?,
             options: match d.options {
                 Some(v) => mongodb::bson::deserialize_from_bson(v)
                     .map_err(|e| StoreError::Malformed(e.to_string()))?,
@@ -278,6 +412,20 @@ impl SessionStore for MongoSessionStore {
 
     async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
         self.query(doc! { "owner": &owner.0 }).await
+    }
+
+    async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
+        let statuses = SessionStatus::WANTING_RUNTIME
+            .iter()
+            .map(serde_plain_string)
+            .collect::<Result<Vec<_>, _>>()?;
+        let count = self
+            .sessions
+            .count_documents(doc! { "owner": &owner.0, "status": { "$in": statuses } })
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("count live sessions: {e}")))?;
+        u32::try_from(count)
+            .map_err(|_| StoreError::Malformed("live session count exceeds u32".into()))
     }
 
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
@@ -356,100 +504,5 @@ impl MongoSessionStore {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use layer2_core::{RecoveryState, SessionStatus, StopReason};
-
-    #[test]
-    fn enums_round_trip_through_their_serde_representation() {
-        // The stored string must be the same one the interfaces emit, or a
-        // value would mean different things depending on which layer wrote it.
-        assert_eq!(serde_plain_string(&SessionStatus::Ready).unwrap(), "ready");
-        assert_eq!(
-            serde_plain_string(&RecoveryState::Recovering).unwrap(),
-            "recovering"
-        );
-        assert_eq!(
-            serde_plain_string(&StopReason::RequiresAction).unwrap(),
-            "requires_action"
-        );
-
-        let s: SessionStatus = parse_plain("terminated").unwrap();
-        assert_eq!(s, SessionStatus::Terminated);
-        let r: RecoveryState = parse_plain("degraded").unwrap();
-        assert_eq!(r, RecoveryState::Degraded);
-    }
-
-    #[test]
-    fn an_unknown_stored_value_is_rejected_rather_than_guessed() {
-        assert!(parse_plain::<SessionStatus>("not-a-status").is_err());
-    }
-
-    /// Build the failure the database returns for a duplicate sequence.
-    ///
-    /// Deserialised from the server's own shape rather than assembled, because
-    /// that shape is the contract being read: a driver that renamed a field
-    /// would break this the same way it breaks production.
-    fn insert_failure(errors: serde_json::Value) -> mongodb::error::Error {
-        let failed: mongodb::error::InsertManyError =
-            serde_json::from_value(serde_json::json!({ "writeErrors": errors }))
-                .expect("the driver's own shape");
-        mongodb::error::ErrorKind::InsertMany(failed).into()
-    }
-
-    #[test]
-    fn a_duplicate_sequence_is_named_rather_than_reported_as_an_outage() {
-        // The production failure this exists for. Reported as `Unavailable`,
-        // it read as a storage problem and the batch was dropped; the turn had
-        // run and no interface could say what it did.
-        let error = insert_failure(serde_json::json!([{
-            "index": 0,
-            "code": 11000,
-            "errmsg": "E11000 duplicate key error collection: chrono-bot.session_events \
-                       index: session_id_1_seq_1"
-        }]));
-
-        assert!(matches!(
-            sequence_taken(&error, 4),
-            Some(StoreError::SequenceTaken {
-                written: 0,
-                total: 4
-            })
-        ));
-    }
-
-    #[test]
-    fn the_count_is_what_the_database_accepted_before_it_stopped() {
-        // Inserts are ordered, so the first failing position is the number
-        // already written. A caller re-numbering from zero would write those
-        // twice, under sequences nothing would reject.
-        let error = insert_failure(serde_json::json!([
-            { "index": 2, "code": 11000, "errmsg": "dup" },
-            { "index": 3, "code": 11000, "errmsg": "dup" }
-        ]));
-
-        assert!(matches!(
-            sequence_taken(&error, 5),
-            Some(StoreError::SequenceTaken {
-                written: 2,
-                total: 5
-            })
-        ));
-    }
-
-    #[test]
-    fn any_other_failure_is_left_alone() {
-        // Retrying a collision means re-numbering. Doing that to a store that
-        // is merely unreachable would renumber a batch that was never refused,
-        // so anything but the duplicate-key code must fall through.
-        let other = insert_failure(serde_json::json!([{
-            "index": 0, "code": 121, "errmsg": "document failed validation"
-        }]));
-        assert!(sequence_taken(&other, 1).is_none());
-
-        let unreachable: mongodb::error::Error =
-            mongodb::error::ErrorKind::Io(std::sync::Arc::new(std::io::Error::other("gone")))
-                .into();
-        assert!(sequence_taken(&unreachable, 1).is_none());
-    }
-}
+#[path = "mongo_tests.rs"]
+mod tests;

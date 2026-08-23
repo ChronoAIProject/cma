@@ -26,16 +26,20 @@ mod conversation;
 mod runtime;
 
 pub use runtime::{
-    RuntimeEnvironment, RuntimeHandle, RuntimeListing, RuntimeMode, RuntimeOptions,
-    RuntimePermission, RuntimeSpec, TermSize, TerminalChannel, TerminalInput,
+    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeHandle, RuntimeListing,
+    RuntimeLossReason, RuntimeMode, RuntimeOptions, RuntimePermission, RuntimeSpec, SkillPackage,
+    TermSize, TerminalChannel, TerminalInput,
 };
 
+use tokio::sync::mpsc;
+
 pub use conversation::{
-    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
-    ConversationUpdate, MessageId, PermissionDecision, PermissionOption, PermissionOptionId,
-    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
-    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind, TurnStopReason, TurnUsage, UsageUpdate,
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
+    ConversationId, ConversationInput, ConversationInputSender, ConversationUpdate, MessageId,
+    PermissionDecision, PermissionOption, PermissionOptionId, PermissionOptionKind,
+    PermissionRequest, PromptResponse, RequestPermissionRequest, SessionUpdate, ToolCall,
+    ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, TurnStopReason,
+    TurnUsage, UsageUpdate,
 };
 
 pub mod claude_code;
@@ -87,15 +91,35 @@ pub struct KernelCapabilities {
     pub interrupt: bool,
     /// Reports token usage as it accrues.
     pub usage: bool,
+    /// Reports what its sandbox is using: memory, processor time and traffic.
+    ///
+    /// This is a property of the supervisor image rather than of the agent
+    /// inside it, and applies equally to terminal and conversation sessions.
+    pub resources: bool,
 }
 
 /// Errors an adapter may surface.
+///
+/// **The variant is a fact about what was heard**, and callers depend on it:
+/// a session's runtime is replaced on one of these and left alone on the
+/// others, so a variant that is only approximately right costs somebody their
+/// conversation in one direction or their session in the other.
 #[derive(Debug, thiserror::Error)]
 pub enum AdapterError {
-    /// The runtime could not be provisioned or reached.
+    /// Nothing answered.
+    ///
+    /// A provider that could not be reached, a provider saying this sandbox is
+    /// not there, a socket that would not open, a deadline that passed in
+    /// silence, a link that closed under a waiting call. **This and only this
+    /// is evidence that a runtime is gone**, and everything that is evidence of
+    /// that has to arrive here.
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
-    /// The runtime rejected the request.
+    /// Something answered, and refused.
+    ///
+    /// A reply came back. Whatever it says, the thing that sent it exists and
+    /// is dispatching, so this is never on its own grounds for replacing a
+    /// sandbox.
     #[error("runtime rejected request: {0}")]
     Rejected(String),
     /// The provider cannot answer this question at all.
@@ -105,6 +129,34 @@ pub enum AdapterError {
     /// need to be able to tell the two apart.
     #[error("not supported by this runtime: {0}")]
     Unsupported(String),
+}
+
+impl AdapterError {
+    /// The same failure, said with more context, and still the same kind.
+    ///
+    /// Rewording used to change the kind. Three call sites wrapped every
+    /// failure of a follow-up call in `Rejected`, so a deadline and a closed
+    /// link — both of them silence — reached the core as though the runtime
+    /// had answered. Anything reading the variant to decide whether a sandbox
+    /// is still there was reading a fact the wrapper had invented.
+    #[must_use]
+    pub fn context(self, what: &str) -> Self {
+        match self {
+            Self::Unavailable(m) => Self::Unavailable(format!("{what}: {m}")),
+            Self::Rejected(m) => Self::Rejected(format!("{what}: {m}")),
+            Self::Unsupported(m) => Self::Unsupported(format!("{what}: {m}")),
+        }
+    }
+
+    /// Whether this is evidence that the runtime is gone.
+    ///
+    /// Only silence is. A refusal proves the opposite — something was there to
+    /// refuse — and a stated absence is a property of the image rather than of
+    /// this instance, so another sandbox from it would say the same thing.
+    #[must_use]
+    pub fn is_runtime_loss(&self) -> bool {
+        matches!(self, Self::Unavailable(_))
+    }
 }
 
 /// A kernel runtime, abstracted. Layer 2 depends on this trait and never on an
@@ -157,10 +209,18 @@ pub trait KernelAdapter: Send + Sync {
     /// without it never reaches here. The default refusal is the backstop for
     /// the case that check cannot cover: an adapter whose capabilities say one
     /// thing and whose implementation has not caught up.
+    ///
+    /// The caller supplies the sink rather than receiving one back, because
+    /// opening a conversation is not instantaneous and things worth recording
+    /// happen inside it. An own-account session stops mid-open to ask its
+    /// owner to sign in, and a receiver handed over afterwards could not carry
+    /// that request until the sign-in it was asking for had already happened.
+    /// A caller that is draining before it calls hears everything.
     async fn open_conversation(
         &self,
         _handle: &RuntimeHandle,
         _options: &RuntimeOptions,
+        _updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
         Err(AdapterError::Unsupported(
             "this kernel does not hold a conversation".to_string(),
@@ -222,6 +282,24 @@ pub trait KernelAdapter: Send + Sync {
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         Err(AdapterError::Unsupported(
             "this runtime cannot enumerate what it is running".to_string(),
+        ))
+    }
+
+    /// Watch what this runtime is using, for as long as the caller listens.
+    ///
+    /// The caller supplies the sink so it can already be draining while the
+    /// watch opens and cannot miss the first reading. Dropping the receiving
+    /// half ends the watch.
+    ///
+    /// Defaults to a stated absence. A runtime that cannot report resource use
+    /// is still a working runtime, and callers must not retry that as failure.
+    async fn watch_resources(
+        &self,
+        _handle: &RuntimeHandle,
+        _readings: mpsc::Sender<ResourceSample>,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not report what it is using".to_string(),
         ))
     }
 
@@ -291,21 +369,24 @@ mod tests {
     #[tokio::test]
     async fn every_optional_plane_defaults_to_saying_it_cannot() {
         // Absence of an ability is not a failure. A kernel that renders no
-        // terminal, holds no conversation, cannot be captured, or cannot
-        // enumerate what it runs is still a kernel — and a caller reading any
-        // of those as a failure would retry forever, or tear down a live
-        // session whose only fault is being one of them.
+        // terminal, holds no conversation, cannot be captured, cannot
+        // enumerate what it runs, or cannot report its resources is still a
+        // kernel — and a caller reading any of those as a failure would retry
+        // forever, or tear down a live session whose only fault is being one.
         let bare = BareKernel;
         let handle = RuntimeHandle("bare-1".into());
         for error in [
             bare.attach_terminal(&handle)
                 .await
                 .expect_err("no terminal"),
-            bare.open_conversation(&handle, &RuntimeOptions::default())
+            bare.open_conversation(&handle, &RuntimeOptions::default(), mpsc::channel(1).0)
                 .await
                 .expect_err("no conversation"),
             bare.snapshot(&handle).await.expect_err("no snapshot"),
             bare.list_runtimes().await.expect_err("cannot enumerate"),
+            bare.watch_resources(&handle, mpsc::channel(1).0)
+                .await
+                .expect_err("no resource readings"),
         ] {
             assert!(
                 matches!(error, AdapterError::Unsupported(_)),

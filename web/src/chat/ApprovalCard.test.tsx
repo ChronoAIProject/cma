@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCard } from './ApprovalCard';
@@ -70,10 +70,36 @@ describe('the card', () => {
 
   it('carries the kernel wording verbatim', () => {
     // Rewording it into a category loses the one detail the decision turns on.
-    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
-    expect(screen.getByText('Run `rm -rf build/`?')).toBeInTheDocument();
+    // Every word survives; only the backticks become a frame around the
+    // command, which is §18.3's "a command inside it takes inline code".
+    const { container } = render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
+    const question = container.querySelector('.approval__question');
+    expect(question?.textContent).toBe('Run rm -rf build/?');
     // The reason rides the eyebrow — approval · <the kernel's own reason>.
     expect(screen.getByText(/chrono:command_execution/)).toBeInTheDocument();
+  });
+
+  it('draws the command as code rather than as punctuation', () => {
+    // §18.3 requires it, and this is the one sentence in the product where the
+    // exact command is the whole decision. It was rendering its backticks.
+    const { container } = render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />);
+    const code = container.querySelector('.approval__question code');
+    expect(code?.textContent).toBe('rm -rf build/');
+  });
+
+  it('says when the question was asked, and stays quiet when it cannot', () => {
+    // §18.3 requires the time in the eyebrow. On a session picked up later it
+    // is the difference between "the agent is waiting on me" and "the agent
+    // has been waiting since this morning".
+    const asked = { ...THREE_ANSWERS, askedAt: '2026-08-19T09:14:00Z' };
+    const { container } = render(<ApprovalCard interrupt={asked} onAnswer={vi.fn()} />);
+    expect(container.querySelector('.approval__asked')?.textContent).toMatch(/\d{1,2}[:.]\d{2}/);
+
+    // A log written before timestamps draws no time rather than a wrong one.
+    const { container: without } = render(
+      <ApprovalCard interrupt={THREE_ANSWERS} onAnswer={vi.fn()} />,
+    );
+    expect(without.querySelector('.approval__asked')).toBeNull();
   });
 
   it('spends the surface primary key on the affirmative answer', () => {
@@ -135,14 +161,24 @@ describe('it is not a modal', () => {
   });
 
   it('is a card rather than a plate', () => {
-    // §3 and §18.3: a plate floats over the page. This sits in the stream
-    // where the turn stopped, so it rests — --lift-rest — with no fixed
-    // position.
+    /*
+     * §18.3's binding constraint: never a modal. A plate floats over the
+     * page and makes every other session unreachable while one waits; this
+     * takes the composer's seat inside one session's own surface, so it
+     * neither floats nor stacks.
+     */
     const css = readFileSync(resolve(process.cwd(), 'src/chat/ApprovalCard.css'), 'utf8');
     const rule = /\.approval\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(rule).toContain('box-shadow: var(--lift-rest)');
     expect(rule).not.toContain('position: fixed');
+    expect(rule).not.toContain('position: absolute');
     expect(rule).not.toContain('z-index');
+  });
+
+  it('warns rather than informs', () => {
+    // Blue reads as information. This is a decision with a cost.
+    const css = readFileSync(resolve(process.cwd(), 'src/chat/ApprovalCard.css'), 'utf8');
+    const rule = /\.approval\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(rule).toMatch(/border: 1px solid var\(--dsw-alias-state-warn/);
   });
 });
 
@@ -184,7 +220,6 @@ describe('in the stream', () => {
     const { conversation } = await conversationFrom('approval-granted', { upTo: 2 });
     const { container } = render(
       <MessageStream
-        kernel="codex"
         entries={conversation.entries}
         footer={
           conversation.pending === undefined ? null : (
@@ -205,5 +240,90 @@ describe('in the stream', () => {
     expect(session.sent[0]?.body).toMatchObject({
       resume: [{ interruptId: 'apr_7Q2', payload: { decision: 'abort' } }],
     });
+  });
+});
+
+/*
+ * Answering, before the log catches up — #373.
+ *
+ * The card is cleared by the durable event, which is a whole lap of the stream
+ * after the request returns. Until it does, what the reader sees is this
+ * card's own doing, and it used to be nothing: the buttons greyed, ungreyed
+ * when the request resolved, and the card sat unchanged. That reads as a click
+ * that did not register, on the one interaction where somebody is definitely
+ * watching.
+ */
+describe('answering', () => {
+  it('shows the answer at once, without waiting for the service', async () => {
+    const user = userEvent.setup();
+    // Never settles: the point is what is drawn before it does.
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => new Promise(() => {})} />);
+
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
+
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
+    expect(screen.getByText(/sending your answer/i)).toBeInTheDocument();
+  });
+
+  it('withdraws the answers not given', async () => {
+    // Not disabled: they are not unavailable, they are no longer the question,
+    // and a row of greyed alternatives beside the answer invites another press.
+    const user = userEvent.setup();
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => new Promise(() => {})} />);
+
+    await user.click(screen.getByRole('button', { name: 'Deny' }));
+
+    expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop the turn' })).toBeNull();
+  });
+
+  it('sends once however many times it is pressed', async () => {
+    /*
+     * The window this closes was real: `busy` went false when the request
+     * resolved, while the card stayed up until the event arrived — so the
+     * answers were live again on a question that had already been answered.
+     */
+    const user = userEvent.setup();
+    const onAnswer = vi.fn(() => Promise.resolve(true));
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={onAnswer} />);
+
+    const allow = screen.getByRole('button', { name: 'Allow' });
+    await user.click(allow);
+    await user.click(allow);
+    await user.click(allow);
+
+    expect(onAnswer).toHaveBeenCalledOnce();
+  });
+
+  it('puts the question back when the service refuses it', async () => {
+    // Otherwise the reader is left looking at a decision nothing received.
+    const user = userEvent.setup();
+    render(<ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => Promise.resolve(false)} />);
+
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Stop the turn' })).toBeInTheDocument();
+    expect(screen.queryByText(/sending your answer/i)).toBeNull();
+  });
+
+  it('does not carry an answer onto the next question', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ApprovalCard interrupt={THREE_ANSWERS} onAnswer={() => new Promise(() => {})} />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
+
+    rerender(
+      <ApprovalCard
+        interrupt={{ ...THREE_ANSWERS, id: 'apr_8Z3', message: 'Something else?' }}
+        onAnswer={() => new Promise(() => {})}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
   });
 });

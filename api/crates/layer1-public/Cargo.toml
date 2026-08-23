@@ -26,3 +26,5 @@ serde_urlencoded = "0.7"
 # Only the tests implement a core port, and every port in this project is an
 # async trait. The interface layer itself defines none.
 async-trait = { workspace = true }
+# Drives the actual router in path-precedence tests.
+tower = { version = "0.5", features = ["util"] }

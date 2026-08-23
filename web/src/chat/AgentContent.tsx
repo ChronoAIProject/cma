@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react';
+import { CopyKey } from './CopyKey';
+import { blocksOf, type Block } from './blocks';
+import { renderInline } from './inline';
 
 /**
  * Agent-emitted content, rendered as the agent meant it — `Web_Style.md` §1
@@ -11,171 +13,168 @@ import type { ReactNode } from 'react';
  * out syntax highlighting, a tint per role, and colouring a word the agent
  * happened to use.
  *
- * Hand-written rather than taken as a dependency. What is rendered is a closed
- * set — fenced code, inline code, list items, headings, and paragraphs — and a
- * markdown library brings a configuration surface, a sanitiser to keep correct,
- * and a much larger answer to the question "what can an agent put on this
- * page?" than this needs. Everything not in the set is drawn as the text it
- * was, which is the safe direction: an agent that wrote something this does
- * not parse has its words shown rather than swallowed.
- *
- * Nothing here produces HTML from a string. React escapes what it renders, so
- * an agent cannot emit markup that becomes markup — which matters more here
- * than anywhere else in the product, because this content came from a coding
- * agent executing the user's own untrusted code (§9).
+ * The parsing is micromark's, not ours — see `markdown.ts` for why. What is
+ * *drawn* is still a small closed set, and anything outside it comes through
+ * as the text it was: an agent that wrote something is owed having written it,
+ * whether or not this surface has a shape for it.
  */
 
 interface AgentContentProps {
   readonly text: string;
 }
 
-/** One block of what the agent wrote. */
-type Block =
-  | { readonly kind: 'code'; readonly language: string; readonly body: string }
-  | { readonly kind: 'heading'; readonly level: number; readonly body: string }
-  | { readonly kind: 'list'; readonly items: readonly string[]; readonly ordered: boolean }
-  | { readonly kind: 'paragraph'; readonly body: string };
-
-const FENCE = /^```(\w*)\s*$/;
-const HEADING = /^(#{1,6})\s+(.*)$/;
-const BULLET = /^\s*[-*]\s+(.*)$/;
-const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
-
-/**
- * Split what the agent wrote into blocks.
- *
- * A fence that never closes takes the rest of the message, which is what a
- * reader would expect and is better than dropping everything after it.
- */
-export function blocksOf(text: string): Block[] {
-  const lines = text.split('\n');
-  const blocks: Block[] = [];
-  let paragraph: string[] = [];
-  let items: string[] = [];
-  let ordered = false;
-
-  const flushParagraph = () => {
-    if (paragraph.length > 0) {
-      blocks.push({ kind: 'paragraph', body: paragraph.join('\n') });
-      paragraph = [];
-    }
-  };
-  const flushList = () => {
-    if (items.length > 0) {
-      blocks.push({ kind: 'list', items, ordered });
-      items = [];
-    }
-  };
-  const flush = () => {
-    flushParagraph();
-    flushList();
-  };
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i] ?? '';
-    const fence = FENCE.exec(line);
-    if (fence) {
-      flush();
-      const body: string[] = [];
-      i += 1;
-      while (i < lines.length && !FENCE.test(lines[i] ?? '')) {
-        body.push(lines[i] ?? '');
-        i += 1;
-      }
-      blocks.push({ kind: 'code', language: fence[1] ?? '', body: body.join('\n') });
-      continue;
-    }
-
-    const heading = HEADING.exec(line);
-    if (heading) {
-      flush();
-      blocks.push({ kind: 'heading', level: heading[1]?.length ?? 1, body: heading[2] ?? '' });
-      continue;
-    }
-
-    const bullet = BULLET.exec(line);
-    const numbered = NUMBERED.exec(line);
-    if (bullet ?? numbered) {
-      flushParagraph();
-      const nextOrdered = numbered !== null;
-      if (items.length > 0 && nextOrdered !== ordered) {
-        flushList();
-      }
-      ordered = nextOrdered;
-      items.push(numbered?.[1] ?? bullet?.[1] ?? '');
-      continue;
-    }
-
-    flushList();
-    if (line.trim() === '') {
-      flushParagraph();
-    } else {
-      paragraph.push(line);
-    }
-  }
-
-  flush();
-  return blocks;
-}
-
-/** Inline code, and nothing else. Everything else is the text it was. */
-function inline(text: string): ReactNode[] {
-  return text.split(/(`[^`]+`)/).map((part, index) =>
-    part.startsWith('`') && part.endsWith('`') && part.length > 2 ? (
-      <code className="agent__code" key={index}>
-        {part.slice(1, -1)}
-      </code>
-    ) : (
-      part
-    ),
-  );
-}
-
 export function AgentContent({ text }: AgentContentProps) {
   return (
     <div className="agent">
-      {blocksOf(text).map((block, index) => {
+      <Blocks blocks={blocksOf(text)} />
+    </div>
+  );
+}
+
+/** The block renderer, reused wherever blocks nest — a quote, for one. */
+function Blocks({ blocks }: { readonly blocks: readonly Block[] }) {
+  return (
+    <>
+      {blocks.map((block, index) => {
         switch (block.kind) {
           case 'code':
             return (
-              // The language is carried as data rather than used to colour
-              // anything: a client that highlighted would be styling content.
-              <pre className="agent__block" data-language={block.language} key={index}>
-                {block.body}
-              </pre>
+              /*
+               * A wrapper, a header, and the `<pre>` that keeps the scrolling
+               * — §18.11.
+               *
+               * The header cannot live inside the `<pre>`: that element owns
+               * the horizontal overflow, and a sticky child of a horizontally
+               * scrolling box slides away sideways instead of staying put. So
+               * the frame moves out and the `<pre>` keeps its one job.
+               *
+               * The label is the fence's own info string, verbatim. Uppercased
+               * by `text-transform`, which is typography; mapping `py` onto
+               * "Python" would be naming, and §18.2 and §18.10 both forbid this
+               * client inventing a set the kernel did not use. A fence with no
+               * info string draws no label rather than an invented one.
+               */
+              <div className="codeblock" key={index}>
+                <div className="codeblock__head">
+                  <span className="codeblock__lang">{block.language ?? ''}</span>
+                  <CopyKey text={block.body} />
+                </div>
+                <pre className="agent__block" data-language={block.language}>
+                  {block.body}
+                </pre>
+              </div>
             );
-          case 'heading':
+          case 'heading': {
+            /*
+             * A heading element, not a styled paragraph. §18.1 says headings
+             * take §4's scale, and a `<p>` gives a long answer no outline at
+             * all — a screen reader cannot jump between the sections of an
+             * agent's plan, which is exactly the document where jumping is
+             * worth something.
+             *
+             * Offset by one so the agent's top level lands at `h2`: the page
+             * owns `h1`, and an agent that starts at `#` must not compete
+             * with it for the document's title.
+             */
+            const Tag = `h${String(Math.min(block.level + 1, 6))}` as 'h2';
             return (
-              <p className="agent__heading" data-level={block.level} key={index}>
-                {inline(block.body)}
-              </p>
+              <Tag className="agent__heading" data-level={block.level} key={index}>
+                {renderInline(block.content)}
+              </Tag>
             );
-          case 'list':
-            return block.ordered ? (
-              <ol className="agent__list" key={index}>
+          }
+          case 'list': {
+            /*
+             * Nesting kept — §18.12. Carried as a depth on each item and drawn
+             * as an indent rather than rebuilt into nested `<ul>`s: the agent's
+             * markers are what they are, and re-deriving a tree from
+             * indentation invents structure where the agent only wrote
+             * spacing. A plan with sub-steps flattened to one level is a
+             * different plan, which is the thing this prevents.
+             */
+            const List = block.ordered ? 'ol' : 'ul';
+            return (
+              <List className="agent__list" key={index}>
                 {block.items.map((item, at) => (
-                  <li key={at}>{inline(item)}</li>
+                  <li key={at} data-depth={item.depth === 0 ? undefined : item.depth}>
+                    {/*
+                      A task list keeps its boxes. They are the whole point of
+                      the notation, and an agent's checklist rendered without
+                      them is a list of sentences.
+                      Disabled: this is a record of what the agent decided,
+                      not a control — ticking it here would change nothing and
+                      imply it had.
+                    */}
+                    {item.done === undefined ? null : (
+                      <input
+                        className="agent__check"
+                        type="checkbox"
+                        checked={item.done}
+                        disabled
+                        readOnly
+                      />
+                    )}
+                    {renderInline(item.content)}
+                  </li>
                 ))}
-              </ol>
-            ) : (
-              <ul className="agent__list" key={index}>
-                {block.items.map((item, at) => (
-                  <li key={at}>{inline(item)}</li>
-                ))}
-              </ul>
+              </List>
+            );
+          }
+          case 'quote':
+            /*
+             * A quote holds blocks, not a line: an agent quoting a list or a
+             * code fence wrote a list or a code fence, and flattening it to
+             * one paragraph would be this surface deciding what it quoted.
+             */
+            return (
+              <blockquote className="agent__quote" key={index}>
+                <Blocks blocks={block.blocks} />
+              </blockquote>
+            );
+          case 'table':
+            /*
+             * §18.12: the structure the agent wrote it in, scrolling inside
+             * its own frame rather than widening the reading column — the same
+             * rule a code block follows, for the same reason.
+             */
+            return (
+              <div className="agent__tablewrap" key={index}>
+                <table className="agent__table">
+                  <thead>
+                    <tr>
+                      {block.head.map((cell, at) => (
+                        <th key={at} scope="col">
+                          {renderInline(cell)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, at) => (
+                      <tr key={at}>
+                        {row.map((cell, col) => (
+                          <td key={col}>{renderInline(cell)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             );
           case 'paragraph':
             return (
               <p className="agent__paragraph" key={index}>
-                {inline(block.body)}
+                {renderInline(block.content)}
               </p>
             );
+          case 'rule':
+            return <hr className="agent__rule" key={index} />;
           default: {
             const exhaustive: never = block;
             return exhaustive;
           }
         }
       })}
-    </div>
+    </>
   );
 }

@@ -22,124 +22,12 @@
 //! interrupt outcome rather than an ending. §4 of `docs/API_AGUI.md` is the
 //! contract; this file is its implementation.
 
-use layer2_core::{Event, EventKind, SessionStatus, StopReason};
-use serde::Serialize;
-
-/// One AG-UI event, ready to travel.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(super) struct AguiEvent {
-    /// The event type, in the protocol's own spelling.
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    /// The run this belongs to, echoed on every event.
-    #[serde(rename = "runId")]
-    pub run_id: String,
-    /// The session, which this protocol calls a thread.
-    #[serde(rename = "threadId")]
-    pub thread_id: String,
-    /// Everything else the event carries.
-    #[serde(flatten)]
-    pub body: serde_json::Value,
-    /// When the durable event this was projected from was appended, RFC 3339.
-    ///
-    /// Absent for a liveness frame — which has no log position — and for an
-    /// event written by a control plane that predates timestamps. A client
-    /// renders no time rather than an invented one.
-    #[serde(rename = "timestamp", skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<String>,
-    /// The durable sequence this was projected from, when there is one.
-    ///
-    /// Not part of the protocol's own payload: it rides as the SSE id, which
-    /// is what a reconnecting client hands back. Skipped in the body so a
-    /// client is never tempted to read it as protocol.
-    ///
-    /// **`None` for a liveness frame, and the option is the guard.** What is
-    /// happening on a session — a message being typed — is not in the durable
-    /// log and cannot be resumed from. A frame like that given an id becomes a
-    /// cursor: a client that reconnects on it asks the log to continue from a
-    /// number the log has never heard of, and everything between there and the
-    /// real position is skipped. Making the field an `Option` is what stops
-    /// that being a rule somebody has to remember.
-    ///
-    /// Its **absence** is stated on the wire as `chrono:live`, because a
-    /// client cannot otherwise see it. `EventSource` reports `lastEventId` as
-    /// the last id it was *given*, so a frame sent without one is
-    /// indistinguishable from a frame repeating the previous id — and a client
-    /// deduplicating on that would silently drop every liveness frame.
-    ///
-    /// This is not the thing the paragraph above forbids. A cursor is a
-    /// position a client could wrongly resume from; this says there is no
-    /// position, which is the opposite hazard. It is written from this one
-    /// field, so the two cannot come to disagree.
-    #[serde(
-        rename = "chrono:live",
-        serialize_with = "mark_live",
-        skip_serializing_if = "Option::is_some"
-    )]
-    pub seq: Option<u64>,
-}
-
-/// Write the marker that says this frame carries no cursor.
-///
-/// Only ever reached for a frame whose sequence is `None` — the field is
-/// skipped otherwise — so it writes the one value it can mean.
-fn mark_live<S>(_seq: &Option<u64>, out: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    out.serialize_bool(true)
-}
-
-/// Render one event as the frame that goes on the wire.
-///
-/// One function, used by the run stream and by the replay, so the two cannot
-/// come to disagree about the shape a client has to read.
-///
-/// **The frame is deliberately unnamed.** An `EventSource` has no wildcard
-/// listener: a frame carrying an `event:` name is delivered only to a listener
-/// registered for that exact name, so naming them makes a kind the client has
-/// never heard of unreceivable. This service's event set grows additively and
-/// `docs/API_AGUI.md` requires an unrecognised kind to arrive anyway, so it can
-/// be shown rather than dropped — which named frames make impossible.
-///
-/// Nothing is lost by it: the kind travels in the body as `type`, which is what
-/// every client dispatches on and always has.
-pub(super) fn sse_frame(event: &AguiEvent) -> axum::response::sse::Event {
-    let frame = axum::response::sse::Event::default()
-        .json_data(event)
-        // Serialising cannot fail for a shape this crate builds, but a panic
-        // here would take a live stream down; a client reading a run error it
-        // did not expect is survivable and says something went wrong.
-        .unwrap_or_else(|_| axum::response::sse::Event::default().data(r#"{"type":"RUN_ERROR"}"#));
-    // Only where there is one. A liveness frame carries no cursor, and
-    // stamping it with an id would make a client reconnect from a position the
-    // log has never held.
-    match event.cursor() {
-        Some(id) => frame.id(id),
-        None => frame,
-    }
-}
-
-impl AguiEvent {
-    /// The SSE id this frame travels under, if it may travel under one.
-    ///
-    /// One place, so the durable stream and the replay cannot disagree about
-    /// it and neither can accidentally stamp a liveness frame.
-    pub(super) fn cursor(&self) -> Option<String> {
-        self.seq.map(|seq| seq.to_string())
-    }
-}
-
-/// Whether a run ends here, and how.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Ending {
-    /// The turn finished. The run ends with it.
-    Finished,
-    /// The runtime is blocked on a decision. The run ends to ask.
-    Interrupted,
-    /// The session failed. The run ends saying so.
-    Failed,
-}
+use layer2_core::{Event, EventKind, SessionStatus};
+// Re-exported so the split is a move rather than a rename. `live.rs`,
+// `run.rs` and `replay.rs` all refer to `project::AguiEvent` and
+// `project::sse_frame`, and this is what keeps them doing so.
+pub(super) use super::frame::{sse_frame, AguiEvent};
+use super::run_ending::{ends_the_run, wire_stop_reason, Ending};
 
 /// What one durable event becomes, and whether the run continues past it.
 pub(super) struct Projected {
@@ -282,17 +170,40 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             input_tokens,
             output_tokens,
             context_used,
-        } => Projected {
-            events: vec![make(
-                "STATE_DELTA",
-                serde_json::json!({ "delta": [
-                    { "op": "replace", "path": "/usage/inputTokens", "value": input_tokens },
-                    { "op": "replace", "path": "/usage/outputTokens", "value": output_tokens },
-                    { "op": "replace", "path": "/usage/contextUsed", "value": context_used },
-                ]}),
-            )],
-            ending: None,
-        },
+            context_window,
+        } => {
+            let mut delta = vec![
+                serde_json::json!({ "op": "replace", "path": "/usage/inputTokens", "value": input_tokens }),
+                serde_json::json!({ "op": "replace", "path": "/usage/outputTokens", "value": output_tokens }),
+                serde_json::json!({ "op": "replace", "path": "/usage/contextUsed", "value": context_used }),
+            ];
+            if let Some(window) = context_window {
+                delta.push(serde_json::json!({
+                    "op": "replace",
+                    "path": "/usage/contextWindow",
+                    "value": window,
+                }));
+            }
+            Projected {
+                events: vec![make("STATE_DELTA", serde_json::json!({ "delta": delta }))],
+                ending: None,
+            }
+        }
+        EventKind::ContextCompacted { was, now, window } => {
+            let value = match window {
+                Some(window) => serde_json::json!({ "was": was, "now": now, "window": window }),
+                None => serde_json::json!({ "was": was, "now": now }),
+            };
+            Projected {
+                events: vec![make(
+                    "STATE_DELTA",
+                    serde_json::json!({ "delta": [
+                        { "op": "add", "path": "/contextCompactions/-", "value": value },
+                    ]}),
+                )],
+                ending: None,
+            }
+        }
         // A permission-mode change is a safety matter and is surfaced as state,
         // not as prose: the surface draws the new mode as a fact about the
         // session rather than as something the agent said.
@@ -330,6 +241,22 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                     { "op": "replace", "path": "/configOptions", "value": options
                         .iter()
                         .map(|o| serde_json::json!({ "id": o.id, "name": o.name, "kind": o.kind }))
+                        .collect::<Vec<_>>()
+                    },
+                ]}),
+            )],
+            ending: None,
+        },
+        // The actions the owner may invoke, on the same state path the live
+        // lane writes — so a client that replays the log and one that was
+        // already watching arrive at the same list rather than two.
+        EventKind::AvailableCommandsSet { commands } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "replace", "path": "/availableCommands", "value": commands
+                        .iter()
+                        .map(|c| serde_json::json!({ "name": c.name, "description": c.description }))
                         .collect::<Vec<_>>()
                     },
                 ]}),
@@ -402,6 +329,33 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             },
             false => Projected::nothing(),
         },
+        /*
+         * The agent is waiting for its owner to sign in to their own account.
+         *
+         * A state delta rather than a new event kind, matching how a gap and a
+         * plane change already travel, so a client needs no new vocabulary to
+         * read it. It is state rather than conversation: nobody said this, and
+         * putting it in the message stream would mix a thing the reader must
+         * act on into the record of what the agent produced.
+         *
+         * What travels is an address and a short-lived code. The credential
+         * the sign-in produces is written by the agent inside its own sandbox
+         * and never reaches this service, which is the whole basis on which an
+         * own-account session is offered at all.
+         */
+        EventKind::SignInRequired { url, code, message } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "replace", "path": "/signIn", "value": {
+                        "url": url,
+                        "code": code,
+                        "message": message,
+                    }},
+                ]}),
+            )],
+            ending: None,
+        },
         // Part of the conversation was dropped rather than recorded. Shown as
         // a boundary rather than hidden, in the same spirit as the log itself:
         // a client that skips silently leaves its reader to notice.
@@ -441,6 +395,77 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             )],
             ending: None,
         },
+        /*
+         * The runtime under this session died and was replaced.
+         *
+         * A state delta rather than an invented event kind, matching how a
+         * gap and a plane change already travel, so a client needs no new
+         * vocabulary to read it. Appended rather than replaced: a session can
+         * lose more than one runtime, and each loss is a separate thing that
+         * happened.
+         *
+         * `noticedAt` and not `at`. It is the moment the service *established*
+         * the loss, which is up to one reconciliation sweep after the runtime
+         * actually stopped. Naming it as the death would be a claim nothing
+         * here can support.
+         */
+        EventKind::RuntimeLost { runtime_id, cause } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [
+                    { "op": "add", "path": "/runtimeLosses/-", "value": {
+                        "runtime": runtime_id,
+                        "cause": cause,
+                        "noticedAt": timestamp.clone(),
+                    } },
+                ]}),
+            )],
+            ending: None,
+        },
+        /*
+         * An episode is durable state, unlike the readings it was folded
+         * from. A reader who reloads must still see an open squeeze, so this
+         * belongs in `project` and carries the log's cursor and timestamp.
+         *
+         * It does not end the run: pressure is something to act on while the
+         * agent remains working, not a failure in the run lifecycle.
+         */
+        EventKind::MemoryPressureOpened {
+            used_bytes,
+            limit_bytes,
+            occupancy_permille,
+        } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/memoryPressure",
+                    "value": {
+                        "usedBytes": used_bytes,
+                        "limitBytes": limit_bytes,
+                        "occupancyPermille": occupancy_permille,
+                        "since": timestamp.clone(),
+                    },
+                }] }),
+            )],
+            ending: None,
+        },
+        /*
+         * Replace with `null`, never remove. RFC 6902 rejects removing a path
+         * a mid-session reader never received, whereas null is a value every
+         * client can apply idempotently.
+         */
+        EventKind::MemoryPressureClosed { .. } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/memoryPressure",
+                    "value": null,
+                }] }),
+            )],
+            ending: None,
+        },
         // Recorded for the log's own sake and carried by other interfaces. No
         // honest AG-UI shape exists for a resize or an attachment, and an
         // approval's resolution is already known to whoever sent it.
@@ -466,38 +491,6 @@ fn reason_for(action: Option<&str>) -> String {
         Some(action) => format!("chrono:{action}"),
         None => "confirmation".to_string(),
     }
-}
-
-/// Whether a status change is the end of the run.
-///
-/// Going idle is not: a turn ending already says so, and an approval parks a
-/// session idle while its run is being asked about. What ends a run is the
-/// session ceasing to be able to answer at all.
-fn ends_the_run(status: SessionStatus, stop_reason: Option<StopReason>) -> bool {
-    match status {
-        SessionStatus::Terminated => true,
-        // A handover, either onto a newer runtime or onto the other plane. The
-        // session is coming back, but this run is not: its runtime is being
-        // torn down, and a client left holding a stream that simply stops
-        // cannot tell that from an agent taking its time. The detail carried
-        // with the status says which handover it is and that the session
-        // returns, so ending the run here is a statement rather than a
-        // failure dressed up as one.
-        SessionStatus::Rotating => true,
-        SessionStatus::Idle => matches!(
-            stop_reason,
-            Some(StopReason::Error) | Some(StopReason::Revoked) | Some(StopReason::BudgetReached)
-        ),
-        _ => false,
-    }
-}
-
-/// A stop reason as the wire spells it.
-fn wire_stop_reason(reason: StopReason) -> String {
-    serde_json::to_value(reason)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg(test)]

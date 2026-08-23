@@ -29,8 +29,9 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{ContentBlock, ConversationInput, PermissionDecision};
-use tokio::sync::mpsc;
+use layer3_adapter::{
+    AdapterError, ContentBlock, ConversationInput, ConversationInputSender, PermissionDecision,
+};
 
 use crate::authz::Caller;
 use crate::capabilities::Capability;
@@ -50,6 +51,8 @@ pub struct Usage {
     pub output_tokens: u64,
     /// How much of the model's context the conversation currently fills.
     pub context_used: u64,
+    /// How large that context is, where the runtime states one.
+    pub context_window: Option<u64>,
 }
 
 /// How an owner answered something the runtime was blocked on.
@@ -233,14 +236,23 @@ impl SessionService {
                 input_tokens,
                 output_tokens,
                 context_used,
+                context_window,
             } = &event.kind
             {
                 total.input_tokens = total.input_tokens.max(*input_tokens);
                 total.output_tokens = total.output_tokens.max(*output_tokens);
-                // Not a maximum: this is how full the context is right now,
-                // and a conversation that was compacted genuinely holds less
-                // than it did.
-                total.context_used = *context_used;
+                // A turn's own accounting has no context reading and writes
+                // zero. It is not a reading of an empty context, so it leaves
+                // the latest real reading standing.
+                if *context_used > 0 {
+                    total.context_used = *context_used;
+                }
+                // Absence means this report did not state a ceiling, not that
+                // a previously stated ceiling stopped applying. A later
+                // stated value wins because a route can change mid-session.
+                if let Some(window) = context_window {
+                    total.context_window = Some(*window);
+                }
             }
             total
         }))
@@ -259,7 +271,7 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
         capability: Capability,
-    ) -> Result<mpsc::Sender<ConversationInput>, CoreError> {
+    ) -> Result<ConversationInputSender, CoreError> {
         // Read from the record rather than from what this process happens to
         // hold, because after a restart it holds nothing — and a session it has
         // never seen is not a session that does not exist.
@@ -285,12 +297,17 @@ impl SessionService {
     async fn toward_runtime(
         &self,
         id: &SessionId,
-        input: &mpsc::Sender<ConversationInput>,
+        input: &ConversationInputSender,
         message: ConversationInput,
     ) -> Result<(), CoreError> {
-        input.send(message).await.map_err(|_| {
-            tracing::warn!(session_id = %id, "the conversation channel closed");
-            CoreError::RuntimeUnavailable("this session's conversation has ended".into())
+        input.send(message).await.map_err(|error| {
+            tracing::warn!(session_id = %id, %error, "conversation input was not delivered");
+            match error {
+                AdapterError::Unavailable(detail) => CoreError::RuntimeUnavailable(detail),
+                AdapterError::Rejected(detail) | AdapterError::Unsupported(detail) => {
+                    CoreError::RuntimeRefused(detail)
+                }
+            }
         })
     }
 }

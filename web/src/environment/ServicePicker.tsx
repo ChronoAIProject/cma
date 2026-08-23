@@ -1,4 +1,4 @@
-import { Chip } from '../ui/Chip';
+import { Pill } from '../ui/Pill';
 import type { PlatformService } from './types';
 
 /**
@@ -51,14 +51,14 @@ export function ServicePicker({
   }
 
   return (
-    <div className="picker">
+    <div className="selection">
       {services.length === 0 ? (
         <p className="empty">No services are available to you yet.</p>
       ) : (
         services.map((service) => {
           const required = mandatory.includes(service.id);
           return (
-            <label className="picker__row" key={service.id}>
+            <label className="selection__row" key={service.id}>
               <input
                 type="checkbox"
                 checked={required || selected.includes(service.id)}
@@ -67,13 +67,13 @@ export function ServicePicker({
                   toggle(service.id, event.target.checked);
                 }}
               />
-              <span className="picker__text">
-                <span className="picker__name">
+              <span className="selection__text">
+                <span className="selection__name">
                   {service.name}
-                  {required ? <Chip inline>always</Chip> : null}
+                  {required ? <Pill>always</Pill> : null}
                 </span>
                 {service.description === undefined ? null : (
-                  <span className="picker__description">{service.description}</span>
+                  <span className="selection__description">{service.description}</span>
                 )}
               </span>
             </label>

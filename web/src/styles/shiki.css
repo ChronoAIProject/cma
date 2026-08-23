@@ -1,0 +1,36 @@
+/*
+ * First-party. Values are governed by docs/Web_Style.md Section 7.
+ * Change the design authority before changing this sheet.
+ */
+
+/* Syntax-highlight token palette: the values behind shiki's css-variables
+   theme (--shiki-* custom properties emitted by the ui-primitives CodeBlock).
+   Light values on :root, dark overrides on the body attribute — the same
+   cascade as every other token sheet. Background/foreground deliberately
+   alias the markdown code-block tokens so highlighted and plain blocks agree. */
+
+:root {
+  --shiki-foreground: var(--dsw-alias-label-primary);
+  --shiki-background: var(--dsw-alias-markdown-code-block);
+  --shiki-token-constant: #0e61ac;
+  --shiki-token-string: #557a2e;
+  --shiki-token-comment: #8c8474;
+  --shiki-token-keyword: #0e61ac;
+  --shiki-token-parameter: #bc3b26;
+  --shiki-token-function: #7b3f93;
+  --shiki-token-string-expression: #3e7a22;
+  --shiki-token-punctuation: #4c5a68;
+  --shiki-token-link: #0a4c88;
+}
+
+body[data-ds-dark-theme] {
+  --shiki-token-constant: #aee734;
+  --shiki-token-string: #e7d98a;
+  --shiki-token-comment: #6b7361;
+  --shiki-token-keyword: #c3fd43;
+  --shiki-token-parameter: #ff806f;
+  --shiki-token-function: #9acbff;
+  --shiki-token-string-expression: #d7ff7d;
+  --shiki-token-punctuation: #a9b199;
+  --shiki-token-link: #aee734;
+}

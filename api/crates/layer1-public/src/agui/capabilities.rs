@@ -67,6 +67,7 @@ pub(super) async fn declare() -> Json<serde_json::Value> {
                 "chrono:usage": true,
                 "chrono:changePlane": false,
                 "chrono:planeChangeObserved": true,
+                "chrono:resources": true,
                 // The run stream also carries what is happening right now, not
                 // only what has happened. Those frames are marked
                 // `chrono:live` and carry no SSE id: they are not in the

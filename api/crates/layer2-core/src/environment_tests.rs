@@ -250,6 +250,7 @@ fn selecting_no_profile_still_yields_the_baseline() {
 fn a_resolved_profile_carries_its_variables_by_name() {
     let profile = EnvironmentProfile {
         services: Vec::new(),
+        agent_notes: String::new(),
         id: EnvironmentProfileId::generate(),
         owner: SubjectId("subject-a".into()),
         name: "mine".into(),
@@ -261,6 +262,7 @@ fn a_resolved_profile_carries_its_variables_by_name() {
         },
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
+        preferred: false,
     };
     let resolved = ResolvedEnvironment::from_spec(&profile.to_spec());
     assert_eq!(
@@ -282,6 +284,7 @@ fn a_resolved_profile_carries_its_variables_by_name() {
 fn ownership_is_exact_match_only() {
     let profile = EnvironmentProfile {
         services: Vec::new(),
+        agent_notes: String::new(),
         id: EnvironmentProfileId::generate(),
         owner: SubjectId("subject-a".into()),
         name: "mine".into(),
@@ -293,6 +296,7 @@ fn ownership_is_exact_match_only() {
         },
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
+        preferred: false,
     };
     assert!(profile.is_owned_by(&SubjectId("subject-a".into())));
     assert!(!profile.is_owned_by(&SubjectId("subject-b".into())));

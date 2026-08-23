@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { resizeObserved } from '../test/setup';
 import { Composer } from './Composer';
 import { toCapabilities, type ConcurrentInput, type SessionCapabilities } from '../agui';
 
@@ -16,7 +17,7 @@ function capabilities(overrides: Partial<SessionCapabilities> = {}): SessionCapa
 }
 
 function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {}) {
-  const onSend = vi.fn();
+  const onSend = vi.fn().mockResolvedValue(true);
   const onInterrupt = vi.fn();
   const result = render(
     <Composer
@@ -45,7 +46,7 @@ describe('sending', () => {
 
   it('will not send an empty prompt', () => {
     renderComposer();
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   });
 });
 
@@ -75,7 +76,7 @@ describe('what it does mid-turn', () => {
       expect(onSend).toHaveBeenCalledWith('and also this');
     } else {
       expect(onSend).not.toHaveBeenCalled();
-      expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     }
   });
 
@@ -113,18 +114,18 @@ describe('interrupt', () => {
   it('is offered only while a turn is in flight', () => {
     const granted = capabilities({ interrupt: true });
     const idle = renderComposer({ capabilities: granted, turnInFlight: false });
-    expect(idle.queryByRole('button', { name: 'Interrupt' })).toBeNull();
+    expect(idle.queryByRole('button', { name: 'Stop generating' })).toBeNull();
     idle.unmount();
 
     renderComposer({ capabilities: granted, turnInFlight: true });
-    expect(screen.getByRole('button', { name: 'Interrupt' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
   });
 
   it('is absent on a session whose kernel cannot withdraw a prompt', () => {
     // Refused by name rather than left waiting for something that will not
     // happen.
     renderComposer({ capabilities: capabilities({ interrupt: false }), turnInFlight: true });
-    expect(screen.queryByRole('button', { name: 'Interrupt' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).toBeNull();
   });
 
   it('stops the turn, and the surface reflects it without a reload', async () => {
@@ -134,7 +135,7 @@ describe('interrupt', () => {
       turnInFlight: true,
     });
 
-    await user.click(screen.getByRole('button', { name: 'Interrupt' }));
+    await user.click(screen.getByRole('button', { name: 'Stop generating' }));
     expect(onInterrupt).toHaveBeenCalledTimes(1);
 
     // The turn ends; the control goes with it, from state rather than a reload.
@@ -146,7 +147,7 @@ describe('interrupt', () => {
         onInterrupt={onInterrupt}
       />,
     );
-    expect(screen.queryByRole('button', { name: 'Interrupt' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).toBeNull();
   });
 });
 
@@ -168,5 +169,323 @@ describe('a session that cannot take input', () => {
     renderComposer({ refusedReason: 'This session has ended.' });
     expect(screen.queryByRole('button', { name: /send/i })).toBeNull();
     expect(screen.queryByLabelText('Message')).toBeNull();
+  });
+});
+
+describe('a refused turn keeps what was written', () => {
+  /*
+   * The failure this guards is the expensive one: on a long run the message
+   * that gets refused is the carefully worded correction, and clearing the
+   * field means retyping it from memory.
+   */
+  it('leaves the draft alone when the service did not take it', async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn().mockResolvedValue(false);
+    renderComposer({ onSend });
+
+    await user.type(screen.getByRole('textbox'), 'the careful correction');
+    await user.keyboard('{Enter}');
+
+    expect(onSend).toHaveBeenCalledWith('the careful correction');
+    expect(screen.getByRole('textbox')).toHaveValue('the careful correction');
+  });
+
+  it('leaves the draft alone when the send threw', async () => {
+    const user = userEvent.setup();
+    renderComposer({ onSend: vi.fn().mockRejectedValue(new Error('the network went')) });
+
+    await user.type(screen.getByRole('textbox'), 'still here');
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('textbox')).toHaveValue('still here');
+  });
+
+  it('clears the draft once the turn is accepted', async () => {
+    // The other half: keeping it after a successful send would put the last
+    // message back into the next one.
+    const user = userEvent.setup();
+    renderComposer({ onSend: vi.fn().mockResolvedValue(true) });
+
+    await user.type(screen.getByRole('textbox'), 'taken');
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('textbox')).toHaveValue('');
+  });
+
+  it('sends nothing when there is nothing but whitespace', async () => {
+    const user = userEvent.setup();
+    const { onSend } = renderComposer();
+
+    await user.type(screen.getByRole('textbox'), '   ');
+    await user.keyboard('{Enter}');
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('the field grows with what is written in it', () => {
+  /*
+   * §18.4: "The field grows to six lines and then scrolls inside itself." It
+   * was `rows={1}` with no growth, so a multi-paragraph prompt scrolled inside
+   * a two-line porthole — somebody writing the careful instruction a long run
+   * turns on could see two lines of it.
+   *
+   * jsdom lays nothing out, so `scrollHeight` is stubbed: what is under test
+   * is that the field is measured and its height set from the measurement,
+   * which is the part that was missing.
+   */
+  function measured(field: HTMLTextAreaElement, height: number): void {
+    Object.defineProperty(field, 'scrollHeight', { configurable: true, get: () => height });
+  }
+
+  it('sets its height from what it measures', async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+    measured(field, 140);
+
+    await user.type(field, 'a line');
+
+    expect(field.style.height).toBe('140px');
+  });
+
+  it('re-measures when the column around it settles, without the text changing', async () => {
+    /*
+     * The defect this exists for. Measuring on `text` alone measured once, at
+     * mount, before the column had settled — `scrollHeight` then reported the
+     * space *available* rather than the space needed, and an empty field
+     * opened at its fourteen-line cap. Nothing ever corrected it, because the
+     * text never changed.
+     *
+     * So this changes no text at all: it reports a resize, which is what the
+     * first settle, a window resize and the details column opening all look
+     * like from here.
+     */
+    renderComposer();
+    const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+    /*
+     * The mount's own measurement holds the re-entry guard until its
+     * animation frame runs, and the guard is the whole reason writing a
+     * height does not trigger another observation. Flushed rather than worked
+     * around: a resize arriving inside that window is correctly ignored.
+     */
+    const settle = async () => {
+      await act(async () => {
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => {
+            resolve(undefined);
+          });
+        });
+      });
+    };
+    await settle();
+
+    measured(field, 336);
+    await act(async () => {
+      resizeObserved();
+    });
+    expect(field.style.height).toBe('336px');
+    await settle();
+
+    measured(field, 28);
+    await act(async () => {
+      resizeObserved();
+    });
+    expect(field.style.height).toBe('28px');
+  });
+
+  it('shrinks again when the draft is cut down', async () => {
+    // Reset to `auto` before measuring, or `scrollHeight` of an already-tall
+    // box never reports anything smaller and the field only ever grows.
+    const user = userEvent.setup();
+    renderComposer();
+    const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+    measured(field, 200);
+    await user.type(field, 'lots');
+    expect(field.style.height).toBe('200px');
+
+    measured(field, 64);
+    await user.clear(field);
+    expect(field.style.height).toBe('64px');
+  });
+});
+
+describe('the commands the kernel offers', () => {
+  /*
+   * §18.4. They used to be printed as a static list at the foot of the message
+   * column, below every turn: readable and unusable, so the reader retyped
+   * what they had just read.
+   */
+  const OFFERED = [
+    { name: 'compact', description: 'Summarise the conversation so far' },
+    { name: 'clear', description: 'Start again with nothing carried over' },
+  ];
+
+  it('opens on a slash at the head of an empty draft', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/');
+
+    expect(screen.getByRole('listbox', { name: /commands/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /compact/ })).toBeInTheDocument();
+  });
+
+  it('offers only what the kernel advertised', async () => {
+    // §18.2 and §18.10, in identical words: a client that invented a command
+    // would be offering something the session cannot honour.
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/');
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+  });
+
+  it('filters as the reader keeps typing', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/com');
+
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option', { name: /compact/ })).toBeInTheDocument();
+  });
+
+  it('does not open on a slash inside a sentence', async () => {
+    // An agent is asked to do things in prose, and a `/` mid-sentence is a
+    // path or a date rather than a command.
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), 'look in src/chat');
+
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('opens nothing when the kernel advertised none', async () => {
+    // The same reasoning that keeps an ungranted affordance off the surface
+    // rather than drawing it empty.
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: [] });
+
+    await user.type(screen.getByRole('textbox'), '/');
+
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('takes a command and leaves the caret after it', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+    const field = screen.getByRole('textbox');
+
+    await user.type(field, '/com');
+    await user.keyboard('{Enter}');
+
+    expect(field).toHaveValue('/compact ');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('does not send the turn while the menu is choosing', async () => {
+    // The field is listening for Enter too. The menu takes it first, or
+    // choosing a command would send one instead.
+    const user = userEvent.setup();
+    const onSend = vi.fn().mockResolvedValue(true);
+    renderComposer({ availableCommands: OFFERED, onSend });
+
+    await user.type(screen.getByRole('textbox'), '/com');
+    await user.keyboard('{Enter}');
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('closes on Escape and stays closed for that draft', async () => {
+    const user = userEvent.setup();
+    renderComposer({ availableCommands: OFFERED });
+
+    await user.type(screen.getByRole('textbox'), '/');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).toBeNull();
+
+    // Still closed as they keep typing the same command.
+    await user.type(screen.getByRole('textbox'), 'com');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+});
+
+describe('where the keyboard lands', () => {
+  it('rests on the prompt, as §10 has always required', () => {
+    // Honoured only by the landing until now, so opening a session and typing
+    // cost a mouse click every time — on the surface whose whole purpose is
+    // typing into it.
+    renderComposer();
+    expect(screen.getByRole('textbox')).toHaveFocus();
+  });
+
+  it('takes no focus where the session refuses input', () => {
+    // There is no field to focus: a refused composer draws its reason instead.
+    renderComposer({ refusedReason: 'This session is terminated' });
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+});
+
+describe('the send seat', () => {
+  it('holds Stop where the turn refuses input, because sending cannot work', () => {
+    /*
+     * A Send that cannot fire beside a Stop that can is two keys where only
+     * one of them ever applies, and the reader has to work out which before
+     * they can act.
+     */
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: true, concurrentInput: 'reject' }),
+    });
+
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
+  });
+
+  it('keeps Send in the seat where the policy accepts input mid-turn', () => {
+    // §18.4: sending during a turn is a real act on such a session, and it is
+    // the act the seat is for. Interrupt gets its own key beside it.
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: true, concurrentInput: 'enqueue' }),
+    });
+
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
+  });
+
+  it('offers exactly one way to stop, never two', () => {
+    /*
+     * A rewrite left the old text key beside the new icon one, and every test
+     * here passed: they each looked for one name — "Interrupt" or "Stop
+     * generating" — and both controls existed, so neither query failed. What
+     * nothing asked was how many there were.
+     */
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: true, concurrentInput: 'enqueue' }),
+    });
+
+    const stops = screen
+      .getAllByRole('button')
+      .filter((button) =>
+        /stop|interrupt/i.test(button.getAttribute('aria-label') ?? button.textContent ?? ''),
+      );
+    expect(stops).toHaveLength(1);
+  });
+
+  it('offers no stop at all where the session cannot be interrupted', () => {
+    // §18.4 refuses by name rather than offering a stop that will not happen.
+    renderComposer({
+      turnInFlight: true,
+      capabilities: capabilities({ interrupt: false, concurrentInput: 'reject' }),
+    });
+
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   });
 });

@@ -5,6 +5,8 @@
 //! selection the caller may not use has to fail before a sandbox exists.
 
 use super::*;
+use crate::test_support::service_with_environments_and_settings;
+use crate::{PlatformSettings, ServiceId, SessionBriefing};
 
 /// Wait until the adapter has been asked to provision something.
 ///
@@ -81,6 +83,67 @@ async fn a_selected_profile_reaches_the_runtime_that_backs_the_session() {
         .environment
         .skills
         .contains(&"mandatory-one".to_string()));
+}
+
+#[tokio::test]
+async fn the_configured_platform_briefing_reaches_provisioning_separately_from_owner_notes() {
+    // The wiring test #450 requires. Rendering and composition have their own
+    // unit tests, but neither proves the session service actually puts the
+    // configured document on the spec handed to a real adapter.
+    let profiles = Arc::new(FakeProfileStore::default());
+    let environment_service = environments(Arc::clone(&profiles));
+    let owner = user("subject-a");
+    let mut profile_spec = profile_spec("instructions from both authorities");
+    profile_spec.agent_notes = "Run this owner's verification command.".into();
+    profile_spec.services.push(ServiceId::new("github"));
+    let profile = environment_service
+        .create(&owner, profile_spec)
+        .await
+        .expect("profile creates");
+
+    let briefing = SessionBriefing {
+        before: vec!["# Changed deployment policy".into()],
+        ..SessionBriefing::default()
+    };
+    let adapter = Arc::new(FakeAdapter::default());
+    let sessions = service_with_environments_and_settings(
+        Arc::new(FakeStore::default()),
+        Arc::clone(&adapter),
+        environment_service,
+        PlatformSettings {
+            briefing: briefing.clone(),
+            ..PlatformSettings::default()
+        },
+    );
+    sessions
+        .create_session(
+            &owner,
+            crate::session::SessionSpec {
+                environment_profile: Some(profile.id),
+                ..crate::test_support::spec()
+            },
+        )
+        .await
+        .expect("session creates");
+
+    let provisioned = await_provisioned(&adapter).await;
+    assert_eq!(
+        provisioned.platform_briefing,
+        briefing.render(&provisioned.reaches),
+        "the configured document must be rendered with this session's recorded grant"
+    );
+    assert!(provisioned.platform_briefing.contains("- `github`"));
+    assert_eq!(
+        provisioned.environment.agent_notes,
+        "Run this owner's verification command."
+    );
+    assert!(!provisioned
+        .platform_briefing
+        .contains("owner's verification"));
+    assert!(!provisioned
+        .environment
+        .agent_notes
+        .contains("Changed deployment policy"));
 }
 
 #[tokio::test]
@@ -169,6 +232,7 @@ mod granted_services {
             None,
             None,
             fake_agent(),
+            crate::test_support::unconfigured_settings(),
         )
     }
 
@@ -409,6 +473,7 @@ mod granted_services {
             None,
             None,
             fake_agent(),
+            crate::test_support::unconfigured_settings(),
         );
         let owner = user("subject-a");
         let profile = environment_service
@@ -462,7 +527,7 @@ mod granted_services {
                 &owner,
                 SessionSpec {
                     environment_profile: Some(profile.id.clone()),
-                    subject_credential: Some("a-real-credential-value".into()),
+                    caller_credential: Some("a-real-credential-value".into()),
                     ..crate::test_support::spec()
                 },
             )
@@ -476,5 +541,274 @@ mod granted_services {
                 "a credential value reached the list of names"
             );
         }
+    }
+}
+
+/// The size frozen onto a session and used by every runtime it receives.
+mod session_sizes {
+    use super::*;
+    use crate::store::SessionStore;
+    use crate::test_support::{await_settled, service_with_environments_on_version};
+    use crate::{Session, SessionService, SessionSize};
+
+    fn size(cpu_millis: u32, memory_mib: u32) -> SessionSize {
+        SessionSize::new(cpu_millis, memory_mib).expect("a non-zero size is usable")
+    }
+
+    fn profile_with_size(name: &str, requested: Option<SessionSize>) -> EnvironmentProfileSpec {
+        let mut spec = profile_spec(name);
+        spec.agent.size = requested;
+        spec
+    }
+
+    async fn save_profile(
+        service: &Arc<EnvironmentProfileService>,
+        owner: &Caller,
+        name: &str,
+        requested: Option<SessionSize>,
+    ) -> EnvironmentProfile {
+        service
+            .create(owner, profile_with_size(name, requested))
+            .await
+            .expect("profile creates")
+    }
+
+    async fn create_from(
+        service: &Arc<SessionService>,
+        owner: &Caller,
+        profile: &EnvironmentProfile,
+    ) -> Session {
+        service
+            .create_session(
+                owner,
+                crate::session::SessionSpec {
+                    environment_profile: Some(profile.id.clone()),
+                    ..crate::test_support::spec()
+                },
+            )
+            .await
+            .expect("session creates")
+    }
+
+    fn assert_capacity(
+        provisioned: &layer3_adapter::RuntimeSpec,
+        cpu_millis: u32,
+        memory_mib: u32,
+    ) {
+        let capacity = provisioned
+            .capacity
+            .expect("the requested capacity crosses");
+        assert_eq!(capacity.cpu_millis.get(), cpu_millis);
+        assert_eq!(capacity.memory_mib.get(), memory_mib);
+    }
+
+    #[tokio::test]
+    async fn a_profile_size_reaches_the_runtime_that_backs_the_session() {
+        let environment_service = environments(Arc::new(FakeProfileStore::default()));
+        let owner = user("subject-a");
+        let profile = save_profile(
+            &environment_service,
+            &owner,
+            "large build",
+            Some(size(1_500, 3_072)),
+        )
+        .await;
+        let adapter = Arc::new(FakeAdapter::default());
+        let sessions = service_with_environments(
+            Arc::new(FakeStore::default()),
+            Arc::clone(&adapter),
+            environment_service,
+        );
+
+        create_from(&sessions, &owner, &profile).await;
+
+        assert_capacity(&await_provisioned(&adapter).await, 1_500, 3_072);
+    }
+
+    #[tokio::test]
+    async fn a_profile_that_names_no_size_provisions_at_the_deployments_own() {
+        let environment_service = environments(Arc::new(FakeProfileStore::default()));
+        let owner = user("subject-a");
+        let profile = save_profile(&environment_service, &owner, "ordinary build", None).await;
+        let adapter = Arc::new(FakeAdapter::default());
+        let sessions = service_with_environments(
+            Arc::new(FakeStore::default()),
+            Arc::clone(&adapter),
+            environment_service,
+        );
+
+        create_from(&sessions, &owner, &profile).await;
+
+        assert_eq!(await_provisioned(&adapter).await.capacity, None);
+    }
+
+    #[tokio::test]
+    async fn a_session_recorded_before_sizing_provisions_at_the_deployments_own() {
+        let environment_service = environments(Arc::new(FakeProfileStore::default()));
+        let owner = user("subject-a");
+        let profile = save_profile(
+            &environment_service,
+            &owner,
+            "old session",
+            Some(size(1_500, 3_072)),
+        )
+        .await;
+        let store = Arc::new(FakeStore::default());
+        let adapter = Arc::new(FakeAdapter::default());
+        let sessions = service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            Arc::clone(&environment_service),
+        );
+        let session = create_from(&sessions, &owner, &profile).await;
+        await_settled(&sessions, &owner, &session.id).await;
+        sessions
+            .stop_session(&owner, &session.id)
+            .await
+            .expect("session stops");
+
+        let mut record = store
+            .get(&session.id)
+            .await
+            .expect("record reads")
+            .expect("record exists");
+        let mut stored = serde_json::to_value(&record.session).expect("session serializes");
+        let removed = stored["options"]
+            .as_object_mut()
+            .expect("options are an object")
+            .remove("size");
+        assert!(removed.is_some(), "the fixture must first carry a size");
+        record.session = serde_json::from_value(stored).expect("an older session reads");
+        assert_eq!(record.session.options.size, None);
+        store.upsert(&record).await.expect("older record writes");
+
+        *adapter.last_spec.lock().await = None;
+        drop(sessions);
+        let restarted = service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            environment_service,
+        );
+        restarted
+            .revive_session(&owner, &session.id)
+            .await
+            .expect("older session revives");
+
+        assert_eq!(await_provisioned(&adapter).await.capacity, None);
+    }
+
+    #[tokio::test]
+    async fn a_session_keeps_its_size_when_its_profile_changes() {
+        let environment_service = environments(Arc::new(FakeProfileStore::default()));
+        let owner = user("subject-a");
+        let profile = save_profile(
+            &environment_service,
+            &owner,
+            "resized later",
+            Some(size(1_500, 3_072)),
+        )
+        .await;
+        let adapter = Arc::new(FakeAdapter::default());
+        let sessions = service_with_environments(
+            Arc::new(FakeStore::default()),
+            Arc::clone(&adapter),
+            Arc::clone(&environment_service),
+        );
+        let session = create_from(&sessions, &owner, &profile).await;
+        await_settled(&sessions, &owner, &session.id).await;
+        sessions
+            .stop_session(&owner, &session.id)
+            .await
+            .expect("session stops");
+        environment_service
+            .update(
+                &owner,
+                &profile.id,
+                profile_with_size("resized later", Some(size(3_000, 6_144))),
+            )
+            .await
+            .expect("profile resizes");
+
+        *adapter.last_spec.lock().await = None;
+        sessions
+            .revive_session(&owner, &session.id)
+            .await
+            .expect("session revives");
+
+        assert_capacity(&await_provisioned(&adapter).await, 1_500, 3_072);
+    }
+
+    #[tokio::test]
+    async fn a_rotation_carries_a_sessions_size() {
+        let environment_service = environments(Arc::new(FakeProfileStore::default()));
+        let owner = user("subject-a");
+        let profile = save_profile(
+            &environment_service,
+            &owner,
+            "rotating session",
+            Some(size(1_500, 3_072)),
+        )
+        .await;
+        let store = Arc::new(FakeStore::default());
+        let adapter = Arc::new(FakeAdapter::default());
+        let old = service_with_environments_on_version(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            Arc::clone(&environment_service),
+            "runtime:1",
+        );
+        let session = create_from(&old, &owner, &profile).await;
+        await_settled(&old, &owner, &session.id).await;
+        *adapter.last_spec.lock().await = None;
+        drop(old);
+
+        let new = service_with_environments_on_version(
+            store,
+            Arc::clone(&adapter),
+            environment_service,
+            "runtime:2",
+        );
+        let reconciled = new.reconcile().await;
+
+        assert_eq!(reconciled.rotated_sessions, 1);
+        assert_capacity(&await_provisioned(&adapter).await, 1_500, 3_072);
+    }
+
+    #[tokio::test]
+    async fn a_lost_runtime_is_replaced_at_the_same_size() {
+        let environment_service = environments(Arc::new(FakeProfileStore::default()));
+        let owner = user("subject-a");
+        let profile = save_profile(
+            &environment_service,
+            &owner,
+            "recovering session",
+            Some(size(1_500, 3_072)),
+        )
+        .await;
+        let store = Arc::new(FakeStore::default());
+        let adapter = Arc::new(FakeAdapter::default());
+        let first = service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            Arc::clone(&environment_service),
+        );
+        let session = create_from(&first, &owner, &profile).await;
+        await_settled(&first, &owner, &session.id).await;
+        let lost = store
+            .get(&session.id)
+            .await
+            .expect("record reads")
+            .expect("record exists")
+            .runtime_id
+            .expect("runtime exists");
+        drop(first);
+        adapter.lose(&lost).await;
+        *adapter.last_spec.lock().await = None;
+
+        let restarted = service_with_environments(store, Arc::clone(&adapter), environment_service);
+        let reconciled = restarted.reconcile().await;
+
+        assert_eq!(reconciled.reprovisioned_sessions, 1);
+        assert_capacity(&await_provisioned(&adapter).await, 1_500, 3_072);
     }
 }

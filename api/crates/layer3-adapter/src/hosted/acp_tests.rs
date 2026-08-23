@@ -9,8 +9,12 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
+use tokio::sync::mpsc;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
 use super::Bridge;
 use crate::supervisor;
+use crate::AdapterError;
 
 /// What the fake bridge did during one handshake.
 struct Handshake {
@@ -38,6 +42,16 @@ async fn bridging(
     resuming: Option<&str>,
     refuse: Option<&'static str>,
     calls: Option<usize>,
+) -> (String, tokio::task::JoinHandle<Handshake>) {
+    bridging_offering(resuming, refuse, calls, serde_json::json!([])).await
+}
+
+/// The same fixture, with control over which sign-ins the bridge advertises.
+async fn bridging_offering(
+    resuming: Option<&str>,
+    refuse: Option<&'static str>,
+    calls: Option<usize>,
+    auth_methods: serde_json::Value,
 ) -> (String, tokio::task::JoinHandle<Handshake>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -77,6 +91,18 @@ async fn bridging(
                     "id": call["id"],
                     "error": { "code": -32000, "message": "no" },
                 }),
+                // `initialize` answers with the sign-ins this bridge offers,
+                // because that is what an own-account session chooses from.
+                // Every other call keeps the one-size answer: these tests are
+                // about which calls are made and in what order.
+                _ if method == "initialize" => serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": call["id"],
+                    "result": {
+                        "sessionId": "conv-1",
+                        "authMethods": auth_methods.clone(),
+                    },
+                }),
                 _ => serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": call["id"],
@@ -97,6 +123,117 @@ async fn bridging(
         Handshake {
             asked,
             mode,
+            frames,
+        }
+    });
+
+    (url, served)
+}
+
+/// A bridge that asks its owner to sign in, and waits there.
+///
+/// The other fixtures answer `authenticate` immediately, which is the one
+/// thing a real device sign-in never does — it is a person walking to another
+/// machine. This one reproduces the wait: it sends `elicitation/create` and
+/// holds the `authenticate` answer until the client has replied, so anything
+/// the client is expected to do *during* the sign-in is observable.
+async fn bridging_that_waits_for_a_sign_in() -> (String, tokio::task::JoinHandle<Handshake>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let declared = declaration(None);
+
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declared))
+            .await
+            .expect("the declaration is sent");
+
+        let mut asked = Vec::new();
+        let mut frames = Vec::new();
+        let mut authenticate_id = None;
+        async fn send(
+            ws: &mut WebSocketStream<tokio::net::TcpStream>,
+            value: serde_json::Value,
+        ) -> bool {
+            let body = value.to_string();
+            let framed = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
+            ws.send(Message::Binary(framed)).await.is_ok()
+        }
+
+        while let Some(Ok(frame)) = ws.next().await {
+            let Message::Binary(bytes) = frame else {
+                continue;
+            };
+            let Some((supervisor::LANE_CONVERSATION, payload)) = supervisor::unframe(&bytes) else {
+                continue;
+            };
+            let call: serde_json::Value = serde_json::from_slice(payload).expect("json-rpc");
+            frames.push(call.clone());
+
+            // The client's answer to the sign-in. Only now does the kernel
+            // consider itself authenticated, which is the whole point.
+            if call.get("method").is_none() {
+                if let Some(id) = authenticate_id.take() {
+                    if !send(
+                        &mut ws,
+                        serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
+                    )
+                    .await
+                    {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            let method = call["method"].as_str().unwrap_or_default().to_string();
+            asked.push(method.clone());
+
+            if method == "authenticate" {
+                authenticate_id = Some(call["id"].clone());
+                let elicit = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 9001,
+                    "method": "elicitation/create",
+                    "params": {
+                        "message": "Sign in to continue",
+                        "url": "https://auth.example.invalid/device",
+                        "userCode": "ABCD-1234",
+                    },
+                });
+                if !send(&mut ws, elicit).await {
+                    break;
+                }
+                continue;
+            }
+
+            let answer = match method.as_str() {
+                "initialize" => serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": call["id"],
+                    "result": { "sessionId": "conv-1", "authMethods": device_code_offer() },
+                }),
+                _ => serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": call["id"],
+                    "result": { "sessionId": "conv-1" },
+                }),
+            };
+            if !send(&mut ws, answer).await {
+                break;
+            }
+            if asked.len() == 3 {
+                break;
+            }
+        }
+        Handshake {
+            asked,
+            mode: None,
             frames,
         }
     });
@@ -125,15 +262,51 @@ async fn connect(
     stream
 }
 
+/// Open a bridge the way the core does: already draining before it calls.
+///
+/// The receiver comes back beside the channel so a test can assert on what was
+/// reported *during* the open — which is the only place a sign-in request
+/// exists, since the kernel is blocked on it for the whole of the rest of it.
+async fn open_bridge(
+    stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    cwd: String,
+    mode: Option<String>,
+    rejoin: Option<String>,
+    switches: Option<(super::super::SwitchWaiters, String)>,
+    own_credential: bool,
+) -> Result<
+    (
+        crate::ConversationChannel,
+        mpsc::Sender<crate::TerminalInput>,
+        mpsc::Receiver<crate::ConversationUpdate>,
+    ),
+    AdapterError,
+> {
+    let (updates_tx, updates_rx) = mpsc::channel(64);
+    let (channel, control) = Bridge::open(
+        stream,
+        cwd,
+        mode,
+        rejoin,
+        switches,
+        own_credential,
+        updates_tx,
+    )
+    .await?;
+    Ok((channel, control, updates_rx))
+}
+
 #[tokio::test]
 async fn a_fresh_conversation_is_started_and_held_to_its_mode() {
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(
+    open_bridge(
         stream,
         "/home/chrono".into(),
         Some("read-only".into()),
         None,
+        None,
+        false,
     )
     .await
     .expect("the bridge answered everything");
@@ -152,9 +325,16 @@ async fn a_carried_conversation_is_loaded_rather_than_started_again() {
     // identifier, so its owner's history is still there after a rotation.
     let (url, served) = bridging(Some("conv-carried"), None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
-        .await
-        .expect("the bridge answered everything");
+    open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("agent".into()),
+        None,
+        None,
+        false,
+    )
+    .await
+    .expect("the bridge answered everything");
     let done = served.await.expect("the fixture finished");
     assert_eq!(
         done.asked,
@@ -170,7 +350,7 @@ async fn a_bridge_with_no_modes_is_not_asked_to_set_one() {
     // names none and this step is skipped rather than defaulted.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    Bridge::open(stream, "/home/chrono".into(), None, None)
+    open_bridge(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect("a bridge without modes still opens");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -184,11 +364,13 @@ async fn a_session_whose_mode_did_not_take_is_refused_rather_than_started() {
     // unattended while its owner had asked to be asked.
     let (url, served) = bridging(None, Some("session/set_mode"), Some(3)).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(
+    let err = open_bridge(
         stream,
         "/home/chrono".into(),
         Some("read-only".into()),
         None,
+        None,
+        false,
     )
     .await
     .expect_err("a mode that did not take must fail the session");
@@ -205,9 +387,16 @@ async fn a_conversation_that_could_not_be_resumed_fails_loudly() {
     // here would lose somebody's history with nothing said about it.
     let (url, served) = bridging(Some("conv-carried"), Some("session/load"), Some(3)).await;
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
-        .await
-        .expect_err("a conversation that did not resume must not look resumed");
+    let err = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("agent".into()),
+        None,
+        None,
+        false,
+    )
+    .await
+    .expect_err("a conversation that did not resume must not look resumed");
     assert!(
         matches!(err, crate::AdapterError::Rejected(_)),
         "got {err:?}"
@@ -230,7 +419,7 @@ async fn a_link_that_declares_nothing_is_not_a_conversation() {
         let _ = ws.close(None).await;
     });
     let stream = connect(&url).await;
-    let err = Bridge::open(stream, "/home/chrono".into(), None, None)
+    let err = open_bridge(stream, "/home/chrono".into(), None, None, None, false)
         .await
         .expect_err("a silent link is not a conversation");
     assert!(
@@ -252,11 +441,13 @@ async fn a_conversation_the_bridge_still_holds_is_adopted_rather_than_loaded() {
     // initialize is the mode.
     let (url, served) = bridging(None, None, Some(2)).await;
     let stream = connect(&url).await;
-    Bridge::open(
+    open_bridge(
         stream,
         "/home/chrono".into(),
         Some("read-only".into()),
         Some("conv-already-running".into()),
+        None,
+        false,
     )
     .await
     .expect("a held conversation is adopted");
@@ -269,17 +460,103 @@ async fn a_conversation_the_bridge_still_holds_is_adopted_rather_than_loaded() {
 }
 
 #[tokio::test]
+async fn a_bridge_that_was_already_greeted_is_taken_over_rather_than_abandoned() {
+    /*
+     * #416, reproduced. `initialize` is once per bridge, not once per
+     * connection, and a bot pod outlives the control plane that started it.
+     * So a control plane taking back over a live runtime meets a kernel its
+     * predecessor already greeted, and the kernel says so.
+     *
+     * In production that refusal was read as the sandbox being gone, and a
+     * fresh one was provisioned over the top of a runtime that was still
+     * working — the session came back empty beside the pod still holding its
+     * conversation, on every rollout.
+     *
+     * The refusal only exists because something was there to send it, so the
+     * handshake carries on. The mode still follows, which is what proves the
+     * takeover completed rather than merely not erroring.
+     */
+    let (url, served) = bridging(None, Some("initialize"), Some(2)).await;
+    let stream = connect(&url).await;
+    open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        Some("conv-already-running".into()),
+        None,
+        false,
+    )
+    .await
+    .expect("a bridge that refuses a second greeting is still a live bridge");
+    let done = served.await.expect("the fixture finished");
+    assert_eq!(
+        done.asked,
+        vec!["initialize", "session/set_mode"],
+        "the greeting was refused and the takeover continued anyway"
+    );
+}
+
+#[tokio::test]
+async fn a_bridge_that_answers_nothing_is_not_mistaken_for_one_that_refused() {
+    /*
+     * The other half, and the one that keeps genuine loss recoverable.
+     *
+     * A refusal is tolerated because a frame came back. Silence must not be:
+     * a runtime that has gone away answers nothing, and reading that as "it
+     * refused, carry on" would leave a session pointed at a sandbox that no
+     * longer exists and never replace it.
+     *
+     * The link is closed under the waiting call, which is what a vanished
+     * runtime looks like from here.
+     */
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let declared = declaration(None);
+    tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declared))
+            .await
+            .expect("the declaration is sent");
+        // Take the greeting and then vanish, answering nothing.
+        let _ = ws.next().await;
+        drop(ws);
+    });
+    let stream = connect(&url).await;
+    let failed = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        Some("conv-already-running".into()),
+        None,
+        false,
+    )
+    .await
+    .expect_err("silence is not a refusal");
+    assert!(
+        failed.is_runtime_loss(),
+        "a runtime that answered nothing must stay recoverable as loss, got {failed:?}"
+    );
+}
+
+#[tokio::test]
 async fn rejoining_wins_over_what_the_pod_says_it_was_handed() {
     // Both can be present: a pod that took a conversation over, whose control
     // plane then restarted. The record is the more recent truth, and it names
     // the conversation that is running now.
     let (url, served) = bridging(Some("conv-carried"), None, Some(2)).await;
     let stream = connect(&url).await;
-    Bridge::open(
+    open_bridge(
         stream,
         "/home/chrono".into(),
         Some("agent".into()),
         Some("conv-already-running".into()),
+        None,
+        false,
     )
     .await
     .expect("adopted");
@@ -304,9 +581,10 @@ async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
     // is where it was wrong. Every existing test here passed throughout.
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
-    let (channel, _control) = Bridge::open(stream, "/home/chrono".into(), None, None)
-        .await
-        .expect("the bridge answered the handshake");
+    let (channel, _control, _updates) =
+        open_bridge(stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the bridge answered the handshake");
 
     channel
         .input
@@ -341,16 +619,50 @@ async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
 }
 
 #[tokio::test]
+async fn an_interrupt_is_accepted_after_it_reaches_the_runtime_link() {
+    let (url, served) = bridging(None, None, Some(3)).await;
+    let stream = connect(&url).await;
+    let (channel, _control, _updates) =
+        open_bridge(stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the bridge answered the handshake");
+
+    channel
+        .input
+        .send(crate::ConversationInput::Cancel)
+        .await
+        .expect("the interrupt reached the bridge link");
+
+    let done = served.await.expect("the fixture finished");
+    assert!(
+        done.frames
+            .iter()
+            .any(|frame| frame["method"] == "session/cancel"),
+        "the bridge must receive session/cancel before the caller sees success: {:?}",
+        done.frames
+    );
+}
+
+#[tokio::test]
 async fn every_request_this_bridge_sends_is_dispatchable() {
     // The general form, so the next request added cannot repeat it. A JSON-RPC
     // request without a method is undispatchable whatever it was meant to ask,
     // and the failure is silent at both ends.
-    let (url, served) = bridging(None, None, Some(3)).await;
+    // Three handshake calls plus the prompt this test inspects. Stopping the
+    // fixture after three closes the runtime link before the prompt and is
+    // now correctly refused rather than accepted into a dead local queue.
+    let (url, served) = bridging(None, None, Some(4)).await;
     let stream = connect(&url).await;
-    let (channel, _control) =
-        Bridge::open(stream, "/home/chrono".into(), Some("agent".into()), None)
-            .await
-            .expect("the bridge answered the handshake");
+    let (channel, _control, _updates) = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("agent".into()),
+        None,
+        None,
+        false,
+    )
+    .await
+    .expect("the bridge answered the handshake");
     channel
         .input
         .send(crate::ConversationInput::Prompt(vec![
@@ -381,11 +693,13 @@ fn a_turn_reports_the_reason_the_kernel_gave() {
     // into a stop reason, which could only ever fail, so every turn was
     // reported as `end_turn`: a refusal, a context limit and a cancellation
     // all looked like an agent that had finished normally.
-    let ended = super::turn_outcome(serde_json::json!({
+    let super::Outcome::Ended(ended) = crate::hosted::turn::turn_outcome(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 4,
         "result": { "stopReason": "max_tokens" },
-    }));
+    })) else {
+        panic!("a turn the agent finished is an ending, not a failure");
+    };
 
     assert!(
         matches!(ended.stop_reason, crate::TurnStopReason::MaxTokens),
@@ -399,17 +713,36 @@ fn a_refused_prompt_is_not_reported_as_a_finished_turn() {
     // The worst of the flattened cases. Telling an owner their agent answered
     // when the bridge refused outright leaves them reading an empty turn and
     // wondering what they did wrong.
-    let ended = super::turn_outcome(serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 4,
-        "error": { "code": -32000, "message": "no" },
-    }));
+    //
+    // The agent's own words are carried through, because that message is the
+    // only part a person can act on — it is where "could not reach the model"
+    // and an upstream 401 actually arrive.
+    let super::Outcome::Failed { message, .. } =
+        crate::hosted::turn::turn_outcome(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "error": { "code": -32000, "message": "connection refused talking to chrono-llm" },
+        }))
+    else {
+        panic!("a refusal is a failure, not a finished turn");
+    };
 
-    assert!(
-        matches!(ended.stop_reason, crate::TurnStopReason::Refusal),
-        "got {:?}",
-        ended.stop_reason
-    );
+    assert_eq!(message, "connection refused talking to chrono-llm");
+}
+
+#[test]
+fn a_refusal_naming_a_capability_carries_the_name() {
+    let super::Outcome::Failed { capability, .. } =
+        crate::hosted::turn::turn_outcome(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "error": { "code": -32021, "message": "no", "data": { "capability": "steer" } },
+        }))
+    else {
+        panic!("a refusal is a failure");
+    };
+
+    assert_eq!(capability.as_deref(), Some("steer"));
 }
 
 #[test]
@@ -417,14 +750,189 @@ fn an_answer_this_build_cannot_read_still_closes_the_turn() {
     // A turn left open sits `running` forever and is indistinguishable from an
     // agent taking its time. Ending it is right even when the reason is not
     // legible; what must not happen is silence.
-    let ended = super::turn_outcome(serde_json::json!({
+    let super::Outcome::Ended(ended) = crate::hosted::turn::turn_outcome(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 4,
         "result": { "stopReason": "something-added-later" },
-    }));
+    })) else {
+        panic!("a newer protocol naming a new ending must not read as a failure");
+    };
 
     assert!(matches!(ended.stop_reason, crate::TurnStopReason::EndTurn));
 
-    let empty = super::turn_outcome(serde_json::json!({ "jsonrpc": "2.0", "id": 4 }));
-    assert!(matches!(empty.stop_reason, crate::TurnStopReason::EndTurn));
+    // An answer that is neither a result nor an error is not an ending: the
+    // agent said nothing usable, and reporting that as a finished turn is how
+    // an empty turn came to mean two different things.
+    let empty = crate::hosted::turn::turn_outcome(serde_json::json!({ "jsonrpc": "2.0", "id": 4 }));
+    assert!(matches!(empty, super::Outcome::Failed { .. }));
+}
+
+#[tokio::test]
+async fn a_pod_whose_agent_never_answers_fails_the_handshake_quickly() {
+    // The thirty-minute bound was sized for a prompt, which no longer travels
+    // this path. Against a pod whose agent never started it held the session
+    // at Attaching for half an hour with nothing said — indistinguishable
+    // from a slow start, and the request that asked for it hung too.
+    assert!(
+        super::CALL_DEADLINE <= std::time::Duration::from_secs(60),
+        "a handshake is a question with a quick answer: {:?}",
+        super::CALL_DEADLINE
+    );
+    // A turn is the opposite and keeps its room, but is still bounded: a
+    // prompt had no deadline at all, so a turn nobody would answer stayed
+    // `running` forever.
+    assert!(
+        super::TURN_DEADLINE >= std::time::Duration::from_secs(600),
+        "a turn takes as long as the model takes: {:?}",
+        super::TURN_DEADLINE
+    );
+    assert!(
+        super::TURN_DEADLINE < std::time::Duration::from_secs(24 * 3600),
+        "but it is still bounded"
+    );
+}
+
+/// The device-code method a bridge offers a client that can show a URL.
+fn device_code_offer() -> serde_json::Value {
+    serde_json::json!([
+        { "id": "browser", "name": "Browser" },
+        { "id": "chat-gpt-device-code", "name": "ChatGPT (device code)" }
+    ])
+}
+
+#[tokio::test]
+async fn an_own_account_session_signs_in_before_opening_a_conversation() {
+    // Found in production, not here: the session provisioned, reached the
+    // bridge, and died on `session/new` with "Authentication required". An
+    // unauthenticated kernel has no account to open a conversation against, so
+    // the sign-in cannot wait for somebody's first message.
+    //
+    // Deleting the call this guards left 171 tests green, which is why it
+    // exists.
+    let (url, served) = bridging_offering(None, None, Some(3), device_code_offer()).await;
+    let stream = connect(&url).await;
+    open_bridge(stream, "/home/chrono".into(), None, None, None, true)
+        .await
+        .expect("an own-account session opens");
+    // Bounded, because the failure this guards against is a call that never
+    // arrives — and waiting forever for it is not a test result. Unbounded,
+    // deleting the sign-in made this hang instead of fail, which tells whoever
+    // broke it nothing and stalls CI rather than reporting.
+    let done = tokio::time::timeout(std::time::Duration::from_secs(10), served)
+        .await
+        .expect("the sign-in call never arrived")
+        .expect("the fixture finished");
+
+    let at = |m: &str| done.asked.iter().position(|a| a == m);
+    assert_eq!(at("initialize"), Some(0));
+    assert_eq!(
+        at("authenticate"),
+        Some(1),
+        "the sign-in comes before the conversation, got {:?}",
+        done.asked
+    );
+    assert!(
+        at("authenticate") < at("session/new"),
+        "a conversation opened before signing in is refused by the kernel, got {:?}",
+        done.asked
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_request_is_reported_while_the_kernel_is_still_waiting() {
+    /*
+     * Found in production, and invisible to every test above.
+     *
+     * The kernel asks its owner to sign in from inside the handshake and then
+     * blocks there until they have. When the update sink was created by this
+     * function and handed back at the end, the request could only be delivered
+     * after the open returned — after the sign-in it was asking for. The
+     * session sat in `provisioning` showing nothing, the log had no
+     * `sign_in_required` in it, and no client could draw the card that exists
+     * to answer it.
+     *
+     * So the assertion is specifically about *when*: the update is read before
+     * the open is awaited, with the fixture still holding the handshake.
+     */
+    let (url, served) = bridging_that_waits_for_a_sign_in().await;
+    let stream = connect(&url).await;
+
+    let (updates_tx, mut updates_rx) = mpsc::channel(64);
+    let opening = tokio::spawn(Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        None,
+        true,
+        updates_tx,
+    ));
+
+    let reported = tokio::time::timeout(std::time::Duration::from_secs(10), updates_rx.recv())
+        .await
+        .expect("the sign-in was never reported while the kernel waited for it")
+        .expect("the sink is still open");
+
+    match reported {
+        crate::ConversationUpdate::SignInRequired { url, .. } => {
+            assert!(
+                url.starts_with("https://"),
+                "an address somebody can open, got {url:?}"
+            );
+        }
+        other => {
+            panic!("the first thing an own-account session reports is its sign-in, got {other:?}")
+        }
+    }
+
+    opening
+        .await
+        .expect("the open task ran")
+        .expect("an own-account session opens");
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), served).await;
+}
+
+#[tokio::test]
+async fn a_delegated_session_never_signs_in() {
+    // The platform's credential is attached by the proxy; asking a kernel to
+    // sign in to an account nobody named would stall the session on a prompt
+    // its owner has no way to answer.
+    let (url, served) = bridging_offering(None, None, Some(2), device_code_offer()).await;
+    let stream = connect(&url).await;
+    open_bridge(stream, "/home/chrono".into(), None, None, None, false)
+        .await
+        .expect("a delegated session opens");
+    let done = tokio::time::timeout(std::time::Duration::from_secs(10), served)
+        .await
+        .expect("the handshake never finished")
+        .expect("the fixture finished");
+
+    assert!(
+        !done.asked.iter().any(|a| a == "authenticate"),
+        "a delegated session must not sign in, got {:?}",
+        done.asked
+    );
+}
+
+#[tokio::test]
+async fn a_bridge_offering_no_reachable_sign_in_is_refused_by_name() {
+    // §9: an absence is declared rather than discovered. A browser method is
+    // useless here — this pod has none, and a kernel that opened one would
+    // hang — so a session that cannot sign in must not appear to start.
+    let only_browser = serde_json::json!([{ "id": "browser", "name": "Browser" }]);
+    let (url, served) = bridging_offering(None, None, Some(1), only_browser).await;
+    let stream = connect(&url).await;
+    let err = open_bridge(stream, "/home/chrono".into(), None, None, None, true)
+        .await
+        .expect_err("a session that cannot sign in must not open");
+    drop(served);
+
+    assert!(
+        matches!(err, AdapterError::Unsupported(_)),
+        "the refusal is a missing ability, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("own account"),
+        "and it names what cannot be done, got {err}"
+    );
 }

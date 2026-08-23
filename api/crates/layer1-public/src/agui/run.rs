@@ -30,7 +30,6 @@
 //! route of its own.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     extract::State,
@@ -45,15 +44,9 @@ use serde::Deserialize;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 
-use super::live;
 use super::project::project;
+use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
 use super::Problem;
-
-/// How often the log is re-read while a run is open.
-///
-/// The core publishes no change notification, so this polls. The same interval
-/// the event stream uses, for the same reasons.
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// One run, as a client posts it.
 #[derive(Debug, Deserialize)]
@@ -156,7 +149,11 @@ pub(super) async fn run(
                         // deployment defaulting to terminal, then refused it
                         // for lacking the ability it had just asked for.
                         requested_mode: Some(layer2_core::SessionMode::Conversation),
-                        subject_credential: credential.map(|axum::Extension(c)| c.0),
+                        quoted_rate_card: None,
+                        // The caller's own token, for asking the platform as them. It
+                        // is never what the session runs on: the core mints that.
+                        caller_credential: credential.map(|axum::Extension(c)| c.0),
+                        runtime_credential: None,
                     },
                 )
                 .await?
@@ -215,11 +212,18 @@ pub(super) async fn run(
     // none, and the durable stream is unaffected: that is the difference
     // between a turn nobody can watch and a turn nobody can read.
     let watching = service.subscribe_live(&caller, &id).await.ok();
+    let resources = service.subscribe_resources(&caller, &id).await.ok();
 
-    Ok(
-        Sse::new(events(service, caller, id, body.run_id, from, watching))
-            .keep_alive(KeepAlive::default()),
-    )
+    Ok(Sse::new(events(
+        service,
+        caller,
+        id,
+        body.run_id,
+        from,
+        watching,
+        resources,
+    ))
+    .keep_alive(KeepAlive::default()))
 }
 
 /// What the owner decided, read from the protocol's own vocabulary.
@@ -240,12 +244,11 @@ fn decision_of(item: &ResumeItem) -> ApprovalDecision {
 
 /// The run's event stream, from `after` until the turn ends.
 ///
-/// Two lanes on one stream. The durable one is polled from the log and is what
-/// a client resumes on; the live one carries what is happening right now and
-/// carries no cursor at all. They are merged here rather than offered as two
-/// connections because they describe one turn, and a client holding two would
-/// have to decide for itself how to interleave them — which is exactly the
-/// ordering question §18.1 of `Web_Style.md` says must have one answer.
+/// Three lanes on one stream. The durable one is polled from the log and is
+/// what a client resumes on; conversation liveness and resource readings each
+/// have their own receiver and carry no cursor at all. They are merged here
+/// rather than offered as separate connections because they describe one turn,
+/// and a client holding several would have to decide how to interleave them.
 ///
 /// The durable lane is drained first on every pass. A committed message must
 /// not arrive behind a piece of itself.
@@ -256,6 +259,7 @@ fn events(
     run_id: String,
     after: u64,
     watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
+    resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
 ) -> impl Stream<Item = Result<SseEvent, std::convert::Infallible>> {
     struct Open {
         service: Arc<SessionService>,
@@ -266,6 +270,8 @@ fn events(
         pending: std::collections::VecDeque<super::project::AguiEvent>,
         /// What is happening right now, when anything is watching for it.
         watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
+        /// What this session is using right now, on its independent lag budget.
+        resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
         /// Set once something has ended the run, so the last event is still
         /// delivered before the stream closes.
         ended: bool,
@@ -280,6 +286,7 @@ fn events(
             seq: after,
             pending: Default::default(),
             watching,
+            resources,
             ended: false,
         },
         |mut open| async move {
@@ -295,38 +302,26 @@ fn events(
                 // interval unconditionally would hold a piece of a message for
                 // up to that long, which on a fast agent is most of what makes
                 // the difference between watching a turn and waiting on one.
-                if let Some(live) = open.watching.as_mut() {
-                    match tokio::time::timeout(POLL_INTERVAL, live.recv()).await {
-                        Ok(Ok(frame)) => {
-                            open.pending.extend(live::project_live(
-                                &frame,
-                                &open.run_id,
-                                &open.id.0,
-                            ));
-                            if !open.pending.is_empty() {
-                                continue;
-                            }
-                        }
-                        // Behind, and what was missed was liveness. The log
-                        // still holds everything that happened, so the poll
-                        // below is what makes it good.
-                        Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(frames))) => {
-                            tracing::debug!(
-                                session_id = %open.id,
-                                frames,
-                                "a watcher fell behind; the durable log still carries the turn"
-                            );
-                        }
-                        // The session's runtime went away. The status change
-                        // that says so is durable and arrives on the poll, so
-                        // this lane just stops.
-                        Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
-                            open.watching = None;
-                        }
-                        Err(_) => {}
+                let woke = tokio::time::timeout(
+                    POLL_INTERVAL,
+                    next_frame(&mut open.watching, &mut open.resources),
+                )
+                .await
+                .unwrap_or(Woke::Idle);
+                match woke {
+                    Woke::Live(frame) => open.pending.extend(super::live::project_live(
+                        &frame,
+                        &open.run_id,
+                        &open.id.0,
+                    )),
+                    Woke::Reading(reading) => {
+                        open.pending
+                            .push_back(project_reading(&reading, &open.run_id, &open.id.0))
                     }
-                } else {
-                    tokio::time::sleep(POLL_INTERVAL).await;
+                    Woke::Idle => {}
+                }
+                if !open.pending.is_empty() {
+                    continue;
                 }
                 let read = open
                     .service

@@ -48,16 +48,17 @@ pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
 
 /// How long a minted session credential is kept before it is replaced.
 ///
-/// The platform issues these for a day. Replacing at half that means one is
-/// swapped twice over its life, and a lifetime shortened upstream would have
-/// to halve before a session ever presented a credential already refused.
+/// The platform does not give these keys an expiry. Twelve hours is a local
+/// rotation cadence: it limits how long one value is used without pretending
+/// the provider will invalidate it on that schedule.
 const CREDENTIAL_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// One pass: renew what is close to expiry, then push it into live sessions.
 async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
-    // Credentials replaced on an earlier pass. Taken back now rather than when
-    // they were replaced, so the sessions holding them had a full sweep to
-    // receive the value that supersedes them.
+    // Credentials queued on an earlier pass or release. Replaced credentials
+    // wait so the sessions holding them have a full sweep to receive the value
+    // that supersedes them; released credentials wait for an owner token when
+    // release could not attempt the revoke itself.
     let taken = auth.take_back_superseded().await;
     if taken > 0 {
         tracing::info!(
@@ -71,8 +72,10 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
     // A control plane that stopped between minting and releasing leaves one
     // behind, and nothing else records the pairing — the key's own name is
     // what says whose it was. Reclaiming needs the owner's token, which this
-    // process may not hold after a restart; the day-long expiry is what makes
-    // that acceptable rather than a leak.
+    // process may not hold after a restart, and there is no expiry behind it:
+    // until that owner signs in again the key stays valid. This sweep is the
+    // only thing that takes it back, so a pass it cannot make is a credential
+    // still open, not a tidy-up postponed.
     let reclaimed = auth.reclaim_orphaned_credentials(service).await;
     if reclaimed > 0 {
         tracing::info!(
@@ -103,9 +106,36 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
     }
     tracing::debug!(subjects = due.len(), "renewing delegated credentials");
 
+    /*
+     * What a renewed owner token is for depends on what sessions run on.
+     *
+     * Where they hold keys of their own it is this service's ability to mint
+     * and revoke being kept alive, and nothing else. Pushing it into sessions
+     * would hand each of them the owner's whole identity — undoing, on a
+     * timer, the scoping their own keys exist to provide, and silently: the
+     * session keeps working, and the reach it reports stays right while the
+     * credential behind it stops matching.
+     *
+     * Their own keys are replaced on age by the reissue above, which is the
+     * rotation that belongs to a session rather than to a person.
+     */
+    let sessions_run_on_own_keys = auth.sessions_hold_own_credentials().await;
     for (subject, refresh_token) in due {
         match auth.refresh(&subject, &refresh_token).await {
             Ok(access_token) => {
+                if sessions_run_on_own_keys {
+                    // Said out loud rather than at debug. This is the branch
+                    // that stops an owner's whole identity reaching their
+                    // sessions, and a silent branch cannot be confirmed to
+                    // have run — the only other evidence is the absence of a
+                    // line, which is indistinguishable from the sweep never
+                    // having fired.
+                    tracing::info!(
+                        %subject,
+                        "renewed this owner's token; their sessions keep their own credentials"
+                    );
+                    continue;
+                }
                 let pushed = service
                     .refresh_subject_credential(&subject, access_token)
                     .await;
@@ -151,6 +181,45 @@ mod tests {
     #[test]
     fn an_already_expired_token_is_renewed() {
         assert!(tokens(Duration::from_millis(1), Some("r")).needs_refresh(RENEW_MARGIN));
+    }
+
+    /// What a renewed owner token is for, which depends on what sessions run
+    /// on — and getting it wrong undoes session scoping on a timer.
+    #[tokio::test]
+    async fn a_renewed_owner_token_is_not_pushed_where_sessions_hold_their_own_keys() {
+        /*
+         * A session's own key exists so a compromised agent reaches the
+         * services that session was granted and nothing else its owner can.
+         * Renewing the owner's token and pushing it into every live session
+         * hands each of them the whole identity back — and silently: the
+         * session keeps working and the reach it reports stays right, while
+         * the credential behind it stops matching.
+         *
+         * The renewal is still needed. It keeps this service able to mint and
+         * to revoke, which is a different job from what a session presents.
+         */
+        let with_issuer = AuthState::new(
+            AuthMode::Trusted {
+                subject: "s".into(),
+            },
+            None,
+        );
+        assert!(
+            !with_issuer.sessions_hold_own_credentials().await,
+            "no issuer configured yet, so sessions are on their owner's token"
+        );
+
+        with_issuer
+            .use_issuer(std::sync::Arc::new(crate::auth::keys::KeyIssuer::new(
+                reqwest::Client::new(),
+                "https://platform.example",
+                "chrono-bot",
+            )))
+            .await;
+        assert!(
+            with_issuer.sessions_hold_own_credentials().await,
+            "an issuer means every session has a key of its own to keep"
+        );
     }
 
     #[tokio::test]

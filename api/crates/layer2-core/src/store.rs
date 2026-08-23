@@ -85,6 +85,23 @@ pub trait SessionStore: Send + Sync {
     /// Every session owned by a subject, newest first.
     async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError>;
 
+    /// How many of this subject's sessions are recorded as wanting a runtime.
+    ///
+    /// Its own method rather than a fold over `list_for`, which decodes every
+    /// record the subject has ever had on a query made for every creation. The
+    /// default is that fold so a store with nothing better remains correct.
+    ///
+    /// Recorded state is authoritative. Provider inventory can retain a dead
+    /// runtime and would then refuse a session its owner is entitled to start.
+    async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
+        Ok(self
+            .list_for(owner)
+            .await?
+            .into_iter()
+            .filter(|record| record.session.status.wants_runtime())
+            .count() as u32)
+    }
+
     /// Every session, newest first. For the monitoring surface.
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError>;
 
@@ -288,6 +305,8 @@ mod tests {
             rotated_at: None,
             capabilities: Default::default(),
             granted_services: None,
+            granted_skills: None,
+            pricing: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }
     }
@@ -308,4 +327,96 @@ mod tests {
         assert_eq!(r.session.id, s.id);
         assert_eq!(r.session.owner, s.owner);
     }
+}
+
+/// Where the deployment's own settings are kept.
+///
+/// A singleton rather than a collection: there is one deployment, so there is
+/// one record, and nothing addresses it by identifier. That is why there is no
+/// `get(id)` here and why the service rather than the caller decides what an
+/// absent record means.
+///
+/// The save is conditional on what the writer last read. Two administrators
+/// with the editor open is not a hypothetical — it is the ordinary case for a
+/// setting that changes rarely and is opened by whoever is asking about it —
+/// and a last-write-wins save silently discards the other's work.
+#[async_trait::async_trait]
+pub trait PlatformSettingsStore: Send + Sync {
+    /// Read the settings, and the revision they were at.
+    ///
+    /// `None` where nothing has ever been written, which is a real answer and
+    /// not a failure: a deployment nobody has configured is the common case.
+    async fn load(&self) -> Result<Option<StoredSettings>, StoreError>;
+
+    /// Write these settings, but only if nobody has written since `expected`.
+    ///
+    /// `Ok(None)` means somebody had, and the caller is told rather than
+    /// having their write applied over the top.
+    ///
+    /// `expected` is a plain number and **zero means nothing is stored**, which
+    /// is the revision an unconfigured deployment reports. An `Option` here
+    /// carried no information the number did not: `None` and `Some(0)` were
+    /// the same state described twice, and the first write on a fresh
+    /// deployment failed depending on which one a caller happened to send.
+    async fn save_if_unchanged(
+        &self,
+        expected: u64,
+        settings: &crate::PlatformSettings,
+    ) -> Result<Option<StoredSettings>, StoreError>;
+}
+
+/// Settings as they were read, with the revision that identifies them.
+#[derive(Debug, Clone)]
+pub struct StoredSettings {
+    pub settings: crate::PlatformSettings,
+    /// Increments on every write, and is **zero when nothing is stored**.
+    ///
+    /// Carried by a client so its next save can be refused rather than
+    /// silently overwriting somebody else's. Zero is a real revision that a
+    /// client sends back like any other, so the first write on a fresh
+    /// deployment takes the same conditional path as every write after it
+    /// rather than a special case that skips the check.
+    pub revision: u64,
+    /// What was stored before this write, so an overwrite is recoverable.
+    ///
+    /// One step and no more: this exists so a mistake can be undone in the
+    /// moment, not so the service keeps a history nobody asked it to keep.
+    pub previous: Option<crate::PlatformSettings>,
+}
+
+/// One skill, fetched and ready to be written.
+#[derive(Debug, Clone)]
+pub struct SkillPack {
+    /// The directory it occupies, which is the name the agent invokes.
+    pub name: String,
+    /// Which version of it this is, where the registry said.
+    ///
+    /// Carried from the fetch rather than looked up later, so what a session
+    /// reports is the version it actually received. Asking the registry
+    /// afterwards would answer with whatever is current, which is a different
+    /// fact and is wrong for every session that has been running a while.
+    pub version: Option<String>,
+    /// Each file, relative to that directory, exactly as the registry names it.
+    pub files: Vec<(String, Vec<u8>)>,
+}
+
+/// Where a session's skills come from.
+///
+/// The core knows a session was granted skills and knows nothing about where
+/// they live or how one is resolved — the same division as a credential.
+/// Named per skill and fetched as the caller, because which skills exist
+/// depends on who is asking.
+#[async_trait::async_trait]
+pub trait SkillSource: Send + Sync {
+    /// Fetch each of these, or say which one could not be had.
+    ///
+    /// Failing by name matters: a session started without a skill it was
+    /// promised looks identical to one that never asked for it, and the
+    /// difference only surfaces when the agent cannot do what it was told it
+    /// could.
+    async fn packs_for(
+        &self,
+        caller_credential: Option<&str>,
+        skills: &[crate::environment::SkillId],
+    ) -> Result<Vec<SkillPack>, String>;
 }

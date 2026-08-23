@@ -4,12 +4,76 @@
 //! client saw, a client that arrives later — or comes back after a restart —
 //! must be able to reconstruct from the sequence alone.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::conversation_support::{asking, chunk, conversation, said, until_logged};
+use layer3_adapter::KernelAdapter;
+
+use crate::authz::Caller;
+use crate::conversation_support::{
+    asking, chunk, conversation, conversing, offering, said, until_logged,
+};
 use crate::event::EventKind;
+use crate::ids::SessionId;
+use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+
+async fn report_usage(adapter: &Arc<FakeAdapter>, used: u64, window: u64) {
+    let held = adapter.conversation.lock().await;
+    held.as_ref()
+        .expect("the conversation was opened")
+        .updates
+        .send(said(layer3_adapter::SessionUpdate::UsageUpdate(
+            layer3_adapter::UsageUpdate::new(used, window),
+        )))
+        .await
+        .expect("the core is listening");
+}
+
+fn versioned_conversation_service(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+) -> Arc<SessionService> {
+    let mut adapters: HashMap<crate::ids::KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    adapters.insert(crate::test_support::kernel(), adapter);
+    let screen: crate::service::ScreenFactory =
+        Arc::new(|geometry| Box::new(crate::test_support::NullScreen(geometry)));
+    let environments =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    SessionService::new(
+        adapters,
+        screen,
+        store,
+        crate::service::SessionPorts::default(),
+        environments,
+        crate::service::Deployment {
+            runtime_version: Some(version.to_string()),
+            ..crate::test_support::owned()
+        },
+    )
+}
+
+async fn await_ready(
+    service: &Arc<SessionService>,
+    caller: &Caller,
+    id: &SessionId,
+) -> crate::session::Session {
+    for _ in 0..400 {
+        if let Ok(session) = service.get_session(caller, id).await {
+            if session.status == SessionStatus::Ready {
+                return session;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    panic!("session never became ready");
+}
 
 #[tokio::test]
 async fn a_tool_call_and_its_progress_are_recorded() {
@@ -74,21 +138,15 @@ async fn a_message_being_typed_is_liveness_and_never_numbered() {
 #[tokio::test]
 async fn usage_is_reported_and_read_back() {
     let (svc, alice, id, adapter) = conversation().await;
-    {
-        let held = adapter.conversation.lock().await;
-        let kernel = held.as_ref().expect("the conversation was opened");
-        kernel
-            .updates
-            .send(said(layer3_adapter::SessionUpdate::UsageUpdate(
-                layer3_adapter::UsageUpdate::new(1290, 258_400),
-            )))
-            .await
-            .expect("the core is listening");
-    }
+    report_usage(&adapter, 1290, 258_400).await;
     assert!(
         until_logged(&svc, &alice, &id, |kind| matches!(
             kind,
-            EventKind::UsageReported { context_used, .. } if *context_used == 1290
+            EventKind::UsageReported {
+                context_used,
+                context_window: Some(258_400),
+                ..
+            } if *context_used == 1290
         ))
         .await,
         "usage must reach the log, which is what get_usage reads"
@@ -96,6 +154,195 @@ async fn usage_is_reported_and_read_back() {
 
     let usage = svc.get_usage(&alice, &id).await.expect("usage is readable");
     assert_eq!(usage.context_used, 1290);
+    assert_eq!(usage.context_window, Some(258_400));
+}
+
+#[tokio::test]
+async fn a_zero_context_window_is_absent_rather_than_a_ceiling() {
+    let (svc, alice, id, adapter) = conversation().await;
+    report_usage(&adapter, 1290, 0).await;
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 1290,
+                context_window: None,
+                ..
+            }
+        ))
+        .await
+    );
+
+    assert_eq!(
+        svc.get_usage(&alice, &id)
+            .await
+            .expect("usage is readable")
+            .context_window,
+        None
+    );
+}
+
+#[tokio::test]
+async fn turn_accounting_does_not_wipe_a_context_reading_or_its_window() {
+    let (svc, alice, id, adapter) = conversation().await;
+    report_usage(&adapter, 1290, 258_400).await;
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 1290,
+                ..
+            }
+        ))
+        .await
+    );
+    {
+        let held = adapter.conversation.lock().await;
+        held.as_ref()
+            .expect("the conversation was opened")
+            .updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn)
+                    .usage(layer3_adapter::TurnUsage::new(421, 412, 9)),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                input_tokens: 412,
+                ..
+            }
+        ))
+        .await
+    );
+
+    let usage = svc.get_usage(&alice, &id).await.expect("usage is readable");
+    assert_eq!(usage.context_used, 1290);
+    assert_eq!(usage.context_window, Some(258_400));
+}
+
+#[tokio::test]
+async fn a_context_fall_is_recorded_before_the_report_that_revealed_it() {
+    let (svc, alice, id, adapter) = conversation().await;
+    report_usage(&adapter, 198_000, 200_000).await;
+    report_usage(&adapter, 42_100, 200_000).await;
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ContextCompacted {
+                was: 198_000,
+                now: 42_100,
+                window: Some(200_000),
+            }
+        ))
+        .await
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("log reads");
+    let compacted: Vec<_> = events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::ContextCompacted { .. }))
+        .collect();
+    assert_eq!(compacted.len(), 1);
+    let revealed = events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                EventKind::UsageReported {
+                    context_used: 42_100,
+                    ..
+                }
+            )
+        })
+        .expect("the revealing report is logged");
+    assert!(compacted[0].seq < revealed.seq);
+}
+
+#[tokio::test]
+async fn a_first_equal_or_rising_reading_is_not_a_compaction() {
+    let (svc, alice, id, adapter) = conversation().await;
+    for used in [42_100, 42_100, 198_000] {
+        report_usage(&adapter, used, 200_000).await;
+    }
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 198_000,
+                ..
+            }
+        ))
+        .await
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("log reads");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::ContextCompacted { .. })),
+        "a context that did not fall must have no compaction boundary"
+    );
+}
+
+#[tokio::test]
+async fn a_replacement_runtime_counting_from_less_is_not_a_compaction() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let alice = user("alice");
+    let old = versioned_conversation_service(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let session = old.create_session(&alice, spec()).await.expect("created");
+    await_ready(&old, &alice, &session.id).await;
+    report_usage(&adapter, 198_000, 200_000).await;
+    assert!(
+        until_logged(&old, &alice, &session.id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 198_000,
+                ..
+            }
+        ))
+        .await
+    );
+    drop(old);
+
+    let new = versioned_conversation_service(store, Arc::clone(&adapter), "runtime:2");
+    assert_eq!(new.reconcile().await.rotated_sessions, 1);
+    await_ready(&new, &alice, &session.id).await;
+    report_usage(&adapter, 42_100, 200_000).await;
+    assert!(
+        until_logged(&new, &alice, &session.id, |kind| matches!(
+            kind,
+            EventKind::UsageReported {
+                context_used: 42_100,
+                ..
+            }
+        ))
+        .await
+    );
+
+    let events = new
+        .events_since(&alice, &session.id, None)
+        .await
+        .expect("log reads");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::ContextCompacted { .. })),
+        "readings from different runtimes must never be compared"
+    );
 }
 
 #[tokio::test]
@@ -569,4 +816,246 @@ fn a_tool_body_over_the_cap_says_it_was_cut() {
         }
         other => panic!("expected a truncated result, got {other:?}"),
     }
+}
+
+/*
+ * A session whose kernel wants its owner to sign in — #351.
+ *
+ * These assert on the **durable log**, never on the adapter having reported
+ * it. That distinction is the bug: #320 made the request reach the folder and
+ * was verified by asking the adapter, so nobody noticed the folder had
+ * nowhere to put it and the event was discarded on arrival.
+ */
+
+/// Build a conversation session whose kernel asks for a sign-in during the
+/// open, before the core has a live entry for it.
+async fn signing_in() -> (Arc<SessionService>, Caller, SessionId) {
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        sign_in_on_open: true,
+        ..FakeAdapter::default()
+    });
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    let svc = crate::test_support::service_with_environments(
+        Arc::new(FakeStore::default()),
+        Arc::clone(&adapter),
+        profiles,
+    );
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    (svc, alice, created.id)
+}
+
+#[tokio::test]
+async fn a_sign_in_raised_before_the_session_is_ready_reaches_the_log() {
+    let (svc, alice, id) = signing_in().await;
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::SignInRequired { url, .. } if url == "https://auth.example.test/device"
+        ))
+        .await,
+        "the owner cannot sign in to a prompt that was never recorded"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_carries_the_code_its_owner_has_to_enter() {
+    // The address alone is not actionable: a device flow asks for a code, and
+    // one that reached nobody leaves the session waiting on it forever.
+    let (svc, alice, id) = signing_in().await;
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::SignInRequired { code, message, .. }
+                if code.as_deref() == Some("WDJB-MJHT")
+                    && message.as_deref() == Some("Sign in to continue")
+        ))
+        .await,
+        "the code and the kernel's own wording must survive into the record"
+    );
+}
+
+#[tokio::test]
+async fn the_commands_a_kernel_offers_are_recorded_rather_than_only_broadcast() {
+    // The list used to ride the live lane alone, on the reasoning that a
+    // replayed list could offer commands that no longer exist. The kernel
+    // announces it as the conversation opens, which is before anybody is
+    // subscribed, so what actually happened is that it reached nobody at all —
+    // and the protocol has no request to ask for it again.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
+                    "review",
+                    "Review the working tree",
+                )])),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::AvailableCommandsSet { commands }
+                if commands.len() == 1
+                    && commands[0].name == "review"
+                    && commands[0].description == "Review the working tree"
+        ))
+        .await,
+        "a command list nothing recorded is a command list nobody can ever be shown"
+    );
+}
+
+#[tokio::test]
+async fn the_commands_a_kernel_offers_survive_arriving_before_the_entry_exists() {
+    /*
+     * The real timing, pinned directly. `entries` holds only sessions with a
+     * running runtime, and this announcement is made as the conversation
+     * opens — so arriving with no entry is the ordinary case for it, not a
+     * fault. Before the fallback it returned early and the list was gone.
+     */
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.entries.write().await.remove(&id);
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
+                    "compact",
+                    "Summarise the conversation so far",
+                )])),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::AvailableCommandsSet { commands }
+                if commands.iter().any(|c| c.name == "compact")
+        ))
+        .await,
+        "the announcement precedes the entry, so dropping it there drops it always"
+    );
+}
+
+#[tokio::test]
+async fn a_kernel_that_offers_nothing_records_that_rather_than_staying_silent() {
+    // "This kernel has no commands" and "nothing has been said yet" are
+    // different facts. Recording only a non-empty list would leave a client
+    // unable to tell them apart, and leave a previous list standing.
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[])),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::AvailableCommandsSet { commands } if commands.is_empty()
+        ))
+        .await,
+        "an empty offering is an answer and has to be recorded as one"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_is_recorded_for_a_session_with_no_live_entry() {
+    /*
+     * The fallback itself, pinned directly rather than through the timing of
+     * an open. `entries` holds only sessions with a running runtime, so its
+     * absence is what the sign-in path has to survive — removing the entry
+     * from a settled session reproduces that exactly, and driving the update
+     * down the kernel's own channel keeps the test on the real path rather
+     * than on a hook that exists only for it.
+     */
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.entries.write().await.remove(&id);
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::SignInRequired {
+                url: "https://auth.example.test/device".to_string(),
+                code: Some("WDJB-MJHT".to_string()),
+                message: None,
+            })
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::SignInRequired { code, .. } if code.as_deref() == Some("WDJB-MJHT")
+        ))
+        .await,
+        "a sign-in must be recorded even with no live entry to append to"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_for_a_session_nobody_holds_any_more_is_dropped_quietly() {
+    /*
+     * The failure path. Once the session is gone from the record there is
+     * nothing to append against and nobody left to show it to, so dropping it
+     * is right — but it must drop rather than panic, because the runtime
+     * raising it has simply not noticed the session ended yet.
+     */
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.terminate_session(&alice, &id)
+        .await
+        .expect("terminated");
+    svc.delete_session(&alice, &id).await.expect("deleted");
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        // A closed channel is itself the session being gone; either way this
+        // must not bring the folder down.
+        let _ = kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::SignInRequired {
+                url: "https://auth.example.test/device".to_string(),
+                code: None,
+                message: None,
+            })
+            .await;
+    }
+
+    // Give the folder a chance to meet it, then prove the service is still
+    // answering: a panic in that task would take the log with it.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !svc.list_sessions(&alice).await.iter().any(|s| s.id == id),
+        "the core must survive a sign-in for a session that no longer exists"
+    );
 }

@@ -35,11 +35,19 @@ export interface EnvironmentProfile {
   readonly name: string;
   readonly agent: AgentConfiguration;
   readonly nyxid: NyxIdAccess;
+  /** Standing instructions the owner wrote for their own sessions. */
+  readonly agentNotes: AgentNotes;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
   readonly mandatory: MandatoryEntries;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /**
+   * Whether this owner's sessions start from this profile unless told
+   * otherwise. At most one of theirs carries it; none is a real answer and
+   * means the deployment's own defaults.
+   */
+  readonly preferred: boolean;
 }
 
 /**
@@ -81,6 +89,17 @@ export interface NyxIdAccess {
   readonly services: readonly string[];
 }
 
+/**
+ * Standing instructions the owner wants their sessions to start with.
+ *
+ * Theirs alone. What the platform tells an agent about itself — that it is
+ * already authenticated, which services it may reach, which commands will
+ * refuse it — is composed by the control plane and appended to, never edited
+ * from here: a session talked out of knowing those things spends its first
+ * minutes rediscovering them badly.
+ */
+export type AgentNotes = string;
+
 /** A service the owner may allow, as the picker lists it. */
 export interface PlatformService {
   readonly id: string;
@@ -103,10 +122,15 @@ export interface ServiceCatalogue {
  */
 export const DEFAULT_AGENT: AgentConfiguration = {
   kernel: 'codex',
-  // What every session was before the conversation plane existed, and what
-  // the core still defaults to. Reading a profile back as something else
-  // would change what an existing profile starts.
-  mode: 'terminal',
+  // The conversation plane is the default surface: it is where approvals are
+  // answered, where tool calls read as structure, and where a failure can be
+  // explained rather than printed. A terminal is the escape hatch. This
+  // mirrors the deployment's own default, so a new profile starts where an
+  // unqualified session would.
+  //
+  // Only a *new* draft starts here. A stored profile is read back exactly as
+  // it was written (`draftOf`), so nothing anybody already saved changes.
+  mode: 'conversation',
   model: undefined,
   reasoningEffort: 'high',
   permission: 'guarded',
@@ -114,11 +138,24 @@ export const DEFAULT_AGENT: AgentConfiguration = {
   skills: [],
 };
 
+/**
+ * What an unstated plane means on a profile that was already stored.
+ *
+ * Deliberately NOT `DEFAULT_AGENT.mode`. That is what a *new* draft starts
+ * as and it moved to conversation; this is what a record written before the
+ * field existed already meant, and it is terminal — the same answer the
+ * core's own wire format gives. Reading an old profile through the new
+ * default would silently change what it starts.
+ */
+export const PLANE_BEFORE_PLANES_EXISTED: SessionPlane = 'terminal';
+
 /** What a caller supplies when creating or replacing a profile. */
 export interface ProfileDraft {
   readonly name: string;
   readonly agent: AgentConfiguration;
   readonly nyxid: NyxIdAccess;
+  /** Standing instructions the owner wrote for their own sessions. */
+  readonly agentNotes: AgentNotes;
   readonly variables: readonly ProfileVariable[];
   readonly packages: readonly ProfilePackage[];
 }
@@ -164,6 +201,15 @@ export interface EnvironmentProfileStore {
   update(id: string, draft: ProfileDraft): Promise<EnvironmentProfile>;
   /** Remove a profile. */
   remove(id: string): Promise<void>;
+  /**
+   * Choose which profile this user's sessions start from, or none.
+   *
+   * Returns the whole list, because setting it changes two records — the one
+   * taking it and the one giving it up — and a caller must not have to guess
+   * which other rows moved. `null` clears it, which returns them to the
+   * deployment's own defaults and is a choice rather than an omission.
+   */
+  prefer(id: string | null): Promise<readonly EnvironmentProfile[]>;
   /** Skills this user may select, and what the platform mandates. */
   catalogue(): Promise<SkillCatalogue>;
   /** Services this user may allow a session to reach, and which are fixed. */
@@ -184,6 +230,7 @@ export function emptyDraft(): ProfileDraft {
     packages: [],
     agent: { ...DEFAULT_AGENT },
     nyxid: { services: [] },
+    agentNotes: '',
   };
 }
 
@@ -195,6 +242,7 @@ export function draftOf(profile: EnvironmentProfile): ProfileDraft {
     packages: [...profile.packages],
     agent: { ...profile.agent, skills: [...profile.agent.skills] },
     nyxid: { services: [...profile.nyxid.services] },
+    agentNotes: profile.agentNotes,
   };
 }
 
@@ -231,3 +279,11 @@ export function validate(draft: ProfileDraft): string | null {
   }
   return null;
 }
+
+/**
+ * What a deployment mandates when nothing has said.
+ *
+ * Shared rather than declared per form: two copies of "nothing" that drift
+ * apart is a form claiming a package is required and another saying it is not.
+ */
+export const NOTHING_MANDATED: MandatoryEntries = { packages: [], skills: [] };

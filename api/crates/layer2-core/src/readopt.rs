@@ -14,10 +14,11 @@ use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
-use crate::service::{spawn_relay, store_failed, SessionEntry, SessionService, LIVE_BUFFER};
-use crate::session::{Session, SessionSpec, SessionStatus};
+use crate::service::{store_failed, SessionEntry, SessionService, LIVE_BUFFER, RESOURCE_BUFFER};
+use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::store::SessionRecord;
 use crate::terminal::ScreenModel;
+use crate::terminal_io::spawn_relay;
 
 impl SessionService {
     /// Give a stopped session a runtime again.
@@ -45,6 +46,11 @@ impl SessionService {
             return Ok(record.session);
         }
 
+        let settings = self.settings.for_provisioning().await;
+        let limit_guard = self
+            .refuse_at_session_limit(caller, settings.live_sessions)
+            .await?;
+
         let adapter = self
             .adapters
             .get(&record.session.kernel)
@@ -59,6 +65,7 @@ impl SessionService {
         let seq = self.sequences.take(id, starting.session.last_seq, 1);
         starting.session.last_seq = seq;
         self.store.upsert(&starting).await.map_err(store_failed)?;
+        limit_guard.record_written(self.store.as_ref()).await;
         self.append_durably(
             id,
             vec![Event {
@@ -83,8 +90,10 @@ impl SessionService {
             environment_profile: starting.session.environment_profile.clone(),
             // The owner is not on the line to delegate one; the renewal loop
             // hands the session a fresh credential once it is running.
-            subject_credential: None,
+            caller_credential: None,
+            runtime_credential: None,
             requested_mode: None,
+            quoted_rate_card: None,
         };
 
         self.begin_start(id).await;
@@ -112,6 +121,7 @@ impl SessionService {
     async fn settle_ready(&self, record: &SessionRecord) {
         let mut settled = record.clone();
         settled.session.status = SessionStatus::Ready;
+        settled.session.recovery_state = RecoveryState::Normal;
         settled.session.stop_reason = None;
         let id = settled.session.id.clone();
         let seq = self.sequences.take(&id, settled.session.last_seq, 1);
@@ -142,6 +152,7 @@ impl SessionService {
         }
         if let Some(entry) = self.entries.write().await.get_mut(&id) {
             entry.session.status = SessionStatus::Ready;
+            entry.session.recovery_state = RecoveryState::Normal;
             entry.session.last_seq = seq;
         }
     }
@@ -211,13 +222,28 @@ impl SessionService {
         // exclusive, and a conversation session picked back up as a terminal
         // one is a session that is listed, intact, and unusable.
         let conversing = capabilities.conversation;
+        /*
+         * Whether the runtime is gone, or merely would not do this.
+         *
+         * These used to be the same answer, and the caller replaces a session's
+         * runtime on it. So a bridge that answered — proving it was alive — was
+         * reported as a sandbox that no longer exists, and the session was
+         * rebuilt empty next to the pod still holding its conversation.
+         *
+         * The adapter already keeps the distinction: silence is `Unavailable`,
+         * an answer is `Rejected`. This carries it rather than flattening it.
+         */
         let unreachable = |e: layer3_adapter::AdapterError| {
-            // The sandbox is genuinely gone. Say so in terms of what the person
-            // can do rather than repeating the provider's wording.
-            tracing::warn!(session_id = %id, error = %e, "cannot reconnect to the runtime");
-            CoreError::RuntimeUnavailable(
-                "the sandbox for this session is no longer running".to_string(),
-            )
+            if e.is_runtime_loss() {
+                tracing::warn!(session_id = %id, error = %e, "the runtime is gone");
+                return CoreError::RuntimeUnavailable(
+                    "the sandbox for this session is no longer running".to_string(),
+                );
+            }
+            tracing::warn!(session_id = %id, error = %e, "the runtime refused the takeover");
+            CoreError::RuntimeRefused(format!(
+                "the sandbox for this session would not resume: {e}"
+            ))
         };
 
         let terminal = match conversing {
@@ -244,9 +270,19 @@ impl SessionService {
                         "this session's conversation was never named; the runtime will be asked for a new one"
                     );
                 }
+                /*
+                 * Folding starts before the open, for the reason given at the
+                 * equivalent point in `provision.rs`: a conversation reports
+                 * things while it is being opened, and a taken-back-over
+                 * session is exactly where those reports matter — this is the
+                 * path a control-plane replacement runs.
+                 */
+                let (updates_tx, updates_rx) =
+                    tokio::sync::mpsc::channel(crate::provision::CONVERSATION_BUFFER);
+                crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates_rx);
                 Some(
                     adapter
-                        .open_conversation(&handle, &options)
+                        .open_conversation(&handle, &options, updates_tx)
                         .await
                         .map_err(unreachable)?,
                 )
@@ -256,6 +292,7 @@ impl SessionService {
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
+        let (resources, _) = broadcast::channel(RESOURCE_BUFFER);
         let mut model = (self.screen_factory)(record.session.geometry);
 
         // Replayed before anything new arrives, so the person reattaching sees
@@ -296,24 +333,32 @@ impl SessionService {
             environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
-            runtime: Some(handle),
+            runtime: Some(handle.clone()),
             input: terminal.as_ref().map(|c| c.input.clone()),
             live: live.clone(),
             live_frames: live_frames.clone(),
+            resources,
+            last_reading: None,
+            memory_pressure: Default::default(),
+            readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),
             assembling: None,
+            context_reading: None,
             attached: None,
             attachments_issued: 0,
             context_ref: record.context_ref.clone(),
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        crate::resources::spawn_resource_watch(
+            Arc::clone(self),
+            id.clone(),
+            Arc::clone(&adapter),
+            handle,
+        );
         if let Some(channel) = terminal {
             spawn_relay(id.clone(), channel.output, screen, live);
-        }
-        if let Some(channel) = conversation {
-            crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), channel.updates);
         }
 
         // The sandbox kept running, but the credential it was given belonged to

@@ -8,7 +8,19 @@
 //! re-declared. Re-declaring would mean maintaining a copy of a published
 //! schema, and a copy is wrong from the first release that moves.
 
-use tokio::sync::mpsc;
+use std::future::Future;
+use std::time::Duration;
+
+use tokio::sync::{mpsc, oneshot};
+
+use crate::AdapterError;
+
+/// How long a local adapter has to deliver one operation to its runtime link.
+///
+/// This is not a network response deadline. It bounds the handoff to the task
+/// already holding the link, which is either immediate or is evidence that
+/// task is no longer able to receive work.
+const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
 
 /// The protocol's own types, re-exported rather than re-declared.
 ///
@@ -17,10 +29,10 @@ use tokio::sync::mpsc;
 /// on the way through: the core has a stop reason of its own about whole
 /// sessions, and these five are about a single turn.
 pub use agent_client_protocol_schema::v1::{
-    ContentBlock, ContentChunk, PermissionOption, PermissionOptionId, PermissionOptionKind,
-    PromptResponse, RequestPermissionRequest, SessionId as ConversationId, SessionUpdate,
-    StopReason as TurnStopReason, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind, UsageUpdate,
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, PermissionOption,
+    PermissionOptionId, PermissionOptionKind, PromptResponse, RequestPermissionRequest,
+    SessionId as ConversationId, SessionUpdate, StopReason as TurnStopReason, ToolCall, ToolCallId,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 pub use agent_client_protocol_schema::v1::{MessageId, Usage as TurnUsage};
 
@@ -72,6 +84,94 @@ pub enum ConversationInput {
     Cancel,
 }
 
+/// Input queued together with the receipt its caller awaits.
+struct PendingInput {
+    input: ConversationInput,
+    delivered: oneshot::Sender<Result<(), AdapterError>>,
+}
+
+/// The sending half of a runtime conversation.
+///
+/// A Tokio sender confirms only that a queue slot accepted a value. It says
+/// nothing about whether the task behind that queue is still reading, or
+/// whether its runtime link can take the frame. This sender waits for the
+/// adapter task to report that result.
+#[derive(Clone)]
+pub struct ConversationInputSender {
+    inner: mpsc::Sender<PendingInput>,
+}
+
+impl std::fmt::Debug for ConversationInputSender {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConversationInputSender")
+            .field("closed", &self.inner.is_closed())
+            .field("capacity", &self.inner.capacity())
+            .finish()
+    }
+}
+
+impl ConversationInputSender {
+    /// Run the consumer for a conversation input channel.
+    ///
+    /// The handler returns after writing the operation to the runtime link,
+    /// not after a long-lived turn has finished.
+    pub fn spawn<F, Fut>(capacity: usize, handler: F) -> Self
+    where
+        F: FnMut(ConversationInput) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), AdapterError>> + Send + 'static,
+    {
+        Self::spawn_with_abort(capacity, handler).0
+    }
+
+    /// Send one operation and wait until the adapter has delivered it.
+    pub async fn send(&self, input: ConversationInput) -> Result<(), AdapterError> {
+        let (delivered, receipt) = oneshot::channel();
+        self.inner
+            .try_send(PendingInput { input, delivered })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => AdapterError::Unavailable(
+                    "the conversation input queue is not being consumed".to_string(),
+                ),
+                mpsc::error::TrySendError::Closed(_) => {
+                    AdapterError::Unavailable("the conversation input task has ended".to_string())
+                }
+            })?;
+
+        tokio::time::timeout(DELIVERY_DEADLINE, receipt)
+            .await
+            .map_err(|_| {
+                AdapterError::Unavailable(
+                    "the conversation input task did not deliver the operation".to_string(),
+                )
+            })?
+            .map_err(|_| {
+                AdapterError::Unavailable(
+                    "the conversation input task ended before delivery".to_string(),
+                )
+            })?
+    }
+
+    /// Hosted adapters stop this consumer when the socket's read half ends.
+    pub(crate) fn spawn_with_abort<F, Fut>(
+        capacity: usize,
+        mut handler: F,
+    ) -> (Self, tokio::task::AbortHandle)
+    where
+        F: FnMut(ConversationInput) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), AdapterError>> + Send + 'static,
+    {
+        let (inner, mut pending) = mpsc::channel::<PendingInput>(capacity);
+        let task = tokio::spawn(async move {
+            while let Some(PendingInput { input, delivered }) = pending.recv().await {
+                let _ = delivered.send(handler(input).await);
+            }
+        });
+        let abort = task.abort_handle();
+        (Self { inner }, abort)
+    }
+}
+
 /// What an owner decided about something a runtime asked to do.
 ///
 /// Three answers rather than two, because refusing one action and abandoning
@@ -112,6 +212,42 @@ pub enum ConversationUpdate {
         /// How many frames went, as the runtime counted them.
         frames: u64,
     },
+    /// The turn stopped because something went wrong, and what.
+    ///
+    /// Distinct from `TurnEnded` deliberately. A turn that ends is a turn the
+    /// agent finished; this one did not, and the difference is the whole of
+    /// what a client needs to tell "the agent had nothing more to say" from
+    /// "the agent could not answer". Reported so it becomes `RUN_ERROR`
+    /// rather than a turn that quietly produced nothing — the failure
+    /// `docs/API_AGUI.md` requires a client be able to see, and the one
+    /// `CLAUDE.md` §9 forbids being discovered by whoever tried to use it.
+    Failed {
+        /// What went wrong, in the words of whatever knew: the agent's own
+        /// message, the bridge's, or the runtime's.
+        message: String,
+        /// The ability that was missing, where the failure was a refusal.
+        capability: Option<String>,
+    },
+    /// The agent cannot proceed until its owner signs in to their own account.
+    ///
+    /// Only ever reached by a session created with the owner's own credential.
+    /// The kernel is asking a person to complete a sign-in somewhere else, and
+    /// the two things it needs them to know — where to go and what to type —
+    /// travel here so an interface can put them on screen.
+    ///
+    /// **No credential passes this way, in either direction.** What the sign-in
+    /// produces is written inside the sandbox by the kernel itself; this
+    /// carries only the address of a page and a code that is useless without
+    /// the person's own account. That is what makes the promise in
+    /// `CredentialMode::Own` true rather than aspirational.
+    SignInRequired {
+        /// The page the owner opens, in their own browser, on their own device.
+        url: String,
+        /// The one-time code they enter there. Short-lived by construction.
+        code: Option<String>,
+        /// The kernel's own sentence about what it wants, where it gave one.
+        message: Option<String>,
+    },
 }
 
 /// A bidirectional attachment to a runtime's conversation.
@@ -123,10 +259,8 @@ pub enum ConversationUpdate {
 /// other's pace.
 #[derive(Debug)]
 pub struct ConversationChannel {
-    /// Everything that happens on the conversation, in the order it happens.
-    pub updates: mpsc::Receiver<ConversationUpdate>,
     /// Input destined for the runtime.
-    pub input: mpsc::Sender<ConversationInput>,
+    pub input: ConversationInputSender,
     /// What the runtime calls this conversation, when it has a name for one.
     ///
     /// Reported so it can be recorded, because a control plane that restarts
@@ -137,4 +271,25 @@ pub struct ConversationChannel {
     /// `None` from a runtime whose conversations have no name. Such a runtime
     /// cannot be rejoined either, and says so by refusing to be asked.
     pub conversation_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_queue_slot_without_a_draining_consumer_is_not_delivery() {
+        // This is the shape that used to produce a false success: the receiver
+        // is alive, so Tokio accepts the value, but no task ever reads it.
+        let (inner, _held_open) = mpsc::channel(1);
+        let input = ConversationInputSender { inner };
+
+        let error = input
+            .send(ConversationInput::Cancel)
+            .await
+            .expect_err("an undrained queue did not deliver an interrupt");
+
+        assert!(matches!(error, AdapterError::Unavailable(message)
+            if message.contains("did not deliver")));
+    }
 }

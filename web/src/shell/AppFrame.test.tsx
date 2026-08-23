@@ -1,0 +1,269 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { render, screen } from '@testing-library/react';
+import { act } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AppFrame } from './AppFrame';
+import { DETAILS_MIN, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns';
+
+/**
+ * The page frame — `docs/Web_Style.md` §9.
+ *
+ * jsdom lays nothing out, so what is checked here is what the frame *decides*:
+ * the tracks it writes, what it keeps mounted, and how it behaves when it is
+ * measured. The arithmetic behind the numbers is pinned in columns.test.ts.
+ */
+
+/** jsdom has no ResizeObserver, and no layout to feed one. */
+let observed: (() => void) | undefined;
+
+class FakeResizeObserver {
+  constructor(callback: () => void) {
+    observed = callback;
+  }
+  observe() {
+    /* the callback is fired by the test, since jsdom never resizes */
+  }
+  disconnect() {
+    observed = undefined;
+  }
+}
+
+/** Report a frame width, the way the observer would. */
+function measure(width: number) {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    width,
+    height: 800,
+  } as DOMRect);
+  act(() => {
+    observed?.();
+    // The frame coalesces to one measurement per animation frame.
+    vi.advanceTimersByTime(20);
+  });
+}
+
+function tracks(): string {
+  return (document.querySelector('.frame') as HTMLElement).style.gridTemplateColumns;
+}
+
+function pointer(type: string, clientX: number): Event {
+  const event = new Event(type, { bubbles: true });
+  Object.defineProperties(event, {
+    clientX: { value: clientX },
+    pointerId: { value: 1 },
+  });
+  return event;
+}
+
+function capturePointer(handle: HTMLElement): void {
+  let captured = false;
+  Object.defineProperties(handle, {
+    setPointerCapture: {
+      configurable: true,
+      value: () => {
+        captured = true;
+      },
+    },
+    hasPointerCapture: {
+      configurable: true,
+      value: () => captured,
+    },
+    releasePointerCapture: {
+      configurable: true,
+      value: () => {
+        captured = false;
+      },
+    },
+  });
+}
+
+function dragAcrossFrames(handle: HTMLElement, positions: readonly number[]): void {
+  capturePointer(handle);
+  act(() => {
+    handle.dispatchEvent(pointer('pointerdown', positions[0] ?? 0));
+  });
+  for (const position of positions.slice(1)) {
+    act(() => {
+      handle.dispatchEvent(pointer('pointermove', position));
+      vi.advanceTimersByTime(20);
+    });
+  }
+  act(() => {
+    handle.dispatchEvent(pointer('pointerup', positions.at(-1) ?? 0));
+  });
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+    setTimeout(() => {
+      callback(0);
+    }, 0),
+  );
+  vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+    clearTimeout(handle);
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  observed = undefined;
+});
+
+function renderFrame(detailsOpen = true) {
+  return render(
+    <AppFrame
+      detailsOpen={detailsOpen}
+      sidebar={<p>sessions</p>}
+      center={<p>surface</p>}
+      details={<p>details</p>}
+      overlay={<p>banner</p>}
+    />,
+  );
+}
+
+describe('the page frame', () => {
+  it('writes the solved widths as its own tracks', () => {
+    renderFrame();
+    measure(1600);
+    expect(tracks()).toBe(
+      `${SIDEBAR_DEFAULT}px ${1600 - SIDEBAR_DEFAULT - DETAILS_MIN}px ${DETAILS_MIN}px`,
+    );
+  });
+
+  it('keeps the details column mounted when it is closed', () => {
+    // §9: closed is zero width, never unmounted. Unmounting throws away
+    // whatever the column had scrolled to and rebuilt on every open.
+    renderFrame(false);
+    measure(1600);
+    expect(screen.getByText('details')).toBeInTheDocument();
+    expect(tracks().endsWith('0px')).toBe(true);
+  });
+
+  it('drops the seam a zero-width column would otherwise paint', () => {
+    // A 1px left border on a 0px column is a 1px line down the page.
+    renderFrame(false);
+    measure(1600);
+    expect(document.querySelector('.frame')).toHaveAttribute('data-details-collapsed');
+  });
+
+  it('collapses the sidebar to its rail on a narrow frame', () => {
+    renderFrame();
+    measure(900);
+    expect(tracks().startsWith(`${SIDEBAR_COLLAPSED}px`)).toBe(true);
+  });
+
+  it('lets somebody open it anyway, and the auto-collapse does not fight back', () => {
+    /*
+     * Without the override the toggle does nothing below the breakpoint: the
+     * rule would win on the next render and shut the panel again, which reads
+     * as a broken control rather than as a deliberate layout.
+     */
+    renderFrame();
+    measure(900);
+
+    const toggle = screen.getByRole('button', { name: /show sessions/i });
+    act(() => {
+      toggle.click();
+    });
+
+    expect(tracks().startsWith(`${SIDEBAR_DEFAULT}px`)).toBe(true);
+    expect(screen.getByRole('button', { name: /hide sessions/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('gives its sidebar subtree the derived rail state and overlays it below the centre floor', () => {
+    render(
+      <AppFrame
+        detailsOpen={false}
+        sidebar={({ collapsed, onToggle }) => (
+          <>
+            <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>
+            <button type="button" onClick={onToggle}>
+              {collapsed ? 'Show sessions' : 'Hide sessions'}
+            </button>
+          </>
+        )}
+        center={<p>surface</p>}
+      />,
+    );
+    measure(390);
+
+    expect(screen.getByText('sidebar rail')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Show sessions' })).toHaveLength(1);
+    act(() => {
+      screen.getByRole('button', { name: 'Show sessions' }).click();
+    });
+
+    expect(screen.getByText('sidebar panel')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Hide sessions' })).toHaveLength(1);
+    expect(document.querySelector('.frame')).toHaveAttribute('data-sidebar-overlay');
+
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    expect(css).toMatch(
+      /\.frame\[data-sidebar-overlay\] \.frame__center,\s*\.frame\[data-sidebar-overlay\] \.frame__details\s*\{[^}]*visibility: hidden/,
+    );
+  });
+
+  it('offers no way back when the sidebar has not collapsed', () => {
+    // The toggle exists to undo the automatic collapse. At a width where
+    // nothing collapsed, it would be a second control for the same thing.
+    renderFrame();
+    measure(1600);
+    expect(screen.queryByRole('button', { name: /sessions/i })).toBeNull();
+  });
+
+  it('gives each resizable border one named handle', () => {
+    // Named, because a bare strip is invisible to anybody not using a pointer.
+    renderFrame();
+    measure(1600);
+    const handles = screen.getAllByRole('separator');
+    expect(handles.map((handle) => handle.getAttribute('aria-label'))).toEqual([
+      'Resize the session list',
+      'Resize the details column',
+    ]);
+  });
+
+  it('draws a grip on the details edge only', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    const grips = [...css.matchAll(/\.frame__handle([^,{]*)::after/g)].map(
+      (match) => match[1] ?? '',
+    );
+    expect(grips.length).toBeGreaterThan(0);
+    expect(grips.every((selector) => selector.includes("[data-side='details']"))).toBe(true);
+    expect(css).toMatch(
+      /\.frame__handle\[data-side='details'\]::after\s*\{[^}]*width: 12px[^}]*height: 32px[^}]*border-radius: 10px/,
+    );
+  });
+
+  it('anchors a multi-frame drag to the width at pointer-down', () => {
+    renderFrame();
+    measure(1600);
+
+    const sidebar = screen.getByRole('separator', { name: 'Resize the session list' });
+    dragAcrossFrames(sidebar, [SIDEBAR_DEFAULT, 300, 320, 340]);
+    expect(tracks().startsWith('340px ')).toBe(true);
+
+    const details = screen.getByRole('separator', { name: 'Resize the details column' });
+    dragAcrossFrames(details, [1300, 1280, 1260, 1240]);
+    expect(tracks().endsWith(' 360px')).toBe(true);
+  });
+
+  it('offers no details handle when there is no details column', () => {
+    renderFrame(false);
+    measure(1600);
+    expect(screen.getAllByRole('separator')).toHaveLength(1);
+  });
+
+  it('draws the overlay above every column, and lets clicks through where it is empty', () => {
+    renderFrame();
+    measure(1600);
+    expect(screen.getByText('banner')).toBeInTheDocument();
+    expect(document.querySelector('.frame__overlay')?.parentElement).toHaveClass('frame');
+  });
+});

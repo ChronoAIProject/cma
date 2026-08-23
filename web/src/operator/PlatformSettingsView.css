@@ -1,0 +1,294 @@
+/* Platform settings — docs/Web_Style.md §19. */
+
+.platform-settings {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding-bottom: var(--space-5);
+}
+
+.platform-settings__heading,
+.platform-settings__section-head,
+.platform-settings__blocks-head,
+.platform-settings__actions,
+.platform-settings__conflict-actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.platform-settings__heading .button,
+.platform-settings__blocks-head .button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.platform-settings__read-error {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.platform-settings__title {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.platform-settings__revision {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.platform-settings__notice {
+  align-items: center;
+}
+
+.platform-settings__notice p,
+.platform-settings__conflict p,
+.platform-settings__section-note,
+.platform-settings__generated-detail,
+.platform-settings__empty,
+.platform-settings__error {
+  margin: 0;
+}
+
+.platform-settings__notice code {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+
+.platform-settings__conflict {
+  flex-direction: column;
+}
+
+.platform-settings__conflict-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.platform-settings__conflict-actions {
+  justify-content: flex-start;
+}
+
+.platform-settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+.platform-settings__controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.platform-settings__section-head {
+  align-items: baseline;
+}
+
+.platform-settings__section-title {
+  flex: none;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.platform-settings__section-note {
+  color: var(--ink-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
+  text-align: right;
+}
+
+.platform-settings__field,
+.platform-settings__blocks,
+.platform-settings__input,
+.platform-settings__number {
+  width: 100%;
+}
+
+.platform-settings__block-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.platform-settings__block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: var(--space-2);
+  align-items: start;
+}
+
+.platform-settings__block-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.button.platform-settings__icon {
+  width: 28px;
+  padding: 0;
+}
+
+.platform-settings__textarea {
+  resize: vertical;
+  line-height: var(--leading-ui);
+}
+
+.platform-settings__empty,
+.platform-settings__unchanged,
+.platform-settings__status {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-ui);
+}
+
+.platform-settings__generated {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  background: var(--raised);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.platform-settings__generated-title {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-note);
+}
+
+.platform-settings__generated-detail {
+  margin-top: var(--space-1);
+  color: var(--ink-3);
+  font-size: var(--text-meta);
+}
+
+.platform-settings__fixed {
+  flex: none;
+  color: var(--ink-3);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.platform-settings__ranges {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.platform-settings__range {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.platform-settings__range-title {
+  color: var(--ink);
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.platform-settings__range-title span {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  font-weight: 400;
+}
+
+.platform-settings__range-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.platform-settings__number-field {
+  min-width: 0;
+}
+
+.platform-settings__number input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.platform-settings__toggle {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--ink);
+  font-size: var(--text-note);
+  cursor: pointer;
+}
+
+.platform-settings__toggle input {
+  accent-color: var(--dsw-alias-button-primary-fill);
+}
+
+.platform-settings__actions {
+  justify-content: flex-start;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+@media (max-width: 680px) {
+  .platform-settings__heading,
+  .platform-settings__section-head {
+    align-items: flex-start;
+  }
+
+  .platform-settings__heading {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .platform-settings__section-head {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .platform-settings__section-note {
+    text-align: left;
+  }
+
+  .platform-settings__ranges,
+  .platform-settings__range-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .platform-settings__actions,
+  .platform-settings__conflict-actions {
+    flex-wrap: wrap;
+  }
+}

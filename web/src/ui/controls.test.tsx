@@ -1,15 +1,15 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './Button';
-import { Select } from './Select';
+import { Picker } from './Picker';
 
 /**
- * Controls — docs/Web_Style.md §7.
+ * Controls — docs/Web_Style.md §12.
  *
- * The five control heights and no others, `box-sizing: border-box`
+ * The two shared control heights and no others, `box-sizing: border-box`
  * everywhere, the lift state contract, and one dropdown pattern. jsdom does
  * not lay out, so the height rule is checked where it is actually decided:
  * in the stylesheets, which is also where a sixth height would be introduced.
@@ -17,71 +17,29 @@ import { Select } from './Select';
 
 const SRC = resolve(process.cwd(), 'src');
 
-/** Every height §7 permits a control to take, plus the chip. */
-const PERMITTED_HEIGHTS = new Set([
-  'var(--control-h)',
-  'var(--control-h-sm)',
-  'var(--control-h-md)',
-  'var(--control-h-lg)',
-  'var(--control-h-xl)',
-  'var(--chip-h)',
-  'var(--hit)',
-  'var(--band-head)',
-  'var(--band-foot)',
-  'var(--bar-height)',
-  'var(--canvas-node-h)',
-  '100%',
-  'auto',
-  '1em',
-  '1',
-  // A textarea grows; its floor is stated in control heights rather than in
-  // pixels, which is the property this check exists to hold.
-  'calc(var(--control-h) * 2)',
-  // §18.3's own number: the approval's answers sit two above the field step.
-  'calc(var(--control-h-md) + 2px)',
-]);
-
-function stylesheets(dir: string): string[] {
-  const found: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      found.push(...stylesheets(path));
-    } else if (entry.name.endsWith('.css')) {
-      found.push(path);
-    }
-  }
-  return found;
-}
-
 describe('the control heights', () => {
-  it('takes a height from §7 rather than a hand-set pixel value', () => {
-    // A control that sets its own pixel height is how two controls in one row
-    // end up a pixel out of line. Small decorative boxes — a status dot, an
-    // avatar — are not controls and are allowed their own geometry, so the
-    // check is on the token vocabulary rather than on every declaration.
-    const offences: string[] = [];
-    for (const path of stylesheets(SRC)) {
-      const css = readFileSync(path, 'utf8');
-      for (const [index, line] of css.split('\n').entries()) {
-        const match = /^\s*(?:min-)?height:\s*(.+);/.exec(line);
-        const value = match?.[1];
-        if (value === undefined || PERMITTED_HEIGHTS.has(value)) {
-          continue;
-        }
-        // A pixel height on something that is not a control is fine; a pixel
-        // height inside a rule naming a button, field, select or chip is not.
-        const rule = css.slice(0, css.indexOf(line)).split('}').pop() ?? '';
-        if (/\.(button|field|select|menu__item|chip|segment)/.test(rule)) {
-          offences.push(`${relative(SRC, path)}:${String(index + 1)} ${line.trim()}`);
-        }
-      }
-    }
-    expect(offences).toEqual([]);
+  it('gives the button two heights and no third', () => {
+    /*
+     * §12 gives the control 40px and 32px. A third height added here is a
+     * third height everything can then reach for, which is how a row ends up
+     * with three controls on two baselines — and it is invisible in a diff
+     * that only adds a modifier.
+     *
+     * Checked on Button.css alone, deliberately. A surface that genuinely
+     * needs its own proportions declares them in its own sheet, where the
+     * decision is local and visible, rather than by widening the shared set.
+     */
+    const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    const heights = [...css.matchAll(/^\s*height:\s*(.+);/gm)].map((match) => match[1]);
+    expect(new Set(heights)).toEqual(new Set(['40px', '32px', '16px']));
+    expect(css).toMatch(/\.button\s*\{[^}]*border-radius: 10px/);
+    expect(css).toMatch(/\.button--sm\s*\{[^}]*border-radius: 6px/);
+    expect(css).toMatch(/\.button--md:has\(> \.button__icon:only-child\)\s*\{[^}]*width: 40px/);
+    expect(css).toMatch(/\.button--sm:has\(> \.button__icon:only-child\)\s*\{[^}]*width: 32px/);
   });
 
   it('makes every element border-box', () => {
-    // §7: a quiet button carries a 1px border and an accent button does not,
+    // §7: an outline button carries a 1px border and a primary one does not,
     // so under content-box the two render 2px apart and sit a pixel out of
     // line in the same row.
     const base = readFileSync(join(SRC, 'styles', 'base.css'), 'utf8');
@@ -91,117 +49,258 @@ describe('the control heights', () => {
 
 describe('the button', () => {
   it('takes the primary fill when the surface spends it', () => {
-    const { container } = render(<Button tone="accent">Start</Button>);
+    const { container } = render(<Button variant="primary">Start</Button>);
     expect(container.firstElementChild).toHaveClass('button', 'button--primary');
   });
 
+  it('renders a danger action from danger tokens and never the primary fill', () => {
+    const { container } = render(<Button variant="danger">Remove</Button>);
+    expect(container.firstElementChild).toHaveClass('button', 'button--danger');
+
+    const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    const dangerRules = [...css.matchAll(/\.button--danger[^{]*\{[^}]*\}/g)]
+      .map((match) => match[0])
+      .join('\n');
+    expect(dangerRules).toContain('var(--dsw-alias-state-error-primary)');
+    expect(dangerRules).toContain('var(--dsw-alias-state-error-secondary)');
+    expect(dangerRules).toContain('var(--dsw-alias-interactive-bg-hover-danger)');
+    expect(dangerRules).not.toContain('button-primary');
+  });
+
+  it('activates a danger action from the keyboard and leaves it inert when disabled', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    const { rerender } = render(
+      <Button variant="danger" onClick={onClick}>
+        Remove
+      </Button>,
+    );
+
+    const button = screen.getByRole('button', { name: 'Remove' });
+    button.focus();
+    await user.keyboard('{Enter}');
+    expect(onClick).toHaveBeenCalledOnce();
+
+    rerender(
+      <Button variant="danger" disabled onClick={onClick}>
+        Remove
+      </Button>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it('takes interaction values from the named component tokens', () => {
+    const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    expect(css).toMatch(
+      /\.button--primary:hover:not\(:disabled\)\s*\{[^}]*box-shadow: var\(--dsw-shadow-accent-hover\)/,
+    );
+    expect(css).toMatch(
+      /\.button--primary:active:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-button-primary-active\)/,
+    );
+    expect(css).toMatch(/\.button--outline\s*\{[^}]*var\(--dsw-alias-border-l3\)/);
+    expect(css).toMatch(
+      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover-accent\)[^}]*var\(--dsw-alias-state-business-primary\)/,
+    );
+  });
+
   it('takes the disabled treatment, and the reason lives beside it', () => {
-    // §7: disabled, never removed — and the reason is a sibling
+    // §12: disabled, never removed — and the reason is a sibling
     // .control-reason drawn once per row, never stacked into the key, which
     // made every disabled control taller than its enabled neighbour.
     render(
       <div>
-        <Button disabled>End session</Button>
+        <Button disabled>Pause session</Button>
         <span className="control-reason">This session is not running</span>
       </div>,
     );
-    const button = screen.getByRole('button', { name: /end session/i });
+    const button = screen.getByRole('button', { name: 'Pause session' });
     expect(button).toBeDisabled();
     expect(button.textContent).not.toContain('This session is not running');
 
+    // Dimmed rather than recoloured, so a primary button that cannot be
+    // pressed is still recognisably the one somebody is looking for.
+    const buttonCss = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    expect(buttonCss).toMatch(/\.button:disabled\s*\{[^}]*opacity: 0\.4/);
+    expect(buttonCss).toMatch(/\.button:disabled\s*\{[^}]*cursor: not-allowed/);
+
+    // The reason class is part of the shared vocabulary, and stays there.
     const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    // §3: disabled takes the inset fill with an --ink-3 label.
-    expect(components).toMatch(/\.button:disabled,[\s\S]*?background: var\(--inset\)/);
-    // The reason class is part of the shared vocabulary, at note size in ink-3.
-    expect(components).toMatch(/\.control-reason\s*\{[^}]*font-size: var\(--text-note\)/);
+    expect(components).toMatch(/\.control-reason\s*\{/);
   });
 
-  it('is quiet unless something is spent on it', () => {
-    // §7: one primary per surface, spent on the action it exists for.
+  it('is a ghost unless something is spent on it', () => {
+    // §12: one primary per surface, spent on the action it exists for. Ghost
+    // is the default so that spending it is a decision somebody made.
     const { container } = render(<Button>Cancel</Button>);
-    expect(container.firstElementChild).toHaveClass('button');
+    expect(container.firstElementChild).toHaveClass('button', 'button--ghost');
     expect(container.firstElementChild).not.toHaveClass('button--primary');
+  });
+
+  it('draws a leading glyph in a fixed box, out of the accessible name', () => {
+    // The slot is 16px whatever the glyph draws itself at, so a row of
+    // buttons keeps its labels on one baseline. It is aria-hidden because the
+    // label already says what the button does; announcing both says it twice.
+    const { container } = render(<Button icon={<svg data-testid="glyph" />}>Stop</Button>);
+    const slot = container.querySelector('.button__icon');
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('button').textContent).toBe('Stop');
   });
 });
 
-describe('the dropdown', () => {
+describe('the shared component vocabulary', () => {
+  it('uses no migration-shim property except the shared focus ring', () => {
+    const tokens = readFileSync(join(SRC, 'styles', 'tokens.css'), 'utf8');
+    const migration = tokens.slice(tokens.indexOf('Migration shim'));
+    const shimBody = /body\s*\{([\s\S]*?)\n\}/.exec(migration)?.[1] ?? '';
+    const shimNames = new Set(
+      [...shimBody.matchAll(/^\s*(--[a-z0-9-]+):/gm)].map((match) => match[1]),
+    );
+    shimNames.delete('--focus-ring');
+
+    const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    const references = [...components.matchAll(/var\((--[a-z0-9-]+)/g)].map((match) => match[1]);
+    expect(references.filter((name) => shimNames.has(name))).toEqual([]);
+  });
+
+  it('keeps the four cross-sheet transition owners in one shared rule', () => {
+    const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    expect(css).toMatch(/\.button,\s*\.pill,\s*\.row-item,\s*\.input\s*\{\s*transition:/);
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.button,\s*\.pill,\s*\.row-item,\s*\.input\s*\{\s*transition: none/,
+    );
+  });
+
+  it('pins the field, failure, progress, and skeleton idioms to their aliases', () => {
+    const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    expect(css).toMatch(
+      /\.field__label\s*\{[^}]*font-family: var\(--ds-font-family-code\)[^}]*font-size: 10\.5px[^}]*letter-spacing: 0\.14em/,
+    );
+    expect(css).toMatch(
+      /\.notice--fail\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-left: 2px solid var\(--dsw-alias-state-error-primary\)/,
+    );
+    expect(css).toMatch(
+      /\.progress__fill\s*\{[^}]*background: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-glow-accent\)/,
+    );
+    expect(css).toMatch(/\.skeleton\s*\{[^}]*background: var\(--dsw-alias-bg-skeleton\)/);
+    expect(css).toMatch(
+      /\.skeleton::after\s*\{[^}]*animation: skeleton-shimmer 1\.6s var\(--ds-ease-in-out\) infinite/,
+    );
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.skeleton::after\s*\{[^}]*display: none[^}]*animation: none/,
+    );
+  });
+});
+
+describe('the value picker', () => {
   const OPTIONS = [
     { value: 'a', label: 'Codex' },
     { value: 'b', label: 'Claude Code' },
     { value: 'c', label: 'DeepSeek Harness', unavailable: 'no terminal plane' },
   ] as const;
 
-  function renderSelect(onChange = vi.fn()) {
-    render(<Select label="Agent" value="a" options={OPTIONS} onChange={onChange} />);
+  function renderPicker(onChange = vi.fn()) {
+    render(<Picker label="Agent" value="a" options={OPTIONS} onChange={onChange} />);
     return onChange;
   }
 
-  it('does not run anything when it opens', async () => {
-    // §7: choosing a value is a select and choosing an action is a menu. They
-    // look alike and behave differently.
+  it('does not choose anything when it opens', async () => {
+    // §7: choosing a value and choosing an action look alike and behave
+    // differently. Opening one is not picking the row under the pointer.
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    await user.click(screen.getByRole('combobox', { name: 'Agent' }));
-    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    const onChange = renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
+    expect(screen.getByRole('menu', { name: 'Agent' })).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
   });
 
   it('is operable from the keyboard alone', async () => {
     // §10: every view is fully keyboard operable. A native <select> gave this
-    // away for free and the pattern §7 asks for cannot, so it is implemented.
+    // away for free and this pattern cannot, so it is implemented — and the
+    // menu it replaced had no keyboard route at all.
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    const trigger = screen.getByRole('combobox', { name: 'Agent' });
-    trigger.focus();
+    const onChange = renderPicker();
 
-    await user.keyboard('{ArrowDown}');
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
+    // Focus lands on the selected row, so arrows move from where you are.
+    expect(screen.getByRole('menuitemradio', { name: 'Codex' })).toHaveFocus();
+
     await user.keyboard('{ArrowDown}{Enter}');
-
     expect(onChange).toHaveBeenCalledWith('b');
+  });
+
+  it('wraps rather than stopping at the ends', async () => {
+    // A list that stops dead at the last row makes the first one four presses
+    // away in a menu of five.
+    const user = userEvent.setup();
+    renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
+
+    await user.keyboard('{ArrowUp}');
+    expect(screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ })).toHaveFocus();
   });
 
   it('closes on Escape without choosing', async () => {
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    const trigger = screen.getByRole('combobox', { name: 'Agent' });
-    trigger.focus();
+    const onChange = renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
 
-    await user.keyboard('{ArrowDown}{Escape}');
+    await user.keyboard('{Escape}');
 
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu')).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('disables an unavailable option rather than removing it, and steps past it', async () => {
+  it('disables an unavailable option rather than removing it, and says why', async () => {
+    // §12: removing it answers "why is it not there" with nothing, and a person
+    // who came looking for it concludes the product cannot do it.
     const user = userEvent.setup();
-    const onChange = renderSelect();
-    const trigger = screen.getByRole('combobox', { name: 'Agent' });
-    trigger.focus();
+    renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
 
-    await user.keyboard('{ArrowDown}');
-    const unavailable = screen.getByRole('option', { name: /DeepSeek Harness/ });
+    const unavailable = screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ });
     expect(unavailable).toHaveAttribute('aria-disabled', 'true');
     expect(unavailable.textContent).toContain('no terminal plane');
 
-    // End would land on the last option; it lands on the last CHOOSABLE one.
-    await user.keyboard('{End}{Enter}');
-    expect(onChange).toHaveBeenCalledWith('b');
+    // Still reachable, so the reason can actually be read. Choosing it does
+    // nothing — the row is listed, not offered.
+    unavailable.focus();
+    expect(unavailable).toHaveFocus();
+    await user.click(unavailable);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 
-  it('marks the chosen option by weight and by a tick', () => {
-    // §7 asks for both, because a mark carried by one channel alone is not a
-    // mark to everyone (§10).
-    const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    expect(components).toMatch(/\.menu__item\[aria-selected='true'\][\s\S]*?font-weight: 600/);
-    expect(components).toMatch(/\.menu__tick::before\s*\{\s*content: '✓'/);
+  it('marks the chosen option with a tick rather than a fill', () => {
+    // A fill would make the selected row and the hovered row the same colour,
+    // so running the pointer down the list would look like the selection
+    // following it.
+    const css = readFileSync(join(SRC, 'ui', 'Menu.css'), 'utf8');
+    expect(css).toMatch(/\.menu__check\s*\{[^}]*color: var\(--/);
+    expect(css).not.toMatch(/\.menu__item\[aria-checked='true'\]\s*\{[^}]*background:/);
   });
 
-  it('holds the 200px minimum when it filters, and flips rather than rotates', () => {
-    const components = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
-    expect(components).toMatch(/\.select--filter\s*\{\s*min-width: 200px/);
-    // Content swap, not a transform: at this size a rotation reads as a wobble.
-    expect(components).toMatch(/\.select\[aria-expanded='true'\] \.select__caret::before/);
-    expect(components).not.toMatch(/\.select__caret[\s\S]{0,120}transform:/);
+  it('uses the shared menu geometry and keeps danger rows in their own tone', () => {
+    const css = readFileSync(join(SRC, 'ui', 'Menu.css'), 'utf8');
+    expect(css).toMatch(/\.menu__item\s*\{[^}]*min-height: 40px[^}]*border-radius: 7px/);
+    expect(css).toMatch(
+      /\.menu__item:hover:not\(\[aria-disabled='true'\]\)\s*\{[^}]*color: var\(--dsw-alias-state-business-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-accent\)/,
+    );
+    expect(css).toMatch(
+      /\.menu__item--danger:hover:not\(\[aria-disabled='true'\]\)[^{]*\{[^}]*color: var\(--dsw-alias-state-error-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)/,
+    );
+  });
+
+  it('uses the shared focus ring for the risk acknowledgement', () => {
+    const css = readFileSync(join(SRC, 'ui', 'RiskConfirmation.css'), 'utf8');
+    expect(css).toMatch(
+      /\.risk__acknowledgement input:focus-visible\s*\{[^}]*box-shadow: var\(--focus-ring\)/,
+    );
+  });
+
+  it('holds a minimum width when it filters', () => {
+    // Otherwise the row it sits in resizes every time the value changes.
+    const css = readFileSync(join(SRC, 'ui', 'Picker.css'), 'utf8');
+    expect(css).toMatch(/\.picker--filter \.picker__anchor\s*\{\s*min-width: 160px/);
   });
 });

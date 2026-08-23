@@ -1,36 +1,42 @@
 /*
- * The reasoning band — docs/Web_Style.md §18.8.
+ * The reasoning row — docs/Web_Style.md §13.
  *
- * Collapsed by default to one pill key; open, a height-capped band on the
- * raised ground pinned to the newest. No colour, ever: §2 reserves the
- * semantic inks for session and system state, and reasoning is neither.
+ * A row rather than a pill, because it carries a line of the agent's own
+ * words: a pill sized to its label would truncate every one of them to
+ * nothing. No colour, ever — §2 reserves the semantic inks for session and
+ * system state, and reasoning is neither.
  */
 
 .thinking {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  align-items: flex-start;
+  gap: 4px;
+  align-items: stretch;
+  min-width: 0;
 }
 
 .thinking__key {
-  display: inline-flex;
+  display: flex;
+  gap: 6px;
   align-items: center;
-  height: var(--chip-h);
-  padding-inline: var(--space-3);
-  color: var(--ink-3);
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 24px;
+  text-align: left;
   white-space: nowrap;
+  background: none;
+  border: none;
   cursor: pointer;
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-pill);
 }
 
 .thinking__key:hover {
-  color: var(--ink-2);
-  border-color: var(--rule-2);
+  color: var(--dsw-alias-label-primary);
 }
 
 .thinking__key:focus-visible {
@@ -46,12 +52,97 @@
 .thinking__body {
   align-self: stretch;
   max-height: 120px;
-  padding: var(--space-3);
+  padding: 12px;
   overflow-y: auto;
-  color: var(--ink-3);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+}
+
+.thinking__glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.thinking__title {
+  flex: none;
+}
+
+/* A 2px dot between the title and the line, rather than a bullet character. */
+.thinking__dot {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  background: var(--dsw-alias-label-tertiary);
+  border-radius: 50%;
+}
+
+/*
+ * The agent's newest line. It never wraps: a row that grows with the longest
+ * sentence would move the conversation under it several times a second.
+ */
+.thinking__summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
+}
+
+/*
+ * The sweep — a band of lighter ground travelling across the row.
+ *
+ * It says the row is live without claiming progress, which is the same reason
+ * §5 refuses a spinner: a bar that fills implies somebody knows how far along
+ * it is, and nothing here does. It rides on the row rather than on the text,
+ * so the agent's words stay at full contrast while it passes.
+ */
+.thinking__key::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent) 55%,
+    transparent 100%
+  );
+  animation: thinking-sweep 2.6s ease-out infinite;
+  pointer-events: none;
+  content: '';
+}
+
+.thinking__key {
+  position: relative;
+}
+
+@keyframes thinking-sweep {
+  from {
+    transform: translateX(-300px);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/*
+ * Stopped for anybody who asked for less motion. The row still says what the
+ * agent is working through — the sweep was never carrying that.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .thinking__key::after {
+    animation: none;
+    opacity: 0;
+  }
 }

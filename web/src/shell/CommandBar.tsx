@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Session } from '../sessions/types';
 import type { Arrangement } from '../sessions/arrangement';
+import type { CreationAbility } from '../sessions/availability';
 import { lastActivity } from '../sessions/lastActivity';
 import { tabLabel } from '../sessions/sessionTime';
 import { setAppearance, type Appearance } from '../theme/appearance';
@@ -8,7 +9,7 @@ import { PlateScrim, usePlateFocus } from '../ui/plate';
 import './CommandBar.css';
 
 /**
- * The command bar — docs/Web_Style.md §6 and §7.
+ * The command bar — docs/Web_Style.md §6 and §12.
  *
  * The plate the bar's trigger opens, reaching the surfaces it can already
  * reach and no more: sessions by time and last-activity line, the two
@@ -22,6 +23,7 @@ import './CommandBar.css';
 
 interface CommandBarProps {
   readonly sessions: readonly Session[];
+  readonly creation: CreationAbility;
   readonly onClose: () => void;
   readonly onSelectSession: (id: string) => void;
   readonly onArrange: (arrangement: Arrangement) => void;
@@ -34,6 +36,7 @@ interface Command {
   readonly id: string;
   readonly label: string;
   readonly detail?: string;
+  readonly disabled?: boolean;
   readonly run: () => void;
 }
 
@@ -45,6 +48,7 @@ const APPEARANCES: readonly { readonly value: Appearance; readonly label: string
 
 export function CommandBar({
   sessions,
+  creation,
   onClose,
   onSelectSession,
   onArrange,
@@ -62,6 +66,8 @@ export function CommandBar({
       {
         id: 'new-session',
         label: 'New session',
+        detail: creation.reason,
+        disabled: !creation.canCreate,
         run: () => {
           onClose();
           onNewSession();
@@ -108,7 +114,7 @@ export function CommandBar({
       })),
     ];
     return all;
-  }, [sessions, canvasAvailable, onArrange, onClose, onNewSession, onSelectSession]);
+  }, [sessions, creation, canvasAvailable, onArrange, onClose, onNewSession, onSelectSession]);
 
   const matched = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -150,7 +156,10 @@ export function CommandBar({
               setActiveIndex((index) => Math.max(index - 1, 0));
             } else if (event.key === 'Enter') {
               event.preventDefault();
-              matched[active]?.run();
+              const command = matched[active];
+              if (command?.disabled !== true) {
+                command?.run();
+              }
             }
           }}
         />
@@ -164,7 +173,8 @@ export function CommandBar({
               <li key={command.id} role="option" aria-selected={index === active}>
                 <button
                   type="button"
-                  className={`menu__item${index === active ? ' menu__item--active' : ''}`}
+                  className={`commandbar__item${index === active ? ' commandbar__item--active' : ''}`}
+                  disabled={command.disabled ?? false}
                   onClick={command.run}
                   onPointerEnter={() => {
                     setActiveIndex(index);
@@ -172,7 +182,7 @@ export function CommandBar({
                 >
                   {command.label}
                   {command.detail === undefined ? null : (
-                    <span className="menu__kind">{command.detail}</span>
+                    <span className="commandbar__detail">{command.detail}</span>
                   )}
                 </button>
               </li>

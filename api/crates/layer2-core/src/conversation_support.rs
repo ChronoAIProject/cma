@@ -6,10 +6,10 @@
 //! updates and permission requests down, and reads back what the core sent up.
 
 use layer3_adapter::{
-    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
-    ConversationUpdate, KernelCapabilities, PermissionOption, PermissionOptionId,
-    PermissionOptionKind, PermissionRequest, RequestPermissionRequest, SessionUpdate, ToolCallId,
-    ToolCallUpdate, ToolCallUpdateFields,
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
+    ConversationId, ConversationInput, ConversationUpdate, KernelCapabilities, PermissionOption,
+    PermissionOptionId, PermissionOptionKind, PermissionRequest, RequestPermissionRequest,
+    SessionUpdate, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
 };
 use std::sync::Arc;
 
@@ -35,23 +35,25 @@ pub(crate) struct FakeConversation {
 
 impl FakeConversation {
     /// Open a conversation, returning the core's end and the kernel's.
-    pub(crate) fn open() -> (ConversationChannel, Self) {
-        let (updates, update_rx) = mpsc::channel(BUFFER);
-
-        let (input, mut input_rx) = mpsc::channel(BUFFER);
+    ///
+    /// The sender comes from the core, exactly as it does for a real kernel:
+    /// the core is already folding when it calls, so a fake that made its own
+    /// would not be able to reproduce anything reported during the open.
+    pub(crate) fn open(updates: mpsc::Sender<ConversationUpdate>) -> (ConversationChannel, Self) {
         let received = std::sync::Arc::new(Mutex::new(Vec::new()));
 
         let recorder = std::sync::Arc::clone(&received);
-        tokio::spawn(async move {
-            while let Some(sent) = input_rx.recv().await {
+        let input = layer3_adapter::ConversationInputSender::spawn(BUFFER, move |sent| {
+            let recorder = std::sync::Arc::clone(&recorder);
+            async move {
                 recorder.lock().await.push(sent);
+                Ok(())
             }
         });
 
         (
             ConversationChannel {
                 conversation_id: Some("conv-fixture".to_string()),
-                updates: update_rx,
                 input,
             },
             Self { updates, received },
@@ -67,6 +69,20 @@ impl FakeConversation {
 /// Something a runtime said, wrapped for the stream that carries it.
 pub(crate) fn said(update: SessionUpdate) -> ConversationUpdate {
     ConversationUpdate::Said(update)
+}
+
+/// What a kernel says it offers, in the protocol's own shape.
+///
+/// Built through the schema's own constructors: these types are
+/// `#[non_exhaustive]`, so a struct expression here would stop compiling the
+/// first time the protocol adds a field.
+pub(crate) fn offering(commands: &[(&str, &str)]) -> AvailableCommandsUpdate {
+    AvailableCommandsUpdate::new(
+        commands
+            .iter()
+            .map(|(name, description)| AvailableCommand::new(*name, *description))
+            .collect(),
+    )
 }
 
 /// A message chunk, as a runtime streams one.
@@ -104,6 +120,7 @@ pub(crate) fn conversing() -> KernelCapabilities {
         steer: false,
         interrupt: true,
         usage: true,
+        resources: false,
     }
 }
 

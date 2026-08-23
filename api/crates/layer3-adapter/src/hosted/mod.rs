@@ -18,15 +18,22 @@
 
 pub(crate) mod acp;
 mod deployment;
+mod handshake;
 mod inbound;
 mod link;
+mod loss;
+mod telemetry;
+pub(super) mod turn;
 
 use std::collections::BTreeMap;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
-use crate::{AdapterError, RuntimeHandle, RuntimeListing, RuntimeSpec, TerminalInput};
+use crate::{
+    AdapterError, RuntimeCapacity, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage,
+    TerminalInput,
+};
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
 
@@ -52,6 +59,12 @@ const KERNEL_METADATA_KEY: &str = "chrono-bot/kernel";
 /// Where the supervisor serves and accepts the agent's conversation.
 const CONVERSATION_PATH: &str = "/runtime/conversation";
 
+/// Where a pod takes the files its kernel needs before starting.
+const PRELUDE_PATH: &str = "/runtime/prelude";
+
+/// Where a pod says what it is and what it can take.
+const READY_PATH: &str = "/readyz";
+
 /// How long to wait for a freshly created sandbox to start serving.
 const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
@@ -68,6 +81,23 @@ impl From<SandboxError> for AdapterError {
             SandboxError::Rejected { status: 501, .. } => AdapterError::Unsupported(
                 "this runtime declares no support for what was asked".to_string(),
             ),
+            /*
+             * The provider saying a sandbox is not there is the clearest
+             * statement of loss there is, and it arrived as a rejection —
+             * which now means "something answered and refused". Read that way
+             * a deleted sandbox would never be replaced, so the statuses that
+             * mean absence are separated from the ones that mean refusal.
+             *
+             * 404 and 410 are the provider's answer about this sandbox. 5xx is
+             * the provider failing to answer about anything, which says
+             * nothing about the sandbox either way — and treating "the
+             * provider is briefly broken" as "the sandbox is gone" would
+             * replace a healthy runtime, so it stays out of loss.
+             */
+            SandboxError::Rejected {
+                status: status @ (404 | 410),
+                detail,
+            } => AdapterError::Unavailable(format!("this sandbox is gone ({status}: {detail})")),
             SandboxError::Rejected { status, detail } => {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }
@@ -93,8 +123,43 @@ pub struct SandboxShape {
     /// explicit act by the owner, and the reconciliation sweep is what reclaims
     /// sandboxes whose session is genuinely gone.
     pub timeout_seconds: Option<u64>,
+    /// How often to ask a runtime for a reading, or `None` never to ask.
+    ///
+    /// Asked at attach rather than baked into the image, so changing cadence
+    /// does not rotate and interrupt every live runtime.
+    pub telemetry_interval_ms: Option<u64>,
     /// Directory the agent works in, inside its sandbox.
     pub workspace: String,
+}
+
+impl SandboxShape {
+    /// What the provider is asked to reserve for one sandbox.
+    ///
+    /// The only place in this service where a provider's quantity syntax is
+    /// written. The core holds numbers and this derives the strings, so
+    /// nothing ever parses one back -- which is what lets the figure a session
+    /// was quoted and the figure it was provisioned at be the same object
+    /// rather than two things kept in step.
+    ///
+    /// A stated capacity replaces the shape's map **whole**, never key by
+    /// key. Merging would let a session run at its own memory and the
+    /// deployment's CPU, which is a shape nobody asked for; and it would let
+    /// any other key a deployment ever puts in the shape survive beside a
+    /// per-session figure. Stating a capacity is stating both figures,
+    /// because `RuntimeCapacity` cannot express half of one.
+    ///
+    /// CPU is rendered in millicores rather than reduced to whole cores:
+    /// `1500m` needs no division and has no remainder case, and the provider
+    /// reads `1000m` and `1` as the same reservation.
+    pub(crate) fn limits_for(&self, capacity: Option<RuntimeCapacity>) -> BTreeMap<String, String> {
+        match capacity {
+            Some(capacity) => BTreeMap::from([
+                ("cpu".to_string(), format!("{}m", capacity.cpu_millis)),
+                ("memory".to_string(), format!("{}Mi", capacity.memory_mib)),
+            ]),
+            None => self.resource_limits.clone(),
+        }
+    }
 }
 
 impl Default for SandboxShape {
@@ -107,17 +172,61 @@ impl Default for SandboxShape {
                 ("memory".to_string(), "1Gi".to_string()),
             ]),
             timeout_seconds: None,
+            // Slow enough not to dominate an idle session's traffic, while
+            // bounding the last reading before a kill to two seconds of age.
+            telemetry_interval_ms: Some(2_000),
             workspace: "/home/chrono".into(),
         }
     }
 }
 
 /// A kernel running in a provider-managed sandbox.
+/// Who is waiting to hear whether a plane switch happened, by runtime handle.
+///
+/// Shared rather than owned: a link's inbound task is what hears the answer,
+/// and it outlives the call that asked the question.
+#[derive(Clone, Default)]
+pub(crate) struct SwitchWaiters(
+    std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, oneshot::Sender<bool>>>>,
+);
+
+impl SwitchWaiters {
+    /// Register interest in the next answer from this runtime.
+    pub(crate) async fn expect(&self, handle: &str) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+        // A second switch replaces the first waiter; the earlier caller sees
+        // its sender dropped and rotates, which is the safe reading.
+        self.0.lock().await.insert(handle.to_string(), tx);
+        rx
+    }
+
+    /// Hand an answer to whoever asked. An answer nobody awaits is dropped:
+    /// it belongs to a caller that has already given up and rotated.
+    pub(crate) async fn settle(&self, handle: &str, accepted: bool) {
+        if let Some(waiter) = self.0.lock().await.remove(handle) {
+            let _ = waiter.send(accepted);
+        }
+    }
+
+    /// Forget a waiter whose link has gone.
+    pub(crate) async fn forget(&self, handle: &str) {
+        self.0.lock().await.remove(handle);
+    }
+}
+
 pub struct HostedKernel {
     pub(crate) client: SandboxClient,
     shape: SandboxShape,
     /// Which kernel this is, recorded on the sandboxes it creates.
     kernel: &'static str,
+    /// Where this kernel reads its skills, relative to the pod's home.
+    ///
+    /// Held so paths are composed here rather than by anything above: the pod
+    /// is handed paths and writes them, and the core names skills and never
+    /// where they live.
+    skills_root: String,
+    /// Where this kernel reads standing instructions, relative to the home.
+    agent_notes: String,
     /// The open link to each runtime, by handle.
     ///
     /// Held because a credential has to reach a runtime that is already
@@ -126,16 +235,33 @@ pub struct HostedKernel {
     /// option: attaching declares a geometry, and a connection made without
     /// one would resize the pty under whoever is looking at it.
     links: tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>,
+    /// Who is waiting to hear whether a plane switch was performed.
+    ///
+    /// A switch is only recorded once the runtime says it happened (#289):
+    /// the frame reaching the socket says nothing about the program actually
+    /// being swapped, and a supervisor too old to know the frame ignores it
+    /// in silence. One waiter per runtime, because a session has one plane
+    /// and cannot be moved twice at once.
+    switch_waiters: SwitchWaiters,
 }
 
 impl HostedKernel {
     /// Host `kernel` in sandboxes of this shape, from this provider.
-    pub fn new(client: SandboxClient, shape: SandboxShape, kernel: &'static str) -> Self {
+    pub fn new(
+        client: SandboxClient,
+        shape: SandboxShape,
+        kernel: &'static str,
+        skills_root: impl Into<String>,
+        agent_notes: impl Into<String>,
+    ) -> Self {
         Self {
             client,
             shape,
             kernel,
+            skills_root: skills_root.into(),
+            agent_notes: agent_notes.into(),
             links: tokio::sync::Mutex::new(BTreeMap::new()),
+            switch_waiters: SwitchWaiters::default(),
         }
     }
 
@@ -150,13 +276,14 @@ impl HostedKernel {
         spec: &RuntimeSpec,
         env: BTreeMap<String, String>,
     ) -> Result<RuntimeHandle, AdapterError> {
+        let resource_limits = self.shape.limits_for(spec.capacity);
         let request = SandboxRequest {
             image: ImageSpec {
                 uri: self.shape.image.clone(),
             },
             entrypoint: self.shape.entrypoint.clone(),
             env,
-            resource_limits: self.shape.resource_limits.clone(),
+            resource_limits: resource_limits.clone(),
             timeout: self.shape.timeout_seconds,
             // Correlates a sandbox back to the session that owns it, so an
             // orphan can be found and reclaimed.
@@ -178,6 +305,8 @@ impl HostedKernel {
             sandbox = %sandbox.id,
             kernel = self.kernel,
             image = %self.shape.image,
+            cpu = resource_limits.get("cpu").map(String::as_str).unwrap_or("-"),
+            memory = resource_limits.get("memory").map(String::as_str).unwrap_or("-"),
             "sandbox provisioned"
         );
         let sandbox = self.await_running(&sandbox.id).await?;
@@ -190,7 +319,134 @@ impl HostedKernel {
             self.hand_over(&sandbox.id, conversation).await?;
         }
 
+        // Skills land in the same window and for the same reason. The agent
+        // reads them when it starts, so delivering now is delivering before
+        // anything can look — and a session whose skills arrive afterwards is
+        // a session promised tools it is not using.
+        // The skills and the note the agent reads before using them travel
+        // together: both have to be on disk before the kernel starts, and both
+        // are useless if they land after it has already decided what to do.
+        if !spec.skills.is_empty() || !self.agent_notes.trim().is_empty() {
+            self.install_prelude(
+                &sandbox.id,
+                &spec.skills,
+                &spec.platform_briefing,
+                &spec.environment.agent_notes,
+            )
+            .await?;
+        }
+
         Ok(RuntimeHandle(sandbox.id))
+    }
+
+    /// Compose two separately owned instruction sources without merging them.
+    fn agent_note(&self, platform_briefing: &str, owner_notes: &str) -> String {
+        let mut note = platform_briefing.to_string();
+        /*
+         * The owner's own instructions, after the platform's and separated.
+         *
+         * Appended rather than merged: the two sources have different owners.
+         * An owner may contradict the platform in their prose, but they cannot
+         * remove or rewrite what the platform placed before it.
+         */
+        let owner_notes = owner_notes.trim();
+        if !owner_notes.is_empty() {
+            note.truncate(note.trim_end().len());
+            if !note.is_empty() {
+                note.push_str("\n\n---\n\n");
+            }
+            note.push_str("# From the owner of this session\n\n");
+            note.push_str(owner_notes);
+            note.push('\n');
+        }
+        note
+    }
+
+    /// Put a session's skills on its pod's disk, under this kernel's root.
+    ///
+    /// The paths are composed here, so the pod is handed paths and writes
+    /// them and never learns what a skill is — the same naivety the
+    /// conversation carry commits to, and for the same reason.
+    ///
+    /// A supervisor that cannot take a prelude is refused by name rather than
+    /// having a POST land on a router without the route: that answers 404,
+    /// which reads as a sandbox that is gone and would replace a healthy one.
+    async fn install_prelude(
+        &self,
+        sandbox: &str,
+        skills: &[SkillPackage],
+        platform_briefing: &str,
+        owner_notes: &str,
+    ) -> Result<(), AdapterError> {
+        let root = self.skills_root.trim();
+        if !skills.is_empty() && root.is_empty() {
+            return Err(AdapterError::Unsupported(
+                "this runtime's agent reads no skills".to_string(),
+            ));
+        }
+        let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
+        if !self.takes_a_prelude(&endpoint.endpoint).await {
+            return Err(AdapterError::Unsupported(format!(
+                "this runtime's image cannot be given skills, so {} would be missing",
+                skills
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+
+        let mut entries = Vec::new();
+        let mut bodies = Vec::new();
+        let notes = self.agent_notes.trim();
+        if !notes.is_empty() {
+            let body = self.agent_note(platform_briefing, owner_notes).into_bytes();
+            entries.push(serde_json::json!({ "path": notes, "len": body.len() }));
+            bodies.push(body);
+        }
+        for skill in skills {
+            for (relative, body) in &skill.files {
+                entries.push(serde_json::json!({
+                    "path": format!("{root}/{}/{relative}", skill.name),
+                    "len": body.len(),
+                }));
+                bodies.push(body.clone());
+            }
+        }
+        let mut pack = serde_json::json!({ "chronoPrelude": 1, "files": entries })
+            .to_string()
+            .into_bytes();
+        pack.push(b'\n');
+        for body in bodies {
+            pack.extend_from_slice(body.as_slice());
+        }
+
+        let bytes = pack.len();
+        self.client
+            .post_to_sandbox(&endpoint.endpoint, PRELUDE_PATH, pack)
+            .await?;
+        tracing::info!(
+            %sandbox,
+            skills = skills.len(),
+            bytes,
+            "wrote this session's skills and its standing instructions"
+        );
+        Ok(())
+    }
+
+    /// Whether this pod's supervisor can be handed files at all.
+    ///
+    /// Read from readiness, which every image ever built answers. An older one
+    /// answers without the key, which is unambiguous — and asking is cheaper
+    /// than discovering it from a 404 that means something else entirely.
+    async fn takes_a_prelude(&self, endpoint: &str) -> bool {
+        let Ok(body) = self.client.get_from_sandbox(endpoint, READY_PATH).await else {
+            return false;
+        };
+        serde_json::from_slice::<serde_json::Value>(body.unwrap_or_default().as_slice())
+            .ok()
+            .and_then(|v| v.get("prelude").and_then(serde_json::Value::as_bool))
+            .unwrap_or(false)
     }
 
     /// Capture the agent's conversation so it can be resumed elsewhere.
@@ -223,6 +479,14 @@ impl HostedKernel {
             .map(|s| RuntimeListing {
                 session: s.metadata.get(SESSION_METADATA_KEY).cloned(),
                 created_by: s.metadata.get(CREATOR_METADATA_KEY).cloned(),
+                // Read rather than discarded. The provider reports this and
+                // this listing used to drop it, which is what let a dead
+                // sandbox count as a live one.
+                serving: s.is_running(),
+                // Read at the same moment liveness is, from the same object.
+                // Asking later would mean asking the provider again about a
+                // sandbox it may by then have collected.
+                lost_because: loss::loss_reason(&s),
                 handle: RuntimeHandle(s.id),
             })
             .collect())
@@ -271,6 +535,15 @@ impl HostedKernel {
     /// Forget a link that has closed.
     pub(crate) async fn forget_link(&self, handle: &str) {
         self.links.lock().await.remove(handle);
+        // A waiter on a link that has gone will never be answered, so it is
+        // dropped here rather than left to time out: dropping the sender
+        // wakes the waiter at once and the caller rotates.
+        self.switch_waiters.forget(handle).await;
+    }
+
+    /// The registry a link's inbound task answers into.
+    pub(crate) fn switch_waiters(&self) -> SwitchWaiters {
+        self.switch_waiters.clone()
     }
 
     /// Wait until a sandbox reports itself running.

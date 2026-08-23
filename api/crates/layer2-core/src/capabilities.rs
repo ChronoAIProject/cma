@@ -50,6 +50,13 @@ pub struct SessionCapabilities {
     /// Reports token usage as it accrues.
     #[serde(default)]
     pub usage: bool,
+    /// Reports what its sandbox is using.
+    ///
+    /// `None` means this ability was never recorded; `Some(false)` means it was
+    /// recorded and denied. Older records need that distinction so the absent
+    /// field can be settled once rather than silently treated as a refusal.
+    #[serde(default)]
+    pub resources: Option<bool>,
 }
 
 impl SessionCapabilities {
@@ -83,6 +90,11 @@ impl SessionCapabilities {
                     steer: false,
                     interrupt: false,
                     usage: false,
+                    // Unlike the three above, this is a fact about the
+                    // sandbox itself. A terminal session holds a whole one,
+                    // so it receives this grant on the same terms as a
+                    // conversation session.
+                    resources: Some(kernel.resources),
                 })
             }
             SessionMode::Conversation => {
@@ -96,6 +108,7 @@ impl SessionCapabilities {
                     steer: kernel.steer,
                     interrupt: kernel.interrupt,
                     usage: kernel.usage,
+                    resources: Some(kernel.resources),
                 })
             }
         }
@@ -135,6 +148,7 @@ impl SessionCapabilities {
             Capability::Steer => self.steer,
             Capability::Interrupt => self.interrupt,
             Capability::Usage => self.usage,
+            Capability::Resources => self.resources.unwrap_or(false),
         }
     }
 }
@@ -171,6 +185,8 @@ pub enum Capability {
     Interrupt,
     /// Token usage as it accrues.
     Usage,
+    /// Resource use as it changes.
+    Resources,
 }
 
 impl Capability {
@@ -186,6 +202,7 @@ impl Capability {
             Self::Steer => "steer",
             Self::Interrupt => "interrupt",
             Self::Usage => "usage",
+            Self::Resources => "resources",
         }
     }
 }

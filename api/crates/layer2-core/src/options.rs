@@ -145,6 +145,13 @@ pub struct AgentOptions {
     pub permission: PermissionMode,
     #[serde(default)]
     pub credential: CredentialMode,
+    /// How much this session reserves.
+    ///
+    /// `None` means this deployment's own reservation. The value is copied
+    /// from the profile at creation and stays on the session so profile edits
+    /// cannot resize it during a revive or rotation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<crate::size::SessionSize>,
     /// Whether a session's tool bodies — the arguments and results a tool call
     /// carries — are recorded in its durable log.
     ///
@@ -157,6 +164,46 @@ pub struct AgentOptions {
 
 #[cfg(test)]
 mod tests {
+    /// The wire names a client switches on, pinned.
+    ///
+    /// The frontend draws a different word for each of these, so a rename here
+    /// silently turns into a blank field there. `XHigh` is the one worth the
+    /// test: `as_str` spells it `xhigh` and serde spells it `x_high`, and only
+    /// the serde spelling ever reaches a client.
+    #[test]
+    fn option_wire_names_are_what_clients_read() {
+        use super::*;
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Guarded).unwrap(),
+            "\"guarded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Autonomous).unwrap(),
+            "\"autonomous\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Unrestricted).unwrap(),
+            "\"unrestricted\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialMode::Delegated).unwrap(),
+            "\"delegated\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialMode::Own).unwrap(),
+            "\"own\""
+        );
+        for (value, wire) in [
+            (ReasoningEffort::Minimal, "\"minimal\""),
+            (ReasoningEffort::Low, "\"low\""),
+            (ReasoningEffort::Medium, "\"medium\""),
+            (ReasoningEffort::High, "\"high\""),
+            (ReasoningEffort::XHigh, "\"x_high\""),
+        ] {
+            assert_eq!(serde_json::to_string(&value).unwrap(), wire, "{value:?}");
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -210,6 +257,7 @@ mod tests {
             reasoning_effort: ReasoningEffort::High,
             permission: PermissionMode::Unrestricted,
             credential: CredentialMode::Own,
+            size: Some(crate::size::SessionSize::new(1_500, 3_072).unwrap()),
             record_tool_bodies: true,
         };
         let json = serde_json::to_string(&o).expect("serialises");
