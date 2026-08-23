@@ -150,4 +150,10 @@ describe('the node geometry', () => {
       /\.node\[data-focused='true'\]\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--focus-node\)/,
     );
   });
+
+  it('contains a terminal inside the fixed node while xterm measures it', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/canvas/SessionCanvas.css'), 'utf8');
+    expect(css).toMatch(/\.node__body\s*\{[^}]*overflow: hidden/);
+    expect(css).toMatch(/\.node \.terminal\s*\{[^}]*min-width: 0/);
+  });
 });
