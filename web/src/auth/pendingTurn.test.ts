@@ -6,9 +6,17 @@ import {
   consumePendingTurn,
 } from './pendingTurn';
 
+const KEY = 'cma:pending-turn';
+const LEGACY_KEY = 'chrono-bot:pending-turn';
+
+function pending(text: string, capturedAt: number = Date.now()): string {
+  return JSON.stringify({ text, capturedAt });
+}
+
 describe('pendingTurn', () => {
   beforeEach(() => {
     window.sessionStorage.clear();
+    vi.restoreAllMocks();
   });
 
   it('carries a prompt across the sign-in round trip', () => {
@@ -42,8 +50,46 @@ describe('pendingTurn', () => {
 
   it('never writes a token — only the prompt text and a timestamp', () => {
     capturePendingTurn('hello');
-    const raw = window.sessionStorage.getItem('chrono-bot:pending-turn') ?? '';
+    const raw = window.sessionStorage.getItem(KEY) ?? '';
     expect(Object.keys(JSON.parse(raw) as object).sort()).toEqual(['capturedAt', 'text']);
+    expect(window.sessionStorage.getItem(LEGACY_KEY)).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('consumes a valid historical prompt once and clears both names', () => {
+    window.sessionStorage.setItem(LEGACY_KEY, pending('historical'));
+
+    expect(consumePendingTurn()).toBe('historical');
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(LEGACY_KEY)).toBeNull();
+    expect(consumePendingTurn()).toBeNull();
+  });
+
+  it('prefers valid canonical content and clears both names', () => {
+    window.sessionStorage.setItem(KEY, pending('canonical'));
+    window.sessionStorage.setItem(LEGACY_KEY, pending('historical'));
+
+    expect(consumePendingTurn()).toBe('canonical');
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(LEGACY_KEY)).toBeNull();
+  });
+
+  it('falls back to valid historical content when canonical content is malformed', () => {
+    window.sessionStorage.setItem(KEY, 'not json');
+    window.sessionStorage.setItem(LEGACY_KEY, pending('historical'));
+
+    expect(consumePendingTurn()).toBe('historical');
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(LEGACY_KEY)).toBeNull();
+  });
+
+  it('discards and clears both names when neither contains valid content', () => {
+    window.sessionStorage.setItem(KEY, 'not json');
+    window.sessionStorage.setItem(LEGACY_KEY, '{"text":123}');
+
+    expect(consumePendingTurn()).toBeNull();
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(LEGACY_KEY)).toBeNull();
   });
 
   it('discards a stale capture', () => {
@@ -55,22 +101,22 @@ describe('pendingTurn', () => {
   it('rejects malformed storage rather than trusting it', () => {
     // Anything on the origin can write here, so the value is untrusted input.
     for (const bad of ['not json', '{}', 'null', '[]', '{"text":123}', '{"text":"ok"}']) {
-      window.sessionStorage.setItem('chrono-bot:pending-turn', bad);
+      window.sessionStorage.setItem(KEY, bad);
       expect(consumePendingTurn()).toBeNull();
     }
   });
 
   it('rejects a non-finite timestamp', () => {
-    window.sessionStorage.setItem(
-      'chrono-bot:pending-turn',
-      JSON.stringify({ text: 'hi', capturedAt: Number.NaN }),
-    );
+    window.sessionStorage.setItem(KEY, JSON.stringify({ text: 'hi', capturedAt: Number.NaN }));
     expect(consumePendingTurn()).toBeNull();
   });
 
   it('drops a stored prompt on request', () => {
     capturePendingTurn('discard me');
+    window.sessionStorage.setItem(LEGACY_KEY, pending('old discard'));
     clearPendingTurn();
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(LEGACY_KEY)).toBeNull();
     expect(consumePendingTurn()).toBeNull();
   });
 
@@ -94,5 +140,13 @@ describe('pendingTurn', () => {
     expect(consumePendingTurn()).toBeNull();
 
     spy.mockRestore();
+  });
+
+  it('does not throw when clearing is blocked', () => {
+    vi.spyOn(window.sessionStorage, 'removeItem').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError');
+    });
+
+    expect(() => clearPendingTurn()).not.toThrow();
   });
 });
