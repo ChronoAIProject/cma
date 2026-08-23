@@ -74,7 +74,7 @@ const WILDCARD: &str = "*";
 /// Wildcard naming this product, which does grant everything here.
 ///
 /// Distinct from the one above because this one was written by somebody
-/// deciding about chrono-bot.
+/// deciding about CMA.
 const PRODUCT_WILDCARD: &str = "chrono-bot:*";
 
 /// What a subject may do to their own work, and nothing beyond it.
