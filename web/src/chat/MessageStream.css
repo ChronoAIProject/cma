@@ -123,7 +123,7 @@
 }
 
 /*
- * The eyebrow — a live dot, then CHRONOBOT · <kernel> in mono, uppercase by
+ * The eyebrow — a live dot, then CMA · <kernel> in mono, uppercase by
  * style. The owner's turn takes the same slot with `You`, right-aligned.
  */
 .turn__eyebrow {

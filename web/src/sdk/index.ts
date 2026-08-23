@@ -1,13 +1,13 @@
 /**
- * The chrono-bot client SDK.
+ * The CMA client SDK.
  *
- * One import for everything a consumer needs to drive a chrono-bot deployment:
+ * One import for everything a consumer needs to drive a CMA deployment:
  * start a session, read what it may do, hold a conversation with it, and be
  * told in words when it refuses.
  *
  * ## Why this exists
  *
- * `CLAUDE.md` §1 states what chrono-bot is for: its clients are other
+ * `CLAUDE.md` §1 states what CMA is for: its clients are other
  * products' frontends and backends, and this repository's own `web/` is the
  * reference client — held to the same constraints a third party is, because a
  * client permitted one private route would prove nothing about the one
@@ -19,7 +19,7 @@
  * ## Getting started
  *
  * ```ts
- * import { createClient } from '@chronoai/chrono-bot';
+ * import { createClient } from '@chronoai/cma-sdk';
  *
  * const bot = createClient({
  *   baseUrl: 'https://bot-api.example',
