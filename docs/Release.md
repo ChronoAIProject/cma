@@ -87,7 +87,7 @@ Release declaration    Commit hygiene
 A context is the job's `name:`, so **renaming a job is a branch-protection change.** Rename one without updating the list and every later pull request into `main` waits forever on a check that no longer exists. Update the two together, in the same rollout:
 
 ```sh
-gh api -X PATCH repos/ChronoAIProject/chrono-bot/branches/main/protection/required_status_checks \
+gh api -X PATCH repos/ChronoAIProject/cma/branches/main/protection/required_status_checks \
   -F strict=true -f 'contexts[]=Release declaration' ...
 ```
 
