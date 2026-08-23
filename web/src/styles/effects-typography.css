@@ -1,36 +1,34 @@
 /*
- * Vendored from deepseek-harness (deepseek-ai/deepseek-harness),
- * packages/client/ui-theme/src/styles/gradient-shadow-text.css, at the commit current on
- * 2026-08-20. Copied under its MIT licence, whose full text and copyright
- * notice are in ./vendor/LICENSE-deepseek-harness.txt as that licence
- * requires.
- *
- * Kept verbatim on purpose — `docs/Web_Style.md` §4 says why. Restyling a
- * palette chosen against a hundred languages, or a scrollbar sheet whose
- * selectors are load-bearing, produces a worse result than adopting it whole.
- * Changes belong upstream, or in a sheet of ours that overrides this one.
+ * First-party. Values are governed by docs/Web_Style.md Sections 4 and 5.
+ * Change the design authority before changing this sheet.
  */
 
 body {
-  --dsw-linear-gradient-think: linear-gradient(180deg, #fff 20.19%, rgba(255, 255, 255, 0) 100%);
-  --dsw-linear-think-select: linear-gradient(180deg, #f5f6f7 20.19%, rgba(245, 246, 247, 0) 100%);
-  /* 阴影 */
-  --dsw-shadow-lv1: 0 2px 4px 0 rgba(0, 0, 0, 0.05);
-  --dsw-shadow-lv1-blur: 0 4px 12px 0 rgba(0, 0, 0, 0.02);
-  --dsw-shadow-lv2: 0 4px 12px 0 rgba(0, 0, 0, 0.02), 0 2px 8px 0 rgba(0, 0, 0, 0.04);
-  --dsw-shadow-lv3:
-    0 0 1px 0 rgba(0, 0, 0, 0.2), 0 0 4px 0 rgba(0, 0, 0, 0.02), 0 12px 32px 0 rgba(0, 0, 0, 0.08);
-  /* blur filter */
+  --dsw-linear-gradient-think: linear-gradient(180deg, #faf2e0 20.19%, rgba(250, 242, 224, 0) 100%);
+  --dsw-linear-think-select: linear-gradient(180deg, #f5ead3 20.19%, rgba(245, 234, 211, 0) 100%);
+  --dsw-shadow-lv1: 0 1px 2px rgba(122, 96, 52, 0.1);
+  --dsw-shadow-lv1-blur: 0 4px 12px rgba(122, 96, 52, 0.08);
+  --dsw-shadow-lv2: 0 2px 4px rgba(122, 96, 52, 0.1), 0 8px 20px -8px rgba(122, 96, 52, 0.22);
+  --dsw-shadow-lv3: 0 18px 44px -14px rgba(82, 62, 30, 0.32);
+  --dsw-shadow-accent-hover: var(--dsw-shadow-lv2);
+  --dsw-glow-accent: none;
+  --dsw-ring-accent-soft: 0 0 0 3px rgba(14, 97, 172, 0.08);
   --dsw-mask-blur: blur(2px);
 }
 
 body[data-ds-dark-theme] {
-  --dsw-linear-gradient-think: linear-gradient(180deg, #151517 20.19%, rgba(21, 21, 23, 0) 100%);
-  --dsw-linear-think-select: linear-gradient(180deg, #232325 20.19%, rgba(35, 35, 37, 0) 100%);
+  --dsw-linear-gradient-think: linear-gradient(180deg, #060606 20.19%, rgba(6, 6, 6, 0) 100%);
+  --dsw-linear-think-select: linear-gradient(180deg, #191c14 20.19%, rgba(25, 28, 20, 0) 100%);
+  --dsw-shadow-lv1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --dsw-shadow-lv1-blur: 0 8px 20px -8px #000;
+  --dsw-shadow-lv2: 0 20px 44px -14px #000;
+  --dsw-shadow-lv3: 0 40px 90px -30px #000;
+  --dsw-shadow-accent-hover: 0 6px 26px -8px rgba(195, 253, 67, 0.35);
+  --dsw-glow-accent: 0 0 14px rgba(195, 253, 67, 0.35);
+  --dsw-ring-accent-soft: 0 0 0 3px rgba(195, 253, 67, 0.1);
 }
 
-/* ---------- 字体 ---------- */
-/* 由 @deepseek-figma-plugin/custom-variable-name 插件导出 */
+/* Composite typography exports are retained until the fonts issue applies Section 4. */
 body {
   --dsw-font-markdown-h1: 700 24px/34px var(--dsw-font-family);
   --dsw-font-markdown-h1-font-family: var(--dsw-font-family);
