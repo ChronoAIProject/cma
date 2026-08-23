@@ -98,6 +98,15 @@ impl From<SandboxError> for AdapterError {
                 status: status @ (404 | 410),
                 detail,
             } => AdapterError::Unavailable(format!("this sandbox is gone ({status}: {detail})")),
+            /*
+             * The production probe for issue #551 on 2026-08-23 received no
+             * response to create before its 240-second client deadline. A
+             * separate observer saw only Pending / BATCHSANDBOX_PENDING, the
+             * provider's generic allocation state. Neither is an exact
+             * capacity signal, so this adapter deliberately does not map them
+             * to AtCapacity. A future provider contract may add a specific
+             * response here; arbitrary status prose must never be guessed.
+             */
             SandboxError::Rejected { status, detail } => {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }

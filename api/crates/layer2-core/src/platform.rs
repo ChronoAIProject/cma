@@ -13,6 +13,8 @@ use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
+use crate::deployment_capacity::DeploymentCapacity;
+
 // Re-exported so the split is a move rather than a rename: callers still read
 // deployment policy through `platform`, while the range has a file named for
 // the type and does not consume this settings file as more settings arrive.
@@ -83,6 +85,13 @@ pub struct SessionBriefing {
 pub struct PlatformSettings {
     #[serde(default)]
     pub briefing: SessionBriefing,
+    /// The total reservation this deployment is prepared to promise.
+    ///
+    /// Declared here so an administrator can change it without a rollout. It is
+    /// separate from `size_bounds`: those govern one request, while this setting
+    /// compares a request with everything durable records already promise.
+    #[serde(default)]
+    pub deployment_capacity: DeploymentCapacity,
     /// When a session's memory counts as being under pressure.
     ///
     /// A setting rather than process configuration so an administrator can
@@ -138,6 +147,7 @@ impl PlatformSettings {
     pub fn changed_from(&self, previous: &Self) -> Vec<&'static str> {
         let Self {
             briefing,
+            deployment_capacity,
             memory_pressure,
             pricing,
             size_bounds,
@@ -145,6 +155,7 @@ impl PlatformSettings {
         } = self;
         let Self {
             briefing: previous_briefing,
+            deployment_capacity: previous_deployment_capacity,
             memory_pressure: previous_memory_pressure,
             pricing: previous_pricing,
             size_bounds: previous_size_bounds,
@@ -153,6 +164,9 @@ impl PlatformSettings {
         let mut changed = Vec::new();
         if briefing != previous_briefing {
             changed.push("briefing");
+        }
+        if deployment_capacity != previous_deployment_capacity {
+            changed.push("deployment_capacity");
         }
         if memory_pressure != previous_memory_pressure {
             changed.push("memory_pressure");
@@ -446,6 +460,7 @@ mod tests {
         let previous = PlatformSettings::default();
         let mut changed = previous.clone();
         changed.briefing.before.push("Different prose".into());
+        changed.deployment_capacity.cpu_millis = Some(20_000);
         changed.memory_pressure =
             crate::MemoryPressurePolicy::new(850, 650, 6, 18, 180).expect("valid policy");
         changed.pricing = changed.pricing.appended(
@@ -462,6 +477,7 @@ mod tests {
             changed.changed_from(&previous),
             [
                 "briefing",
+                "deployment_capacity",
                 "memory_pressure",
                 "pricing",
                 "size_bounds",

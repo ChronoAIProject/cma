@@ -87,6 +87,10 @@ impl SessionStore for ObservedStore {
         }
     }
 
+    async fn reserved_capacity(&self) -> Result<crate::Reserved, StoreError> {
+        self.inner.reserved_capacity().await
+    }
+
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
         self.inner.list_all().await
     }
