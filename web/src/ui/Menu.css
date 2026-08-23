@@ -1,5 +1,5 @@
 /*
- * The dropdown — `docs/Web_Style.md` §7.
+ * The dropdown — `docs/Web_Style.md` §12.3.
  *
  * The card carries its own scrollbar elevation rather than leaving it to the
  * page's: a menu floats above whatever is behind it, so a thumb tinted for
@@ -59,17 +59,19 @@
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: 10px;
+  border-radius: 7px;
   cursor: pointer;
 }
 
 .menu__item:hover:not([aria-disabled='true']) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
 }
 
 .menu__item:focus-visible {
   outline: none;
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
   box-shadow: var(--focus-ring);
 }
 
@@ -79,7 +81,6 @@
 }
 
 .menu--dense .menu__item {
-  min-height: 34px;
   padding-block: 5px;
 }
 
@@ -123,7 +124,9 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-.menu__item--danger:hover:not([aria-disabled='true']) {
+.menu__item--danger:hover:not([aria-disabled='true']),
+.menu__item--danger:focus-visible {
+  color: var(--dsw-alias-state-error-primary);
   background: var(--dsw-alias-interactive-bg-hover-danger);
 }
 

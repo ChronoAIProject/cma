@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -6,7 +8,7 @@ import type { Session } from '../sessions/types';
 import { NO_CAPABILITIES } from '../agui';
 
 /**
- * The command bar — docs/Web_Style.md §6 and §7.
+ * The command bar — docs/Web_Style.md §6 and §12.
  *
  * The plate reaches the surfaces it can already reach and no more: sessions
  * by time and last-activity line, the two arrangements, new session, and the
@@ -41,6 +43,11 @@ function renderBar(props: Partial<Parameters<typeof CommandBar>[0]> = {}) {
 }
 
 describe('the command bar', () => {
+  it('uses the shared field geometry for its raw search control', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/CommandBar.css'), 'utf8');
+    expect(css).toMatch(/\.commandbar__field\s*\{[^}]*height: 44px[^}]*border-radius: 10px/);
+  });
+
   it('reaches sessions, arrangements, new session and appearance — and no more', () => {
     renderBar();
     const labels = screen.getAllByRole('option').map((option) => option.textContent ?? '');
