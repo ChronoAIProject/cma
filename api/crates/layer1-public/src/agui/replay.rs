@@ -18,7 +18,6 @@
 
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     extract::{Query, State},
@@ -29,15 +28,10 @@ use layer2_core::SessionId;
 use serde::Deserialize;
 
 use super::project::project;
+use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
 use super::SessionsState;
 use crate::auth::AuthenticatedCaller;
 use crate::rest::Problem;
-
-/// How often the log is re-read while a client is following it.
-///
-/// The same cadence the run stream polls at, because it is the same log and a
-/// client should not see one lag the other.
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Where a client is resuming from, and which conversation it wants.
 #[derive(Debug, Deserialize)]
@@ -120,6 +114,7 @@ pub(super) async fn replay(
     // lane is unaffected either way: that is the difference between a turn
     // nobody can watch and a turn nobody can read.
     let watching = state.sessions.subscribe_live(&caller, &id).await.ok();
+    let resources = state.sessions.subscribe_resources(&caller, &id).await.ok();
 
     struct Following {
         service: Arc<layer2_core::SessionService>,
@@ -128,6 +123,7 @@ pub(super) async fn replay(
         seq: u64,
         pending: std::collections::VecDeque<super::project::AguiEvent>,
         watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
+        resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
         /// Polls since the last attempt to attach to the live lane.
         ///
         /// A client opens this stream as soon as it has a session, which is
@@ -151,6 +147,7 @@ pub(super) async fn replay(
         seq,
         pending: Default::default(),
         watching,
+        resources,
         since_attempt: 0,
         follows,
     };
@@ -179,46 +176,48 @@ pub(super) async fn replay(
             // unconditionally would hold a piece of a message for up to that
             // long, which on a fast agent is most of what makes the difference
             // between watching a turn and waiting on one.
-            if let Some(live) = open.watching.as_mut() {
-                match tokio::time::timeout(POLL_INTERVAL, live.recv()).await {
-                    Ok(Ok(frame)) => {
-                        let run = open.id.0.clone();
-                        open.pending
-                            .extend(super::live::project_live(&frame, &run, &run));
-                        if !open.pending.is_empty() {
-                            continue;
-                        }
-                    }
-                    // Behind, and what was missed was liveness. Everything that
-                    // happened is in the log, and the poll below is what makes
-                    // it good.
-                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(frames))) => {
-                        tracing::debug!(
-                            session_id = %open.id,
-                            frames,
-                            "a watcher fell behind; the durable log still carries the turn"
-                        );
-                    }
-                    // The runtime went away. Whatever that means for the
-                    // session is durable and arrives on the poll, so this lane
-                    // simply stops rather than ending the stream: the session
-                    // outlives its runtime and a client stays attached to it.
-                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
-                        open.watching = None;
-                    }
-                    Err(_) => {}
+            let run = open.id.0.clone();
+            let woke = tokio::time::timeout(
+                POLL_INTERVAL,
+                next_frame(&mut open.watching, &mut open.resources),
+            )
+            .await
+            .unwrap_or(Woke::Idle);
+            match woke {
+                Woke::Live(frame) => open
+                    .pending
+                    .extend(super::live::project_live(&frame, &run, &run)),
+                Woke::Reading(reading) => {
+                    open.pending
+                        .push_back(project_reading(&reading, &run, &run));
                 }
-            } else {
-                tokio::time::sleep(POLL_INTERVAL).await;
+                Woke::Idle => {}
+            }
+
+            if open.watching.is_none() || open.resources.is_none() {
                 open.since_attempt = open.since_attempt.saturating_add(1);
                 if open.since_attempt >= ATTACH_EVERY {
                     open.since_attempt = 0;
-                    open.watching = open
-                        .service
-                        .subscribe_live(&open.caller, &open.id)
-                        .await
-                        .ok();
+                    if open.watching.is_none() {
+                        open.watching = open
+                            .service
+                            .subscribe_live(&open.caller, &open.id)
+                            .await
+                            .ok();
+                    }
+                    if open.resources.is_none() {
+                        open.resources = open
+                            .service
+                            .subscribe_resources(&open.caller, &open.id)
+                            .await
+                            .ok();
+                    }
                 }
+            } else {
+                open.since_attempt = 0;
+            }
+            if !open.pending.is_empty() {
+                continue;
             }
             let read = open
                 .service

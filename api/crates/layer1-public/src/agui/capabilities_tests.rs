@@ -65,6 +65,12 @@ async fn this_interface_never_claims_to_carry_a_terminal() {
 }
 
 #[tokio::test]
+async fn live_resource_state_is_declared_before_a_client_receives_it() {
+    let doc = document().await;
+    assert_eq!(doc["features"]["custom"]["chrono:resources"], true);
+}
+
+#[tokio::test]
 async fn resumability_is_claimed_because_the_log_is_what_makes_it_true() {
     // Not the stream: a dropped connection is recovered by reading the durable
     // log from the last sequence, which is why this can be claimed at all.
