@@ -73,13 +73,3 @@
   font-size: 14px;
   line-height: 20px;
 }
-
-/*
- * The state pill takes the row's size too. `Pill` is 12px everywhere else and
- * stays that way; this is the one row where it sits in a line of 14px text and
- * has to belong to it.
- */
-.sessionheader .pill {
-  font-size: 14px;
-  line-height: 20px;
-}

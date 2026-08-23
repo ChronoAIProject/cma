@@ -1,5 +1,5 @@
 /*
- * The risk confirmation — `docs/Web_Style.md` §7.
+ * The risk confirmation — `docs/Web_Style.md` §12.4.
  *
  * Wider than the plain card because the sentence explaining the consequence
  * has to be readable in one go: broken over five lines it stops being a
@@ -51,8 +51,8 @@
 }
 
 .risk__acknowledgement input:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-l4);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /*
