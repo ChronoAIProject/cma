@@ -15,7 +15,7 @@ fn everything() -> KernelCapabilities {
         steer: true,
         interrupt: true,
         usage: true,
-        resources: false,
+        resources: true,
     }
 }
 
@@ -111,7 +111,9 @@ fn every_capability_has_a_distinct_wire_name() {
         Capability::Terminal.name(),
         Capability::Snapshot.name(),
         Capability::Steer.name(),
+        Capability::Interrupt.name(),
         Capability::Usage.name(),
+        Capability::Resources.name(),
     ];
     let mut sorted = names.to_vec();
     sorted.sort_unstable();
