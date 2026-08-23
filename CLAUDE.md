@@ -35,12 +35,16 @@ api/         backend — a single Rust project (workspace root lives here)
 web/         frontend — a single React project
 infra/       deployment manifests and Dockerfiles
 docs/        all documentation, markdown only
+sdk/         independently published TypeScript and Rust client SDKs
 CLAUDE.md
 README.md
 .gitignore
+.dockerignore
 ```
 
-Adding any other root-level file or directory is a CI failure. Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/` or `web/` accordingly.
+Adding any other root-level file or directory is a CI failure. Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, or the SDK it governs.
+
+`sdk/` contains published client SDKs. Each immediate subdirectory is one self-contained published artifact, with its own manifest, toolchain configuration, lockfile, source, tests, and package documentation; it does not join the service project under `api/` or `web/`.
 
 ### `infra/` — fixed contents
 
@@ -95,7 +99,7 @@ infrastructure this repository consumes rather than owns.
 
 ### `docs/`
 
-All documentation lives in `docs/`, and every file in it is markdown. No documentation is placed anywhere else in the repository except this file and `README.md`.
+All documentation lives in `docs/`, and every file in it is markdown. The only documentation outside it is this file, `README.md`, and markdown under `sdk/*/docs/`; SDK documentation lives beside the artifact it ships with and is the source rendered by the frontend.
 
 ---
 
