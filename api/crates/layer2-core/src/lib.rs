@@ -138,7 +138,7 @@ pub use platform::{
 };
 pub use platform_service::PlatformSettingsService;
 pub use reconcile::Reclaimed;
-pub use resources::{HeldReading, ResourceReading};
+pub use resources::{HeldReading, ResourceReading, ResourceStatus};
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
