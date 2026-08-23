@@ -14,7 +14,7 @@
   display: inline-block;
   /* Preserved so the gaps between words survive being wrapped per character. */
   white-space: pre;
-  animation: bounce-char 1.4s ease-in-out infinite;
+  animation: bounce-char 1.4s var(--ds-ease-in-out) infinite;
 }
 
 /*
