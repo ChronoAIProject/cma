@@ -174,6 +174,11 @@ async fn a_complete_save_reports_the_settings_and_card_that_actually_changed() {
         .briefing
         .before
         .push("Changed with the price".into());
+    settings.deployment_capacity = layer2_core::DeploymentCapacity {
+        cpu_millis: Some(8_000),
+        memory_mib: Some(16_384),
+        assumed_session_size: Some(layer2_core::SessionSize::new(1_000, 1_024).unwrap()),
+    };
     let response = app()
         .oneshot(request(
             Method::PUT,
@@ -191,13 +196,67 @@ async fn a_complete_save_reports_the_settings_and_card_that_actually_changed() {
     assert_eq!(
         response.extensions().get::<SettingsTouched>(),
         Some(&SettingsTouched {
-            changed: vec!["briefing", "pricing"],
+            changed: vec!["briefing", "deployment_capacity", "pricing"],
             rate_card: Some(rate_card.clone()),
         })
     );
     let body = response_json(response).await;
     assert_eq!(body["revision"], 1);
     assert_eq!(body["settings"]["pricing"]["cards"][0]["id"], rate_card);
+    assert_eq!(body["settings"]["deployment_capacity"]["cpu_millis"], 8_000);
+}
+
+#[tokio::test]
+async fn deployment_capacity_can_be_conditionally_replaced_and_then_preserved() {
+    let app = app();
+    let changed = app
+        .clone()
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "deployment_capacity": {
+                    "cpu_millis": 20_000,
+                    "memory_mib": 40_960,
+                    "assumed_session_size": {
+                        "cpu_millis": 1_000,
+                        "memory_mib": 1_024
+                    }
+                }
+            })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(changed.status(), StatusCode::OK);
+    let changed = response_json(changed).await;
+    assert_eq!(
+        changed["settings"]["deployment_capacity"],
+        json!({
+            "cpu_millis": 20_000,
+            "memory_mib": 40_960,
+            "assumed_session_size": {
+                "cpu_millis": 1_000,
+                "memory_mib": 1_024
+            }
+        })
+    );
+
+    let preserved = app
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({ "expected_revision": 1, "live_sessions": 3 })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(preserved.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(preserved).await["settings"]["deployment_capacity"],
+        changed["settings"]["deployment_capacity"]
+    );
 }
 
 #[tokio::test]
@@ -292,6 +351,11 @@ async fn empty_null_unknown_and_stale_changes_are_refused_by_name() {
         ),
         (
             json!({ "expected_revision": 0, "briefing": null }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_request",
+        ),
+        (
+            json!({ "expected_revision": 0, "deployment_capacity": null }),
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_request",
         ),

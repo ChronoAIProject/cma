@@ -10,9 +10,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, TerminalInput};
-use tokio::sync::RwLock;
 #[cfg(test)]
 use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{OwnedMutexGuard, RwLock};
 
 use crate::authz::{Caller, Capability};
 use crate::capabilities::{servable_modes, SessionCapabilities};
@@ -69,6 +69,7 @@ impl SessionService {
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
             session_limit_guards: Default::default(),
+            deployment_capacity_guard: Default::default(),
             runtime_version: deployment.runtime_version,
             identity: deployment.identity,
             adopts_untagged: deployment.adopts_untagged,
@@ -186,6 +187,70 @@ impl SessionService {
             currency: CURRENCY,
             quoted_at: now_rfc3339(),
         }))
+    }
+
+    /// Fail unless this deployment has declared room for one more session.
+    ///
+    /// Requiring a caller keeps the check on an asking path. Reconciliation and
+    /// runtime replacement restore promises already recorded and never call it.
+    /// The returned guard is held through the durable record write so two local
+    /// creates cannot both spend the same headroom.
+    async fn refuse_at_deployment_capacity(
+        &self,
+        caller: &Caller,
+        declared: crate::DeploymentCapacity,
+        requested: Option<SessionSize>,
+    ) -> Result<Option<OwnedMutexGuard<()>>, CoreError> {
+        if !declared.is_declared() {
+            return Ok(None);
+        }
+
+        let held = Arc::clone(&self.deployment_capacity_guard)
+            .lock_owned()
+            .await;
+        let mut reserved = self.store.reserved_capacity().await.map_err(store_failed)?;
+        let requested = match requested.or(declared.assumed_session_size) {
+            Some(size) => size,
+            None => {
+                tracing::warn!(
+                    subject = %caller.subject,
+                    unsized_sessions = reserved.unsized_sessions.saturating_add(1),
+                    "deployment capacity is declared but no cost is declared for unsized sessions; skipping the capacity check"
+                );
+                return Ok(Some(held));
+            }
+        };
+
+        if reserved.unsized_sessions > 0 {
+            let Some(assumed) = declared.assumed_session_size else {
+                tracing::warn!(
+                    subject = %caller.subject,
+                    unsized_sessions = reserved.unsized_sessions,
+                    "deployment capacity is declared but no cost is declared for unsized sessions; skipping the capacity check"
+                );
+                return Ok(Some(held));
+            };
+            reserved = reserved.assuming(assumed);
+        }
+
+        if let Err(shortfall) = declared.check(reserved, requested) {
+            tracing::info!(
+                subject = %caller.subject,
+                requested_cpu_millis = shortfall.requested_cpu_millis,
+                requested_memory_mib = shortfall.requested_memory_mib,
+                free_cpu_millis = shortfall.free_cpu_millis,
+                free_memory_mib = shortfall.free_memory_mib,
+                "refused a session larger than the deployment's declared room"
+            );
+            return Err(CoreError::DeploymentAtCapacity {
+                requested_cpu_millis: shortfall.requested_cpu_millis,
+                requested_memory_mib: shortfall.requested_memory_mib,
+                free_cpu_millis: shortfall.free_cpu_millis,
+                free_memory_mib: shortfall.free_memory_mib,
+            });
+        }
+
+        Ok(Some(held))
     }
 
     /// Create a session and bring its runtime up in the background.
@@ -326,6 +391,9 @@ impl SessionService {
         if let Some(size) = size {
             settings.size_bounds.check(size)?;
         }
+        let capacity_guard = self
+            .refuse_at_deployment_capacity(caller, settings.deployment_capacity, size)
+            .await?;
         let limit_guard = self
             .refuse_at_session_limit(caller, settings.live_sessions)
             .await?;
@@ -375,6 +443,7 @@ impl SessionService {
         let first = self.sequences.take(&id, 0, 3);
         record.session.last_seq = first + 2;
         self.store.upsert(&record).await.map_err(store_failed)?;
+        drop(capacity_guard);
         if let Some(error) = settings_fallback.as_ref() {
             tracing::error!(
                 session_id = %id,

@@ -18,6 +18,7 @@ use crate::environment::{EnvironmentProfile, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
 use crate::session::Session;
+use crate::Reserved;
 
 /// A session as it is stored.
 #[derive(Debug, Clone)]
@@ -101,6 +102,13 @@ pub trait SessionStore: Send + Sync {
             .filter(|record| record.session.status.wants_runtime())
             .count() as u32)
     }
+
+    /// What this deployment has promised to sandboxes that should be running.
+    ///
+    /// A port method rather than a fold over `list_all`, which decodes every
+    /// record ever written and is documented for the monitoring surface. This
+    /// runs on every session creation.
+    async fn reserved_capacity(&self) -> Result<Reserved, StoreError>;
 
     /// Every session, newest first. For the monitoring surface.
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError>;

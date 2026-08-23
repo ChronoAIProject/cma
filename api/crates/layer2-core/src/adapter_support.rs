@@ -20,6 +20,8 @@ pub(crate) struct FakeAdapter {
     /// When set, provisioning fails. Models a provider that cannot give us a
     /// runtime at all.
     pub(crate) refuse_provision: bool,
+    /// When set, provisioning receives a typed answer that no room remains.
+    pub(crate) refuse_at_capacity: bool,
     /// How many attempts fail before one succeeds. Models the transient
     /// failure that retrying exists for.
     pub(crate) fail_first: std::sync::atomic::AtomicUsize,
@@ -121,6 +123,7 @@ impl Default for FakeAdapter {
         Self {
             terminated: Mutex::default(),
             refuse_provision: false,
+            refuse_at_capacity: false,
             fail_first: std::sync::atomic::AtomicUsize::new(0),
             refuse_attach: false,
             senders: Mutex::default(),
@@ -214,6 +217,11 @@ impl KernelAdapter for FakeAdapter {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.refuse_provision {
             return Err(AdapterError::Unavailable("no capacity".into()));
+        }
+        if self.refuse_at_capacity {
+            return Err(AdapterError::AtCapacity(
+                "the adapter's declared capacity signal".into(),
+            ));
         }
         // No kernel authenticates against the owner's own vendor account yet,
         // so every adapter refuses it. Modelled here because what the core has

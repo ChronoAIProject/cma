@@ -115,6 +115,93 @@ fn wanting_runtime_statuses_use_the_core_serialization() {
 }
 
 #[test]
+fn reserved_capacity_pipeline_matches_and_sums_only_durable_runtime_promises() {
+    let pipeline = reserved_capacity_pipeline().expect("the core statuses serialize");
+    assert_eq!(
+        pipeline,
+        vec![
+            doc! {
+                "$match": {
+                    "status": {
+                        "$in": ["provisioning", "ready", "running", "rotating"]
+                    }
+                }
+            },
+            doc! {
+                "$group": {
+                    "_id": null,
+                    "sessions": { "$sum": 1_i64 },
+                    "unsized_sessions": {
+                        "$sum": {
+                            "$cond": [
+                                { "$eq": [{ "$ifNull": ["$options.size", null] }, null] },
+                                1_i64,
+                                0_i64,
+                            ]
+                        }
+                    },
+                    "cpu_millis": {
+                        "$sum": { "$ifNull": ["$options.size.cpu_millis", 0_i64] }
+                    },
+                    "memory_mib": {
+                        "$sum": { "$ifNull": ["$options.size.memory_mib", 0_i64] }
+                    },
+                }
+            },
+        ]
+    );
+}
+
+#[test]
+fn reservation_query_has_a_status_index() {
+    let index = reservation_status_index();
+    assert_eq!(index.keys, doc! { "status": 1 });
+    assert_eq!(
+        index.options.and_then(|options| options.name),
+        Some("status_1".into())
+    );
+}
+
+#[test]
+fn an_empty_reservation_aggregate_is_the_zero_ledger() {
+    assert_eq!(
+        reserved_from_optional_doc(None).unwrap(),
+        Reserved {
+            sessions: 0,
+            unsized_sessions: 0,
+            cpu_millis: 0,
+            memory_mib: 0,
+        }
+    );
+}
+
+#[test]
+fn a_reservation_aggregate_is_converted_without_losing_units() {
+    assert_eq!(
+        reserved_from_doc(ReservedCapacityDoc {
+            sessions: 4,
+            unsized_sessions: 2,
+            cpu_millis: 3_500,
+            memory_mib: 7_168,
+        })
+        .unwrap(),
+        Reserved {
+            sessions: 4,
+            unsized_sessions: 2,
+            cpu_millis: 3_500,
+            memory_mib: 7_168,
+        }
+    );
+    assert!(reserved_from_doc(ReservedCapacityDoc {
+        sessions: -1,
+        unsized_sessions: 0,
+        cpu_millis: 0,
+        memory_mib: 0,
+    })
+    .is_err());
+}
+
+#[test]
 fn an_unknown_stored_value_is_rejected_rather_than_guessed() {
     assert!(parse_plain::<SessionStatus>("not-a-status").is_err());
 }

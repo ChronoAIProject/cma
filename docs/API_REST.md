@@ -765,6 +765,43 @@ The refusal happens when a session is created, before an identifier or record ex
 
 These bounds apply only to a size the profile explicitly states. A profile with no `agent.size`, and a creation naming no profile, use this deployment's own sandbox reservation without being measured against the bounds. That reservation may lie outside the range an administrator has configured: the range governs what a caller may ask for, not the unnamed deployment default.
 
+### Deployment-capacity refusal
+
+`deployment_at_capacity` is a `503` response with problem type
+`deployment-at-capacity`. It is not a limit on this caller: the deployment's
+declared shared room is smaller than this request, and the caller may own none
+of the sessions occupying it. A smaller session may fit, or stopping a session
+may release enough room.
+
+```json
+{
+  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/deployment-at-capacity",
+  "title": "deployment at capacity",
+  "status": 503,
+  "detail": "no room for a session of 2000m CPU and 4096MiB: 750m CPU and 1536MiB free",
+  "code": "deployment_at_capacity",
+  "requested_cpu_millis": 2000,
+  "requested_memory_mib": 4096,
+  "free_cpu_millis": 750,
+  "free_memory_mib": 1536
+}
+```
+
+The four top-level integer fields let a client state what was requested and
+what is free without parsing `detail`. Retrying may succeed after some session
+stops, but no `Retry-After` is offered: elapsed time does not release a
+reservation. Creation is refused before an identifier is minted or a record is
+written.
+
+The capacity is declared in platform settings, not observed from the shared
+sandbox provider. Passing this preflight check therefore cannot prove a later
+provider create will succeed. The adapter contract can classify a provider's
+exact capacity response and avoid retrying it, but the production probe on
+2026-08-23 found that the current hosted provider exposes only a generic
+pending state and a create timeout. Those signals are deliberately not guessed
+to mean capacity, so this provider's late failure remains subject to its
+ordinary timeout until it exposes a specific contract.
+
 ### Live-session-limit refusal
 
 `session_limit_reached` is a `409` response with problem type
@@ -857,6 +894,11 @@ exists:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "deployment_capacity": {
+      "cpu_millis": 20000,
+      "memory_mib": 40960,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -874,6 +916,11 @@ exists:
       "reach_close": "Other services remain unavailable.",
       "reach_none": "No services are available to this session.",
       "after": []
+    },
+    "deployment_capacity": {
+      "cpu_millis": null,
+      "memory_mib": null,
+      "assumed_session_size": null
     },
     "pricing": { "cards": [] },
     "size_bounds": {
@@ -914,6 +961,11 @@ Content-Type: application/json
       "reach_close": "Calls to every other service are refused.",
       "reach_none": "No services were granted to this session.",
       "after": []
+    },
+    "deployment_capacity": {
+      "cpu_millis": 20000,
+      "memory_mib": 40960,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
     },
     "pricing": {
       "cards": [
@@ -969,6 +1021,11 @@ Content-Type: application/json
     "reach_none": "No services were granted to this session.",
     "after": ["Continue with the owner's standing instructions."]
   },
+  "deployment_capacity": {
+    "cpu_millis": 20000,
+    "memory_mib": 40960,
+    "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+  },
   "size_bounds": {
     "min_cpu_millis": 250,
     "max_cpu_millis": 4000,
@@ -997,6 +1054,11 @@ as `GET`. The object it replaced becomes `previous`:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "deployment_capacity": {
+      "cpu_millis": 20000,
+      "memory_mib": 40960,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -1018,6 +1080,11 @@ as `GET`. The object it replaced becomes `previous`:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "deployment_capacity": {
+      "cpu_millis": 16000,
+      "memory_mib": 32768,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -1030,17 +1097,26 @@ as `GET`. The object it replaced becomes `previous`:
 }
 ```
 
-The three settings accepted by `PATCH` have distinct replacement rules.
+The four settings accepted by `PATCH` have distinct replacement rules.
 `pricing` is accepted only inside the complete document sent to `PUT`:
 
-| Setting         | PATCH rule                                                                                                                                                                                                                                                                       |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `briefing`      | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose.                                  |
-| `size_bounds`   | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
-| `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation.                                      |
+| Setting | PATCH rule |
+|---|---|
+| `briefing` | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose. |
+| `deployment_capacity` | The object replaces the whole declaration. `cpu_millis` and `memory_mib` are nullable non-negative `u64` totals; `null` leaves that dimension undeclared, while zero is an explicit ceiling. `assumed_session_size` is either `null` or a non-zero CPU/memory pair. The setting itself cannot be `null`. |
+| `size_bounds` | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
+| `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation. |
+
+Deployment capacity is a ledger over durable records whose desired state wants
+a runtime. Pausing a session releases its reservation. Existing work is never
+stopped when the declaration is lowered, and reconciliation and rotation are
+never refused by it. If the new request names no size, or any counted record
+has no size, and `assumed_session_size` is `null`, the sum cannot be computed
+honestly: the entire capacity check is skipped and creation proceeds with an
+operator warning. An unsized session is never counted as zero.
 
 For example, this removes only the live-session limit and preserves the
-briefing and size bounds:
+briefing, deployment capacity, and size bounds:
 
 ```json
 { "expected_revision": 13, "live_sessions": null }
