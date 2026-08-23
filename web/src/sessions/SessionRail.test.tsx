@@ -6,6 +6,9 @@ import { lastActivity } from './lastActivity';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '../agui';
 
+const COLLAPSED_KEY = 'cma:rail-collapsed';
+const LEGACY_COLLAPSED_KEY = 'chrono-bot:rail-collapsed';
+
 /**
  * The session rail — docs/Web_Style.md §12, and §7 for collapsing it.
  */
@@ -68,6 +71,7 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
 
 afterEach(() => {
   window.localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe('the rail row', () => {
@@ -326,14 +330,21 @@ describe('the groups', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(2);
   });
 
-  it('remembers which groups were closed', () => {
+  it('remembers which groups were closed under the canonical key', async () => {
     // A preference about how a list is drawn, like the arrangement beside it.
+    const user = userEvent.setup();
     const first = renderRail({ sessions: MIXED });
     expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
-    window.localStorage.setItem('chrono-bot:rail-collapsed', JSON.stringify(['active']));
+    await user.click(screen.getByRole('button', { name: /^Active/ }));
+    expect(JSON.parse(window.localStorage.getItem(COLLAPSED_KEY) ?? '[]')).toEqual([
+      'paused',
+      'terminated',
+      'active',
+    ]);
+    expect(window.localStorage.getItem(LEGACY_COLLAPSED_KEY)).toBeNull();
     first.unmount();
 
     renderRail({ sessions: MIXED });
@@ -343,10 +354,22 @@ describe('the groups', () => {
     );
   });
 
-  it('ignores a stored value this build does not recognise', () => {
-    // Web storage is untrusted: another script on the origin, or a build
-    // somebody has since rolled back from, may have written it.
-    window.localStorage.setItem('chrono-bot:rail-collapsed', '{"nope":true}');
+  it('migrates historical collapsed groups', () => {
+    window.localStorage.setItem(LEGACY_COLLAPSED_KEY, JSON.stringify(['active']));
+
+    renderRail({ sessions: MIXED });
+
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(window.localStorage.getItem(COLLAPSED_KEY)).toBe(JSON.stringify(['active']));
+  });
+
+  it('prefers valid canonical collapsed groups when both keys exist', () => {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(['paused']));
+    window.localStorage.setItem(LEGACY_COLLAPSED_KEY, JSON.stringify(['active']));
+
     renderRail({ sessions: MIXED });
 
     expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
@@ -354,6 +377,64 @@ describe('the groups', () => {
       'true',
     );
     expect(screen.getByRole('button', { name: /^Paused/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('falls back to historical collapsed groups when canonical data is malformed', () => {
+    window.localStorage.setItem(COLLAPSED_KEY, '{"nope":true}');
+    window.localStorage.setItem(LEGACY_COLLAPSED_KEY, JSON.stringify(['active']));
+
+    renderRail({ sessions: MIXED });
+
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(window.localStorage.getItem(COLLAPSED_KEY)).toBe(JSON.stringify(['active']));
+  });
+
+  it('ignores a stored value this build does not recognise', () => {
+    // Web storage is untrusted: another script on the origin, or a build
+    // somebody has since rolled back from, may have written it.
+    window.localStorage.setItem(COLLAPSED_KEY, '{"nope":true}');
+    window.localStorage.setItem(LEGACY_COLLAPSED_KEY, 'not json');
+    renderRail({ sessions: MIXED });
+
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /^Paused/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('uses defaults instead of crashing when storage reads are blocked', () => {
+    vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError');
+    });
+
+    renderRail({ sessions: MIXED });
+
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('still toggles a group when storage writes are blocked', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    renderRail({ sessions: MIXED });
+
+    await user.click(screen.getByRole('button', { name: /^Active/ }));
+
+    expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
