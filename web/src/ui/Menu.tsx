@@ -6,7 +6,7 @@ import { placeMenu, type MenuAlign, type MenuSide } from './menuPlacement';
 import './Menu.css';
 
 /**
- * The product's one dropdown — `docs/Web_Style.md` §7.
+ * The product's one dropdown — `docs/Web_Style.md` §12.3.
  *
  * A value picker and an overflow menu are the same control here. They were
  * two before, and the second one had no keyboard route at all.
@@ -351,7 +351,7 @@ function MenuRow({
        * `aria-disabled` rather than `disabled`, so the row keeps its place in
        * the keyboard order. A row that cannot be reached cannot have its
        * reason read, and the reason is the whole point of listing something
-       * that cannot be chosen (§7).
+       * that cannot be chosen (§12.3).
        */
       aria-disabled={unavailable}
       aria-checked={choosing ? selected : undefined}

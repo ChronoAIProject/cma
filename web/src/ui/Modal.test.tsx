@@ -118,7 +118,8 @@ describe('the dialog shell', () => {
     // reach for.
     const css = readFileSync(resolve(process.cwd(), 'src/ui/Modal.css'), 'utf8');
     const widths = [...css.matchAll(/width: min\((\d+)px, 100%\)/g)].map((match) => match[1]);
-    expect(widths).toEqual(['380', '700', '1000']);
+    expect(widths).toEqual(['440', '700', '1000']);
+    expect(css).toMatch(/\.modal__card\s*\{[^}]*border-radius: 16px/);
   });
 
   it('portals out of the page, and stops it scrolling underneath', () => {
