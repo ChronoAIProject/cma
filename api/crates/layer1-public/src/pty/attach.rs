@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use layer2_core::{AttachmentClaim, Caller, SessionId, SessionService, TerminalGeometry};
+use layer2_core::{
+    AttachmentClaim, Caller, ResourceReading, SessionId, SessionService, TerminalGeometry,
+};
 
 use super::{
-    ending, error_code, ClientControl, Limits, ServerControl, CONFORMS_TO, KEEPALIVE_INTERVAL,
-    MAX_FRAME_BYTES, SCROLLBACK_LINES,
+    ending, error_code, reports_resources, ClientControl, Limits, ServerControl, CONFORMS_TO,
+    KEEPALIVE_INTERVAL, MAX_FRAME_BYTES, SCROLLBACK_LINES,
 };
 
 pub(super) async fn serve(
@@ -106,12 +108,24 @@ pub(super) async fn serve(
         }
     };
 
+    // Open the lane before announcing it so a reading cannot fall between the
+    // ready frame and the receiver. A granted session whose current runtime
+    // cannot report still subscribes successfully, so the point read is what
+    // distinguishes a lane that will never speak from one awaiting a sample.
+    let mut resources = service.subscribe_resources(&caller, &id).await.ok();
+    let has_resources = if resources.is_some() {
+        reports_resources(true, service.last_reading(&caller, &id).await)
+    } else {
+        false
+    };
+
     let _ = sink
         .send(
             ServerControl::Ready {
                 cols: attachment.geometry.columns(),
                 rows: attachment.geometry.rows(),
                 snapshot: true,
+                resources: has_resources,
                 conforms_to: CONFORMS_TO,
                 limits: Limits {
                     scrollback_lines: SCROLLBACK_LINES,
@@ -147,6 +161,7 @@ pub(super) async fn serve(
         // has had a chance to go idle.
         heartbeat.tick().await;
         loop {
+            let has_resources = resources.is_some();
             tokio::select! {
                 received = output.recv() => match received {
                     Ok(chunk) => {
@@ -158,6 +173,25 @@ pub(super) async fn serve(
                         tracing::warn!(skipped, "terminal client lagged");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                },
+                received = receive_resource(&mut resources), if has_resources => match received {
+                    Ok(reading) => {
+                        if sink
+                            .send(ServerControl::from_reading(reading).to_message())
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(frames)) => {
+                        tracing::debug!(frames, "terminal client lagged on resource readings");
+                    }
+                    // Gauges went away, not the terminal. Keep every other
+                    // branch alive and retire only this lane.
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        resources = None;
+                    }
                 },
                 _ = heartbeat.tick() => {
                     if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
@@ -235,4 +269,15 @@ pub(super) async fn serve(
     // Dropping the attachment releases the exclusive lease. The session keeps
     // running: a dropped connection detaches, it does not terminate.
     drop(attachment);
+}
+
+/// Receive from the optional lane whose select guard established its presence.
+async fn receive_resource(
+    receiver: &mut Option<tokio::sync::broadcast::Receiver<ResourceReading>>,
+) -> Result<ResourceReading, tokio::sync::broadcast::error::RecvError> {
+    receiver
+        .as_mut()
+        .expect("the select guard established this receiver")
+        .recv()
+        .await
 }
