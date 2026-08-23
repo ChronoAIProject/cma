@@ -22,6 +22,7 @@ import { describe, expect, it } from 'vitest';
 
 const FONTS = resolve(process.cwd(), 'src/assets/fonts');
 const STYLES = resolve(process.cwd(), 'src/styles');
+const TOKENS = readFileSync(join(STYLES, 'tokens.css'), 'utf8');
 
 /** Every stylesheet, so a face moving between sheets cannot escape these. */
 function styleSheets(): string[] {
@@ -30,15 +31,42 @@ function styleSheets(): string[] {
     .map((entry) => readFileSync(join(STYLES, entry), 'utf8'));
 }
 
+/** Every declaration block for one selector, in source order. */
+function blocks(css: string, selector: string): string[] {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [...css.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))].map(
+    (match) => match[1] ?? '',
+  );
+}
+
+/** A custom property's whitespace-normalised value from the first block that declares it. */
+function property(source: readonly string[], name: string): string {
+  for (const block of source) {
+    const value = new RegExp(`${name}:\\s*([^;]+);`).exec(block)?.[1];
+    if (value !== undefined) {
+      return value.replace(/\s+/g, ' ').trim();
+    }
+  }
+  return '';
+}
+
+function stack(value: string): string[] {
+  return value.split(',').map((family) => family.trim());
+}
+
 describe('the platform faces', () => {
-  it('vendors the one face it downloads, with its licence and nothing else', () => {
-    // Exact equality, deliberately: §4 retires a face by removing it, and a
-    // retired face lingering here would ship dead bytes. §20.3 retired the
-    // interface face for the system stack, so only the mono face is vendored
-    // — code and terminal output cannot be left to whatever a platform calls
-    // monospace, and everything else can.
+  it('vendors the four selected families, their six faces, and nothing else', () => {
+    // Exact equality: a retired face lingering here would still ship dead bytes.
     expect(readdirSync(FONTS).sort()).toEqual([
+      'Archivo-Variable.woff2',
+      'FamiljenGrotesk-Variable.woff2',
+      'IBMPlexMono-Medium.woff2',
+      'IBMPlexMono-Regular.woff2',
+      'IBMPlexMono-SemiBold.woff2',
       'JetBrainsMono-Variable.woff2',
+      'OFL-Archivo.txt',
+      'OFL-FamiljenGrotesk.txt',
+      'OFL-IBMPlexMono.txt',
       'OFL-JetBrainsMono.txt',
     ]);
   });
@@ -55,60 +83,153 @@ describe('the platform faces', () => {
     }
   });
 
-  it('swaps rather than blocking, and names a system fallback', () => {
+  it('declares every face with its exact file, weight, format, and swap behaviour', () => {
     const faces = styleSheets().flatMap((css) =>
       [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1] ?? ''),
     );
-    expect(faces).toHaveLength(1);
-    for (const face of faces) {
-      expect(face).toContain('font-display: swap');
+    expect(faces).toHaveLength(6);
+
+    const declarations = faces.map((face) => ({
+      family: /font-family:\s*'([^']+)'/.exec(face)?.[1] ?? '',
+      file: /url\('\.\.\/assets\/fonts\/([^']+)'\)/.exec(face)?.[1] ?? '',
+      format: /format\('([^']+)'\)/.exec(face)?.[1] ?? '',
+      weight: /font-weight:\s*([^;]+)/.exec(face)?.[1]?.trim() ?? '',
+      display: /font-display:\s*([^;]+)/.exec(face)?.[1]?.trim() ?? '',
+    }));
+    expect(declarations).toEqual([
+      {
+        family: 'Archivo',
+        file: 'Archivo-Variable.woff2',
+        format: 'woff2-variations',
+        weight: '100 900',
+        display: 'swap',
+      },
+      {
+        family: 'Familjen Grotesk',
+        file: 'FamiljenGrotesk-Variable.woff2',
+        format: 'woff2-variations',
+        weight: '400 700',
+        display: 'swap',
+      },
+      {
+        family: 'IBM Plex Mono',
+        file: 'IBMPlexMono-Regular.woff2',
+        format: 'woff2',
+        weight: '400',
+        display: 'swap',
+      },
+      {
+        family: 'IBM Plex Mono',
+        file: 'IBMPlexMono-Medium.woff2',
+        format: 'woff2',
+        weight: '500',
+        display: 'swap',
+      },
+      {
+        family: 'IBM Plex Mono',
+        file: 'IBMPlexMono-SemiBold.woff2',
+        format: 'woff2',
+        weight: '600',
+        display: 'swap',
+      },
+      {
+        family: 'JetBrains Mono',
+        file: 'JetBrainsMono-Variable.woff2',
+        format: 'woff2-variations',
+        weight: '100 800',
+        display: 'swap',
+      },
+    ]);
+
+    const files = readdirSync(FONTS);
+    for (const declaration of declarations) {
+      expect(files).toContain(declaration.file);
     }
-
-    const tokens = readFileSync(join(STYLES, 'tokens.css'), 'utf8');
-    const stackOf = (name: string) =>
-      (new RegExp(`${name}:\\s*([^;]+);`).exec(tokens)?.[1] ?? '').replace(/\s+/g, ' ').trim();
-
-    /*
-     * The vendored face is named in the code stack but does not lead it: a
-     * machine that already has SF Mono renders in it and never fetches ours,
-     * which is a download avoided rather than a fallback. What matters is
-     * that the face is reachable at all, and that every name before it is one
-     * a platform ships.
-     */
-    /*
-     * The family and the file come from the declaration itself rather than
-     * from the filename: what a stack has to name is what `@font-face` calls
-     * the face, and the two agreeing is exactly what would otherwise drift.
-     */
-    const declared = /font-family:\s*'([^']+)'/.exec(faces[0] ?? '')?.[1] ?? '';
-    const file = /url\('\.\.\/assets\/fonts\/([^']+)'\)/.exec(faces[0] ?? '')?.[1] ?? '';
-    expect(declared).not.toBe('');
-    expect(readdirSync(FONTS)).toContain(file);
-
-    const mono = stackOf('--ds-font-family-code');
-    expect(mono).toContain(`'${declared}'`);
-    expect(mono.split(',').length).toBeGreaterThan(1);
-
-    /*
-     * No bare `monospace` tail. On Windows that keyword resolves to a CJK
-     * serif, which is the one thing a terminal cannot use — column widths are
-     * the entire reason this stack exists.
-     */
-    expect(mono.split(',').map((face) => face.trim())).not.toContain('monospace');
-
-    // The interface stack downloads nothing — §20.3. It must therefore name no
-    // face this repository would have to ship, and start with a platform's
-    // own, which is what makes it correct on the first paint rather than the
-    // second.
-    const ui = stackOf('--dsw-font-family');
-    expect(ui).toMatch(/^-apple-system/);
-    expect(ui).not.toContain(declared);
   });
 
-  it('licenses the face it ships under the OFL', () => {
-    // A vendored face travels with its licence or it should not travel.
-    const mono = readFileSync(join(FONTS, 'OFL-JetBrainsMono.txt'), 'utf8');
-    expect(mono).toContain('SIL OPEN FONT LICENSE Version 1.1');
-    expect(mono).toContain('JetBrains Mono Project Authors');
+  it('switches both branded stacks on body while retaining deliberate fallbacks', () => {
+    const light = blocks(TOKENS, 'body');
+    const dark = blocks(TOKENS, 'body[data-ds-dark-theme]');
+    const root = blocks(TOKENS, ':root').join('\n');
+    expect(root).not.toContain('--dsw-font-family');
+    expect(root).not.toContain('--ds-font-family-code');
+
+    const lightUi = stack(property(light, '--dsw-font-family'));
+    const darkUi = stack(property(dark, '--dsw-font-family'));
+    const lightCode = stack(property(light, '--ds-font-family-code'));
+    const darkCode = stack(property(dark, '--ds-font-family-code'));
+
+    expect(lightUi).toEqual([
+      "'Familjen Grotesk'",
+      "'Noto Sans SC'",
+      '-apple-system',
+      'BlinkMacSystemFont',
+      "'Segoe UI'",
+      "'PingFang SC'",
+      "'Hiragino Sans GB'",
+      "'Microsoft YaHei'",
+      'system-ui',
+      "'Helvetica Neue'",
+      'Helvetica',
+      'Arial',
+      'sans-serif',
+    ]);
+    expect(darkUi).toEqual(["'Archivo'", ...lightUi.slice(1)]);
+    expect(lightCode).toEqual([
+      "'IBM Plex Mono'",
+      "'SF Mono'",
+      "'JetBrains Mono'",
+      "'Fira Code'",
+      'Consolas',
+      "'Liberation Mono'",
+      'Menlo',
+      'Courier',
+      "'PingFang SC'",
+      "'Microsoft YaHei'",
+    ]);
+    expect(darkCode).toEqual(["'JetBrains Mono'", "'SF Mono'", ...lightCode.slice(3)]);
+
+    const sans = ["'Archivo'", "'Familjen Grotesk'"];
+    const mono = ["'IBM Plex Mono'", "'JetBrains Mono'"];
+    for (const ui of [lightUi, darkUi]) {
+      expect(ui.filter((family) => sans.includes(family))).toHaveLength(1);
+      expect(ui.some((family) => mono.includes(family))).toBe(false);
+      expect(ui).toContain('-apple-system');
+    }
+    for (const code of [lightCode, darkCode]) {
+      expect(code).not.toContain('monospace');
+    }
+
+    const everyStack = [...lightUi, ...darkUi, ...lightCode, ...darkCode];
+    for (const family of [...sans, ...mono]) {
+      expect(everyStack).toContain(family);
+    }
+  });
+
+  it('keeps the display width conventional in light and widens Archivo in dark', () => {
+    const effects = readFileSync(join(STYLES, 'effects-typography.css'), 'utf8');
+    expect(property(blocks(effects, 'body'), '--ds-font-variation-display')).toBe('normal');
+    expect(
+      property(blocks(effects, 'body[data-ds-dark-theme]'), '--ds-font-variation-display'),
+    ).toBe("'wdth' 118");
+  });
+
+  it('licenses every family under OFL 1.1 with its own copyright line', () => {
+    const licenses = [
+      ['OFL-Archivo.txt', 'The Archivo Project Authors'],
+      ['OFL-FamiljenGrotesk.txt', 'The Familjen Grotesk Project Authors'],
+      ['OFL-IBMPlexMono.txt', 'Copyright \u00a9 2017 IBM Corp.'],
+      ['OFL-JetBrainsMono.txt', 'JetBrains Mono Project Authors'],
+    ] as const;
+    expect(
+      readdirSync(FONTS)
+        .filter((file) => file.startsWith('OFL-'))
+        .sort(),
+    ).toEqual(licenses.map(([file]) => file).sort());
+    for (const [file, copyright] of licenses) {
+      const text = readFileSync(join(FONTS, file), 'utf8');
+      expect(text).toContain('SIL OPEN FONT LICENSE Version 1.1');
+      expect(text).toContain(copyright);
+    }
   });
 });
