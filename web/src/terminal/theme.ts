@@ -2,7 +2,7 @@ import type { ITheme } from '@xterm/xterm';
 
 /**
  * The 16-slot ANSI palette, derived from the design tokens per §2 and
- * authoritative per §9. Do not invent terminal colours here.
+ * authoritative per Section 14. Do not invent terminal colours here.
  *
  * These are literals rather than CSS custom properties because xterm renders to
  * canvas and cannot resolve `var()`. They are kept in lockstep with
@@ -29,54 +29,54 @@ interface Palette {
 }
 
 const DARK: Palette = {
-  background: '#232324',
-  foreground: '#F9FAFB',
-  cursor: '#679EFE',
+  background: '#0C0D0A',
+  foreground: '#EDF2E2',
+  cursor: '#C3FD43',
   // The business primary at 25% alpha, per the terminal component rules.
-  selection: 'rgba(103, 158, 254, 0.25)',
+  selection: 'rgba(195, 253, 67, 0.25)',
   ansi: {
     // One step below the ground, so the ink end still reads as behind it.
-    black: '#151517',
-    red: '#F25A5A',
-    green: '#22C55E',
-    yellow: '#F59E0B',
-    blue: '#679EFE',
-    magenta: '#C08BE0',
-    cyan: '#5FD3C4',
-    white: '#CFD3D6',
-    brightBlack: '#ADB2B8',
-    brightRed: '#FF8A8A',
-    brightGreen: '#4ADE80',
-    brightYellow: '#FBBF24',
-    brightBlue: '#93B8FE',
-    brightMagenta: '#D7B0EE',
-    brightCyan: '#93E6DB',
-    brightWhite: '#F9FAFB',
+    black: '#060606',
+    red: '#FF5A45',
+    green: '#C3FD43',
+    yellow: '#FFB020',
+    blue: '#72B7FF',
+    magenta: '#E69AF2',
+    cyan: '#69D7C6',
+    white: '#A9B199',
+    brightBlack: '#6B7361',
+    brightRed: '#FF806F',
+    brightGreen: '#D7FF7D',
+    brightYellow: '#FFC45A',
+    brightBlue: '#9ACBFF',
+    brightMagenta: '#F0BCF7',
+    brightCyan: '#9AE8DC',
+    brightWhite: '#EDF2E2',
   },
 };
 
 const LIGHT: Palette = {
-  background: '#FFFFFF',
-  foreground: '#0F1115',
-  cursor: '#4176E6',
-  selection: 'rgba(65, 118, 230, 0.25)',
+  background: '#FFFBF2',
+  foreground: '#15283C',
+  cursor: '#0E61AC',
+  selection: 'rgba(14, 97, 172, 0.25)',
   ansi: {
-    black: '#0F1115',
-    red: '#EC1313',
-    green: '#22C55E',
-    yellow: '#F59E0B',
-    blue: '#4176E6',
-    magenta: '#8B3FBF',
-    cyan: '#0E7C74',
-    white: '#61666B',
-    brightBlack: '#81858C',
-    brightRed: '#B00E0E',
-    brightGreen: '#15803D',
-    brightYellow: '#B45309',
-    brightBlue: '#2F58B4',
-    brightMagenta: '#6B2E94',
-    brightCyan: '#0A5C56',
-    brightWhite: '#0F1115',
+    black: '#15283C',
+    red: '#BC3B26',
+    green: '#3E7A22',
+    yellow: '#A9720B',
+    blue: '#0E61AC',
+    magenta: '#7B3F93',
+    cyan: '#0E766E',
+    white: '#4C5A68',
+    brightBlack: '#8C8474',
+    brightRed: '#982D1C',
+    brightGreen: '#2D6017',
+    brightYellow: '#875A08',
+    brightBlue: '#073A69',
+    brightMagenta: '#603074',
+    brightCyan: '#0A5B55',
+    brightWhite: '#15283C',
   },
 };
 

@@ -1,7 +1,7 @@
 /*
  * The token layer — `docs/Web_Style.md` §2, §3, §4.
  *
- * Three sheets carry the palette itself and are vendored beside this one:
+ * Three first-party sheets carry the palette itself beside this one:
  * `design-platform.css` (the ramps and aliases), `effects-typography.css`
  * (shadows and the composite type ramp) and `shiki.css` (syntax). This file
  * holds only what those sheets reference but do not define, plus the one face
@@ -94,9 +94,9 @@ body {
   --rule-3: var(--dsw-alias-border-l3);
 
   /*
-   * Blue is status here, never the primary — §2. The old `--accent` was the
-   * thing you pressed; it now means running, current, send, and the thing you
-   * press is `--primary-fill`, which is a neutral.
+   * The theme accent now carries both primary actions and running/current/send
+   * state. These migration names remain separate until #317 removes the shim,
+   * but their role tokens deliberately resolve to the same accent.
    */
   --accent: var(--dsw-alias-state-business-primary);
   --accent-fill: var(--dsw-alias-state-business-primary);
@@ -109,7 +109,7 @@ body {
   --ended: var(--dsw-alias-label-tertiary);
   --live-wash: var(--dsw-alias-interactive-bg-hover);
   --wait-wash: var(--dsw-alias-interactive-bg-hover);
-  --fail-wash: var(--dsw-alias-interactive-bg-hover);
+  --fail-wash: var(--dsw-alias-interactive-bg-hover-danger);
 
   --scrim: var(--dsw-alias-bg-mask-1);
   --tint-hover: var(--dsw-alias-interactive-bg-hover);
@@ -188,14 +188,12 @@ body {
   --canvas-node-h: 280px;
 
   /*
-   * Two of the vendored syntax tokens, re-declared where they can resolve.
+   * Two syntax tokens, re-declared where they can resolve.
    *
    * `shiki.css` writes them on `:root` in terms of aliases the palette
    * declares on `body`, so upstream they compute to nothing — the same scope
-   * trap the shim above fell into. The vendored sheet is kept verbatim by
-   * design, so the correction goes here, which is exactly what its header
-   * says to do: changes belong upstream, or in a sheet of ours that overrides
-   * it.
+   * trap the shim above fell into. The first-party syntax sheet keeps its
+   * selector contract, so the body-scoped correction remains here.
    */
   --shiki-foreground: var(--dsw-alias-label-primary);
   --shiki-background: var(--dsw-alias-markdown-code-block);
