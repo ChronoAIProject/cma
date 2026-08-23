@@ -34,6 +34,12 @@ use crate::terminal::{ScreenModel, TerminalGeometry};
 /// so lagging is survivable; unbounded buffering is not.
 pub(crate) const LIVE_BUFFER: usize = 512;
 
+/// How many readings a slow subscriber may fall behind before it is dropped.
+///
+/// Small because each reading supersedes its predecessor whole, and kept
+/// separate so their cadence can never spend the live frame lane's budget.
+pub(crate) const RESOURCE_BUFFER: usize = 8;
+
 pub use crate::lease::{AttachmentHandle, Detached};
 
 /// Builds a screen model at a given geometry.
@@ -88,6 +94,17 @@ pub(crate) struct SessionEntry {
     /// screen and rendering it into one would be a decision the core has no
     /// business making.
     pub(crate) live_frames: broadcast::Sender<crate::event::LiveFrame>,
+    /// Resource readings as they arrive.
+    ///
+    /// Kept off `live_frames` so neither kind of subscriber spends the other
+    /// kind's lag budget.
+    pub(crate) resources: broadcast::Sender<crate::resources::ResourceReading>,
+    /// The newest resource reading this session produced, and when it arrived.
+    ///
+    /// Overwritten on every cadence and never written to the durable event log.
+    pub(crate) last_reading: Option<crate::resources::HeldReading>,
+    /// Whether this session reported that it cannot produce resource readings.
+    pub(crate) readings_unreported: bool,
     /// Input toward the session's conversation, when it holds one.
     pub(crate) conversation: Option<layer3_adapter::ConversationInputSender>,
     /// The message the agent is still assembling, and which one it is.
