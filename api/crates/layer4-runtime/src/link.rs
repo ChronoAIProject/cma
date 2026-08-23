@@ -67,6 +67,14 @@ pub(crate) struct AttachParams {
     /// Absent means the terminal, which is what every link was.
     #[serde(default)]
     lanes: Option<String>,
+    /// How often, in milliseconds, to send a resource reading on this link.
+    ///
+    /// Present makes this a telemetry link and nothing else: no pty is taken,
+    /// no geometry is declared, no conversation is bridged. Asked for per link
+    /// rather than baked into the image, because the image is the runtime
+    /// version and changing it rotates every live session.
+    #[serde(default)]
+    telemetry: Option<u64>,
 }
 
 impl AttachParams {
@@ -78,6 +86,11 @@ impl AttachParams {
     /// Whether this link drives the conversation rather than the terminal.
     fn conversational(&self) -> bool {
         self.lanes.as_deref() == Some("conv")
+    }
+
+    /// Whether this link carries readings rather than a plane.
+    fn telemetric(&self) -> bool {
+        self.telemetry.is_some()
     }
 }
 
@@ -147,11 +160,19 @@ async fn relay(
 ) -> std::io::Result<()> {
     let (mut sink, source) = socket.split();
 
+    if params.telemetric() && !params.framed() {
+        tracing::warn!(runtime = %id, "a resource reading cannot be sent on a wire with no lane discriminator");
+        let _ = sink.send(Message::Close(None)).await;
+        return Ok(());
+    }
+
     // Sent before anything else, so a control plane can decide how to read
     // every frame that follows from the first one it receives. A pod that
     // predates this sends nothing here, which is exactly how it is recognised.
     if params.framed() {
-        let lanes = if params.conversational() {
+        let lanes = if params.telemetric() {
+            ["ctl", lanes::LANE_NAME_TELEMETRY]
+        } else if params.conversational() {
             ["ctl", "conv"]
         } else {
             ["ctl", "term"]
@@ -163,6 +184,9 @@ async fn relay(
         }
     }
 
+    if let Some(interval_ms) = params.telemetry {
+        return crate::telemetry::relay_telemetry(sink, source, state, id, interval_ms).await;
+    }
     if params.conversational() {
         crate::conversation_link::relay_conversation(sink, source, state, id).await
     } else {
