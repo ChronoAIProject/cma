@@ -163,9 +163,29 @@ describe('the brand row is set the way the brand is', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/shell/Sidebar.css'), 'utf8');
     const rule = /\.sidebar__name\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
     expect(rule).toMatch(/font-weight:\s*700/);
-    expect(rule).toMatch(/letter-spacing:\s*var\(--track-display\)/);
+    expect(rule).toMatch(/letter-spacing:\s*-0\.035em/);
     // The mutation this kills: any positive tracking creeping back in.
     expect(rule).not.toMatch(/letter-spacing:\s*0?\.\d/);
+  });
+
+  it('draws the build as a bordered mono reference chip with an accent value', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/Sidebar.css'), 'utf8');
+    const rule = /\.sidebar__build\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(rule).toMatch(/color:\s*var\(--dsw-alias-state-business-primary\)/);
+    expect(rule).toMatch(/font-family:\s*var\(--ds-font-family-code\)/);
+    expect(rule).toMatch(/font-size:\s*11px/);
+    expect(rule).toMatch(/border:\s*1px solid var\(--dsw-alias-border-l3\)/);
+    expect(rule).toMatch(/border-radius:\s*999px/);
+  });
+
+  it('uses the standard 40px control beside the 36px collapsed rail control', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/Sidebar.css'), 'utf8');
+    const expanded = /\.sidebar__new\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const collapsed = /\.sidebar--collapsed \.sidebar__new\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(expanded).toMatch(/height:\s*40px/);
+    expect(expanded).toMatch(/border-radius:\s*10px/);
+    expect(collapsed).toMatch(/width:\s*36px/);
+    expect(collapsed).toMatch(/height:\s*36px/);
   });
 
   it('gives the mark one size that serves the open rail and the closed one', () => {

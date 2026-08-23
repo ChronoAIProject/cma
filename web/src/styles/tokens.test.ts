@@ -150,6 +150,13 @@ describe('the token layer', () => {
 });
 
 describe('the component layer', () => {
+  it('draws selected text with the appearance accent and paired foreground', () => {
+    const base = readFileSync(join(SRC, 'styles', 'base.css'), 'utf8');
+    const selection = /::selection\s*\{([^}]*)\}/.exec(base)?.[1] ?? '';
+    expect(selection).toMatch(/color:\s*var\(--dsw-alias-label-primary-foreground\)/);
+    expect(selection).toMatch(/background:\s*var\(--dsw-alias-state-business-primary\)/);
+  });
+
   it('declares no literal colour', () => {
     // §2: components reference tokens only. A literal here is a colour that
     // cannot follow the theme and will not appear in §2's contrast table.

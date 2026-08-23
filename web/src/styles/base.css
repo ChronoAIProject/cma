@@ -44,6 +44,12 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* §4: selected text uses the appearance's accent and its paired foreground. */
+::selection {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-state-business-primary);
+}
+
 h1,
 h2,
 h3 {

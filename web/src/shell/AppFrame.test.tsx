@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -145,6 +147,18 @@ describe('the page frame', () => {
       'Resize the session list',
       'Resize the details column',
     ]);
+  });
+
+  it('draws a grip on the details edge only', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    const grips = [...css.matchAll(/\.frame__handle([^,{]*)::after/g)].map(
+      (match) => match[1] ?? '',
+    );
+    expect(grips.length).toBeGreaterThan(0);
+    expect(grips.every((selector) => selector.includes("[data-side='details']"))).toBe(true);
+    expect(css).toMatch(
+      /\.frame__handle\[data-side='details'\]::after\s*\{[^}]*width: 12px[^}]*height: 32px[^}]*border-radius: 10px/,
+    );
   });
 
   it('offers no details handle when there is no details column', () => {
