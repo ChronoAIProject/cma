@@ -8,7 +8,7 @@
 .actions {
   display: flex;
   flex: 0 1 auto;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
@@ -19,7 +19,7 @@
 }
 
 .actions__more {
-  width: 36px;
+  width: 32px;
   min-width: 0;
   padding: 0;
 }
@@ -48,7 +48,7 @@
 }
 
 .actions__menu {
-  top: calc(100% + var(--space-1));
+  top: calc(100% + 4px);
   right: 0;
 }
 
@@ -65,4 +65,10 @@
 
 .actions__explain + .actions__explain {
   margin-top: 12px;
+}
+
+@media (max-width: 29.999rem) {
+  .actions {
+    flex: 1 0 100%;
+  }
 }
