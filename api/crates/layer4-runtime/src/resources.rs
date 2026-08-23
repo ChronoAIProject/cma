@@ -37,7 +37,7 @@ impl Default for Roots {
 pub struct ResourceFrame {
     /// Monotonic milliseconds since this supervisor started.
     pub uptime_ms: u64,
-    /// The raw cumulative processor counter from `cpu.stat`.
+    /// Cumulative processor time reported by the active cgroup hierarchy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_usage_usec: Option<u64>,
     /// The processor ceiling in thousandths of one CPU.
@@ -72,11 +72,42 @@ pub struct ResourceFrame {
     pub sent_bytes: Option<u64>,
 }
 
+impl ResourceFrame {
+    /// Whether this frame carries an observed resource rather than only time.
+    pub(crate) fn has_observations(&self) -> bool {
+        self.cpu_usage_usec.is_some()
+            || self.cpu_millis_limit.is_some()
+            || self.memory_bytes_used.is_some()
+            || self.memory_bytes_limit.is_some()
+            || self.memory_bytes_peak.is_some()
+            || self.stall_permille.is_some()
+            || self.ceiling_hits.is_some()
+            || self.allocation_failures.is_some()
+            || self.kills.is_some()
+            || self.received_bytes.is_some()
+            || self.sent_bytes.is_some()
+    }
+}
+
+#[derive(Default)]
+struct Cgroups {
+    v2: Option<PathBuf>,
+    v1_memory: Option<PathBuf>,
+    v1_cpu: Option<PathBuf>,
+    v1_cpuacct: Option<PathBuf>,
+}
+
+impl Cgroups {
+    fn has_v1(&self) -> bool {
+        self.v1_memory.is_some() || self.v1_cpu.is_some() || self.v1_cpuacct.is_some()
+    }
+}
+
 /// A stateless reader for this container's kernel counters.
 pub struct Sampler {
     roots: Roots,
-    /// This container's cgroup directory, where one was resolvable.
-    cgroup: Option<PathBuf>,
+    /// This container's cgroup directories, where any were resolvable.
+    cgroups: Cgroups,
     /// When this sampler was built, which is when the supervisor started.
     started_at: Instant,
 }
@@ -84,19 +115,23 @@ pub struct Sampler {
 impl Sampler {
     /// Resolve this pod's cgroup once and retain the monotonic start time.
     pub fn new(roots: Roots, started_at: Instant) -> Self {
-        let cgroup = resolve_cgroup(&roots);
-        match cgroup.as_ref() {
-            Some(path) => {
-                tracing::info!(cgroup = %path.display(), "resource sampler resolved this pod's cgroup")
-            }
-            None => {
-                tracing::warn!("this kernel exposes no cgroup v2 hierarchy to this pod");
-                tracing::info!("resource sampler started without a resolved cgroup");
-            }
+        let cgroups = resolve_cgroups(&roots);
+        if let Some(path) = cgroups.v2.as_ref() {
+            tracing::info!(cgroup = %path.display(), "resource sampler resolved this pod's cgroup v2 directory");
+        } else if cgroups.has_v1() {
+            tracing::info!(
+                memory = ?cgroups.v1_memory,
+                cpu = ?cgroups.v1_cpu,
+                cpuacct = ?cgroups.v1_cpuacct,
+                "resource sampler resolved this pod's cgroup v1 controllers"
+            );
+        } else {
+            tracing::warn!("this kernel exposes no readable cgroup hierarchy to this pod");
+            tracing::info!("resource sampler started without a resolved cgroup");
         }
         Self {
             roots,
-            cgroup,
+            cgroups,
             started_at,
         }
     }
@@ -105,7 +140,8 @@ impl Sampler {
     pub fn sample(&self, now: Instant) -> ResourceFrame {
         let uptime_ms = u64::try_from(now.saturating_duration_since(self.started_at).as_millis())
             .unwrap_or(u64::MAX);
-        let (received_bytes, sent_bytes) = read_network(&self.roots.net);
+        let (received_bytes, sent_bytes) =
+            read_network(&self.roots.net, &self.roots.proc.join("net/dev"));
         let mut frame = ResourceFrame {
             uptime_ms,
             cpu_usage_usec: None,
@@ -121,33 +157,162 @@ impl Sampler {
             sent_bytes,
         };
 
-        let Some(cgroup) = self.cgroup.as_ref() else {
-            return frame;
-        };
-        frame.memory_bytes_used = read_u64(&cgroup.join("memory.current"));
-        frame.memory_bytes_limit = read_limit(&cgroup.join("memory.max"));
-        frame.memory_bytes_peak = read_u64(&cgroup.join("memory.peak"));
-        frame.stall_permille = read_pressure(&cgroup.join("memory.pressure"));
+        if let Some(cgroup) = self.cgroups.v2.as_ref() {
+            frame.memory_bytes_used = read_u64(&cgroup.join("memory.current"));
+            frame.memory_bytes_limit = read_limit(&cgroup.join("memory.max"));
+            frame.memory_bytes_peak = read_u64(&cgroup.join("memory.peak"));
+            frame.stall_permille = read_pressure(&cgroup.join("memory.pressure"));
 
-        let events = read_keyed(&cgroup.join("memory.events"));
-        frame.ceiling_hits = events.get("max").copied();
-        frame.allocation_failures = events.get("oom").copied();
-        frame.kills = events.get("oom_kill").copied();
+            let events = read_keyed(&cgroup.join("memory.events"));
+            frame.ceiling_hits = events.get("max").copied();
+            frame.allocation_failures = events.get("oom").copied();
+            frame.kills = events.get("oom_kill").copied();
 
-        let processor = read_keyed(&cgroup.join("cpu.stat"));
-        frame.cpu_usage_usec = processor.get("usage_usec").copied();
-        frame.cpu_millis_limit = read_cpu_limit(&cgroup.join("cpu.max"));
+            let processor = read_keyed(&cgroup.join("cpu.stat"));
+            frame.cpu_usage_usec = processor.get("usage_usec").copied();
+            frame.cpu_millis_limit = read_cpu_limit(&cgroup.join("cpu.max"));
+        }
+
+        if let Some(memory) = self.cgroups.v1_memory.as_ref() {
+            frame.memory_bytes_used = frame
+                .memory_bytes_used
+                .or_else(|| read_u64(&memory.join("memory.usage_in_bytes")));
+            frame.memory_bytes_limit = frame
+                .memory_bytes_limit
+                .or_else(|| read_v1_memory_limit(&memory.join("memory.limit_in_bytes")));
+            frame.memory_bytes_peak = frame
+                .memory_bytes_peak
+                .or_else(|| read_u64(&memory.join("memory.max_usage_in_bytes")));
+        }
+        if let Some(cpuacct) = self.cgroups.v1_cpuacct.as_ref() {
+            frame.cpu_usage_usec = frame
+                .cpu_usage_usec
+                .or_else(|| read_cpuacct_usage(&cpuacct.join("cpuacct.usage")));
+        }
+        if let Some(cpu) = self.cgroups.v1_cpu.as_ref() {
+            frame.cpu_millis_limit = frame.cpu_millis_limit.or_else(|| {
+                read_v1_cpu_limit(
+                    &cpu.join("cpu.cfs_quota_us"),
+                    &cpu.join("cpu.cfs_period_us"),
+                )
+            });
+        }
         frame
     }
 }
 
-fn resolve_cgroup(roots: &Roots) -> Option<PathBuf> {
-    let membership = std::fs::read_to_string(roots.proc.join("self/cgroup")).ok()?;
-    let path = membership
-        .lines()
-        .find_map(|line| line.strip_prefix("0::"))?;
-    let relative = path.strip_prefix('/')?;
-    Some(roots.cgroup_mount.join(relative))
+fn resolve_cgroups(roots: &Roots) -> Cgroups {
+    let mut cgroups = Cgroups::default();
+    let Ok(membership) = std::fs::read_to_string(roots.proc.join("self/cgroup")) else {
+        return cgroups;
+    };
+    let mut v1 = BTreeMap::<String, String>::new();
+    for line in membership.lines() {
+        let mut fields = line.splitn(3, ':');
+        let (Some(hierarchy), Some(controllers), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            tracing::debug!(line, "malformed cgroup membership ignored");
+            continue;
+        };
+        if hierarchy == "0" && controllers.is_empty() {
+            cgroups.v2 = cgroup_relative(path).map(|path| roots.cgroup_mount.join(path));
+            continue;
+        }
+        for controller in controllers.split(',').filter(|name| !name.is_empty()) {
+            v1.insert(controller.to_string(), path.to_string());
+        }
+    }
+
+    cgroups.v1_memory = v1.get("memory").and_then(|path| {
+        resolve_v1_controller(
+            roots,
+            "memory",
+            path,
+            &[
+                "memory.usage_in_bytes",
+                "memory.limit_in_bytes",
+                "memory.max_usage_in_bytes",
+            ],
+        )
+    });
+    cgroups.v1_cpu = v1.get("cpu").and_then(|path| {
+        resolve_v1_controller(
+            roots,
+            "cpu",
+            path,
+            &["cpu.cfs_quota_us", "cpu.cfs_period_us"],
+        )
+    });
+    cgroups.v1_cpuacct = v1
+        .get("cpuacct")
+        .and_then(|path| resolve_v1_controller(roots, "cpuacct", path, &["cpuacct.usage"]));
+    cgroups
+}
+
+fn cgroup_relative(path: &str) -> Option<PathBuf> {
+    let relative = Path::new(path).strip_prefix("/").ok()?;
+    relative
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+        .then(|| relative.to_path_buf())
+}
+
+fn resolve_v1_controller(
+    roots: &Roots,
+    controller: &str,
+    membership: &str,
+    counter_names: &[&str],
+) -> Option<PathBuf> {
+    let relative = cgroup_relative(membership)?;
+    let mut mount_root_fallbacks = Vec::new();
+    for mount in controller_mounts(&roots.cgroup_mount, controller) {
+        let member = mount.join(&relative);
+        match std::fs::metadata(&member) {
+            Ok(_) => {
+                if counter_names
+                    .iter()
+                    .any(|counter| member.join(counter).is_file())
+                {
+                    return Some(member);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                mount_root_fallbacks.push(mount);
+            }
+            Err(error) => {
+                tracing::debug!(path = %member.display(), %error, "cgroup membership cannot be inspected");
+            }
+        }
+    }
+
+    // Some gVisor guests name a membership below the mount while exposing the
+    // guest's counters at the mount root. Consider that shape only after every
+    // actual membership directory has had a chance to match.
+    mount_root_fallbacks.into_iter().find(|mount| {
+        counter_names
+            .iter()
+            .any(|counter| mount.join(counter).is_file())
+    })
+}
+
+fn controller_mounts(root: &Path, controller: &str) -> Vec<PathBuf> {
+    let direct = root.join(controller);
+    let mut mounts = vec![direct.clone()];
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return mounts;
+    };
+    let mut combined = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            (name.split(',').any(|name| name == controller) && entry.path() != direct)
+                .then_some(entry.path())
+        })
+        .collect::<Vec<_>>();
+    combined.sort();
+    mounts.extend(combined);
+    mounts
 }
 
 fn read_u64(path: &Path) -> Option<u64> {
@@ -186,6 +351,23 @@ fn read_limit(path: &Path) -> Option<u64> {
             None
         }
     }
+}
+
+// Linux cgroup v1 represents "unlimited" as LONG_MAX, commonly rounded down
+// to a page boundary. Values in this range are not useful finite ceilings.
+const CGROUP_V1_UNLIMITED_MIN: u64 = 0x7fff_ffff_ffff_0000;
+
+fn read_v1_memory_limit(path: &Path) -> Option<u64> {
+    let value = read_u64(path)?;
+    if value >= CGROUP_V1_UNLIMITED_MIN {
+        tracing::debug!(path = %path.display(), value, "cgroup v1 memory limit is unlimited");
+        return None;
+    }
+    Some(value)
+}
+
+fn read_cpuacct_usage(path: &Path) -> Option<u64> {
+    read_u64(path).map(|nanoseconds| nanoseconds / 1_000)
 }
 
 fn read_keyed(path: &Path) -> BTreeMap<String, u64> {
@@ -289,7 +471,60 @@ fn read_cpu_limit(path: &Path) -> Option<u32> {
     Some(u32::try_from(millis).unwrap_or(u32::MAX))
 }
 
-fn read_network(net: &Path) -> (Option<u64>, Option<u64>) {
+fn read_v1_cpu_limit(quota: &Path, period: &Path) -> Option<u32> {
+    let quota_usec = read_i64(quota)?;
+    if quota_usec < 0 {
+        tracing::debug!(path = %quota.display(), quota_usec, "cgroup v1 processor quota is unlimited or invalid");
+        return None;
+    }
+    let period_usec = read_u64(period)?;
+    if period_usec == 0 {
+        tracing::debug!(path = %period.display(), "cgroup v1 processor period is zero");
+        return None;
+    }
+    let Some(scaled_quota) = u128::try_from(quota_usec)
+        .ok()
+        .and_then(|quota| quota.checked_mul(1_000))
+    else {
+        tracing::debug!(path = %quota.display(), quota_usec, "cgroup v1 processor quota overflows its calculation");
+        return None;
+    };
+    let millis = scaled_quota / u128::from(period_usec);
+    match u32::try_from(millis) {
+        Ok(millis) => Some(millis),
+        Err(error) => {
+            tracing::debug!(path = %quota.display(), quota_usec, period_usec, %error, "cgroup v1 processor limit does not fit the wire");
+            None
+        }
+    }
+}
+
+fn read_i64(path: &Path) -> Option<i64> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            tracing::debug!(path = %path.display(), %error, "signed resource counter cannot be read");
+            return None;
+        }
+    };
+    match raw.trim().parse() {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::debug!(path = %path.display(), %error, "signed resource counter is not an integer");
+            None
+        }
+    }
+}
+
+fn read_network(net: &Path, proc_net_dev: &Path) -> (Option<u64>, Option<u64>) {
+    let sysfs = read_network_sysfs(net);
+    if sysfs.0.is_some() {
+        return sysfs;
+    }
+    read_network_proc(proc_net_dev)
+}
+
+fn read_network_sysfs(net: &Path) -> (Option<u64>, Option<u64>) {
     let entries = match std::fs::read_dir(net) {
         Ok(entries) => entries,
         Err(error) => {
@@ -329,6 +564,57 @@ fn read_network(net: &Path) -> (Option<u64>, Option<u64>) {
         ) else {
             continue;
         };
+        received = received.saturating_add(u128::from(rx));
+        sent = sent.saturating_add(u128::from(tx));
+        readable = true;
+    }
+    if !readable {
+        return (None, None);
+    }
+    (
+        Some(u64::try_from(received).unwrap_or(u64::MAX)),
+        Some(u64::try_from(sent).unwrap_or(u64::MAX)),
+    )
+}
+
+fn read_network_proc(path: &Path) -> (Option<u64>, Option<u64>) {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            tracing::debug!(path = %path.display(), %error, "proc network counters cannot be read");
+            return (None, None);
+        }
+    };
+    let mut received = 0_u128;
+    let mut sent = 0_u128;
+    let mut readable = false;
+    for line in raw.lines() {
+        let Some((name, counters)) = line.rsplit_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        if name == "lo" {
+            continue;
+        }
+        if !trusted_interface(name) {
+            tracing::debug!(path = %path.display(), "untrusted proc network interface ignored");
+            continue;
+        }
+        let counters = counters.split_whitespace().collect::<Vec<_>>();
+        if counters.len() != 16 {
+            tracing::debug!(path = %path.display(), interface = name, columns = counters.len(), "proc network row does not have the documented column count");
+            continue;
+        }
+        let counters = counters
+            .into_iter()
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>();
+        let Ok(counters) = counters else {
+            tracing::debug!(path = %path.display(), interface = name, "malformed proc network counter ignored");
+            continue;
+        };
+        let rx = counters[0];
+        let tx = counters[8];
         received = received.saturating_add(u128::from(rx));
         sent = sent.saturating_add(u128::from(tx));
         readable = true;
