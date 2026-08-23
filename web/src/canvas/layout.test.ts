@@ -127,7 +127,7 @@ describe('nextNodeIndex', () => {
 
 describe('the node geometry', () => {
   it('is unchanged, because a node size is what its runtime draws at', () => {
-    // §13: a 420x280 node asks for roughly 47 columns, and a node that changed
+    // §18: a 420x280 node asks for roughly 47 columns, and a node that changed
     // width as siblings came and went would re-wrap everything the agent has
     // drawn. Output already wrapped at 47 columns stays wrapped at 47 columns,
     // in the transcript afterwards as well — so this is not a styling value
@@ -142,12 +142,12 @@ describe('the node geometry', () => {
   });
 
   it('draws focus in accent and hover in weight, so the two cannot be confused', () => {
-    // §13's table: hover changes weight within the neutral ramp; focus
+    // §18's table: hover changes weight within the neutral ramp; focus
     // changes hue and takes the --focus-node halo.
     const css = readFileSync(resolve(process.cwd(), 'src/canvas/SessionCanvas.css'), 'utf8');
-    expect(css).toMatch(/\.node:hover\s*\{\s*border-color: var\(--rule-2\);\s*\}/);
+    expect(css).toMatch(/\.node:hover\s*\{\s*border-color: var\(--dsw-alias-border-l2\);\s*\}/);
     expect(css).toMatch(
-      /\.node\[data-focused='true'\]\s*\{[^}]*border-color: var\(--accent\)[^}]*box-shadow: var\(--focus-node\)/,
+      /\.node\[data-focused='true'\]\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--focus-node\)/,
     );
   });
 });
