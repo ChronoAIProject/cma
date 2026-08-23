@@ -20,7 +20,10 @@ use tokio::sync::RwLock;
 use token::random_token;
 
 /// Name of the session cookie this service issues.
-pub const SESSION_COOKIE: &str = "chrono_bot_session";
+pub const SESSION_COOKIE: &str = "cma_session";
+
+/// Name issued before the CMA migration, accepted during the compatibility window.
+pub(crate) const LEGACY_SESSION_COOKIE: &str = "chrono_bot_session";
 
 /// How the service establishes who is calling.
 #[derive(Debug, Clone)]
@@ -187,7 +190,7 @@ impl AuthState {
         match &self.mode {
             AuthMode::Trusted { subject } => Some(SubjectId(subject.clone())),
             AuthMode::Provider { .. } => {
-                if let Some(token) = session_cookie(headers) {
+                for token in session_cookies(headers) {
                     if let Some(subject) = self.sessions.read().await.get(&token).cloned() {
                         return Some(subject);
                     }
@@ -463,7 +466,7 @@ mod tokens;
 pub use middleware::attach_subject;
 pub use tokens::SubjectTokens;
 
-pub(crate) use middleware::session_cookie;
+pub(crate) use middleware::session_cookies;
 pub(crate) use tokens::ProviderMetadata;
 
 pub mod capabilities;
