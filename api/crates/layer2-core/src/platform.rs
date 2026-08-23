@@ -83,6 +83,12 @@ pub struct SessionBriefing {
 pub struct PlatformSettings {
     #[serde(default)]
     pub briefing: SessionBriefing,
+    /// When a session's memory counts as being under pressure.
+    ///
+    /// A setting rather than process configuration so an administrator can
+    /// change it while the service is running without requiring a rollout.
+    #[serde(default)]
+    pub memory_pressure: crate::MemoryPressurePolicy,
     /// Every rate this deployment has ever charged, newest last.
     ///
     /// An empty list means no price has been configured. Sessions remain fully
@@ -132,12 +138,14 @@ impl PlatformSettings {
     pub fn changed_from(&self, previous: &Self) -> Vec<&'static str> {
         let Self {
             briefing,
+            memory_pressure,
             pricing,
             size_bounds,
             live_sessions,
         } = self;
         let Self {
             briefing: previous_briefing,
+            memory_pressure: previous_memory_pressure,
             pricing: previous_pricing,
             size_bounds: previous_size_bounds,
             live_sessions: previous_live_sessions,
@@ -145,6 +153,9 @@ impl PlatformSettings {
         let mut changed = Vec::new();
         if briefing != previous_briefing {
             changed.push("briefing");
+        }
+        if memory_pressure != previous_memory_pressure {
+            changed.push("memory_pressure");
         }
         if pricing != previous_pricing {
             changed.push("pricing");
@@ -435,6 +446,8 @@ mod tests {
         let previous = PlatformSettings::default();
         let mut changed = previous.clone();
         changed.briefing.before.push("Different prose".into());
+        changed.memory_pressure =
+            crate::MemoryPressurePolicy::new(850, 650, 6, 18, 180).expect("valid policy");
         changed.pricing = changed.pricing.appended(
             crate::Rate {
                 cpu_micros_per_cpu_hour: 40_000,
@@ -447,7 +460,13 @@ mod tests {
 
         assert_eq!(
             changed.changed_from(&previous),
-            ["briefing", "pricing", "size_bounds", "live_sessions"]
+            [
+                "briefing",
+                "memory_pressure",
+                "pricing",
+                "size_bounds",
+                "live_sessions"
+            ]
         );
         assert!(changed.changed_from(&changed).is_empty());
     }
