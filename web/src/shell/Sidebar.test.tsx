@@ -175,6 +175,19 @@ describe('the brand row is set the way the brand is', () => {
     const mark = /\.sidebar__mark\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
     expect(mark).toMatch(/width:\s*32px/);
     expect(mark).toMatch(/height:\s*32px/);
+    expect(mark).toMatch(/color:\s*var\(--dsw-alias-brand-primary\)/);
+    expect(css).toMatch(
+      /\.sidebar__mark svg\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*100%/,
+    );
     expect(css).not.toMatch(/\.sidebar--collapsed\s+\.sidebar__mark/);
+  });
+
+  it('inlines the mark so the appearance can ink it', () => {
+    renderSidebar();
+    const wrapper = document.querySelector('.sidebar__mark');
+    expect(wrapper).toHaveAttribute('aria-hidden', 'true');
+    expect(wrapper).toBeInstanceOf(HTMLSpanElement);
+    expect(wrapper?.querySelector('svg')).not.toBeNull();
+    expect(wrapper?.querySelector('img')).toBeNull();
   });
 });
