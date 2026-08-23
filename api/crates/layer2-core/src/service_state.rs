@@ -86,6 +86,11 @@ pub(crate) struct SessionEntry {
     ///
     /// Overwritten on every cadence and never written to the durable event log.
     pub(crate) last_reading: Option<crate::resources::HeldReading>,
+    /// Whether this session's memory has been near its limit, and for how long.
+    ///
+    /// Ephemeral like the readings it folds. Only the two edges it emits are
+    /// recorded, and a fresh live entry starts with a fresh fold.
+    pub(crate) memory_pressure: crate::pressure::MemoryPressure,
     /// Whether this session reported that it cannot produce resource readings.
     pub(crate) readings_unreported: bool,
     /// Input toward the session's conversation, when it holds one.
