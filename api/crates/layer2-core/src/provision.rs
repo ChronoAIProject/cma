@@ -30,7 +30,7 @@ use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
 use crate::provision_failure::StartFailure;
-use crate::service::{SessionEntry, SessionService, LIVE_BUFFER};
+use crate::service::{SessionEntry, SessionService, LIVE_BUFFER, RESOURCE_BUFFER};
 use crate::session::{ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::size::SessionSize;
 use crate::terminal::{ScreenModel, TerminalGeometry};
@@ -392,6 +392,7 @@ impl SessionService {
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
+        let (resources, _) = broadcast::channel(RESOURCE_BUFFER);
 
         // Seeded from the record rather than from the copy passed in, because
         // the record is the authority and the copy is a snapshot from before
@@ -447,6 +448,9 @@ impl SessionService {
             input: terminal_input.clone(),
             live: live.clone(),
             live_frames: live_frames.clone(),
+            resources,
+            last_reading: None,
+            readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),
             assembling: None,
