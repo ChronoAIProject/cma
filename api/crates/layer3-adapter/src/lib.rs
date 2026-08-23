@@ -26,9 +26,9 @@ mod conversation;
 mod runtime;
 
 pub use runtime::{
-    RuntimeCapacity, RuntimeEnvironment, RuntimeHandle, RuntimeListing, RuntimeLossReason,
-    RuntimeMode, RuntimeOptions, RuntimePermission, RuntimeSpec, SkillPackage, TermSize,
-    TerminalChannel, TerminalInput,
+    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeHandle, RuntimeListing,
+    RuntimeLossReason, RuntimeMode, RuntimeOptions, RuntimePermission, RuntimeSpec, SkillPackage,
+    TermSize, TerminalChannel, TerminalInput,
 };
 
 use tokio::sync::mpsc;
@@ -91,6 +91,11 @@ pub struct KernelCapabilities {
     pub interrupt: bool,
     /// Reports token usage as it accrues.
     pub usage: bool,
+    /// Reports what its sandbox is using: memory, processor time and traffic.
+    ///
+    /// This is a property of the supervisor image rather than of the agent
+    /// inside it, and applies equally to terminal and conversation sessions.
+    pub resources: bool,
 }
 
 /// Errors an adapter may surface.
@@ -280,6 +285,24 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
+    /// Watch what this runtime is using, for as long as the caller listens.
+    ///
+    /// The caller supplies the sink so it can already be draining while the
+    /// watch opens and cannot miss the first reading. Dropping the receiving
+    /// half ends the watch.
+    ///
+    /// Defaults to a stated absence. A runtime that cannot report resource use
+    /// is still a working runtime, and callers must not retry that as failure.
+    async fn watch_resources(
+        &self,
+        _handle: &RuntimeHandle,
+        _readings: mpsc::Sender<ResourceSample>,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not report what it is using".to_string(),
+        ))
+    }
+
     /// Move a live session between the terminal and conversation planes
     /// without replacing its sandbox.
     ///
@@ -346,10 +369,10 @@ mod tests {
     #[tokio::test]
     async fn every_optional_plane_defaults_to_saying_it_cannot() {
         // Absence of an ability is not a failure. A kernel that renders no
-        // terminal, holds no conversation, cannot be captured, or cannot
-        // enumerate what it runs is still a kernel — and a caller reading any
-        // of those as a failure would retry forever, or tear down a live
-        // session whose only fault is being one of them.
+        // terminal, holds no conversation, cannot be captured, cannot
+        // enumerate what it runs, or cannot report its resources is still a
+        // kernel — and a caller reading any of those as a failure would retry
+        // forever, or tear down a live session whose only fault is being one.
         let bare = BareKernel;
         let handle = RuntimeHandle("bare-1".into());
         for error in [
@@ -361,6 +384,9 @@ mod tests {
                 .expect_err("no conversation"),
             bare.snapshot(&handle).await.expect_err("no snapshot"),
             bare.list_runtimes().await.expect_err("cannot enumerate"),
+            bare.watch_resources(&handle, mpsc::channel(1).0)
+                .await
+                .expect_err("no resource readings"),
         ] {
             assert!(
                 matches!(error, AdapterError::Unsupported(_)),
