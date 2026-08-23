@@ -66,6 +66,19 @@ describe('the equivalence rule', () => {
     expect(reading.container.innerHTML).toBe(watchedHtml);
   });
 
+  it('rebuilds the complete review fixture identically after a reconnect', async () => {
+    const live = await conversationFrom('full-conversation');
+    const replayed = await conversationFrom('full-conversation', { dropAfter: 12 });
+    expect(replayed.conversation).toEqual(live.conversation);
+
+    const watching = render(<MessageStream entries={live.conversation.entries} />);
+    const watchedHtml = watching.container.innerHTML;
+    watching.unmount();
+
+    const reading = render(<MessageStream entries={replayed.conversation.entries} />);
+    expect(reading.container.innerHTML).toBe(watchedHtml);
+  });
+
   it('folds one function for both, so the two cannot disagree', async () => {
     // Not a coincidence of two code paths agreeing today: there is one path.
     const { events } = await conversationFrom('two-tool-calls');
@@ -83,6 +96,12 @@ describe('the equivalence rule', () => {
 });
 
 describe('a turn', () => {
+  it('defines the owner bubble and its alignment exactly once', () => {
+    const css = readCss();
+    expect(css.match(/\.turn\[data-role='user'\]\s*\{/g) ?? []).toHaveLength(1);
+    expect(css.match(/\.turn\[data-role='user'\]\s+\.turn__body\s*\{/g) ?? []).toHaveLength(1);
+  });
+
   it('tells the two roles apart by shape alone', () => {
     const state = fold([
       toEvent({ type: 'RUN_STARTED', seq: 1 }),
@@ -239,6 +258,24 @@ describe('agent-emitted content', () => {
 function readCss(): string {
   return readFileSync(resolve(process.cwd(), 'src/chat/MessageStream.css'), 'utf8');
 }
+
+describe('the stream stylesheet contract', () => {
+  it('uses the reference code frame and distinct failure and warning notices', () => {
+    const css = readCss();
+    expect(css).toMatch(
+      /\.codeblock\s*\{[^}]*background: var\(--dsw-alias-markdown-code-block\)[^}]*border: 1px solid var\(--dsw-alias-border-l1\)[^}]*border-radius: 12px/,
+    );
+    expect(css).toMatch(
+      /\.codeblock__head\s*\{[^}]*position: sticky[^}]*background: var\(--dsw-alias-markdown-code-block-banner\)/,
+    );
+    expect(css).toMatch(
+      /\.failure\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-left: 2px solid var\(--dsw-alias-state-error-primary\)/,
+    );
+    expect(css).toMatch(
+      /\.gap\s*\{[^}]*background: var\(--dsw-alias-state-warn-tertiary\)[^}]*border-left: 2px solid var\(--dsw-alias-state-warn-primary\)/,
+    );
+  });
+});
 
 describe('the plane-change boundary', () => {
   it('names where the session went and when history stopped being continuous', () => {
