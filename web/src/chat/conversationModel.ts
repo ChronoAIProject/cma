@@ -164,6 +164,47 @@ export interface RuntimeLoss {
   readonly seq: number;
 }
 
+/** One complete live resource reading, as AG-UI replaces it on `/resources`. */
+export interface Resources {
+  /** Thousandths of one CPU core used over `intervalMs`. Undefined is not zero. */
+  readonly cpuMillisUsed: number | undefined;
+  /** The CPU ceiling in thousandths of one core. Undefined means no ceiling. */
+  readonly cpuMillisLimit: number | undefined;
+  /** Current memory use in bytes. Undefined is not zero. */
+  readonly memoryBytesUsed: number | undefined;
+  /** The memory ceiling in bytes. Undefined means no ceiling. */
+  readonly memoryBytesLimit: number | undefined;
+  /** Peak memory use in bytes. Undefined is not zero. */
+  readonly memoryBytesPeak: number | undefined;
+  /** Time stalled, in thousandths of the reporting interval. Undefined is not zero. */
+  readonly stallPermille: number | undefined;
+  /** Resource-ceiling hits. Undefined is not zero. */
+  readonly ceilingHits: number | undefined;
+  /** Allocation failures. Undefined is not zero. */
+  readonly allocationFailures: number | undefined;
+  /** Runtime kills. Undefined is not zero. */
+  readonly kills: number | undefined;
+  /** Bytes received since this runtime started. Undefined is not zero. */
+  readonly receivedBytes: number | undefined;
+  /** Bytes sent since this runtime started. Undefined is not zero. */
+  readonly sentBytes: number | undefined;
+  /** Bytes received per second over `intervalMs`. Undefined is not zero. */
+  readonly receivedBytesPerSecond: number | undefined;
+  /** Bytes sent per second over `intervalMs`. Undefined is not zero. */
+  readonly sentBytesPerSecond: number | undefined;
+  /** The interval the three rates were derived over. Undefined is not zero. */
+  readonly intervalMs: number | undefined;
+}
+
+/** The memory-pressure episode currently open, reconstructed from durable state. */
+export interface MemoryPressure {
+  readonly usedBytes: number;
+  readonly limitBytes: number;
+  readonly occupancyPermille: number;
+  /** RFC 3339 timestamp from the event that opened this episode. */
+  readonly since: string;
+}
+
 /** Everything a surface needs to draw the conversation. */
 export interface Conversation {
   readonly entries: readonly Entry[];
@@ -186,6 +227,14 @@ export interface Conversation {
    * nothing, and has often spent a great deal.
    */
   readonly usage?: Usage;
+  /**
+   * The latest live resource reading. Every undefined figure is absence, not zero.
+   */
+  readonly resources?: Resources;
+  /**
+   * The durable pressure episode currently open. Undefined means no open episode.
+   */
+  readonly memoryPressure?: MemoryPressure;
   /**
    * A sign-in the agent is waiting on — `Web_Style.md` §18.
    *

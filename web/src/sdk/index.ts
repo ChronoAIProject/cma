@@ -50,6 +50,12 @@ export { resolveConfig, type ClientConfig, type Credential, type ResolvedConfig 
 export { ApiError, CapabilityRefused, SessionLimitReached } from './errors';
 export { request, type RequestOptions } from './http';
 export {
+  readResources,
+  toResourceStatus,
+  type ResourceStatusReason,
+  type SessionResourceStatus,
+} from './resources';
+export {
   changePlane,
   createSession,
   deleteSession,
@@ -118,6 +124,8 @@ export {
   type Conversation,
   type Entry,
   type MessageEntry,
+  type MemoryPressure,
+  type Resources,
   type ToolCallEntry,
   type Usage,
 } from '../chat/conversation';

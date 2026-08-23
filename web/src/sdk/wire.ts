@@ -54,6 +54,10 @@ export const PRICING_WIRE = {
  * `/runtimeLosses`.
  */
 export const PATHS = {
+  /** A session's live resource readings. Replaced whole; never accumulated. */
+  resources: '/resources',
+  /** An open memory-pressure episode, or null when there is none. */
+  memoryPressure: '/memoryPressure',
   /** Tokens the turn consumed reading. */
   inputTokens: '/usage/inputTokens',
   /** Tokens the turn produced. */

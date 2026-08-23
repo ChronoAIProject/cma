@@ -102,7 +102,7 @@ chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative l
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
 | Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
-| State | `STATE_DELTA` | usage, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
+| State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
 
 Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
 
@@ -175,6 +175,41 @@ The lane also carries the agent's reasoning:
 
 Declared as `chrono:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
 
+Resource readings are cursorless state on this lane too. Each reading is one
+whole-object replace, never a set of field patches:
+
+```json
+{ "type": "STATE_DELTA", "chrono:live": true, "delta": [{
+  "op": "replace", "path": "/resources", "value": {
+    "cpuMillisUsed": 340, "cpuMillisLimit": 1000,
+    "memoryBytesUsed": 892211200, "memoryBytesLimit": 1073741824,
+    "memoryBytesPeak": 930086912, "stallPermille": 12,
+    "ceilingHits": 0, "allocationFailures": 0, "kills": 0,
+    "receivedBytes": 18442, "sentBytes": 9120,
+    "receivedBytesPerSecond": 420, "sentBytesPerSecond": 110,
+    "intervalMs": 2000
+  }
+}] }
+```
+
+All fourteen keys are always present. An unread level, an absent limit, and a
+rate with no predecessor are each `null`, never omitted and never zero. A
+reading replaces its predecessor whole so a dropped frame self-heals on the
+next one, and so `/resources` remains reconstructible without a
+`STATE_SNAPSHOT`.
+
+The conversation-liveness receiver and resource receiver are independent in
+the service, so a two-second gauge cannot spend the lag budget reserved for a
+message being typed. They share the same cursorless wire treatment once
+merged onto this stream.
+
+This lane alone cannot distinguish "no reading has arrived yet" from "this
+session's current runtime cannot ever report one". That status changes at most
+once during bring-up and does not earn a second stream path; call the public
+`GET /api/v1/sessions/{id}/resources` point read once when the surface mounts
+and again after a reconnect. A third-party frontend can make exactly the same
+call as the reference client.
+
 ### Committed text arrives whole, not as tokens
 
 On the durable lane, `TEXT_MESSAGE_CONTENT` carries the finished message rather than a stream of deltas. The token-level pieces are the live lane above, and they are deliberately not part of the durable log: numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time.
@@ -184,6 +219,14 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
 **`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. The current reading is written at `/usage/contextUsed`; the ceiling it is drawn from is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
+
+Memory pressure is durable state folded from those ephemeral readings. An
+opening edge replaces `/memoryPressure` with `usedBytes`, `limitBytes`,
+`occupancyPermille`, and `since`, where `since` is the durable event's own
+timestamp. A closing edge replaces the path with `null`, never removes it: a
+client that joined after the open may not have the path, and RFC 6902 would
+reject removing it. Neither edge ends the run; a squeeze is something to show
+while the agent remains working, not a `RUN_ERROR`.
 
 When the agent summarises the conversation to make room, a patch is appended to `/contextCompactions/-` with `was`, `now`, and `window` where a ceiling was stated. `window` is omitted rather than null where none is known. This is a durable boundary and precedes the lower `/usage/contextUsed` reading that revealed it, so a replay explains why the conversation became smaller instead of leaving its reader to infer that from the figures.
 
@@ -324,6 +367,7 @@ GET /api/v1/agui/capabilities
                         "approveWithEdits": false, "interventions": false },
     "execution":      { "codeExecution": true, "sandboxed": true },
     "custom":         { "chrono:terminal": false, "chrono:usage": true,
+                        "chrono:resources": true,
                         "chrono:changePlane": false, "chrono:planeChangeObserved": true }
   },
   "conformsTo": [
