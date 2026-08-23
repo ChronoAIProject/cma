@@ -40,6 +40,7 @@ mod provision_failure;
 mod reading;
 mod readopt;
 pub mod reconcile;
+pub mod resources;
 mod rotate;
 mod sequence;
 mod spend;
@@ -137,6 +138,7 @@ pub use platform::{
 };
 pub use platform_service::PlatformSettingsService;
 pub use reconcile::Reclaimed;
+pub use resources::{HeldReading, ResourceReading};
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
