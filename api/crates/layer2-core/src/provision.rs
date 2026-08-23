@@ -631,7 +631,7 @@ impl SessionService {
 }
 
 impl SessionService {
-    /// Give a session the granted set it should have, and record it.
+    /// Give a session abilities that were never recorded, and record them.
     ///
     /// Two jobs that must not be separated. It refuses a session whose runtime
     /// can no longer be what the session is — the check every start makes —
@@ -646,39 +646,74 @@ impl SessionService {
     /// which is not "granted nothing": it is refused at every gate that asks,
     /// including the one behind every keystroke.
     ///
-    /// Recorded rather than recomputed per process, because §5 makes the
-    /// record the authority and a set that exists only in memory is one the
-    /// next control plane has to derive again.
+    /// This also settles a single field added after the set existed. Filling a
+    /// field that was never written does not change a recorded grant: there is
+    /// no earlier answer to overwrite. Every field that was recorded remains
+    /// untouched.
+    ///
+    /// Recorded rather than recomputed per process, because the record is the
+    /// authority and a set that exists only in memory is one the next control
+    /// plane has to derive again.
     pub(crate) async fn settle_capabilities(
         &self,
         session: &Session,
         adapter: &Arc<dyn KernelAdapter>,
     ) -> Result<SessionCapabilities, crate::error::CoreError> {
         let granted = SessionCapabilities::granted(session.options.mode, adapter.capabilities())?;
-        if !session.capabilities.unrecorded() {
+        if !session.capabilities.unrecorded() && session.capabilities.resources.is_some() {
             return Ok(session.capabilities);
         }
+        let fallback = if session.capabilities.unrecorded() {
+            granted
+        } else {
+            SessionCapabilities {
+                resources: granted.resources,
+                ..session.capabilities
+            }
+        };
         match self.store.get(&session.id).await {
             Ok(Some(mut record)) => {
-                record.session.capabilities = granted;
+                let current = record.session.capabilities;
+                let (settled, resources_only) = if current.unrecorded() {
+                    (granted, false)
+                } else if current.resources.is_none() {
+                    (
+                        SessionCapabilities {
+                            resources: granted.resources,
+                            ..current
+                        },
+                        true,
+                    )
+                } else {
+                    return Ok(current);
+                };
+                record.session.capabilities = settled;
                 if let Err(e) = self.store.upsert(&record).await {
                     // Worth saying and not worth refusing over: the session
                     // works with the set in hand, and the next sweep settles
                     // it again.
                     tracing::warn!(session_id = %session.id, error = %e, "cannot record what this session holds");
                 } else {
-                    tracing::info!(
-                        session_id = %session.id,
-                        "settled what this session holds; it was recorded before capabilities existed"
-                    );
+                    if resources_only {
+                        tracing::info!(
+                            session_id = %session.id,
+                            "settled resource reporting; this ability was never recorded"
+                        );
+                    } else {
+                        tracing::info!(
+                            session_id = %session.id,
+                            "settled what this session holds; it was recorded before capabilities existed"
+                        );
+                    }
                 }
+                Ok(settled)
             }
-            Ok(None) => {}
+            Ok(None) => Ok(fallback),
             Err(e) => {
                 tracing::warn!(session_id = %session.id, error = %e, "cannot read this session to settle what it holds");
+                Ok(fallback)
             }
         }
-        Ok(granted)
     }
 }
 
