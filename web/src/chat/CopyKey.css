@@ -1,5 +1,5 @@
 /*
- * The copy control — §18.11.
+ * The copy control — §13.
  *
  * Persistently drawn and labelled, never revealed on hover: §3 permits no
  * hover-gated affordance and says nothing in this interface moves on hover. It
@@ -13,10 +13,10 @@
  */
 .copykey {
   flex: none;
-  padding: 2px var(--space-2);
+  padding: 2px 8px;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   cursor: pointer;
   transition:
     background var(--ds-transition-duration) var(--ds-ease-in-out),
@@ -27,8 +27,8 @@
 }
 
 .copykey:hover:not(:disabled) {
-  color: var(--ink-2);
-  background: var(--raised);
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .copykey:focus-visible {
@@ -42,7 +42,7 @@
  * the composer, and repeating it here would be two voices for one fact.
  */
 .copykey:disabled {
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-tertiary);
   opacity: 0.5;
   cursor: not-allowed;
 }
