@@ -155,7 +155,7 @@ impl Deployment {
              * they must not render alike.
              *
              * Here rather than in a kernel's own directory because it is a
-             * property of a chrono-bot session, not of any agent: every kernel
+             * property of a CMA session, not of any agent: every kernel
              * hosted this way gets it on the same terms.
              */
             ("CHRONO_SESSION_REACHES".to_string(), spec.reaches.join(",")),
