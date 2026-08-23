@@ -265,6 +265,10 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::AlreadyAttached => "already_attached",
         CoreError::SessionTerminated => "session_terminated",
         CoreError::InvalidGeometry(_) => "invalid_geometry",
+        // This interface attaches to an existing session and never authors a
+        // platform policy. Keep the impossible variant explicit so the next
+        // core variant still breaks this exhaustive projection.
+        CoreError::InvalidPressurePolicy(_) => "invalid_request",
         // This interface attaches to an existing session, so a creation-time
         // size refusal cannot arise here. Named so a new core variant cannot
         // quietly become the wrong terminal frame.
