@@ -98,6 +98,16 @@ pub(crate) struct FakeAdapter {
     /// that can be carried onto a replacement — so tests about anything else
     /// keep working without stating it.
     pub(crate) capabilities: layer3_adapter::KernelCapabilities,
+    /// The receiver a resource watch was asked to feed.
+    ///
+    /// Held so a test can be the session and push readings into the core.
+    pub(crate) resource_sink: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
+    /// When set, a resource watch reports that this session cannot provide one.
+    pub(crate) refuse_watch: bool,
+    /// When set, a resource watch fails transiently.
+    pub(crate) fail_watch: bool,
+    /// Resource watch attempts, including refusals and transient failures.
+    pub(crate) resource_watch_calls: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for FakeAdapter {
@@ -138,6 +148,10 @@ impl Default for FakeAdapter {
                 usage: false,
                 resources: false,
             },
+            resource_sink: Mutex::default(),
+            refuse_watch: false,
+            fail_watch: false,
+            resource_watch_calls: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -318,6 +332,27 @@ impl KernelAdapter for FakeAdapter {
             return Err(AdapterError::Unavailable("no such runtime".into()));
         }
         self.credentials.lock().await.push(credential.to_string());
+        Ok(())
+    }
+
+    async fn watch_resources(
+        &self,
+        _handle: &RuntimeHandle,
+        readings: mpsc::Sender<layer3_adapter::ResourceSample>,
+    ) -> Result<(), AdapterError> {
+        self.resource_watch_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.refuse_watch {
+            return Err(AdapterError::Unsupported(
+                "resource readings are unavailable".into(),
+            ));
+        }
+        if self.fail_watch {
+            return Err(AdapterError::Unavailable(
+                "resource reading link failed".into(),
+            ));
+        }
+        *self.resource_sink.lock().await = Some(readings);
         Ok(())
     }
 

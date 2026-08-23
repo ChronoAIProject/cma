@@ -15,7 +15,7 @@ fn everything() -> KernelCapabilities {
         steer: true,
         interrupt: true,
         usage: true,
-        resources: false,
+        resources: true,
     }
 }
 
@@ -70,6 +70,34 @@ fn a_terminal_session_is_granted_no_turn_level_abilities() {
 }
 
 #[test]
+fn resource_reporting_is_granted_on_both_planes_when_advertised() {
+    let terminal = SessionCapabilities::granted(SessionMode::Terminal, everything()).expect("ok");
+    let conversation =
+        SessionCapabilities::granted(SessionMode::Conversation, everything()).expect("ok");
+
+    assert_eq!(terminal.resources, Some(true));
+    assert_eq!(conversation.resources, Some(true));
+}
+
+#[test]
+fn a_resource_refusal_is_recorded_rather_than_left_unsettled() {
+    let granted = SessionCapabilities::granted(
+        SessionMode::Terminal,
+        KernelCapabilities {
+            resources: false,
+            ..everything()
+        },
+    )
+    .expect("ok");
+
+    assert_eq!(granted.resources, Some(false));
+    assert_eq!(
+        granted.require(Capability::Resources),
+        Err(CoreError::CapabilityUnsupported("resources".into()))
+    );
+}
+
+#[test]
 fn a_conversation_session_gets_only_what_its_runtime_offers() {
     let granted = SessionCapabilities::granted(
         SessionMode::Conversation,
@@ -111,7 +139,9 @@ fn every_capability_has_a_distinct_wire_name() {
         Capability::Terminal.name(),
         Capability::Snapshot.name(),
         Capability::Steer.name(),
+        Capability::Interrupt.name(),
         Capability::Usage.name(),
+        Capability::Resources.name(),
     ];
     let mut sorted = names.to_vec();
     sorted.sort_unstable();
@@ -125,6 +155,7 @@ fn a_session_recorded_before_capabilities_existed_reads_back_as_holding_none() {
     // time it is placed, and until then it claims nothing it cannot prove.
     let restored: SessionCapabilities = serde_json::from_str("{}").expect("deserialises");
     assert_eq!(restored, SessionCapabilities::default());
+    assert_eq!(restored.resources, None);
 }
 
 #[test]
