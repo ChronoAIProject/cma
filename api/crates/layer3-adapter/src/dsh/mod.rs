@@ -90,7 +90,7 @@ impl KernelAdapter for DshAdapter {
             steer: false,
             interrupt: false,
             usage: true,
-            resources: false,
+            resources: true,
         }
     }
 
