@@ -16,8 +16,8 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    CapacityBounds, CoreError, PlatformSettings, PlatformSettingsService, SessionBriefing,
-    StoredSettings,
+    CapacityBounds, CoreError, DeploymentCapacity, PlatformSettings, PlatformSettingsService,
+    SessionBriefing, StoredSettings,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -146,6 +146,8 @@ struct ChangeRequest {
     #[serde(default)]
     briefing: PatchField<BriefingRequest>,
     #[serde(default)]
+    deployment_capacity: PatchField<DeploymentCapacity>,
+    #[serde(default)]
     size_bounds: PatchField<BoundsRequest>,
     #[serde(default)]
     live_sessions: PatchField<NonZeroU32>,
@@ -162,12 +164,13 @@ struct ReplaceRequest {
 impl ChangeRequest {
     fn apply(self, mut settings: PlatformSettings) -> Result<(u64, PlatformSettings), CoreError> {
         if matches!(&self.briefing, PatchField::Missing)
+            && matches!(&self.deployment_capacity, PatchField::Missing)
             && matches!(&self.size_bounds, PatchField::Missing)
             && matches!(&self.live_sessions, PatchField::Missing)
         {
             return Err(CoreError::InvalidRequest(
-                "a settings change must name at least one of 'briefing', 'size_bounds', or \
-                 'live_sessions'"
+                "a settings change must name at least one of 'briefing', \
+                 'deployment_capacity', 'size_bounds', or 'live_sessions'"
                     .into(),
             ));
         }
@@ -181,6 +184,15 @@ impl ChangeRequest {
                 ));
             }
             PatchField::Value(briefing) => settings.briefing = briefing.into(),
+        }
+        match self.deployment_capacity {
+            PatchField::Missing => {}
+            PatchField::Null => {
+                return Err(CoreError::InvalidRequest(
+                    "'deployment_capacity' cannot be null; send its three nullable fields".into(),
+                ));
+            }
+            PatchField::Value(capacity) => settings.deployment_capacity = capacity,
         }
         match self.size_bounds {
             PatchField::Missing => {}

@@ -304,9 +304,9 @@ impl SessionService {
             tracing::warn!(session_id = %id, %error, "conversation input was not delivered");
             match error {
                 AdapterError::Unavailable(detail) => CoreError::RuntimeUnavailable(detail),
-                AdapterError::Rejected(detail) | AdapterError::Unsupported(detail) => {
-                    CoreError::RuntimeRefused(detail)
-                }
+                AdapterError::Rejected(detail)
+                | AdapterError::AtCapacity(detail)
+                | AdapterError::Unsupported(detail) => CoreError::RuntimeRefused(detail),
             }
         })
     }
