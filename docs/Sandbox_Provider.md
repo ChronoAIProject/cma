@@ -31,7 +31,7 @@ sandboxes were created and removed through the provider API, all inside the
 |---|---|---|
 | Per-sandbox limits | **Honoured.** Pod requests and limits exactly matched three different requested shapes. | A hosted runtime receives the reservation rendered by `SandboxShape::limits_for`. The provider response does not echo that reservation, so code must not claim an independently confirmed applied value from `SandboxStatus`. |
 | Over-capacity request | **Asynchronous.** The POST produced no bytes before the 240-second client timeout. The provider object stayed `Pending / BATCHSANDBOX_PENDING`; only a Kubernetes event named the admission failure. | A deployment-side ledger can refuse the predictable case. This provider exposes no specific late capacity signal that `SandboxClient` can safely map to a named error. |
-| Guest resource interfaces | **No requested-limit denominator.** The gVisor guest exposed cgroup v1 with unlimited memory and CPU sentinels, no cgroup v2 files, and no `/sys/class/net`. | The current supervisor cannot report live CPU, memory, pressure, OOM counters, or network from the interfaces its sampler reads. Absence must remain absence. |
+| Guest resource interfaces | **No requested-limit denominator.** The gVisor guest exposed cgroup v1 with unlimited memory and CPU sentinels, no cgroup v2 files, and no `/sys/class/net`. | The supervisor may report the v1 usage counters and may fall back to `/proc/net/dev` where it exists. The hidden limits, v2 pressure and OOM counters remain absent; a requested reservation is not an observed denominator. |
 | Death reason | **Does not name the cause.** A kernel-proven OOM became provider `Pending / CREATING`; timeout and delete became immediate not-found responses. | The provider can establish that a runtime is no longer serving. It cannot provide an OOM verdict for this build. |
 
 These answers are specific to the versions and context above. A provider or
@@ -210,23 +210,24 @@ The available v1 denominator files did not reflect the pod reservation:
 ```
 
 Both different-size controls returned the same unlimited sentinels. Numeric
-`memory.usage_in_bytes` and `cpuacct.usage` existed, but using them against
-those sentinels would draw a misleading percentage and would still omit the
-v2 pressure and OOM event counters.
+`memory.usage_in_bytes` and `cpuacct.usage` existed. The supervisor reads those
+usage counters but treats the sentinels as absent limits, so it does not draw a
+misleading percentage. The v2 pressure and OOM event counters remain absent.
 
 `/sys/class/net` was absent, so interface names and their `rx_bytes` and
-`tx_bytes` counters could not be listed. `Sampler::read_network` consequently
-has no source on this provider.
+`tx_bytes` counters could not be listed. The probe did not record
+`/proc/net/dev`; the sampler uses its non-loopback counters only as a fallback
+when that proc file is present and sysfs has no usable interface.
 
 The top-level `/sys/fs/cgroup` tmpfs was mounted read-only; controller mounts
 were readable. The pod spec did not set `readOnlyRootFilesystem` (the
 Kubernetes default is false), dropped `NET_RAW`, used RuntimeDefault seccomp,
 and ran the application as uid 10001.
 
-The supervisor correctly represents missing reads as absent fields. However,
-advertising a resource capability merely because frames arrive would overstate
-what this provider reports: on the observed production path, the v2-only
-sampler resolves no cgroup and the network root does not exist.
+The supervisor represents missing reads as absent fields and advertises the
+resource lane in readiness only when a sample contains an observation beyond
+its monotonic clock. An uptime-only frame is neither sent nor forwarded by the
+control plane, so the route's existence alone cannot imply useful reporting.
 
 ## 5. Death and reclamation
 
