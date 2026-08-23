@@ -11,8 +11,9 @@
   flex: none;
   gap: 12px;
   align-items: center;
+  min-height: 52px;
   /*
-   * Symmetric. It was `12px 28px 0 20px`, so a 36px control in a 49px band sat
+   * Symmetric. It was `12px 28px 0 20px`, so a 32px control in a 49px band sat
    * one pixel off the hairline while everything above it had a dozen — the row
    * read as having slipped down rather than as having been placed.
    */
@@ -68,8 +69,32 @@
  * attached to the row rather than as part of it.
  */
 .sessionheader__kernel {
+  min-width: 0;
+  overflow: hidden;
   color: var(--dsw-alias-label-tertiary);
   font-family: var(--ds-font-family-code);
   font-size: 14px;
   line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * On a phone the facts keep one compact row and the controls take the next.
+ * Squeezing both into one row made the lifecycle key overlap the state pill.
+ */
+@media (max-width: 29.999rem) {
+  .sessionheader {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .sessionheader__kernel {
+    flex: 1;
+  }
+
+  .sessionheader__spacer {
+    display: none;
+  }
 }

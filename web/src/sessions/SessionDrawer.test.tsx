@@ -87,6 +87,9 @@ describe('the session header', () => {
       'aria-haspopup',
       'menu',
     );
+    for (const name of ['Manage lifecycle', 'Details', 'More actions']) {
+      expect(screen.getByRole('button', { name })).toHaveClass('button--sm');
+    }
     // Nothing loose beside them: every lifecycle act is inside the one key.
     expect(screen.queryByRole('button', { name: /^reconnect$/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^resume$/i })).toBeNull();
