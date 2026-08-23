@@ -1,10 +1,14 @@
 # Rust
 api/target/
+sdk/rust/target/
 
 # Node
 web/node_modules
 web/dist/
 web/coverage/
+sdk/typescript/node_modules/
+sdk/typescript/dist/
+sdk/typescript/coverage/
 
 # Editors / OS
 .DS_Store
