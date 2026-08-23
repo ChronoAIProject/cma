@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 366 368" width="732" height="736" role="img" aria-label="CMA — ChronoAI Managed Agent">
+  <g transform="translate(87.1 16) scale(1.918)">
+    <path d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="#0E61AC" stroke-width="11" stroke-linecap="round"></path>
+    <path d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="#0E61AC" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+    <rect x="30" y="38" width="17" height="12" rx="4" fill="#0E61AC"></rect>
+    <rect x="53" y="38" width="17" height="12" rx="4" fill="#0E61AC"></rect>
+    <path d="M46 44 L54 44" fill="none" stroke="#0E61AC" stroke-width="4"></path>
+  </g>
+  <text x="183" y="309" text-anchor="middle" font-family="'Archivo', 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="88" letter-spacing="-2.6" fill="#0E61AC">CMA</text>
+  <text x="183" y="348" text-anchor="middle" font-family="'IBM Plex Mono', ui-monospace, monospace" font-weight="400" font-size="14" letter-spacing="6.4" fill="#15283C" opacity=".62">CHRONOAI MANAGED AGENT</text>
+</svg>

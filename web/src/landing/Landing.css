@@ -60,6 +60,8 @@
   width: clamp(200px, 52vmin, 560px);
   aspect-ratio: 100 / 69;
   overflow: hidden;
+  color: var(--dsw-alias-brand-primary);
+  filter: none;
   /*
    * The bob begins where the drawing ends. The mark's own file draws its arc,
    * then its base, then its lenses, and fades in the bridge last at 1.78s over
@@ -73,6 +75,11 @@
    * the arc off at the peak of every bounce.
    */
   animation: landing-bob 1.9s var(--ds-ease-in-out) 2.1s infinite;
+}
+
+/* The whole-value token is `none` in Inkwell and the bounded lime glow in Lumen. */
+body[data-ds-dark-theme] .landing__mark {
+  filter: drop-shadow(var(--dsw-glow-accent));
 }
 
 /*
