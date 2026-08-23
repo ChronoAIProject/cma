@@ -235,7 +235,7 @@ describe('what it refuses, by name, on screen', () => {
 
     // §18.5: a session with no usage grant has often spent a great deal, and
     // drawing that as 0 is the one answer that is certainly wrong.
-    expect(await screen.findByText(/not reported/i)).toBeInTheDocument();
+    expect(await screen.findByText('Usage not reported for this session')).toBeInTheDocument();
   });
 });
 
