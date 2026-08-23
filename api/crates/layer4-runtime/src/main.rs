@@ -1,4 +1,4 @@
-//! chrono-bot sandboxed agent runtime.
+//! CMA sandboxed agent runtime.
 //!
 //! Runs in the bot pod, one per session. Supervises the agent kernel under a
 //! real pseudo-terminal and relays that terminal to the control plane over a
