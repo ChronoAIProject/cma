@@ -136,6 +136,7 @@ impl Default for FakeAdapter {
                 steer: false,
                 interrupt: false,
                 usage: false,
+                resources: false,
             },
         }
     }
