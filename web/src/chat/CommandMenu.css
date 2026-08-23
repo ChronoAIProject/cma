@@ -1,5 +1,5 @@
 /*
- * The kernel's commands, over the composer — §18.4 and §3's plate.
+ * The kernel's commands, over the composer — §13 and §5's plate.
  *
  * It floats, so it takes the plate lift rather than the resting one: §3 has
  * two levels and no others, one for a thing resting on the page and one for a
@@ -9,32 +9,32 @@
  */
 .cmdmenu {
   position: absolute;
-  bottom: calc(100% + var(--space-1));
+  bottom: calc(100% + 4px);
   left: 0;
   z-index: 2;
   max-height: 240px;
   width: 100%;
   overflow-y: auto;
   margin: 0;
-  padding: var(--space-1);
+  padding: 4px;
   list-style: none;
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
-  box-shadow: var(--lift-plate);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  box-shadow: var(--dsw-shadow-lv3);
 }
 
 .cmdmenu__item {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: baseline;
   width: 100%;
-  padding: var(--space-1) var(--space-2);
-  color: var(--ink);
+  padding: 4px 8px;
+  color: var(--dsw-alias-label-primary);
   text-align: left;
   background: none;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -45,7 +45,7 @@
  */
 .cmdmenu__item[data-active='true'],
 .cmdmenu__item:hover {
-  background: var(--inset);
+  background: var(--dsw-alias-bg-layer-3);
 }
 
 .cmdmenu__item:focus-visible {
@@ -56,8 +56,8 @@
 /* The kernel's own word for the command, in the face commands are written in. */
 .cmdmenu__name {
   flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
 }
 
 /*
@@ -67,8 +67,8 @@
  */
 .cmdmenu__what {
   overflow: hidden;
-  color: var(--ink-3);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }

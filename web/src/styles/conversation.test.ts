@@ -9,11 +9,17 @@ const sheet = (name: string) => resolve(CHAT, name);
 describe('the migrated conversation sheets', () => {
   it('use no migration shim beyond the shared and responsive exemptions', () => {
     const sheets = [
+      sheet('ConversationSurface.css'),
       sheet('MessageStream.css'),
       sheet('Composer.css'),
+      sheet('ToolCall.css'),
       sheet('Thinking.css'),
       sheet('ApprovalCard.css'),
+      sheet('DetailsPanel.css'),
       sheet('SignInCard.css'),
+      sheet('CommandMenu.css'),
+      sheet('CopyKey.css'),
+      sheet('Usage.css'),
     ];
     expect(
       migrationShimOffences(sheets, ['--focus-ring', '--read-column', '--page-gutter']),
@@ -44,6 +50,14 @@ describe('the migrated conversation sheets', () => {
     expect(thinking).toMatch(/color-mix\(in srgb, var\(--dsw-alias-bg-base\) 60%, transparent\)/);
     expect(thinking).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.thinking__key::after\s*\{[^}]*animation: none[^}]*opacity: 0/,
+    );
+  });
+
+  it('leaves agent links and task boxes in the inherited prose vocabulary', () => {
+    const stream = readFileSync(sheet('MessageStream.css'), 'utf8');
+    expect(stream).toMatch(/\.agent__link\s*\{[^}]*color: inherit/);
+    expect(stream).toMatch(
+      /\.agent__check\s*\{[^}]*accent-color: var\(--dsw-alias-label-tertiary\)/,
     );
   });
 });
