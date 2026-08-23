@@ -363,16 +363,15 @@
 }
 
 /*
- * A hairline rather than a fill. §2: in light every background layer is the
- * same white as the page, so a row distinguished only by `bg-layer-2` has no
- * visible container there — the rule this sheet would otherwise have broken is
- * the one written down after a pill was found drawing white on white.
+ * The reference skeleton ground stays visible on the flat light ramp. Its
+ * sweep is composed from the appearance's own white-bearing alias: the page
+ * ground in Inkwell and primary ink in Lumen.
  */
 .rail__ghost {
   position: relative;
   height: 32px;
   overflow: hidden;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-alias-bg-skeleton);
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
 }
@@ -383,11 +382,20 @@
   background: linear-gradient(
     90deg,
     transparent,
-    var(--dsw-alias-interactive-bg-hover),
+    color-mix(in srgb, var(--dsw-alias-bg-base) 65%, transparent),
     transparent
   );
   content: '';
   animation: rail-sweep 2.6s var(--ds-ease-in-out) infinite;
+}
+
+body[data-ds-dark-theme] .rail__ghost::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent),
+    transparent
+  );
 }
 
 @keyframes rail-sweep {
@@ -407,5 +415,6 @@
 @media (prefers-reduced-motion: reduce) {
   .rail__ghost::after {
     animation: none;
+    content: none;
   }
 }

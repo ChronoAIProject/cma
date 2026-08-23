@@ -1,5 +1,5 @@
 /*
- * Canvas mode — docs/Web_Style.md §15 is the source of truth for every value
+ * Canvas mode — docs/Web_Style.md §18 is the source of truth for every value
  * here.
  *
  * The canvas takes the console's middle column, so the rail and the details
@@ -14,7 +14,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--ground);
+  background: var(--dsw-alias-bg-base);
 }
 
 .canvas__viewport {
@@ -26,7 +26,7 @@
 }
 
 /*
- * §13: the surface overflows on purpose and says so — a fade at the trailing
+ * §18: the surface overflows on purpose and says so — a fade at the trailing
  * edge, so a viewport narrower than the grid reads as pannable rather than
  * clipped. Sticky against the viewport's scroll, and never over a control.
  */
@@ -36,22 +36,22 @@
   right: 0;
   z-index: 5;
   float: right;
-  width: var(--space-12);
+  width: 48px;
   height: 100%;
-  margin-left: calc(-1 * var(--space-12));
+  margin-left: -48px;
   pointer-events: none;
-  background: linear-gradient(to right, transparent, var(--ground));
+  background: linear-gradient(to right, transparent, var(--dsw-alias-bg-base));
 }
 
 /* The pan affordance, with the session count. Below the viewport, never
  * panned away from. */
 .canvas__pan {
   align-self: flex-end;
-  margin: 0 var(--space-4) var(--space-2);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
+  margin: 0 16px 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -59,9 +59,9 @@
   display: grid;
   grid-template-columns: repeat(var(--canvas-columns, 1), var(--canvas-node-w));
   grid-auto-rows: var(--canvas-node-h);
-  gap: var(--space-4);
+  gap: 16px;
   width: max-content;
-  padding: var(--space-4);
+  padding: 16px;
   /* The background is draggable; a node is not. */
   cursor: grab;
 }
@@ -76,9 +76,9 @@
   min-width: 0;
   min-height: 0;
   cursor: default;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
 }
 
 /*
@@ -86,46 +86,46 @@
  * weight only, so it can never be mistaken for the focused node.
  */
 .node:hover {
-  border-color: var(--rule-2);
+  border-color: var(--dsw-alias-border-l2);
 }
 
 /*
  * Focus — this node, and only this node, receives keystrokes.
  *
- * §13's table: 1px --accent, the impression in accent. Hover changes weight
+ * §18's table: an accent edge and the neutral focus halo. Hover changes weight
  * within the neutral ramp and focus changes hue, so the two can never be
- * mistaken for each other, and the handle's aria-pressed carries the same fact
- * without colour at all.
+ * mistaken for each other, and the handle's aria-pressed carries the same
+ * fact without colour at all.
  */
 .node[data-focused='true'] {
-  border-color: var(--accent);
+  border-color: var(--dsw-alias-state-business-primary);
   box-shadow: var(--focus-node);
 }
 
 .node__head {
   display: flex;
   flex: none;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
-  /* §13's table: a 38px header, set rather than accumulated (§5). */
+  /* §18's table: a 38px header, set rather than accumulated (§5). */
   height: 38px;
-  padding-inline: var(--space-2);
-  border-bottom: 1px solid var(--rule);
+  padding-inline: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .node__dot {
-  margin-left: var(--space-1);
+  margin-left: 4px;
 }
 
 .node__handle {
   display: flex;
   flex: 1;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: baseline;
   min-width: 0;
   min-height: 32px;
-  font-family: var(--font-ui);
+  font-family: var(--dsw-font-family);
   text-align: left;
   white-space: nowrap;
   background: none;
@@ -133,26 +133,26 @@
 }
 
 .node__started {
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
-  color: var(--ink-2);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .node[data-focused='true'] .node__started {
-  color: var(--ink);
+  color: var(--dsw-alias-label-primary);
 }
 
 .node[data-focused='true'] .node__meta {
-  color: var(--ink);
+  color: var(--dsw-alias-label-primary);
 }
 
-/* §13: the focused node says so in words — hue is never the only carrier. */
+/* §18: the focused node says so in words — hue is never the only carrier. */
 .node__typinghere {
   flex: none;
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
+  color: var(--dsw-alias-state-business-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -160,12 +160,12 @@
 .node__meta,
 .node__readonly {
   overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  letter-spacing: 0.08em;
   text-overflow: ellipsis;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .node__body {
@@ -173,6 +173,9 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  /* xterm measures after mount. Keep its opening intrinsic width from
+     painting across the next fixed-size node before that measurement lands. */
+  overflow: hidden;
 }
 
 /*
@@ -183,6 +186,7 @@
  * apart.
  */
 .node .terminal {
+  min-width: 0;
   border: none;
 }
 
@@ -190,10 +194,10 @@
   display: flex;
   flex: 1;
   align-items: center;
-  padding: var(--space-4);
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
-  color: var(--ink-3);
+  padding: 16px;
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /*

@@ -190,6 +190,7 @@ export function SessionActions({
         }}
         anchor={
           <Button
+            size="sm"
             aria-haspopup="menu"
             aria-expanded={lifecycleOpen}
             aria-describedby={describedBy}
@@ -202,7 +203,7 @@ export function SessionActions({
         }
       />
 
-      <Button onClick={onDetails} aria-expanded={detailsOpen}>
+      <Button size="sm" onClick={onDetails} aria-expanded={detailsOpen}>
         Details
       </Button>
 
@@ -271,6 +272,7 @@ export function SessionActions({
         }}
         anchor={
           <Button
+            size="sm"
             placement="actions__more"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
