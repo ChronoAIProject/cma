@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import markUrl from '../assets/brand/cma-mark.svg';
+import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import type { CreationAbility } from '../sessions/availability';
 import { BUILD } from './build';
 import { IconNewChatOutline16, IconPanelLeftOutline16, IconSearchOutline16 } from '../ui/icons';
@@ -72,7 +72,11 @@ export function Sidebar({
           aria-describedby={describedBy}
           onClick={onCreate}
         >
-          <img className="sidebar__mark" src={markUrl} alt="" width={32} height={32} />
+          <span
+            className="sidebar__mark"
+            aria-hidden="true"
+            dangerouslySetInnerHTML={{ __html: markMarkup }}
+          />
           {collapsed ? null : <span className="sidebar__name">CMA</span>}
         </button>
         <button

@@ -32,8 +32,6 @@ const EXEMPT = new Map([
     '--canvas-columns',
     'set inline from JavaScript by SessionCanvas; the CSS fallback is deliberate',
   ],
-  ['--mark-lit', 'declared on .mark for its own descendants'],
-  ['--mark-quiet', 'declared on .mark for its own descendants'],
   ['--vscode-scrollbar-shadow', "xterm's own, carried with a #000 fallback"],
 ]);
 
