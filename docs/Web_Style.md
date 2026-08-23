@@ -231,11 +231,12 @@ load-bearing rather than stylistic: sheets that style the scrollbar resolve agai
 the tokens are declared on, and an `html`-scoped rule cannot see them.
 
 Inkwell is `light`; Lumen is `dark`. The preference is `light | dark | system`, defaulting to
-`system`, and is stored at `localStorage['chrono-bot:appearance']`. An inline script immediately
-after `<body>` resolves it before first paint — reading the stored preference, resolving `system`
-through `prefers-color-scheme`, setting `color-scheme` on the document element and toggling
-`data-ds-dark-theme` on `body`. Without it the first paint is the wrong theme and the correction is
-visible.
+`system`, and is stored at `localStorage['cma:appearance']`. During the rename window both the module
+and the inline script read this key first, fall back to a valid value under the historical
+`chrono-bot:appearance` key, and copy that value forward. The inline script immediately after
+`<body>` resolves it before first paint — resolving `system` through `prefers-color-scheme`, setting
+`color-scheme` on the document element and toggling `data-ds-dark-theme` on `body`. Without it the
+first paint is the wrong theme and the correction is visible.
 
 While the preference is `system`, a `change` listener re-applies it, so a session left open across
 sunset follows the machine.
@@ -727,6 +728,11 @@ motion that competes with the session somebody is reading.
 The kernel's own screen, unmediated. A hairline frame, the code face, and the palette derived from
 the same alias tokens the rest of the product uses — so a session's colour vocabulary is the same on
 both planes.
+
+The product palettes are persisted as `cma-dark` and `cma-light` under
+`localStorage['cma:terminal-theme']`. A valid historical `chrono-bot:terminal-theme` preference is
+copied forward, with `chronobot-dark` and `chronobot-light` normalised to those canonical ids, so the
+rename does not reset a returning person's terminal.
 
 xterm renders to canvas and cannot resolve CSS variables, so these literals are authoritative and
 are test-pinned to the aliases they duplicate. Every ANSI slot is a six-digit hex; selection is the
@@ -1272,3 +1278,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-23 | Corrected §20's wordmark and mark-depth contract while implementing #534. The themed display convention already fixed in §4 had not reached §20's table: the live wordmark now states Familjen's 700 in Inkwell and Archivo's 900 with `--ds-font-variation-display` in Lumen, while retaining its existing size and tracking. Named the light mark's warm depth as `--dsw-shadow-lv1-blur` and made the already-specified dark `--dsw-glow-accent` treatment affirmative, so the implementation chooses no unstated shadow value. |
 | 2026-08-24 | Added §12.4's treatment for a deployment-capacity refusal: the new-session dialog uses its existing alert seat, states requested and free CPU and memory, and leaves Start available because shared headroom is learned only by asking and a disabled or retained capacity state would be stale. |
 | 2026-08-24 | Renamed the frontend design authority from chrono-bot to CMA and aligned its machine-name examples with `cma`; compatibility-bound browser storage keys remain unchanged until their read-old/write-new migration. |
+| 2026-08-24 | Completed #477's browser-state migration without resetting returning users: five preferences and pending content now write only `cma:*` keys, valid historical `chrono-bot:*` values are read canonical-first and copied forward, the pre-paint appearance path follows the same rule, and the product terminal ids migrate from `chronobot-*` to `cma-*`. Pending content remains per-tab and clears both names when consumed so an old prompt cannot replay. |
