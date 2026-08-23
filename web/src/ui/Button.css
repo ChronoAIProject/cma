@@ -1,5 +1,5 @@
 /*
- * The button capsule — `docs/Web_Style.md` §7.
+ * The button — `docs/Web_Style.md` §12.
  *
  * Geometry is literal pixels rather than tokens, which is the token layer's
  * own rule: a spacing scale invites a control to take the step above when the
@@ -18,7 +18,7 @@
   line-height: 22px;
   background: transparent;
   border: none;
-  border-radius: 18px;
+  border-radius: 10px;
   cursor: pointer;
 }
 
@@ -33,15 +33,26 @@
 }
 
 .button--md {
-  height: 36px;
+  height: 40px;
 }
 
 .button--sm {
-  height: 28px;
+  height: 32px;
   padding: 0 10px;
   font-size: 12px;
   line-height: 18px;
-  border-radius: 14px;
+  border-radius: 6px;
+}
+
+/* An icon-only key is square at either shared height. */
+.button--md:has(> .button__icon:only-child) {
+  width: 40px;
+  padding: 0;
+}
+
+.button--sm:has(> .button__icon:only-child) {
+  width: 32px;
+  padding: 0;
 }
 
 .button--primary {
@@ -51,6 +62,11 @@
 
 .button--primary:hover:not(:disabled) {
   background: var(--dsw-alias-button-primary-hover);
+  box-shadow: var(--dsw-shadow-accent-hover);
+}
+
+.button--primary:active:not(:disabled) {
+  background: var(--dsw-alias-button-primary-active);
 }
 
 .button--ghost:hover:not(:disabled) {
@@ -64,11 +80,12 @@
 /* The answer that is not the primary one beside it. */
 .button--outline {
   background: transparent;
-  border: 1px solid var(--dsw-alias-border-l2);
+  border: 1px solid var(--dsw-alias-border-l3);
 }
 
 .button--outline:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 /* A control sitting on chrome rather than on a page. */
@@ -78,6 +95,24 @@
 
 .button--toolbar:hover:not(:disabled) {
   background: var(--dsw-alias-button-tool-bar-hover);
+}
+
+/* Destructive, but still only one press: confirmation remains a separate act. */
+.button--danger {
+  color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border: 1px solid var(--dsw-alias-state-error-secondary);
+}
+
+.button--danger:hover:not(:disabled) {
+  /* Two flat wash layers make the hover stronger without inventing a colour. */
+  background:
+    linear-gradient(
+      var(--dsw-alias-interactive-bg-hover-danger),
+      var(--dsw-alias-interactive-bg-hover-danger)
+    ),
+    var(--dsw-alias-interactive-bg-hover-danger);
+  border-color: var(--dsw-alias-state-error-primary);
 }
 
 .button:focus-visible {

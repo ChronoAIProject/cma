@@ -9,7 +9,7 @@ import { PlateScrim, usePlateFocus } from '../ui/plate';
 import './CommandBar.css';
 
 /**
- * The command bar — docs/Web_Style.md §6 and §7.
+ * The command bar — docs/Web_Style.md §6 and §12.
  *
  * The plate the bar's trigger opens, reaching the surfaces it can already
  * reach and no more: sessions by time and last-activity line, the two

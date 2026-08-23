@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Input } from './Input';
 
 /**
- * The text field — `docs/Web_Style.md` §7.
+ * The text field — `docs/Web_Style.md` §12.2.
  *
  * The shape being pinned is where the edge lives: on the wrapper, not on the
  * input. That is what lets a glyph sit inside the field, and it is why a field
@@ -44,7 +44,11 @@ describe('the text field', () => {
      */
     const css = readFileSync(resolve(process.cwd(), 'src/ui/Input.css'), 'utf8');
     expect(css).toMatch(/\.input\s*\{[^}]*border: 1px solid var\(--/);
+    expect(css).toMatch(/\.input\s*\{[^}]*border-radius: 10px/);
     expect(css).toMatch(/\.input:focus-within\s*\{[^}]*border-color: var\(--/);
+    expect(css).toMatch(
+      /\.input:focus-within\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
+    );
     expect(css).toMatch(/\.input__control\s*\{[^}]*border: none/);
     expect(css).toMatch(/\.input__control\s*\{[^}]*outline: none/);
   });
@@ -54,6 +58,9 @@ describe('the text field', () => {
     // has to say about itself is said with that edge rather than beside it.
     const css = readFileSync(resolve(process.cwd(), 'src/ui/Input.css'), 'utf8');
     expect(css).toMatch(/aria-invalid='true'[\s\S]*?border-color: var\(--dsw-alias-state-error/);
+    expect(css).toMatch(
+      /aria-invalid='true'[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)/,
+    );
   });
 
   it('is not the composer', () => {
@@ -61,7 +68,7 @@ describe('the text field', () => {
     // would make every search box growable, which is the actual bug that
     // sharing one would introduce rather than a stylistic preference.
     const css = readFileSync(resolve(process.cwd(), 'src/ui/Input.css'), 'utf8');
-    expect(css).toMatch(/\.input\s*\{[^}]*height: 32px/);
+    expect(css).toMatch(/\.input\s*\{[^}]*height: 44px/);
     expect(css).not.toMatch(/min-height/);
   });
 });

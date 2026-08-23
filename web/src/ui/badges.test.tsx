@@ -7,7 +7,7 @@ import { Pill } from './Pill';
 import { StateDot } from './StateDot';
 
 /**
- * The badge and the state dot — `docs/Web_Style.md` §7.
+ * The badge and the state dot — `docs/Web_Style.md` §12.1.
  *
  * These replaced one component that was both at once, and the split is the
  * point: a label with no state behind it now has no dot to mis-colour, and a
@@ -56,6 +56,15 @@ describe('the pill', () => {
     expect(css).toMatch(/\.pill--active\s*\{[^}]*box-shadow: inset/);
     expect(css).not.toMatch(/\.pill--active\s*\{[^}]*\n\s*border:/);
   });
+
+  it('uses the shared mono-uppercase badge voice', () => {
+    const css = readFileSync(join(SRC, 'ui', 'Pill.css'), 'utf8');
+    expect(css).toMatch(/\.pill\s*\{[^}]*height: 24px[^}]*border-radius: 12px/);
+    expect(css).toMatch(/\.pill\s*\{[^}]*font-family: var\(--ds-font-family-code\)/);
+    expect(css).toMatch(/\.pill\s*\{[^}]*font-size: 10\.5px/);
+    expect(css).toMatch(/\.pill\s*\{[^}]*letter-spacing: 0\.14em/);
+    expect(css).toMatch(/\.pill\s*\{[^}]*text-transform: uppercase/);
+  });
 });
 
 describe('the state dot', () => {
@@ -68,32 +77,23 @@ describe('the state dot', () => {
     expect(dot).toHaveAttribute('aria-hidden', 'true');
   });
 
-  it('draws running as a chase rather than a colour', () => {
-    // "Running" is a claim about right now, and a still dot cannot say
-    // whether it is still true.
+  it('draws running as a live core with one ping ring', () => {
+    // The word supplied by the caller remains the signal; the one ring is a
+    // second visual claim that this state is happening right now.
     const { container } = render(<StateDot state="ongoing" />);
-    expect(container.querySelector('.statedot')).toBeNull();
-    expect(container.querySelectorAll('.statedot__cell')).toHaveLength(8);
+    const dot = container.querySelector('.statedot');
+    expect(dot).toHaveAttribute('data-state', 'ongoing');
+    expect(dot).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelectorAll('.statedot__ping')).toHaveLength(1);
   });
 
-  it('starts the chase mid-cycle so it is already running at mount', () => {
-    // Every cell carries a negative delay. Without them the ring assembles
-    // itself over the first second, which reads as loading rather than as
-    // running.
-    const { container } = render(<StateDot state="ongoing" />);
-    const delays = [...container.querySelectorAll<HTMLElement>('.statedot__cell')].map(
-      (cell) => cell.style.animationDelay,
+  it('sends the ring on one quiet, token-eased loop', () => {
+    const css = readFileSync(join(SRC, 'ui', 'StateDot.css'), 'utf8');
+    expect(css).toMatch(
+      /\.statedot__ping\s*\{[^}]*animation: statedot-ping 1\.8s var\(--ds-ease-in-out\) infinite/,
     );
-    expect(delays).toEqual([
-      '-1000ms',
-      '-875ms',
-      '-750ms',
-      '-625ms',
-      '-500ms',
-      '-375ms',
-      '-250ms',
-      '-125ms',
-    ]);
+    expect(css).toMatch(/@keyframes statedot-ping[\s\S]*transform: scale\(2\.4\)/);
+    expect(css).not.toContain('statedot__cell');
   });
 
   it('takes the size it is given', () => {
@@ -107,6 +107,8 @@ describe('the state dot', () => {
     // A reduced-motion request is not a preference about this component; it
     // is the answer for anything that would otherwise animate indefinitely.
     const css = readFileSync(join(SRC, 'ui', 'StateDot.css'), 'utf8');
-    expect(css).toMatch(/prefers-reduced-motion: reduce[\s\S]*animation: none/);
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.statedot__ping\s*\{[^}]*display: none[^}]*animation: none/,
+    );
   });
 });

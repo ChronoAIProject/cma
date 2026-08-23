@@ -11,27 +11,24 @@
 
 /* ── Depth, §3 and §20.1 ──────────────────────────────────────────────────
  *
- * Two levels. A thing resting on the page carries --lift-rest; a thing floating
- * over it carries --lift-plate and never moves. Nothing translates on hover:
+ * Two levels. A thing resting on the page carries level 1; a thing floating
+ * over it carries level 3 and never moves. Nothing translates on hover:
  * hover tints the background, active tints it further, and that is the whole
  * vocabulary.
  *
- * §20.1 adds the part that makes one rule work in both themes: an edge is
- * drawn by shadow in light and by hairline in dark. `--edge-hairline` is
- * transparent in light, where the shadow is doing it, and a faint white in
- * dark, where a black shadow is invisible against a dark ground. So every
+ * The alias layer supplies the theme-specific edge and depth, so every
  * floating surface declares both and neither theme needs its own rule.
  */
 
 .lift {
-  box-shadow: var(--lift-rest);
+  box-shadow: var(--dsw-shadow-lv1);
 }
 
 .plate {
-  background: var(--raised);
-  border: 1px solid var(--edge-hairline);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-plate);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 14px;
+  box-shadow: var(--dsw-shadow-lv3);
 }
 
 /*
@@ -64,19 +61,19 @@
 }
 
 /*
- * §7: controls are disabled, never removed, and the reason is stated on the
+ * §12: controls are disabled, never removed, and the reason is stated on the
  * surface — once per row, beside the controls it explains, never in a tooltip
  * and never repeated on each key.
  */
 .control-reason {
   overflow: hidden;
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ── Fields, §7 ───────────────────────────────────────────────────────── */
+/* ── Fields, §12.2 ───────────────────────────────────────────────────── */
 
 /*
  * `align-items` folded in from the duplicate this replaced: it won by load
@@ -85,7 +82,7 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: flex-start;
 }
 
@@ -97,24 +94,25 @@
  * What is written here is what everything was already getting.
  */
 .field__label {
-  color: var(--ink-3);
-  font-family: var(--font-ui);
-  font-size: var(--text-label);
-  line-height: var(--leading-ui);
-  letter-spacing: var(--track-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 .field__hint {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .field__error {
-  color: var(--fail);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .record {
@@ -124,19 +122,19 @@
   padding: 0;
   list-style: none;
   overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
 }
 
 /* Rows are read one at a time: no zebra striping, no hover, nothing navigates. */
 .record__row {
   display: grid;
   grid-template-columns: 190px 1fr auto;
-  gap: var(--space-4);
+  gap: 16px;
   align-items: center;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--rule);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .record__row:last-child {
@@ -144,33 +142,33 @@
 }
 
 .record__at {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .record__primary {
-  color: var(--ink);
-  font-size: var(--text-body);
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
 }
 
 .record__meta {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
 }
 
 /* An identifier is drawn as an identifier, so nobody reads it as a name. */
 .record__identifier {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
 }
 
 .record__empty {
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
 }
 
 /* ── Cards and notices, §3, §12 ──────────────────────────────────────────
@@ -181,18 +179,18 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 12px;
   min-width: 0;
-  padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  padding: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
 }
 
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: var(--space-3);
+  gap: 12px;
   align-items: stretch;
 }
 
@@ -203,39 +201,39 @@
  */
 .notice {
   display: flex;
-  gap: var(--space-3);
+  gap: 12px;
   align-items: flex-start;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  border-radius: 10px;
 }
 
 .notice--fail {
-  background: var(--fail-wash);
-  border: 1px solid var(--fail);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-left: 2px solid var(--dsw-alias-state-error-primary);
 }
 
 .notice--quiet {
-  background: var(--raised);
-  border: 1px solid var(--rule);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
 }
 
 .notice__title {
-  color: var(--ink);
-  font-size: var(--text-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
 }
 
 .notice__detail {
-  color: var(--ink-2);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
 }
 
 /* ── Section labels ─────────────────────────────────────────────────────── */
 
 .eyebrow {
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
@@ -245,16 +243,16 @@
  */
 
 .tone-ink-live {
-  color: var(--live);
+  color: var(--dsw-alias-state-success-primary);
 }
 .tone-ink-wait {
-  color: var(--wait);
+  color: var(--dsw-alias-state-warn-primary);
 }
 .tone-ink-fail {
-  color: var(--fail);
+  color: var(--dsw-alias-state-error-primary);
 }
 .tone-ink-ended {
-  color: var(--ended);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* ── Waiting, §8 and §11 ─────────────────────────────────────────────────
@@ -264,7 +262,7 @@
  */
 
 .pulse {
-  animation: pulse-dot 1.4s ease-in-out infinite;
+  animation: pulse-dot 1.4s var(--ds-ease-in-out) infinite;
 }
 
 @keyframes pulse-dot {
@@ -279,21 +277,48 @@
 
 .progress {
   height: 3px;
-  overflow: hidden;
-  background: var(--inset);
-  border-radius: var(--radius-pill);
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 999px;
 }
 
 .progress__fill {
   height: 100%;
-  background: var(--wait);
-  border-radius: var(--radius-pill);
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: 999px;
+  box-shadow: var(--dsw-glow-accent);
+}
+
+/* A shared loading ground with one quiet sweep, and no new tone vocabulary. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-skeleton);
+}
+
+.skeleton::after {
+  position: absolute;
+  background: linear-gradient(90deg, transparent, var(--dsw-alias-bg-skeleton), transparent);
+  content: '';
+  animation: skeleton-shimmer 1.6s var(--ds-ease-in-out) infinite;
+  inset: 0;
+  transform: translateX(-100%);
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pulse {
     animation: none;
     opacity: 1;
+  }
+
+  .skeleton::after {
+    display: none;
+    animation: none;
   }
 }
 
@@ -311,20 +336,20 @@
 .collapse-handle {
   display: grid;
   place-items: center;
-  width: var(--hit);
-  height: var(--hit);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
+  width: 32px;
+  height: 32px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
   line-height: 1;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: 8px;
 }
 
 .collapse-handle:hover {
-  color: var(--ink);
-  border-color: var(--rule-2);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-border-l2);
 }
 
 .collapse-handle:focus-visible {

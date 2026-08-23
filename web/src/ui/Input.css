@@ -1,5 +1,5 @@
 /*
- * The text field — `docs/Web_Style.md` §7.
+ * The text field — `docs/Web_Style.md` §12.2.
  *
  * `inline-flex` rather than `flex`, so a field sits in a row beside a label
  * without a wrapper of its own; surfaces that want it full width say so with
@@ -10,24 +10,22 @@
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  height: 32px;
-  padding: 0 8px;
+  height: 44px;
+  padding: 0 12px;
   background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
-/*
- * Focus is shown by the border rather than by an added ring, because the
- * field already has an edge and a ring outside it would make the control
- * appear to grow.
- */
+/* The whole-value ring does not enter layout, so focus never grows the field. */
 .input:focus-within {
-  border-color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-ring-accent-soft);
 }
 
 /* Invalid is stated on the wrapper for the same reason focus is. */
 .input:has(.input__control[aria-invalid='true']) {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
   border-color: var(--dsw-alias-state-error-primary);
 }
 
