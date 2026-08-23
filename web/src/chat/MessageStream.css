@@ -95,7 +95,7 @@
 
 /*
  * The owner's turn is a bubble; the agent's runs the full measure unboxed —
- * §20.6.
+ * §13.
  *
  * Shape tells the two roles apart, which is what lets the ink stop doing it.
  * The owner's turns are short and are theirs, so they sit right and carry a
@@ -151,24 +151,6 @@
   font-size: var(--text-read);
   line-height: var(--leading-read);
   text-wrap: pretty;
-}
-
-/*
- * The owner's turn — §18.1: a block, right-aligned, on the inset, at most 78%
- * of the column, with the trailing corner tightened so the shape points at
- * where the request came from.
- */
-.turn[data-role='user'] {
-  align-items: flex-end;
-}
-
-.turn[data-role='user'] .turn__body {
-  max-width: 78%;
-  padding: var(--space-3) var(--space-4);
-  font-size: var(--text-body);
-  background: var(--inset);
-  border-radius: var(--radius-lg);
-  border-end-end-radius: 4px;
 }
 
 /*

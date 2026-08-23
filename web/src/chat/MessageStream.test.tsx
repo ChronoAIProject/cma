@@ -83,6 +83,12 @@ describe('the equivalence rule', () => {
 });
 
 describe('a turn', () => {
+  it('defines the owner bubble and its alignment exactly once', () => {
+    const css = readCss();
+    expect(css.match(/\.turn\[data-role='user'\]\s*\{/g) ?? []).toHaveLength(1);
+    expect(css.match(/\.turn\[data-role='user'\]\s+\.turn__body\s*\{/g) ?? []).toHaveLength(1);
+  });
+
   it('tells the two roles apart by shape alone', () => {
     const state = fold([
       toEvent({ type: 'RUN_STARTED', seq: 1 }),
