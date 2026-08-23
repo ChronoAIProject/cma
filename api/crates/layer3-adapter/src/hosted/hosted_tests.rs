@@ -195,6 +195,27 @@ fn sandboxes_do_not_expire_on_a_timer() {
     );
 }
 
+#[test]
+fn provisioning_writes_both_generations_of_correlation_metadata() {
+    let mut request = spec();
+    request.created_by = Some("test-plane".to_string());
+
+    assert_eq!(
+        provisioning_metadata(&request, "test-kernel"),
+        BTreeMap::from([
+            ("cma/control-plane".to_string(), "test-plane".to_string()),
+            ("cma/kernel".to_string(), "test-kernel".to_string()),
+            ("cma/session".to_string(), "sesn_x".to_string()),
+            (
+                "chrono-bot/control-plane".to_string(),
+                "test-plane".to_string(),
+            ),
+            ("chrono-bot/kernel".to_string(), "test-kernel".to_string()),
+            ("chrono-bot/session".to_string(), "sesn_x".to_string()),
+        ])
+    );
+}
+
 #[tokio::test]
 async fn provisioning_against_a_dead_provider_reports_unavailable() {
     // Port 1 is reserved and never listening, so this exercises the failure
@@ -237,8 +258,44 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
     server.await.expect("the provider fixture completes");
 
     assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].session.as_deref(), Some("sesn_x"));
+    assert_eq!(listed[0].created_by.as_deref(), Some("test-plane"));
     assert!(!listed[0].serving);
     assert_eq!(listed[0].lost_because, Some(RuntimeLossReason::Failed));
+}
+
+#[tokio::test]
+async fn canonical_correlation_metadata_wins_over_historical_values() {
+    let (base, server) = listing_provider(serde_json::json!({
+        "items": [{
+            "id": "sbx-current",
+            "status": {"state": "Running"},
+            "metadata": {
+                "cma/session": "sesn_current",
+                "chrono-bot/session": "sesn_stale",
+                "cma/control-plane": "current-plane",
+                "chrono-bot/control-plane": "stale-plane"
+            }
+        }],
+        "pagination": {
+            "page": 1,
+            "pageSize": 100,
+            "totalItems": 1,
+            "totalPages": 1,
+            "hasNextPage": false
+        }
+    }))
+    .await;
+
+    let listed = hosted(&base)
+        .list_runtimes()
+        .await
+        .expect("the provider listing is usable");
+    server.await.expect("the provider fixture completes");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].session.as_deref(), Some("sesn_current"));
+    assert_eq!(listed[0].created_by.as_deref(), Some("current-plane"));
 }
 
 #[tokio::test]

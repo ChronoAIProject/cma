@@ -70,10 +70,18 @@ the provider-to-Kubernetes mapping:
 - the sandbox is owned by a `sandbox.opensandbox.io/v1alpha1` `BatchSandbox`
   whose name is the sandbox ID.
 
-The metadata key `chrono-bot/control-plane` is consumed by
-`HostedKernel::list_runtimes` and reconciliation. Every probe used the value
-`sizing-probe`, not `chrono-bot-prod`, so the production reconciler was not
-entitled to adopt or reclaim it.
+At the time of this probe, the historical metadata key
+`chrono-bot/control-plane` was consumed by `HostedKernel::list_runtimes` and
+reconciliation. Every probe used the value `sizing-probe`, not
+`chrono-bot-prod`, so the production reconciler was not entitled to adopt or
+reclaim it.
+
+Current provisioning writes `cma/control-plane`, `cma/session`, and
+`cma/kernel` as the canonical keys and duplicates the same values under their
+historical `chrono-bot/*` counterparts. Reconciliation prefers each canonical
+ownership value and falls back to the historical value when it is absent. The
+fallback cannot be removed until a complete provider listing proves that no
+live pre-rename sandbox still depends on it.
 
 ## 2. Per-sandbox reservations
 
