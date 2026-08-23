@@ -63,23 +63,23 @@ pub(super) async fn declare() -> Json<serde_json::Value> {
             // A client is told where it does live — a state delta says when a
             // session's plane changed, and REST is where one is asked for.
             "custom": {
-                "chrono:terminal": false,
-                "chrono:usage": true,
-                "chrono:changePlane": false,
-                "chrono:planeChangeObserved": true,
-                "chrono:resources": true,
+                "cma:terminal": false,
+                "cma:usage": true,
+                "cma:changePlane": false,
+                "cma:planeChangeObserved": true,
+                "cma:resources": true,
                 // The run stream also carries what is happening right now, not
                 // only what has happened. Those frames are marked
-                // `chrono:live` and carry no SSE id: they are not in the
+                // `cma:live` and carry no SSE id: they are not in the
                 // durable log and a client must never resume from one.
                 // Declared so a client can size its handling rather than
                 // discover the marker on a frame it has already mishandled.
-                "chrono:liveFrames": true
+                "cma:liveFrames": true
             }
         },
         "conformsTo": [
-            "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/agui-core",
-            "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals"
+            "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
         ]
     }))
 }

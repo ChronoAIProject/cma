@@ -50,8 +50,8 @@ const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
   last_seq: 4,
   created_at: `2026-08-20T0${String(6 - index)}:00:00Z`,
   conforms_to: [
-    'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core',
-    'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation',
+    'https://spec.chrono-ai.fun/cma/1.0/conf/core',
+    'https://spec.chrono-ai.fun/cma/1.0/conf/conversation',
   ],
 }));
 

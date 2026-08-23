@@ -122,7 +122,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                 serde_json::json!({
                     "toolCallId": call_id,
                     "toolCallName": title,
-                    "chrono:toolKind": kind,
+                    "cma:toolKind": kind,
                 }),
             )];
             if let Some(arguments) = arguments {
@@ -131,7 +131,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                     serde_json::json!({
                         "toolCallId": call_id,
                         "delta": arguments.text,
-                        "chrono:truncated": arguments.truncated,
+                        "cma:truncated": arguments.truncated,
                     }),
                 ));
             }
@@ -147,7 +147,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
         } => {
             let mut events = vec![make(
                 "TOOL_CALL_END",
-                serde_json::json!({ "toolCallId": call_id, "chrono:status": status }),
+                serde_json::json!({ "toolCallId": call_id, "cma:status": status }),
             )];
             if let Some(result) = result {
                 events.push(make(
@@ -155,7 +155,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                     serde_json::json!({
                         "toolCallId": call_id,
                         "content": result.text,
-                        "chrono:truncated": result.truncated,
+                        "cma:truncated": result.truncated,
                     }),
                 ));
             }
@@ -322,7 +322,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                         // one; `Web_Style.md` §11 forbids a rotating session
                         // taking the failure ink, and this is what a client
                         // distinguishes on.
-                        "chrono:returns": *status == SessionStatus::Rotating,
+                        "cma:returns": *status == SessionStatus::Rotating,
                     }),
                 )],
                 ending: Some(Ending::Failed),
@@ -484,11 +484,11 @@ fn message_id(seq: u64) -> String {
 /// The protocol's word for why a run was interrupted.
 ///
 /// The standard set does not cover what a coding agent asks about, so the
-/// document reserves a `chrono:` prefix for the rest. The runtime's own word
+/// document reserves a `cma:` prefix for the rest. The runtime's own word
 /// is carried rather than mapped, because the sets differ per kernel.
 fn reason_for(action: Option<&str>) -> String {
     match action {
-        Some(action) => format!("chrono:{action}"),
+        Some(action) => format!("cma:{action}"),
         None => "confirmation".to_string(),
     }
 }
