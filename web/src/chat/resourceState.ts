@@ -46,7 +46,11 @@ export function memoryPressureFrom(value: unknown): MemoryPressure | undefined {
   const limitBytes = figure(pressure.limitBytes);
   const occupancyPermille = figure(pressure.occupancyPermille);
   const since =
-    typeof pressure.since === 'string' && pressure.since !== '' ? pressure.since : undefined;
+    typeof pressure.since === 'string' &&
+    pressure.since !== '' &&
+    !Number.isNaN(Date.parse(pressure.since))
+      ? pressure.since
+      : undefined;
   return usedBytes === undefined ||
     limitBytes === undefined ||
     occupancyPermille === undefined ||
