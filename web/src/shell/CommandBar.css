@@ -14,30 +14,32 @@
 .commandbar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   width: 100%;
   max-width: 520px;
-  padding: var(--space-2);
+  padding: 8px;
 }
 
 .commandbar__field {
   height: 44px;
-  padding-inline: var(--space-3);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-ui);
-  background: var(--inset);
-  border: 1px solid var(--rule-2);
+  padding-inline: 12px;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 22px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
 }
 
 .commandbar__field::placeholder {
-  color: var(--ink-3);
+  color: var(--dsw-alias-label-dimmed);
 }
 
 .commandbar__field:focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring);
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-ring-accent-soft);
 }
 
 /* The results scroll inside the plate; the page never scrolls (§5). */
@@ -50,14 +52,14 @@
 }
 
 .commandbar__list .menu__item {
-  height: var(--control-h-lg);
+  height: 40px;
 }
 
 .commandbar__empty {
   margin: 0;
-  padding: var(--space-3);
-  color: var(--ink-3);
-  font-size: var(--text-note);
+  padding: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
 }
 
 /*
@@ -92,7 +94,8 @@
  */
 .commandbar__item:hover:not(:disabled),
 .commandbar__item--active:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
 }
 
 .commandbar__item:disabled {
