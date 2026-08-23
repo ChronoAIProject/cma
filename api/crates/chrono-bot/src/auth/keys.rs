@@ -335,33 +335,31 @@ impl KeyIssuer {
     ///
     /// Used to find the ones no session accounts for. Reads the name, because
     /// the name is the only record that survives this process restarting.
-    pub async fn minted_here(&self, owner_token: &str) -> Vec<(String, SessionId)> {
+    ///
+    /// NyxID 0.7.0 was driven on 2026-08-23 with
+    /// `nyxid api-key list --output json`: it returned one `keys` envelope and
+    /// no pagination metadata. Its matching server handler accepts no page
+    /// query and collects the complete database cursor. This therefore reads
+    /// one complete response rather than inventing an unsupported page shape.
+    pub async fn minted_here(
+        &self,
+        owner_token: &str,
+    ) -> Result<Vec<(String, SessionId)>, reqwest::Error> {
         let url = format!("{}{KEYS_PATH}", self.base_url);
-        let listing: KeyListing = match self
+        let listing: KeyListing = self
             .http
             .get(&url)
             .bearer_auth(owner_token)
             .send()
-            .await
-            .and_then(|r| r.error_for_status())
-        {
-            Ok(resp) => match resp.json().await {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::warn!(error = %e, "key listing was not usable");
-                    return Vec::new();
-                }
-            },
-            Err(e) => {
-                tracing::warn!(error = %e, "could not list minted credentials");
-                return Vec::new();
-            }
-        };
-        listing
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(listing
             .into_rows()
             .into_iter()
             .filter_map(|k| session_of(&self.deployment, &k.name).map(|s| (k.id, s)))
-            .collect()
+            .collect())
     }
 
     /// Every key this deployment named for one session on an owner's account.
@@ -370,12 +368,17 @@ impl KeyIssuer {
     /// request shape: pagination and platform response handling belong to that
     /// one path, whether a caller is sweeping an account or releasing one
     /// session after this process has forgotten what it minted.
-    pub async fn minted_for(&self, session: &SessionId, owner_token: &str) -> Vec<String> {
-        self.minted_here(owner_token)
-            .await
+    pub async fn minted_for(
+        &self,
+        session: &SessionId,
+        owner_token: &str,
+    ) -> Result<Vec<String>, reqwest::Error> {
+        Ok(self
+            .minted_here(owner_token)
+            .await?
             .into_iter()
             .filter_map(|(id, named)| (named == *session).then_some(id))
-            .collect()
+            .collect())
     }
 }
 
@@ -390,22 +393,29 @@ struct KeyRow {
 /// The platform answers either a bare array or an object wrapping one.
 ///
 /// Accepting both because which it is is not this service's decision, and a
-/// listing that fails to parse would silently stop every reclaim.
+/// listing that fails to parse would silently stop every reclaim. The wrapped
+/// shape is deliberately closed: if NyxID later advertises pagination or
+/// another completeness contract, that must fail rather than being ignored as
+/// though the first response were still the whole account.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum KeyListing {
     Bare(Vec<KeyRow>),
-    Wrapped {
-        #[serde(alias = "api_keys", alias = "items")]
-        keys: Vec<KeyRow>,
-    },
+    Wrapped(WrappedKeyListing),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrappedKeyListing {
+    #[serde(alias = "api_keys", alias = "items")]
+    keys: Vec<KeyRow>,
 }
 
 impl KeyListing {
     fn into_rows(self) -> Vec<KeyRow> {
         match self {
             Self::Bare(v) => v,
-            Self::Wrapped { keys } => keys,
+            Self::Wrapped(listing) => listing.keys,
         }
     }
 }
@@ -467,7 +477,62 @@ impl layer2_core::ServiceCatalog for ServicePicker {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use axum::{
+        extract::State,
+        http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+        response::IntoResponse,
+        routing::get,
+        Json, Router,
+    };
+
     use super::*;
+
+    #[derive(Clone)]
+    struct ListingResponse {
+        status: StatusCode,
+        body: Arc<serde_json::Value>,
+    }
+
+    async fn list_keys(
+        State(response): State<ListingResponse>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_eq!(
+            headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        (response.status, Json((*response.body).clone()))
+    }
+
+    async fn platform(
+        status: StatusCode,
+        body: serde_json::Value,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/api/v1/api-keys", get(list_keys))
+            .with_state(ListingResponse {
+                status,
+                body: Arc::new(body),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock identity platform");
+        let base = format!("http://{}", listener.local_addr().expect("mock address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock identity platform");
+        });
+        (base, server)
+    }
+
+    fn issuer(base: &str) -> KeyIssuer {
+        KeyIssuer::new(reqwest::Client::new(), base, "production")
+    }
 
     #[test]
     fn a_key_carries_the_deployment_and_the_session_it_belongs_to() {
@@ -502,6 +567,69 @@ mod tests {
         let wrapped: KeyListing =
             serde_json::from_str(r#"{"keys":[{"id":"k1","name":"n"}]}"#).expect("wrapped");
         assert_eq!(wrapped.into_rows().len(), 1);
+    }
+
+    #[test]
+    fn an_unimplemented_pagination_contract_is_not_silently_ignored() {
+        let result = serde_json::from_str::<KeyListing>(
+            r#"{"keys":[{"id":"k1","name":"n"}],"pagination":{"hasNextPage":true}}"#,
+        );
+
+        assert!(
+            result.is_err(),
+            "a response that may be partial must not parse as a complete listing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_complete_unpaginated_listing_is_not_cut_to_an_assumed_page_size() {
+        let keys = (0..125)
+            .map(|number| {
+                serde_json::json!({
+                    "id": format!("key-{number}"),
+                    "name": key_name(
+                        "production",
+                        &SessionId(format!("sesn_{number}")),
+                    ),
+                })
+            })
+            .collect::<Vec<_>>();
+        let (base, server) = platform(StatusCode::OK, serde_json::json!({ "keys": keys })).await;
+
+        let listed = issuer(&base)
+            .minted_here("owner-access")
+            .await
+            .expect("complete key listing");
+
+        assert_eq!(listed.len(), 125);
+        assert_eq!(listed[124].1, SessionId("sesn_124".into()));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_failed_listing_is_distinct_from_an_empty_account() {
+        let (empty_base, empty_server) =
+            platform(StatusCode::OK, serde_json::json!({ "keys": [] })).await;
+        let empty = issuer(&empty_base)
+            .minted_here("owner-access")
+            .await
+            .expect("empty account is a complete listing");
+        assert!(empty.is_empty());
+        empty_server.abort();
+
+        let (failed_base, failed_server) = platform(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({ "message": "listing unavailable" }),
+        )
+        .await;
+        assert!(
+            issuer(&failed_base)
+                .minted_here("owner-access")
+                .await
+                .is_err(),
+            "a failed request must not read as an empty account"
+        );
+        failed_server.abort();
     }
 
     #[test]
