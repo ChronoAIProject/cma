@@ -32,6 +32,9 @@ impl IntoResponse for Problem {
             CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
             CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
             CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
+            CoreError::InvalidPressurePolicy(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "invalid-pressure-policy")
+            }
             CoreError::InvalidSessionSize(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "invalid-session-size")
             }
@@ -171,6 +174,9 @@ mod tests {
             CoreError::SessionTerminated,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).unwrap_err()),
+            CoreError::InvalidPressurePolicy(
+                layer2_core::MemoryPressurePolicy::new(800, 780, 5, 15, 120).unwrap_err(),
+            ),
             CoreError::SizeOutOfBounds(OutOfBounds {
                 dimension: SizeDimension::CpuMillis,
                 requested: 5_000,
@@ -202,6 +208,7 @@ mod tests {
                 | CoreError::SessionTerminated
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
+                | CoreError::InvalidPressurePolicy(_)
                 | CoreError::SizeOutOfBounds(_)
                 | CoreError::SessionLimitReached { .. }
                 | CoreError::InvalidSessionSize(_)

@@ -6,7 +6,7 @@
 
 use crate::size::InvalidSessionSize;
 use crate::terminal::InvalidGeometry;
-use crate::OutOfBounds;
+use crate::{InvalidPressurePolicy, OutOfBounds};
 
 /// Errors surfaced by the core.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -41,6 +41,10 @@ pub enum CoreError {
     /// A terminal geometry with a zero dimension was supplied.
     #[error("invalid geometry: {0}")]
     InvalidGeometry(#[from] InvalidGeometry),
+
+    /// A pressure policy whose values would make its signal unreliable.
+    #[error("invalid pressure policy: {0}")]
+    InvalidPressurePolicy(#[from] InvalidPressurePolicy),
 
     /// A size this deployment will not provision.
     ///
@@ -179,6 +183,7 @@ impl CoreError {
             Self::SessionTerminated => "session_terminated",
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
+            Self::InvalidPressurePolicy(_) => "invalid_pressure_policy",
             Self::SizeOutOfBounds(_) => "size_out_of_bounds",
             Self::SessionLimitReached { .. } => "session_limit_reached",
             Self::InvalidSessionSize(_) => "invalid_session_size",
@@ -213,7 +218,7 @@ fn session_limit_message(limit: u32, live: u32) -> String {
 mod tests {
     use super::*;
     use crate::terminal::TerminalGeometry;
-    use crate::{SessionSize, SizeDimension};
+    use crate::{MemoryPressurePolicy, SessionSize, SizeDimension};
 
     /// Every variant, and the compiler is what says so.
     ///
@@ -235,6 +240,9 @@ mod tests {
             CoreError::SessionTerminated,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails")),
+            CoreError::InvalidPressurePolicy(
+                MemoryPressurePolicy::new(800, 780, 5, 15, 120).expect_err("narrow band fails"),
+            ),
             CoreError::SizeOutOfBounds(OutOfBounds {
                 dimension: SizeDimension::CpuMillis,
                 requested: 5_000,
@@ -269,6 +277,7 @@ mod tests {
                 | CoreError::SessionTerminated
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
+                | CoreError::InvalidPressurePolicy(_)
                 | CoreError::SizeOutOfBounds(_)
                 | CoreError::SessionLimitReached { .. }
                 | CoreError::InvalidSessionSize(_)
