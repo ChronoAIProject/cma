@@ -40,21 +40,60 @@ pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
 /// Port the supervisor listens on inside the sandbox.
 pub(crate) const SUPERVISOR_PORT: u16 = 9090;
 
-/// Metadata key naming the control plane that created a sandbox.
+/// Canonical metadata key naming the control plane that created a sandbox.
 ///
 /// Written at provisioning and read by reconciliation, so a provider shared
 /// between control planes can be told apart. Absent on sandboxes created before
 /// this was recorded, which reconciliation treats as its own business to decide.
-const CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
+const CREATOR_METADATA_KEY: &str = "cma/control-plane";
 
-/// Metadata key correlating a sandbox back to its session.
+/// Historical control-plane key, kept while old-only sandboxes remain live.
+const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
+
+/// Canonical metadata key correlating a sandbox back to its session.
 ///
 /// Written at provisioning and read by reconciliation, so the two must agree;
 /// naming it once is what keeps them in step.
-const SESSION_METADATA_KEY: &str = "chrono-bot/session";
+const SESSION_METADATA_KEY: &str = "cma/session";
 
-/// Metadata key naming which kernel a sandbox is running.
-const KERNEL_METADATA_KEY: &str = "chrono-bot/kernel";
+/// Historical session key, kept while old-only sandboxes remain live.
+const LEGACY_SESSION_METADATA_KEY: &str = "chrono-bot/session";
+
+/// Canonical metadata key naming which kernel a sandbox is running.
+const KERNEL_METADATA_KEY: &str = "cma/kernel";
+
+/// Historical kernel key, kept for old control planes during the transition.
+const LEGACY_KERNEL_METADATA_KEY: &str = "chrono-bot/kernel";
+
+/// Read a canonical correlation value, falling back only when it is absent.
+fn correlation_value(
+    metadata: &BTreeMap<String, String>,
+    canonical: &str,
+    legacy: &str,
+) -> Option<String> {
+    metadata
+        .get(canonical)
+        .or_else(|| metadata.get(legacy))
+        .cloned()
+}
+
+/// Give new and old control planes the same ownership facts during rollout.
+fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::from([
+        (SESSION_METADATA_KEY.to_string(), spec.session_id.clone()),
+        (
+            LEGACY_SESSION_METADATA_KEY.to_string(),
+            spec.session_id.clone(),
+        ),
+        (KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
+        (LEGACY_KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
+    ]);
+    if let Some(creator) = spec.created_by.as_ref() {
+        metadata.insert(CREATOR_METADATA_KEY.to_string(), creator.clone());
+        metadata.insert(LEGACY_CREATOR_METADATA_KEY.to_string(), creator.clone());
+    }
+    metadata
+}
 
 /// Where the supervisor serves and accepts the agent's conversation.
 const CONVERSATION_PATH: &str = "/runtime/conversation";
@@ -296,16 +335,7 @@ impl HostedKernel {
             timeout: self.shape.timeout_seconds,
             // Correlates a sandbox back to the session that owns it, so an
             // orphan can be found and reclaimed.
-            metadata: {
-                let mut m = BTreeMap::from([
-                    (SESSION_METADATA_KEY.to_string(), spec.session_id.clone()),
-                    (KERNEL_METADATA_KEY.to_string(), self.kernel.to_string()),
-                ]);
-                if let Some(creator) = spec.created_by.as_ref() {
-                    m.insert(CREATOR_METADATA_KEY.to_string(), creator.clone());
-                }
-                m
-            },
+            metadata: provisioning_metadata(spec, self.kernel),
         };
 
         let sandbox = self.client.create(&request).await?;
@@ -486,8 +516,16 @@ impl HostedKernel {
         Ok(sandboxes
             .into_iter()
             .map(|s| RuntimeListing {
-                session: s.metadata.get(SESSION_METADATA_KEY).cloned(),
-                created_by: s.metadata.get(CREATOR_METADATA_KEY).cloned(),
+                session: correlation_value(
+                    &s.metadata,
+                    SESSION_METADATA_KEY,
+                    LEGACY_SESSION_METADATA_KEY,
+                ),
+                created_by: correlation_value(
+                    &s.metadata,
+                    CREATOR_METADATA_KEY,
+                    LEGACY_CREATOR_METADATA_KEY,
+                ),
                 // Read rather than discarded. The provider reports this and
                 // this listing used to drop it, which is what let a dead
                 // sandbox count as a live one.
