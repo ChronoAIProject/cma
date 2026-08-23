@@ -2,7 +2,7 @@
 
 **Priority 4 — for agent clients.**
 
-chrono-bot exposes itself as an **MCP server**, so any MCP-speaking agent — Claude Code, Codex, Cursor, or a custom one — can delegate work to a chrono-bot session as a tool call, with no integration work beyond adding a server entry.
+CMA (ChronoAI Managed Agent) exposes itself as an **MCP server**, so any MCP-speaking agent — Claude Code, Codex, Cursor, or a custom one — can delegate work to a CMA session as a tool call, with no integration work beyond adding a server entry.
 
 See [API_Overview.md](./API_Overview.md) for the core operation set and session model.
 
@@ -14,7 +14,7 @@ Two unrelated things in this system are called MCP:
 
 | | Meaning |
 |---|---|
-| **This interface** | chrono-bot **is** an MCP server. Agents call chrono-bot. |
+| **This interface** | CMA **is** an MCP server. Agents call CMA. |
 | **Kernel MCP servers** | A session's kernel connects **out** to MCP servers to use tools. |
 
 This document describes the first. The second is session configuration, not a public interface.
@@ -71,7 +71,7 @@ Answer a pending permission request. See §4.
 
 ## 4. Approvals over MCP
 
-A tool call is request/response, which appears to leave nowhere to deliver a mid-turn approval. MCP's current revision solves this properly, and chrono-bot uses that mechanism rather than a workaround.
+A tool call is request/response, which appears to leave nowhere to deliver a mid-turn approval. MCP's current revision solves this properly, and CMA uses that mechanism rather than a workaround.
 
 When the kernel blocks, the tool call returns an **input-required** result carrying the pending request and an opaque continuation token:
 
@@ -90,7 +90,7 @@ When the kernel blocks, the tool call returns an **input-required** result carry
 
 Rules a client must honour:
 
-- **`requestState` is echoed verbatim.** It is opaque to the client, signed and bound to the subject and the originating request by chrono-bot, and it expires.
+- **`requestState` is echoed verbatim.** It is opaque to the client, signed and bound to the subject and the originating request by CMA, and it expires.
 - **The resolution uses a new JSON-RPC id.** It is a new request, not a response to the old one.
 - A client that has not declared the relevant capability at `initialize` will not be sent an interactive request; it receives a typed error instead.
 
@@ -146,7 +146,7 @@ chrono-specific capabilities live under the reverse-DNS prefix `ai.chrono/`, whi
 
 ## 7. Errors
 
-MCP defines a first-class error for "you invoked something your declared capabilities do not cover", carrying the missing capability identifiers in its data. chrono-bot uses it, and mirrors its **shape** on every other interface — a machine-readable list of what is missing beats a bare status code.
+MCP defines a first-class error for "you invoked something your declared capabilities do not cover", carrying the missing capability identifiers in its data. CMA uses it, and mirrors its **shape** on every other interface — a machine-readable list of what is missing beats a bare status code.
 
 | Condition | Result |
 |---|---|
@@ -160,6 +160,6 @@ MCP defines a first-class error for "you invoked something your declared capabil
 
 ## 8. Version policy
 
-MCP is date-versioned and maintains a deprecation registry with removal dates. chrono-bot pins a revision, supports one prior revision as a compatibility shim, and tracks the registry in CI so a scheduled removal fails a build rather than a customer's integration.
+MCP is date-versioned and maintains a deprecation registry with removal dates. CMA pins a revision, supports one prior revision as a compatibility shim, and tracks the registry in CI so a scheduled removal fails a build rather than a customer's integration.
 
 Clients should negotiate at `initialize` and never assume a revision.

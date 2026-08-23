@@ -1,10 +1,10 @@
-# The chrono-bot client SDK
+# The CMA client SDK
 
-A TypeScript client for chrono-bot's public interfaces, in `web/src/sdk/`.
+A TypeScript client for CMA's public interfaces, in `web/src/sdk/`.
 
 ## Why it exists
 
-chrono-bot is a backend service whose clients are other products' frontends and
+CMA (ChronoAI Managed Agent) is a backend service whose clients are other products' frontends and
 backends (`CLAUDE.md` §1). `web/` is the reference client, not the only one, and
 `acp-kernel`'s stated exit criterion is that a product frontend can build a chat
 interface on the public interfaces alone. Nobody had tested that claim.

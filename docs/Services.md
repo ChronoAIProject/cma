@@ -60,7 +60,7 @@ Recorded rather than recomputed, and this is the step people expect to be missin
 
 ### 7. The agent spends it
 
-The `nyxid` CLI is a baseline package and a baseline skill (`chrono-bot/src/config.rs`, `CHRONO_BASELINE_PACKAGES` and `CHRONO_BASELINE_SKILLS`), installed in `infra/runtime/Dockerfile` with a verified checksum. It reads `NYXID_URL` and `NYXID_ACCESS_TOKEN` from the environment, so it calls the loopback proxy and never tries to refresh a credential itself.
+The `nyxid` CLI is a baseline package and a baseline skill (`cma/src/config.rs`, `CHRONO_BASELINE_PACKAGES` and `CHRONO_BASELINE_SKILLS`), installed in `infra/runtime/Dockerfile` with a verified checksum. It reads `NYXID_URL` and `NYXID_ACCESS_TOKEN` from the environment, so it calls the loopback proxy and never tries to refresh a credential itself.
 
 ---
 
@@ -75,7 +75,7 @@ The `nyxid` CLI is a baseline package and a baseline skill (`chrono-bot/src/conf
 
 ## 3. What cannot be removed, and why
 
-`Baseline` (`layer2-core/src/environment.rs`), configured at startup in `chrono-bot/src/main.rs`, carries mandated packages, mandated skills and mandated services. It is applied on every profile write and every resolution, whatever the caller sent.
+`Baseline` (`layer2-core/src/environment.rs`), configured at startup in `cma/src/main.rs`, carries mandated packages, mandated skills and mandated services. It is applied on every profile write and every resolution, whatever the caller sent.
 
 These are part of what a session **is** on this platform rather than something a caller opted into. A profile that excluded the model endpoint would not be a narrower session — it would be a session that cannot think. A client that omits them still gets them, and the interface renders them as fixed rather than inviting somebody to attempt something that will be undone.
 
@@ -126,7 +126,7 @@ Until those are walked, the honest claim is that every piece of the path is buil
 
 **No credential value appears in this repository, in a log, in an activity record, or in an error.** Not in tests, not in fixtures, and nothing may be allowlisted to make a scanner pass (`CLAUDE.md` §9).
 
-What makes that checkable rather than promised is the shape of the activity classifier (`chrono-bot/src/activity/classify.rs`): a request body is parsed into a struct with a field for each parameter somebody decided may be kept, and serde discards the rest. A field added to a request later **has nowhere to land**. A denylist would have to be updated in step with every such field and would leak the first time it was not.
+What makes that checkable rather than promised is the shape of the activity classifier (`cma/src/activity/classify.rs`): a request body is parsed into a struct with a field for each parameter somebody decided may be kept, and serde discards the rest. A field added to a request later **has nowhere to land**. A denylist would have to be updated in step with every such field and would leak the first time it was not.
 
 The same reasoning runs through the rest of the path: the sandbox gets a placeholder rather than a credential, `reach` carries identifiers and names, `CHRONO_SESSION_REACHES` carries names, and the profile store's `Debug` keeps variable values out of logs.
 
