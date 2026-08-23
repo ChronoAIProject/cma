@@ -1,4 +1,4 @@
-# chrono-bot
+# CMA
 
 Managed agent service by ChronoAI. Runs coding-agent kernels (Codex, Claude Code, DeepSeek Harness) on ChronoAI
 infrastructure and exposes them over public interfaces, so end users install nothing locally.

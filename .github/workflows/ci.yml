@@ -64,7 +64,7 @@ jobs:
             && { echo "::error::layer2-core must not depend on layer1-public"; fail=1; }
           grep -qE 'layer1-public|layer2-core' api/crates/layer3-adapter/Cargo.toml \
             && { echo "::error::layer3-adapter must not depend on layer1 or layer2"; fail=1; }
-          grep -q 'layer4-runtime' api/crates/chrono-bot/Cargo.toml \
+          grep -q 'layer4-runtime' api/crates/cma/Cargo.toml \
             && { echo "::error::control plane must not depend on layer4-runtime"; fail=1; }
           exit $fail
       - name: Layer 2 is protocol- and kernel-agnostic
