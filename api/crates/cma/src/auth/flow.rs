@@ -259,13 +259,16 @@ async fn callback(
     let session = auth.issue_session(subject).await;
     // Host-only, HttpOnly, SameSite=Lax: the cookie is never readable from
     // script, and never sent on a cross-site request that could act as the user.
-    let cookie =
-        format!("{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400");
+    let cookie = issued_session_cookie(&session);
     (
         StatusCode::SEE_OTHER,
         [(header::SET_COOKIE, cookie), (header::LOCATION, "/".into())],
     )
         .into_response()
+}
+
+fn issued_session_cookie(session: &str) -> String {
+    format!("{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400")
 }
 
 pub(crate) async fn resolve_subject(
@@ -343,6 +346,14 @@ mod tests {
             },
             None,
         )
+    }
+
+    #[test]
+    fn a_new_login_issues_only_the_canonical_cookie_name() {
+        assert_eq!(
+            issued_session_cookie("secret"),
+            "cma_session=secret; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400"
+        );
     }
 
     #[tokio::test]

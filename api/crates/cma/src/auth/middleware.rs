@@ -15,14 +15,25 @@ use axum::{
 
 use layer1_public::AuthenticatedSubject;
 
-use super::{AuthState, SESSION_COOKIE};
+use super::{AuthState, LEGACY_SESSION_COOKIE, SESSION_COOKIE};
 
-pub(crate) fn session_cookie(headers: &HeaderMap) -> Option<String> {
-    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
-    raw.split(';')
-        .filter_map(|part| part.trim().split_once('='))
-        .find(|(k, _)| *k == SESSION_COOKIE)
-        .map(|(_, v)| v.to_string())
+pub(crate) fn session_cookies(headers: &HeaderMap) -> Vec<String> {
+    let Some(raw) = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Vec::new();
+    };
+
+    [SESSION_COOKIE, LEGACY_SESSION_COOKIE]
+        .into_iter()
+        .filter_map(|name| {
+            raw.split(';')
+                .filter_map(|part| part.trim().split_once('='))
+                .find(|(candidate, _)| *candidate == name)
+                .map(|(_, value)| value.to_string())
+        })
+        .collect()
 }
 
 /// Middleware attaching the authenticated subject to the request.
