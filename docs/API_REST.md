@@ -511,6 +511,57 @@ Requires the `usage` capability. Not every kernel reports token counts, and one 
 
 `input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall when the agent summarises the conversation to make room. Each such fall is recorded as a durable `context_compacted` event carrying the previous reading, the new reading and the stated ceiling where one is known.
 
+### Live sandbox resources
+
+```http
+GET /api/v1/sessions/{id}/resources
+```
+
+The latest reading is a point read beside `/usage`. It carries all fourteen
+figures the core holds, in REST's snake-case vocabulary:
+
+```json
+{
+  "reading": {
+    "cpu_millis_used": 340,
+    "cpu_millis_limit": 1000,
+    "memory_bytes_used": 892211200,
+    "memory_bytes_limit": 1073741824,
+    "memory_bytes_peak": 930086912,
+    "stall_permille": 12,
+    "ceiling_hits": 0,
+    "allocation_failures": 0,
+    "kills": 0,
+    "received_bytes": 18442,
+    "sent_bytes": 9120,
+    "received_bytes_per_second": 420,
+    "sent_bytes_per_second": 110,
+    "interval_ms": 2000
+  },
+  "observed_at": "2026-08-22T09:14:06Z",
+  "reason": null
+}
+```
+
+Every field is present. An unread level, an absent limit, and a rate without a
+predecessor are each `null`, never omitted and never zero. `observed_at` is the
+UTC RFC 3339 moment the reading reached the core.
+
+The route has five distinguishable answers:
+
+| Condition | Answer |
+|---|---|
+| The session was not granted `resources` | **422** `capability-unsupported`, with `"capability": "resources"`; never a 404 |
+| Granted, but no reading has arrived | **200**, `{"reading":null,"observed_at":null,"reason":"no_reading_yet"}` |
+| Granted, but this runtime cannot report | **200**, `{"reading":null,"observed_at":null,"reason":"runtime_does_not_report"}` |
+| A reading arrived without a ceiling | **200**, the complete reading with the limit field `null` and `reason:null` |
+| The caller cannot see the session | **404** `session-not-found`, indistinguishable from a missing id |
+
+A granted session declares
+`https://spec.chrono-ai.fun/chrono-bot/1.0/conf/resources` in its own
+`conforms_to` list. An older record whose resource grant was never written, or
+a session explicitly refused the grant, does not.
+
 ### Reserved-capacity spend
 
 ```http
