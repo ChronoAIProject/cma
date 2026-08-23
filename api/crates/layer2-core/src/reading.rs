@@ -167,4 +167,34 @@ impl SessionService {
             .map(|entry| entry.live_frames.subscribe())
             .ok_or(CoreError::SessionNotFound)
     }
+
+    /// Watch what a session is using, as it uses it.
+    ///
+    /// A sibling of `subscribe_live` rather than a widening of it: live frames
+    /// remain conversation-only, and readings have their own lag budget.
+    ///
+    /// Scoped to seeing the session rather than opening its event log. A
+    /// reading contains current resource figures, not the session's ordered
+    /// history. The named ability is checked before any receiver is handed out.
+    pub async fn subscribe_resources(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<tokio::sync::broadcast::Receiver<crate::resources::ResourceReading>, CoreError>
+    {
+        let record = self.record(id).await?;
+        if !caller.may_read_owned_by(&record.session.owner) {
+            return Err(CoreError::Forbidden);
+        }
+        record
+            .session
+            .capabilities
+            .require(crate::capabilities::Capability::Resources)?;
+        self.entries
+            .read()
+            .await
+            .get(id)
+            .map(|entry| entry.resources.subscribe())
+            .ok_or(CoreError::SessionNotFound)
+    }
 }
