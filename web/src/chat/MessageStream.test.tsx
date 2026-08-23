@@ -66,6 +66,19 @@ describe('the equivalence rule', () => {
     expect(reading.container.innerHTML).toBe(watchedHtml);
   });
 
+  it('rebuilds the complete review fixture identically after a reconnect', async () => {
+    const live = await conversationFrom('full-conversation');
+    const replayed = await conversationFrom('full-conversation', { dropAfter: 12 });
+    expect(replayed.conversation).toEqual(live.conversation);
+
+    const watching = render(<MessageStream entries={live.conversation.entries} />);
+    const watchedHtml = watching.container.innerHTML;
+    watching.unmount();
+
+    const reading = render(<MessageStream entries={replayed.conversation.entries} />);
+    expect(reading.container.innerHTML).toBe(watchedHtml);
+  });
+
   it('folds one function for both, so the two cannot disagree', async () => {
     // Not a coincidence of two code paths agreeing today: there is one path.
     const { events } = await conversationFrom('two-tool-calls');
