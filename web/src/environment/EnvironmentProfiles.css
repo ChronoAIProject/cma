@@ -1,79 +1,94 @@
 /*
  * Environment profiles — the form field, key/value row, selection list and
- * empty state patterns from docs/Web_Style.md section 6. Every value is a
- * token from that document.
+ * empty state patterns from `docs/Web_Style.md` §12. Every colour follows the
+ * appearance aliases; geometry is local to the surface.
  */
 
 .profiles {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
 .profiles__row {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
 }
 
 .profiles__text {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
   min-width: 0;
 }
 
 .profiles__name {
   overflow: hidden;
-  color: var(--ink);
-  font-size: var(--text-note);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .profiles__meta {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
-/* Form field */
+/* Form fields */
 
 /*
- * A field takes §7's control height like every other control, declared rather
- * than left to a min-height that padding then overruns. It is flat: you type
- * into it, so it carries no impression.
+ * Placement only. On an Input this class sits on the shared 44px wrapper,
+ * whose field paint and invalid state stay owned by Input.css. On a textarea
+ * the rules below provide the same vocabulary without pretending a growing
+ * prose field is a single-line Input.
  */
 .field__input {
   width: 100%;
-  height: var(--control-h);
-  padding-inline: var(--space-2);
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
-  background: var(--inset);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
 }
 
-.field__input:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-/* A textarea grows; the height above would clip it to one row. */
 textarea.field__input {
+  display: block;
   height: auto;
-  min-height: calc(var(--control-h) * 2);
-  padding-block: var(--space-2);
+  min-height: 88px;
+  padding: 10px 12px;
+  color: var(--dsw-alias-label-primary);
+  font: 14px/22px var(--dsw-font-family);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  resize: vertical;
+  transition:
+    background var(--ds-transition-duration) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration) var(--ds-ease-in-out),
+    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
-.field__input[aria-invalid='true'] {
-  border-color: var(--fail);
+textarea.field__input::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+textarea.field__input:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: var(--dsw-ring-accent-soft);
+}
+
+textarea.field__input[aria-invalid='true'] {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-color: var(--dsw-alias-state-error-primary);
 }
 
 /* Key/value rows */
@@ -81,13 +96,13 @@ textarea.field__input {
 .pairs {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   width: 100%;
 }
 
 .pair {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
 }
 
@@ -105,52 +120,83 @@ textarea.field__input {
   width: 100%;
   max-height: 240px;
   overflow-y: auto;
+  background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .selection__row {
   display: flex;
-  gap: var(--space-3);
+  gap: 12px;
   align-items: flex-start;
-  padding: var(--space-2) var(--space-3);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
   cursor: pointer;
 }
 
+.selection__row:last-child {
+  border-bottom: 0;
+}
+
 .selection__row:hover {
-  background: var(--raised);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.selection__row:focus-within {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.selection__row:has(input:disabled) {
+  cursor: default;
+}
+
+.selection__row input {
+  flex: none;
+  margin-top: 3px;
+  accent-color: var(--dsw-alias-state-business-primary);
 }
 
 .selection__text {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
   min-width: 0;
 }
 
 .selection__name {
-  color: var(--ink);
-  font-size: var(--text-note);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .selection__access {
-  margin-left: var(--space-2);
-  color: var(--ink-3);
-  font-size: var(--text-label);
-  letter-spacing: var(--track-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 .selection__description {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .empty {
-  color: var(--ink-3);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.selection > .empty {
+  padding: 12px;
 }
 
 .selection__row {
@@ -158,7 +204,8 @@ textarea.field__input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .selection__row {
+  .selection__row,
+  textarea.field__input {
     transition: none;
   }
 }
@@ -169,13 +216,16 @@ textarea.field__input {
  * competed with the field labels would read as a third kind of control.
  */
 .editor__section {
-  margin: var(--space-4) 0 0;
-  font-size: var(--text-label);
+  margin: 16px 0 0;
+  padding-top: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: var(--track-label);
-  color: var(--ink-3);
-  border-top: 1px solid var(--rule);
-  padding-top: var(--space-3);
+  border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
 .editor__section:first-of-type {
@@ -202,8 +252,16 @@ textarea.field__input {
  */
 .editor__notes {
   min-height: 96px;
-  font-family: var(--ds-font-family-code);
-  font-size: 13px;
-  line-height: 20px;
-  resize: vertical;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+@media (max-width: 29.999rem) {
+  .profiles__row {
+    flex-wrap: wrap;
+  }
+
+  .profiles__text {
+    flex-basis: 100%;
+  }
 }
