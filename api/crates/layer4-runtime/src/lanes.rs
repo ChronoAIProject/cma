@@ -46,6 +46,33 @@ pub const LANE_CONVERSATION: u8 = 0x02;
 /// missing without saying when.
 pub const LANE_CONVERSATION_GAP: u8 = 0x03;
 
+/// One resource sample this pod read from its own cgroup and interfaces.
+///
+/// Declared before anything sends one, so the number is agreed between the two
+/// programs before either uses it.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared ahead of the producer; the sampler issue that serves this lane removes this"
+    )
+)]
+pub const LANE_TELEMETRY: u8 = 0x04;
+
+/// The word for that lane in an attach query and in this pod's declaration.
+///
+/// One word, agreed at both ends, for the same reason `SWITCH_RESULT`
+/// (`link.rs:122-126`) is one word: a literal repeated in two crates is how they
+/// stop agreeing.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared ahead of the producer; the sampler issue that serves this lane removes this"
+    )
+)]
+pub const LANE_NAME_TELEMETRY: &str = "tel";
+
 /// What this pod tells a control plane the moment one connects.
 ///
 /// Sent before anything else, so a control plane can decide how to read every
@@ -115,6 +142,15 @@ mod tests {
     }
 
     #[test]
+    fn a_resource_sample_survives_the_telemetry_lane() {
+        let bytes = br#"{"sampledAtMs":42}"#;
+        let carried = frame(LANE_TELEMETRY, bytes);
+        let (lane, payload) = unframe(&carried).expect("a lane frame carries a lane");
+        assert_eq!(lane, LANE_TELEMETRY);
+        assert_eq!(payload, bytes);
+    }
+
+    #[test]
     fn terminal_bytes_are_unchanged_one_byte_along() {
         // The whole terminal plane rests on this: what the pty wrote is what
         // the client renders, byte for byte.
@@ -140,11 +176,30 @@ mod tests {
 
     #[test]
     fn every_lane_has_a_distinct_discriminator() {
-        let lanes = [LANE_TERMINAL, LANE_CONVERSATION, LANE_CONVERSATION_GAP];
+        let lanes = [
+            LANE_TERMINAL,
+            LANE_CONVERSATION,
+            LANE_CONVERSATION_GAP,
+            LANE_TELEMETRY,
+        ];
         let mut sorted = lanes.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), lanes.len(), "two lanes would be one lane");
+    }
+
+    #[test]
+    fn the_lane_numbers_match_the_control_plane_that_reads_them() {
+        // Stated twice by necessity - the control plane must not depend on this
+        // crate - and pinned here as well as there. Distinctness alone is not
+        // drift protection: renumbering a lane on one side only would leave
+        // both suites green and the two programs disagreeing.
+        assert_eq!(LANE_TERMINAL, 0x01);
+        assert_eq!(LANE_CONVERSATION, 0x02);
+        assert_eq!(LANE_CONVERSATION_GAP, 0x03);
+        assert_eq!(LANE_TELEMETRY, 0x04);
+        assert_eq!(LANE_NAME_TELEMETRY, "tel");
+        assert_eq!(WIRE_VERSION, 1);
     }
 
     #[test]
