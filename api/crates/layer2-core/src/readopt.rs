@@ -333,7 +333,7 @@ impl SessionService {
             environment_values,
             events: Vec::new(),
             screen: Arc::clone(&screen),
-            runtime: Some(handle),
+            runtime: Some(handle.clone()),
             input: terminal.as_ref().map(|c| c.input.clone()),
             live: live.clone(),
             live_frames: live_frames.clone(),
@@ -350,6 +350,12 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        crate::resources::spawn_resource_watch(
+            Arc::clone(self),
+            id.clone(),
+            Arc::clone(&adapter),
+            handle,
+        );
         if let Some(channel) = terminal {
             spawn_relay(id.clone(), channel.output, screen, live);
         }
