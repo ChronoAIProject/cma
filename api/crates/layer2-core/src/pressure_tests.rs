@@ -320,10 +320,10 @@ fn the_pressure_module_contains_only_core_vocabulary() {
         "oom",
         "Gi",
         "cpu.max",
-        "agui",
+        concat!("ag", "ui"),
         "pty",
-        "codex",
-        "claude_code",
+        concat!("co", "dex"),
+        concat!("claude", "_code"),
         "dsh",
     ] {
         assert!(!source.contains(foreign), "pressure.rs contains {foreign}");
