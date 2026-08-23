@@ -1,4 +1,4 @@
-# CMA
+# CMA (ChronoAI Managed Agent)
 
 Managed agent service by ChronoAI. This file is the contract for anyone — human or agent — working in this repository. Rules here are binding, not advisory.
 
