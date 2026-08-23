@@ -79,14 +79,13 @@ pub struct AuthState {
     /// replacement is in place. The owner is kept alongside because reclaiming
     /// a key needs their token, and by then the session may be gone.
     issued: RwLock<HashMap<SessionId, Issued>>,
-    /// Credentials replaced but not yet taken back.
+    /// Credentials no runtime will present, but which are not yet taken back.
     ///
-    /// A replacement is not safe to revoke the moment it is minted: the
-    /// session is still presenting the old one until the new value has
-    /// reached it. Holding them here for a sweep is what removes the window
-    /// entirely — by the next pass the push has long since happened, and a
-    /// credential that outlives its session by a minute is not a risk while
-    /// one that dies mid-turn is a failed request somebody is waiting on.
+    /// Usually a replaced credential: it is not safe to revoke the moment its
+    /// successor is minted because the session may still be presenting it.
+    /// Also carries an ended session's credential when its owner token is
+    /// momentarily absent. In both cases the sweep waits until revocation can
+    /// actually be attempted instead of forgetting a still-valid key.
     superseded: RwLock<Vec<(String, SubjectId)>>,
     /// What the provider has said about bearer tokens, briefly.
     ///
@@ -279,9 +278,8 @@ impl AuthState {
     /// Sessions whose credential has been held longer than `lifetime`.
     ///
     /// Age rather than a stated expiry, because the platform does not return
-    /// one when it mints. Replacing well inside the day these last means a
-    /// shortened lifetime upstream would have to halve before a session ever
-    /// presented a dead credential.
+    /// or request one when it mints. The caller chooses a local rotation
+    /// cadence independently of how long the provider accepts the key.
     pub async fn sessions_due_for_reissue(
         &self,
         lifetime: std::time::Duration,
@@ -328,19 +326,24 @@ impl AuthState {
         Some(minted.full_key)
     }
 
-    /// Take back credentials replaced on an earlier pass.
+    /// Take back credentials queued on an earlier pass or release.
     pub async fn take_back_superseded(&self) -> usize {
         let pending: Vec<(String, SubjectId)> = std::mem::take(&mut *self.superseded.write().await);
         let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
+            self.superseded.write().await.extend(pending);
             return 0;
         };
         let mut taken = 0;
+        let mut deferred = Vec::new();
         for (id, owner) in pending {
             if let Some(token) = self.access_token(&owner).await {
                 issuer.revoke(&id, &token).await;
                 taken += 1;
+            } else {
+                deferred.push((id, owner));
             }
         }
+        self.superseded.write().await.extend(deferred);
         taken
     }
 
