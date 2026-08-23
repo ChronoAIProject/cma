@@ -63,37 +63,37 @@
 }
 
 /*
- * The state band. Its ground is the state's own wash and its left edge is the
- * state's own colour, so the first thing read is what the session is doing —
- * and it is the same colour the rail and the header already use for it.
+ * The state band. Its left edge is the state's own colour over the neutral
+ * surface, so the first thing read is what the session is doing — and it is
+ * the same colour the rail and the header already use for it.
  *
  * Right padding clears the floating close key, which sits over this band.
  */
 .drawer__band {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) - 3px);
-  border-bottom: 1px solid var(--rule-2);
-  border-left: 3px solid var(--ended);
+  gap: 4px;
+  padding: 16px 16px 16px calc(16px - 3px);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  border-left: 3px solid var(--dsw-alias-label-tertiary);
   background: var(--dsw-alias-bg-layer-1);
 }
 
 .drawer__band[data-tone='live'] {
-  border-left-color: var(--live);
+  border-left-color: var(--dsw-alias-state-success-primary);
 }
 
 .drawer__band[data-tone='wait'] {
-  border-left-color: var(--wait);
+  border-left-color: var(--dsw-alias-state-warn-primary);
 }
 
 .drawer__band[data-tone='fail'] {
-  border-left-color: var(--fail);
+  border-left-color: var(--dsw-alias-state-error-primary);
 }
 
 .drawer__state {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   margin: 0;
   padding-right: 32px;
@@ -108,28 +108,28 @@
  * the drawer for; a label is not.
  */
 .drawer__statename {
-  color: var(--ink);
-  font-size: var(--text-title);
+  color: var(--dsw-alias-label-primary);
+  font-size: 17px;
   font-weight: 600;
-  line-height: var(--leading-tight);
+  line-height: 1.15;
   text-transform: capitalize;
 }
 
 .drawer__started {
   margin: 0;
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .drawer__creator {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
-  margin: var(--space-1) 0 0;
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .facts__face {
@@ -140,10 +140,10 @@
   width: 22px;
   height: 22px;
   overflow: hidden;
-  color: var(--ink-2);
-  font-size: var(--text-label);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
   font-weight: 600;
-  background: var(--inset);
+  background: var(--dsw-alias-bg-layer-3);
   border-radius: 50%;
   object-fit: cover;
 }
@@ -153,8 +153,8 @@
  * boundary draws one rule (§5) rather than doubling against the state band's.
  */
 .facts__section {
-  padding: var(--space-4);
-  border-top: 1px solid var(--rule-2);
+  padding: 16px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
 }
 
 .facts__section:first-of-type {
@@ -169,14 +169,14 @@
  */
 .facts__title {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
-  margin: 0 0 var(--space-3);
-  color: var(--ink-2);
-  font-size: var(--text-label);
+  margin: 0 0 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
   font-weight: 600;
-  line-height: var(--leading-tight);
-  letter-spacing: var(--track-label);
+  line-height: 1.15;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -188,13 +188,13 @@
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  color: var(--ink-2);
-  font-size: var(--text-label);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
-  background: var(--inset);
-  border-radius: var(--radius-pill);
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 999px;
 }
 
 /*
@@ -205,10 +205,10 @@
  * against the title and pushed away from the content for the same reason.
  */
 .facts__subtitle {
-  margin: -6px 0 var(--space-3);
-  color: var(--ink-2);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  margin: -6px 0 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 /*
@@ -219,7 +219,7 @@
 .facts__grid {
   display: grid;
   grid-template-columns: minmax(72px, 34%) 1fr;
-  gap: var(--space-3) var(--space-3);
+  gap: 12px 12px;
   margin: 0;
 }
 
@@ -228,9 +228,9 @@
 }
 
 .facts__label {
-  color: var(--ink-2);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .facts__value {
@@ -242,9 +242,9 @@
 }
 
 .facts__answer {
-  color: var(--ink);
-  font-size: var(--text-ui);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
@@ -253,17 +253,17 @@
  * of its own — an agent that asks for nothing and confines nothing.
  */
 .facts__answer[data-tone='fail'] {
-  color: var(--fail);
+  color: var(--dsw-alias-state-error-primary);
   font-weight: 600;
 }
 
 .facts__answer[data-tone='wait'] {
-  color: var(--wait);
+  color: var(--dsw-alias-state-warn-primary);
   font-weight: 600;
 }
 
 .facts__answer[data-tone='live'] {
-  color: var(--live);
+  color: var(--dsw-alias-state-success-primary);
   font-weight: 600;
 }
 
@@ -279,22 +279,22 @@
  * in both themes rather than only the one where the token happens to clear.
  */
 .facts__note {
-  color: var(--ink-2);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .facts__unknown {
-  color: var(--ink-2);
-  font-size: var(--text-ui);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 /* A band's entries — skills, services — as a list of two-line rows. */
 .facts__list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -309,16 +309,16 @@
 
 .facts__entryhead {
   display: flex;
-  gap: var(--space-2);
+  gap: 8px;
   align-items: center;
   min-width: 0;
 }
 
 .facts__entryname {
   overflow: hidden;
-  color: var(--ink);
-  font-size: var(--text-ui);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 1.55;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -342,7 +342,7 @@
 
 .facts__entrylink:focus-visible {
   outline: none;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   box-shadow: var(--focus-ring);
 }
 
@@ -352,16 +352,16 @@
  */
 .facts__entryversion {
   flex: none;
-  color: var(--ink-2);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .facts__entryid {
   overflow: hidden;
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -374,16 +374,16 @@
 .facts__entrynote {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--ink-2);
-  font-size: var(--text-meta);
-  line-height: var(--leading-ui);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
 .drawer__mono {
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
 }
 
 /*
@@ -393,19 +393,19 @@
 .drawer__id {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
   align-items: stretch;
   width: 100%;
-  padding: var(--space-2) var(--space-3);
+  padding: 8px 12px;
   text-align: left;
   cursor: pointer;
-  background: var(--inset);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
 }
 
 .drawer__id:hover {
-  background: var(--tint-hover);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .drawer__id:focus-visible {
@@ -414,9 +414,9 @@
 }
 
 .drawer__idvalue {
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
   word-break: break-all;
 }
 
@@ -428,8 +428,8 @@
  */
 .drawer__idhint {
   align-self: flex-end;
-  color: var(--ink-2);
-  font-size: var(--text-meta);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
 }
 
 /*
@@ -440,13 +440,13 @@
 .drawer__reason,
 .drawer__ending {
   margin: 0;
-  padding: var(--space-4);
-  border-top: 1px solid var(--rule-2);
-  color: var(--ink-2);
-  font-size: var(--text-note);
-  line-height: var(--leading-ui);
+  padding: 16px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .drawer__ending {
-  color: var(--fail);
+  color: var(--dsw-alias-state-error-primary);
 }
