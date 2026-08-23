@@ -173,6 +173,9 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  /* xterm measures after mount. Keep its opening intrinsic width from
+     painting across the next fixed-size node before that measurement lands. */
+  overflow: hidden;
 }
 
 /*
@@ -183,6 +186,7 @@
  * apart.
  */
 .node .terminal {
+  min-width: 0;
   border: none;
 }
 
