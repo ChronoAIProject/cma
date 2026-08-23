@@ -247,6 +247,10 @@ fn this_kernel_advertises_only_what_was_proven_of_it() {
     );
     assert!(c.steer, "input mid-turn continues the same turn");
     assert!(c.usage, "token counts arrive with every turn");
+    assert!(
+        !c.resources,
+        "the runtime watch has not been demonstrated yet"
+    );
 }
 
 #[test]

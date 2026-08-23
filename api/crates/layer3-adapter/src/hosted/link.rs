@@ -103,12 +103,30 @@ impl HostedKernel {
         handle: &RuntimeHandle,
         lanes: Option<&str>,
     ) -> Result<(Link, String), AdapterError> {
+        let extra = lanes
+            .map(|lanes| format!("&lanes={lanes}"))
+            .unwrap_or_default();
+        self.connect_with(handle, &extra).await
+    }
+
+    pub(crate) async fn connect_with(
+        &self,
+        handle: &RuntimeHandle,
+        extra_query: &str,
+    ) -> Result<(Link, String), AdapterError> {
         let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
-        let mut url = self.link_url(&endpoint.endpoint, &handle.0);
-        if let Some(lanes) = lanes {
-            url.push_str("&lanes=");
-            url.push_str(lanes);
-        }
+        self.connect_at(handle, &endpoint.endpoint, extra_query)
+            .await
+    }
+
+    pub(super) async fn connect_at(
+        &self,
+        handle: &RuntimeHandle,
+        endpoint: &str,
+        extra_query: &str,
+    ) -> Result<(Link, String), AdapterError> {
+        let mut url = self.link_url(endpoint, &handle.0);
+        url.push_str(extra_query);
         let mut request = url
             .as_str()
             .into_client_request()

@@ -182,6 +182,10 @@ mod tests {
         for pair in deployments.windows(2) {
             assert_eq!(pair[0].shape.image, pair[1].shape.image);
             assert_eq!(pair[0].shape.resource_limits, pair[1].shape.resource_limits);
+            assert_eq!(
+                pair[0].shape.telemetry_interval_ms,
+                pair[1].shape.telemetry_interval_ms
+            );
             assert_eq!(pair[0].provided_packages, pair[1].provided_packages);
         }
     }

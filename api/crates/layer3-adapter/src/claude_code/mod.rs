@@ -42,8 +42,8 @@ use crate::hosted::{acp, HostedKernel};
 use crate::sandbox::SandboxClient;
 use crate::ConversationUpdate;
 use crate::{
-    AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, RuntimeHandle,
-    RuntimeListing, RuntimeOptions, RuntimeSpec,
+    AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
+    RuntimeHandle, RuntimeListing, RuntimeOptions, RuntimeSpec,
 };
 use tokio::sync::mpsc;
 
@@ -87,6 +87,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
             steer: false,
             interrupt: true,
             usage: false,
+            resources: false,
         }
     }
 
@@ -184,6 +185,14 @@ impl KernelAdapter for ClaudeCodeAdapter {
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         self.hosted.list_runtimes().await
+    }
+
+    async fn watch_resources(
+        &self,
+        handle: &RuntimeHandle,
+        readings: mpsc::Sender<ResourceSample>,
+    ) -> Result<(), AdapterError> {
+        self.hosted.watch_resources(handle, readings).await
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {

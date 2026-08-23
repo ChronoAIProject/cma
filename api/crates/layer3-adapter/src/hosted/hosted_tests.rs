@@ -134,6 +134,7 @@ fn the_default_shape_requests_a_real_workload_size() {
         s.resource_limits.get("memory").map(String::as_str),
         Some("1Gi")
     );
+    assert_eq!(s.telemetry_interval_ms, Some(2_000));
 }
 
 #[test]
