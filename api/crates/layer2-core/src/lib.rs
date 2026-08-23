@@ -144,7 +144,9 @@ pub use platform::{
     SizeDimension, CURRENCY,
 };
 pub use platform_service::PlatformSettingsService;
-pub use pressure::{InvalidPressurePolicy, MemoryPressurePolicy};
+pub use pressure::{
+    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample, PressureTransition,
+};
 pub use reconcile::Reclaimed;
 pub use resources::{HeldReading, ResourceReading, ResourceStatus};
 pub use service::{
