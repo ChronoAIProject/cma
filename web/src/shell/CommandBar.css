@@ -1,5 +1,5 @@
 /*
- * The command bar — docs/Web_Style.md §6 and §7.
+ * The command bar — docs/Web_Style.md §6 and §12.
  *
  * The plate itself is the shared .plate vocabulary; what lives here is the
  * palette's own geometry: pinned toward the window's top so the list grows
@@ -21,14 +21,14 @@
 }
 
 .commandbar__field {
-  height: var(--control-h-md);
+  height: 44px;
   padding-inline: var(--space-3);
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: var(--text-ui);
   background: var(--inset);
   border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
+  border-radius: 10px;
 }
 
 .commandbar__field::placeholder {
