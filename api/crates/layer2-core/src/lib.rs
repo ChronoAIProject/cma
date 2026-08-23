@@ -73,6 +73,8 @@ mod limits_rotation_tests;
 #[cfg(test)]
 mod limits_tests;
 #[cfg(test)]
+mod pressure_settings_tests;
+#[cfg(test)]
 mod pressure_tests;
 #[cfg(test)]
 mod pricing_service_tests;
