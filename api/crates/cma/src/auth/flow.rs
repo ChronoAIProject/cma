@@ -424,10 +424,10 @@ mod tests {
     fn permissions_are_read_from_whichever_document_carries_them() {
         // The same reader serves userinfo and introspection, because the claim
         // is the claim wherever it appears.
-        let body = serde_json::json!({ "permissions": ["chrono-bot:session:use", "*"] });
+        let body = serde_json::json!({ "permissions": ["cma:session:use", "*"] });
         assert_eq!(
             permissions_claim(&body),
-            vec!["chrono-bot:session:use".to_string(), "*".to_string()]
+            vec!["cma:session:use".to_string(), "*".to_string()]
         );
     }
 
@@ -442,8 +442,8 @@ mod tests {
         // permissions and must not panic or half-read.
         assert!(permissions_claim(&serde_json::json!({ "permissions": "all" })).is_empty());
         assert_eq!(
-            permissions_claim(&serde_json::json!({ "permissions": [1, "chrono-bot:session:use"] })),
-            vec!["chrono-bot:session:use".to_string()]
+            permissions_claim(&serde_json::json!({ "permissions": [1, "cma:session:use"] })),
+            vec!["cma:session:use".to_string()]
         );
     }
 
