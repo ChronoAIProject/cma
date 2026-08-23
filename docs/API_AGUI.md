@@ -148,13 +148,13 @@ The run stream also carries a **live** lane — what is happening right now. Tho
   "type":         "TEXT_MESSAGE_CONTENT",
   "messageId":    "msg_live",
   "delta":        "Hel",
-  "chrono:live":  true
+  "cma:live":  true
 }
 ```
 
 **Never resume from one.** It has no place in the log, so a cursor taken from it points at a position the log has never held, and everything between there and the real position is skipped on the next reconnect.
 
-The marker is sent because you cannot otherwise see the absence. `EventSource` reports `lastEventId` as the last id it was *given*, so a frame sent without one is indistinguishable from a frame repeating the previous id — and a client deduplicating on that drops every live frame in silence. **A client must exclude `chrono:live` frames from whatever it deduplicates and cursors on**, and only from that.
+The marker is sent because you cannot otherwise see the absence. `EventSource` reports `lastEventId` as the last id it was *given*, so a frame sent without one is indistinguishable from a frame repeating the previous id — and a client deduplicating on that drops every live frame in silence. **A client must exclude `cma:live` frames from whatever it deduplicates and cursors on**, and only from that.
 
 The lane also carries the agent's reasoning:
 
@@ -163,7 +163,7 @@ The lane also carries the agent's reasoning:
   "type":         "REASONING_MESSAGE_CONTENT",
   "messageId":    "reasoning_live",
   "delta":        "the file is probably under src/",
-  "chrono:live":  true
+  "cma:live":  true
 }
 ```
 
@@ -173,13 +173,13 @@ The lane also carries the agent's reasoning:
 
 `msg_live` is the in-flight message's identity, and it is deliberately not the committed message's. The committed one arrives under `msg_<seq>`, and a client **replaces** the in-flight message with it rather than appending — otherwise the turn is drawn twice, once as it was typed and once as it was recorded.
 
-Declared as `chrono:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
+Declared as `cma:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
 
 Resource readings are cursorless state on this lane too. Each reading is one
 whole-object replace, never a set of field patches:
 
 ```json
-{ "type": "STATE_DELTA", "chrono:live": true, "delta": [{
+{ "type": "STATE_DELTA", "cma:live": true, "delta": [{
   "op": "replace", "path": "/resources", "value": {
     "cpuMillisUsed": 340, "cpuMillisLimit": 1000,
     "memoryBytesUsed": 892211200, "memoryBytesLimit": 1073741824,
@@ -264,7 +264,7 @@ The protocol has one event for a run ending badly, and two things end one: the a
   "message":         "this session's runtime can no longer be what it is",
   "code":            "error",
   "capability":      "conversation",
-  "chrono:returns":  false
+  "cma:returns":  false
 }
 ```
 
@@ -273,13 +273,13 @@ The protocol has one event for a run ending badly, and two things end one: the a
 | `message` | what happened, in the kernel's own words. Always present. |
 | `code` | the stop reason as this API spells it. Absent where the session did not stop for a reason it names. |
 | `capability` | **the ability the session lacked**, present only when the failure was a refusal. Named rather than described: rule 4 of `API_Overview.md` asks errors to name what is missing, and a sentence that happens to contain the word does not satisfy that, because nothing downstream can read a sentence. Most failures lack nothing and carry no `capability` — a provider that was unreachable is not a session missing an ability. |
-| `chrono:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
+| `cma:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
 
-A client that ignores `chrono:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
+A client that ignores `cma:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
 
 ### Tool kinds are the runtime's own word
 
-`TOOL_CALL_START` carries `chrono:toolKind`, and `TOOL_CALL_END` carries `chrono:status`, both verbatim from the kernel. They are not mapped onto a fixed set: the vocabularies differ between kernels and grow without warning, and a session must not fail because one invented a category. Render what you recognise.
+`TOOL_CALL_START` carries `cma:toolKind`, and `TOOL_CALL_END` carries `cma:status`, both verbatim from the kernel. They are not mapped onto a fixed set: the vocabularies differ between kernels and grow without warning, and a session must not fail because one invented a category. Render what you recognise.
 
 **`STATE_DELTA` is where `get_usage` lands.** Token counts and cost arrive as state patches rather than a separate call, so a chat UI can show spend without polling.
 
@@ -298,7 +298,7 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
        type: "interrupt",
        interrupts: [{
          id: "apr_7Q2",
-         reason: "chrono:command_execution",
+         reason: "cma:command_execution",
          message: "Run `rm -rf build/`?",
          responseSchema: { … },
          expiresAt: "2026-08-12T09:20:00Z"
@@ -316,7 +316,7 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 5. The session resumes and streams the continuation
 ```
 
-`reason` is `confirmation` where the runtime offered no description of what it wants, and `chrono:<what the runtime called it>` where it did — `chrono:command_execution`, `chrono:file_write`, `chrono:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
+`reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
 
 `payload.decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions, and a client that meant the second and sent the first watches the agent try something else instead of stopping. **A decision or status this service does not recognise is read as a refusal** — the one direction this can safely fail in, because the alternative is granting on a word it did not understand.
 
@@ -366,13 +366,13 @@ GET /api/v1/agui/capabilities
     "humanInTheLoop": { "supported": true, "approvals": true, "interrupts": true,
                         "approveWithEdits": false, "interventions": false },
     "execution":      { "codeExecution": true, "sandboxed": true },
-    "custom":         { "chrono:terminal": false, "chrono:usage": true,
-                        "chrono:resources": true,
-                        "chrono:changePlane": false, "chrono:planeChangeObserved": true }
+    "custom":         { "cma:terminal": false, "cma:usage": true,
+                        "cma:resources": true,
+                        "cma:changePlane": false, "cma:planeChangeObserved": true }
   },
   "conformsTo": [
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/agui-core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
   ]
 }
 ```

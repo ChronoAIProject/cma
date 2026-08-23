@@ -145,7 +145,7 @@ export const KNOWN_EVENTS = [
  * with is whatever the last durable frame carried — so it must never touch a
  * client's cursor or its seen-set.
  */
-export const LIVE_MARKER = 'chrono:live';
+export const LIVE_MARKER = 'cma:live';
 
 /**
  * How a client tells one delivered frame from another.

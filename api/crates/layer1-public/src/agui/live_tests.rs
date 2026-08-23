@@ -32,7 +32,7 @@ fn a_liveness_frame_says_on_the_wire_that_it_has_no_cursor() {
         .expect("has a shape");
     let body = serde_json::to_value(&frame).expect("serialises");
 
-    assert_eq!(body["chrono:live"], true, "{body}");
+    assert_eq!(body["cma:live"], true, "{body}");
     assert!(
         body.get("seq").is_none(),
         "and never as something that looks like a position: {body}"
@@ -54,7 +54,7 @@ fn a_durable_frame_does_not_claim_to_be_liveness() {
     let body = serde_json::to_value(&projected.events[0]).expect("serialises");
 
     assert!(
-        body.get("chrono:live").is_none(),
+        body.get("cma:live").is_none(),
         "a frame with a cursor carries no marker at all: {body}"
     );
 }

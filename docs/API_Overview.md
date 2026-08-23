@@ -174,7 +174,7 @@ No specification defines a named conformance profile for agent services. CMA the
 | MCP | `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
 | PTY | the `ready` control frame |
 
-The same class URIs appear in every surface, so one vocabulary is visible everywhere. If a standard later emerges, the URIs change and the architecture does not.
+The same class URIs appear in every surface, so one vocabulary is visible everywhere. If a standard later emerges, a new major contract version may adopt it without changing this version's identifiers in place.
 
 The classes:
 
@@ -206,3 +206,11 @@ A capability is declared only where it has been demonstrated against the kernel 
 4. **Errors are typed and name what is missing.** Never a bare status code.
 5. **Concurrent input has one answer.** A second turn arriving while one is in flight resolves identically on every interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
 6. **Identity is NyxID.** Every interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.
+
+---
+
+## 7. Literal identifier stability
+
+The conformance and problem URIs under `https://spec.chrono-ai.fun/cma/1.0/` and the AG-UI extension vocabulary under `cma:*` are protocol identifiers, not display names. Clients compare them literally. Their spelling is frozen for the 1.0 contract; changing either family requires a new major contract version and a compatibility plan.
+
+Clients must still tolerate identifiers they do not recognise. Freezing existing names prevents an old meaning from moving, while accepting unknown names lets the vocabulary grow without making a newer server unreadable to an older client.

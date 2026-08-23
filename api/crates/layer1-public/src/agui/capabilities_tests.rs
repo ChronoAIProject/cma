@@ -60,14 +60,14 @@ async fn this_interface_never_claims_to_carry_a_terminal() {
     // A client told otherwise would build a terminal on a surface that cannot
     // be one.
     let doc = document().await;
-    assert_eq!(doc["features"]["custom"]["chrono:terminal"], false);
+    assert_eq!(doc["features"]["custom"]["cma:terminal"], false);
     assert_eq!(doc["features"]["transport"]["websocket"], false);
 }
 
 #[tokio::test]
 async fn live_resource_state_is_declared_before_a_client_receives_it() {
     let doc = document().await;
-    assert_eq!(doc["features"]["custom"]["chrono:resources"], true);
+    assert_eq!(doc["features"]["custom"]["cma:resources"], true);
 }
 
 #[tokio::test]
@@ -88,7 +88,7 @@ async fn the_projection_is_versioned_rather_than_the_protocol() {
     let conforms = doc["conformsTo"].as_array().expect("a list");
     assert!(conforms
         .iter()
-        .any(|c| c.as_str() == Some("https://spec.chrono-ai.fun/chrono-bot/1.0/conf/agui-core")));
+        .any(|c| c.as_str() == Some("https://spec.chrono-ai.fun/cma/1.0/conf/agui-core")));
     assert!(
         !conforms.iter().any(|c| c
             .as_str()

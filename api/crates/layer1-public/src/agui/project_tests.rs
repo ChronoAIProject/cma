@@ -153,7 +153,7 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
     // the other side too, in `web/src/agui/wire.test.ts`.
     assert_eq!(p.events[0].body["toolCallName"], "read notes");
     assert_eq!(
-        p.events[0].body["chrono:toolKind"],
+        p.events[0].body["cma:toolKind"],
         "a-kind-this-build-has-never-seen"
     );
 }
@@ -224,10 +224,7 @@ fn an_approval_ends_the_run_to_ask() {
     let outcome = &p.events[0].body["outcome"];
     assert_eq!(outcome["type"], "interrupt");
     assert_eq!(outcome["interrupts"][0]["id"], "apr_7Q2");
-    assert_eq!(
-        outcome["interrupts"][0]["reason"],
-        "chrono:command_execution"
-    );
+    assert_eq!(outcome["interrupts"][0]["reason"], "cma:command_execution");
     assert_eq!(outcome["interrupts"][0]["message"], "Run `rm -rf build/`?");
 }
 
@@ -323,7 +320,7 @@ fn a_session_being_moved_says_it_is_coming_back_and_a_failure_does_not() {
         capability: None,
     });
     assert_eq!(
-        moving.events[0].body["chrono:returns"], true,
+        moving.events[0].body["cma:returns"], true,
         "a handover is not a failure: {}",
         moving.events[0].body
     );
@@ -335,7 +332,7 @@ fn a_session_being_moved_says_it_is_coming_back_and_a_failure_does_not() {
         capability: None,
     });
     assert_eq!(
-        failed.events[0].body["chrono:returns"], false,
+        failed.events[0].body["cma:returns"], false,
         "and a failure is not a handover: {}",
         failed.events[0].body
     );
@@ -701,5 +698,5 @@ async fn a_liveness_frame_carries_no_sse_id_at_all() {
     let wire = on_the_wire(&live).await;
 
     assert!(!wire.contains("id:"), "{wire:?}");
-    assert!(wire.contains("\"chrono:live\":true"), "{wire:?}");
+    assert!(wire.contains("\"cma:live\":true"), "{wire:?}");
 }
