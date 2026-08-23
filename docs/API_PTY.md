@@ -31,7 +31,7 @@ Authenticated as the session owner. A second concurrent attach is rejected — s
 
 ### 2.1 Authenticating the upgrade
 
-The browser WebSocket API cannot set an `Authorization` header on the upgrade, and cross-origin cookies are not a workable contract for CMA's actual consumers — other products' frontends, on their own origins. So there are two ways in, and a client uses whichever fits it.
+The browser WebSocket API cannot set an `Authorization` header on the upgrade, and cross-origin cookies are not a workable contract for the actual consumers of CMA (ChronoAI Managed Agent) — other products' frontends, on their own origins. So there are two ways in, and a client uses whichever fits it.
 
 **Same-origin, cookie-authenticated** (our own dashboard): nothing to do. The browser sends the session cookie itself and the upgrade is authenticated like any other route.
 

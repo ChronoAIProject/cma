@@ -22,7 +22,7 @@ A **server** presents a bearer token issued by the identity provider:
 Authorization: Bearer <access token>
 ```
 
-This is the form CMA's own clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
+This is the form that CMA (ChronoAI Managed Agent) clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
 
 The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so revocation takes effect within that window rather than immediately.
 
