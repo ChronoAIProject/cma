@@ -89,6 +89,7 @@ fn a_session_declares_only_the_classes_it_was_granted() {
         conversation: true,
         steer: true,
         usage: true,
+        resources: Some(true),
         ..Default::default()
     });
     assert!(conversation
@@ -96,10 +97,39 @@ fn a_session_declares_only_the_classes_it_was_granted() {
         .any(|c| c.ends_with("/conf/conversation")));
     assert!(conversation.iter().any(|c| c.ends_with("/conf/steering")));
     assert!(conversation.iter().any(|c| c.ends_with("/conf/usage")));
+    assert!(conversation.iter().any(|c| c.ends_with("/conf/resources")));
     assert!(
         !conversation.iter().any(|c| c.ends_with("/conf/terminal")),
         "a conversation session must not claim the terminal class: {conversation:?}"
     );
+}
+
+#[test]
+fn an_unrecorded_or_refused_resource_grant_declares_no_resource_class() {
+    for capabilities in [
+        SessionCapabilities::default(),
+        SessionCapabilities {
+            conversation: true,
+            resources: Some(false),
+            ..Default::default()
+        },
+    ] {
+        let classes = conformance_for(&capabilities);
+        assert!(
+            !classes
+                .iter()
+                .any(|class| class.ends_with("/conf/resources")),
+            "got {classes:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_ungranted_resource_read_is_a_named_422_not_a_404() {
+    let (status, body) = rendered(CoreError::CapabilityUnsupported("resources".into())).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "capability_unsupported");
+    assert_eq!(body["capability"], "resources");
 }
 
 #[test]

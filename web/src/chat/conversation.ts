@@ -9,6 +9,7 @@ import {
   type MessageEntry,
   type PlanStep,
 } from './conversationModel';
+import { memoryPressureFrom, resourcesFrom } from './resourceState';
 
 /**
  * The conversation, folded out of the event stream — `Web_Style.md` §18.1.
@@ -293,12 +294,9 @@ function upsertMessage(state: Conversation, message: MessageEntry): Conversation
 }
 
 /**
- * Apply the patches a `STATE_DELTA` carries.
- *
- * Each path this surface models is folded defensively below; the rest are
- * ignored rather than guessed at. `/runtimeLosses` records a runtime the
- * service established as gone, and the most recent replayed loss is the fact
- * the surface needs to show.
+ * Apply modeled `STATE_DELTA` paths defensively and ignore the rest.
+ * Resource readings replace whole, pressure null clears, and the latest
+ * replayed runtime loss is the one the surface needs to show.
  */
 function applyPatches(
   state: Conversation,
@@ -318,7 +316,11 @@ function applyPatches(
      * the cost, and a reader watching a turn wants what it consumed, not a
      * breakdown they have to add up themselves.
      */
-    if (patch.path === PATHS.inputTokens && typeof patch.value === 'number') {
+    if (patch.path === PATHS.resources) {
+      next = { ...next, resources: resourcesFrom(patch.value) };
+    } else if (patch.path === PATHS.memoryPressure) {
+      next = { ...next, memoryPressure: memoryPressureFrom(patch.value) };
+    } else if (patch.path === PATHS.inputTokens && typeof patch.value === 'number') {
       next = {
         ...next,
         usage: {

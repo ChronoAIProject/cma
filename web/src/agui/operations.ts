@@ -42,6 +42,7 @@ export interface SessionCapabilities {
   readonly steer: boolean;
   readonly interrupt: boolean;
   readonly usage: boolean;
+  readonly resources: boolean;
   /**
    * What happens when a turn arrives while one is in flight.
    *
@@ -68,6 +69,7 @@ export const NO_CAPABILITIES: SessionCapabilities = {
   steer: false,
   interrupt: false,
   usage: false,
+  resources: false,
   concurrentInput: 'reject',
 };
 
@@ -92,6 +94,7 @@ export function toCapabilities(raw: unknown): SessionCapabilities {
     steer: holds('steer'),
     interrupt: holds('interrupt'),
     usage: holds('usage'),
+    resources: holds('resources'),
     concurrentInput: POLICIES.find((known) => known === policy) ?? 'reject',
   };
 }

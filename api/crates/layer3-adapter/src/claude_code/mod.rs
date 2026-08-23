@@ -87,7 +87,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
             steer: false,
             interrupt: true,
             usage: false,
-            resources: false,
+            resources: true,
         }
     }
 

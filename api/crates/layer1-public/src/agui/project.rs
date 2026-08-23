@@ -22,22 +22,12 @@
 //! interrupt outcome rather than an ending. §4 of `docs/API_AGUI.md` is the
 //! contract; this file is its implementation.
 
-use layer2_core::{Event, EventKind, SessionStatus, StopReason};
+use layer2_core::{Event, EventKind, SessionStatus};
 // Re-exported so the split is a move rather than a rename. `live.rs`,
 // `run.rs` and `replay.rs` all refer to `project::AguiEvent` and
 // `project::sse_frame`, and this is what keeps them doing so.
 pub(super) use super::frame::{sse_frame, AguiEvent};
-
-/// Whether a run ends here, and how.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Ending {
-    /// The turn finished. The run ends with it.
-    Finished,
-    /// The runtime is blocked on a decision. The run ends to ask.
-    Interrupted,
-    /// The session failed. The run ends saying so.
-    Failed,
-}
+use super::run_ending::{ends_the_run, wire_stop_reason, Ending};
 
 /// What one durable event becomes, and whether the run continues past it.
 pub(super) struct Projected {
@@ -432,6 +422,50 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             )],
             ending: None,
         },
+        /*
+         * An episode is durable state, unlike the readings it was folded
+         * from. A reader who reloads must still see an open squeeze, so this
+         * belongs in `project` and carries the log's cursor and timestamp.
+         *
+         * It does not end the run: pressure is something to act on while the
+         * agent remains working, not a failure in the run lifecycle.
+         */
+        EventKind::MemoryPressureOpened {
+            used_bytes,
+            limit_bytes,
+            occupancy_permille,
+        } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/memoryPressure",
+                    "value": {
+                        "usedBytes": used_bytes,
+                        "limitBytes": limit_bytes,
+                        "occupancyPermille": occupancy_permille,
+                        "since": timestamp.clone(),
+                    },
+                }] }),
+            )],
+            ending: None,
+        },
+        /*
+         * Replace with `null`, never remove. RFC 6902 rejects removing a path
+         * a mid-session reader never received, whereas null is a value every
+         * client can apply idempotently.
+         */
+        EventKind::MemoryPressureClosed { .. } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/memoryPressure",
+                    "value": null,
+                }] }),
+            )],
+            ending: None,
+        },
         // Recorded for the log's own sake and carried by other interfaces. No
         // honest AG-UI shape exists for a resize or an attachment, and an
         // approval's resolution is already known to whoever sent it.
@@ -457,38 +491,6 @@ fn reason_for(action: Option<&str>) -> String {
         Some(action) => format!("chrono:{action}"),
         None => "confirmation".to_string(),
     }
-}
-
-/// Whether a status change is the end of the run.
-///
-/// Going idle is not: a turn ending already says so, and an approval parks a
-/// session idle while its run is being asked about. What ends a run is the
-/// session ceasing to be able to answer at all.
-fn ends_the_run(status: SessionStatus, stop_reason: Option<StopReason>) -> bool {
-    match status {
-        SessionStatus::Terminated => true,
-        // A handover, either onto a newer runtime or onto the other plane. The
-        // session is coming back, but this run is not: its runtime is being
-        // torn down, and a client left holding a stream that simply stops
-        // cannot tell that from an agent taking its time. The detail carried
-        // with the status says which handover it is and that the session
-        // returns, so ending the run here is a statement rather than a
-        // failure dressed up as one.
-        SessionStatus::Rotating => true,
-        SessionStatus::Idle => matches!(
-            stop_reason,
-            Some(StopReason::Error) | Some(StopReason::Revoked) | Some(StopReason::BudgetReached)
-        ),
-        _ => false,
-    }
-}
-
-/// A stop reason as the wire spells it.
-fn wire_stop_reason(reason: StopReason) -> String {
-    serde_json::to_value(reason)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg(test)]

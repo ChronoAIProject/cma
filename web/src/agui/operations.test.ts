@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { AguiOperations, AguiRefusal, toCapabilities, type OperationTransport } from './operations';
 
@@ -145,6 +146,7 @@ describe('reading what a session was granted', () => {
 
     expect(capabilities.conversation).toBe(true);
     expect(capabilities.usage).toBe(true);
+    expect(capabilities.resources).toBe(false);
     expect(capabilities.steer).toBe(false);
     expect(capabilities.terminal).toBe(false);
     expect(capabilities.concurrentInput).toBe('enqueue');
@@ -158,6 +160,7 @@ describe('reading what a session was granted', () => {
       expect(capabilities.conversation).toBe(false);
       expect(capabilities.steer).toBe(false);
       expect(capabilities.usage).toBe(false);
+      expect(capabilities.resources).toBe(false);
     }
   });
 
@@ -165,5 +168,19 @@ describe('reading what a session was granted', () => {
     // `reject` refuses a second turn; anything looser could send one the
     // session then loses.
     expect(toCapabilities({ concurrent_input: 'something_new' }).concurrentInput).toBe('reject');
+  });
+
+  it("pins the server and client's exact resource conformance spelling", () => {
+    const server = readFileSync(
+      new URL('../../../api/crates/layer1-public/src/rest/mod.rs', import.meta.url),
+      'utf8',
+    );
+    const className = /SessionCapability::Resources\),\s*"(?<name>[^"]+)"/s.exec(server)?.groups
+      ?.name;
+
+    expect(className).toBe('resources');
+    const conformsTo = `https://spec.chrono-ai.fun/chrono-bot/1.0/conf/${String(className)}`;
+    expect(conformsTo).toBe('https://spec.chrono-ai.fun/chrono-bot/1.0/conf/resources');
+    expect(toCapabilities({ conforms_to: [conformsTo] }).resources).toBe(true);
   });
 });

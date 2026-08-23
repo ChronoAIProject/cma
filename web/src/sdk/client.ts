@@ -11,7 +11,9 @@
  */
 
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config';
+import * as resources from './resources';
 import * as sessions from './sessions';
+import type { SessionResourceStatus } from './resources';
 import type { CreateSession, PricingQuote, SessionAllowance, SessionSpend } from './sessions';
 import type { KernelOffer, Session, SessionPlane } from './types';
 
@@ -76,6 +78,11 @@ export class Cma {
   /** Read one session's reserved-capacity spend. */
   readSpend(id: string): Promise<SessionSpend> {
     return sessions.readSpend(this.#config, id);
+  }
+
+  /** Read one session's latest sandbox-resource status. */
+  readResources(id: string, signal?: AbortSignal): Promise<SessionResourceStatus> {
+    return resources.readResources(this.#config, id, signal);
   }
 
   /** Move a session onto the other plane. A rotation; see `changePlane`. */
