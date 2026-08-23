@@ -9,7 +9,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 /*
@@ -27,7 +27,7 @@
  */
 .console__notice {
   align-items: center;
-  margin: var(--space-3) var(--space-4) 0;
+  margin: 12px 16px 0;
 }
 
 .console__noticebody {
@@ -45,9 +45,9 @@
 /* The API's own code, drawn as an identifier so nobody reads it as prose. */
 .console__noticecode {
   flex: none;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
 }
 
 .console__noticedismiss {
@@ -57,10 +57,10 @@
 .console__empty {
   max-width: 32rem;
   margin: auto;
-  padding: var(--space-6);
-  font-family: var(--font-ui);
-  font-size: var(--text-meta);
-  color: var(--ink-3);
+  padding: 24px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
   text-align: center;
 }
 

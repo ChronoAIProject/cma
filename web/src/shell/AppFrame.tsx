@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  CENTER_MIN,
   SIDEBAR_AUTO_COLLAPSE,
   SIDEBAR_DEFAULT,
   SIDEBAR_MAX,
@@ -31,7 +32,9 @@ import './AppFrame.css';
  */
 
 interface AppFrameProps {
-  readonly sidebar: ReactNode;
+  readonly sidebar:
+    | ReactNode
+    | ((state: { readonly collapsed: boolean; readonly onToggle: () => void }) => ReactNode);
   readonly center: ReactNode;
   /** Always rendered. A closed details column is zero-wide, never unmounted. */
   readonly details?: ReactNode;
@@ -45,6 +48,8 @@ interface AppFrameProps {
    * inside a track that was still 280px wide, and the control read as broken.
    */
   readonly sidebarCollapsed?: boolean;
+  /** Records an explicit collapse or expansion; automatic collapse stays derived. */
+  readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   /** Things that float over every column — a banner, a dialog's own layer. */
   readonly overlay?: ReactNode;
 }
@@ -56,12 +61,21 @@ export function AppFrame({
   detailsOpen,
   overlay,
   sidebarCollapsed = false,
+  onSidebarCollapsedChange,
 }: AppFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
   const [dragging, setDragging] = useState(false);
+  /*
+   * A handle reports displacement from pointer-down, so its width must be
+   * anchored at pointer-down too. Reading `columns` on every rendered move
+   * re-added the cumulative displacement to the width from the move before it:
+   * a slow 60px drag reached the 420px clamp after only a few frames.
+   */
+  const sidebarDragStart = useRef(SIDEBAR_DEFAULT);
+  const detailsDragStart = useRef(DETAILS_MIN);
   /**
    * Whether the sidebar was opened by hand at a width that collapses it.
    *
@@ -107,8 +121,28 @@ export function AppFrame({
    * a hand-opened sidebar open against the automatic rule, not against its
    * owner asking a second time for it to close.
    */
-  const sidebarPreference = sidebarCollapsed || (narrow && !expandedAnyway) ? 0 : sidebarWidth;
+  const effectiveSidebarCollapsed = sidebarCollapsed || (narrow && !expandedAnyway);
+  const sidebarPreference = effectiveSidebarCollapsed ? 0 : sidebarWidth;
   const columns = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
+  const sidebarOverlay = viewport > 0 && viewport < CENTER_MIN && !effectiveSidebarCollapsed;
+
+  const toggleSidebar = useCallback(() => {
+    if (effectiveSidebarCollapsed) {
+      onSidebarCollapsedChange?.(false);
+      if (narrow) {
+        setExpandedAnyway(true);
+      }
+      return;
+    }
+
+    onSidebarCollapsedChange?.(true);
+    setExpandedAnyway(false);
+  }, [effectiveSidebarCollapsed, narrow, onSidebarCollapsedChange]);
+
+  const sidebarOwnsToggle = typeof sidebar === 'function';
+  const renderedSidebar = sidebarOwnsToggle
+    ? sidebar({ collapsed: effectiveSidebarCollapsed, onToggle: toggleSidebar })
+    : sidebar;
 
   const onSidebarDrag = useCallback((to: number) => {
     setSidebarWidth(clampWidth(to, SIDEBAR_MIN, SIDEBAR_MAX));
@@ -123,11 +157,17 @@ export function AppFrame({
       className="frame"
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
+      data-sidebar-overlay={sidebarOverlay ? '' : undefined}
       style={{
         gridTemplateColumns: `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
       }}
     >
-      <div className="frame__sidebar">{sidebar}</div>
+      <div
+        className="frame__sidebar"
+        style={sidebarOverlay ? { width: Math.min(columns.sidebar, viewport) } : undefined}
+      >
+        {renderedSidebar}
+      </div>
       <div className="frame__center">{center}</div>
       <div className="frame__details">{details}</div>
 
@@ -141,9 +181,14 @@ export function AppFrame({
         at={columns.sidebar}
         label="Resize the session list"
         onDrag={(dx) => {
-          onSidebarDrag(columns.sidebar + dx);
+          onSidebarDrag(sidebarDragStart.current + dx);
         }}
-        onDraggingChange={setDragging}
+        onDraggingChange={(active) => {
+          if (active) {
+            sidebarDragStart.current = columns.sidebar;
+          }
+          setDragging(active);
+        }}
       />
       {columns.details === 0 ? null : (
         <DragHandle
@@ -152,23 +197,26 @@ export function AppFrame({
           label="Resize the details column"
           onDrag={(dx) => {
             // Dragging left widens: the column grows from its leading edge.
-            onDetailsDrag(columns.details - dx);
+            onDetailsDrag(detailsDragStart.current - dx);
           }}
-          onDraggingChange={setDragging}
+          onDraggingChange={(active) => {
+            if (active) {
+              detailsDragStart.current = columns.details;
+            }
+            setDragging(active);
+          }}
         />
       )}
 
       <div className="frame__overlay">{overlay}</div>
-      {narrow ? (
+      {narrow && !sidebarOwnsToggle ? (
         <button
           type="button"
           className="frame__narrowtoggle"
-          aria-expanded={expandedAnyway}
-          onClick={() => {
-            setExpandedAnyway((was) => !was);
-          }}
+          aria-expanded={!effectiveSidebarCollapsed}
+          onClick={toggleSidebar}
         >
-          {expandedAnyway ? 'Hide sessions' : 'Show sessions'}
+          {effectiveSidebarCollapsed ? 'Show sessions' : 'Hide sessions'}
         </button>
       ) : null}
     </div>
