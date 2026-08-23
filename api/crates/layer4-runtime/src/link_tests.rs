@@ -5,6 +5,9 @@
 //! agreeing without having to guess.
 
 use super::*;
+use crate::bridge::Outbound;
+use crate::conversation_link::{gap, outbound};
+use crate::lanes::{LANE_CONVERSATION, LANE_CONVERSATION_GAP};
 
 /// A link opened with these query values, as the control plane would.
 fn params(wire: Option<u32>, lanes: Option<&str>) -> AttachParams {

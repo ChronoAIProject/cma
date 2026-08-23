@@ -7,6 +7,7 @@
 mod bridge;
 mod carry;
 mod conversation;
+mod conversation_link;
 mod lanes;
 mod link;
 mod prelude;
