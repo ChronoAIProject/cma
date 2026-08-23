@@ -43,10 +43,10 @@ function session(resources = true) {
     kernel: 'codex',
     created_at: '2026-08-23T04:00:00Z',
     conforms_to: [
-      'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core',
-      'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation',
-      'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/usage',
-      ...(resources ? ['https://spec.chrono-ai.fun/chrono-bot/1.0/conf/resources'] : []),
+      'https://spec.chrono-ai.fun/cma/1.0/conf/core',
+      'https://spec.chrono-ai.fun/cma/1.0/conf/conversation',
+      'https://spec.chrono-ai.fun/cma/1.0/conf/usage',
+      ...(resources ? ['https://spec.chrono-ai.fun/cma/1.0/conf/resources'] : []),
     ],
   });
 }
@@ -178,7 +178,7 @@ describe('the projected state in its reading column', () => {
         type: 'STATE_DELTA',
         threadId: current.id,
         runId: 'run_resources',
-        'chrono:live': true,
+        'cma:live': true,
         delta: [{ op: 'replace', path: '/resources', value: READING }],
       });
       transport.emit({
@@ -232,7 +232,7 @@ describe('the projected state in its reading column', () => {
         type: 'STATE_DELTA',
         threadId: current.id,
         runId: 'run_resources',
-        'chrono:live': true,
+        'cma:live': true,
         delta: [{ op: 'replace', path: '/resources', value: READING }],
       });
       transport.emit({
