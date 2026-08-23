@@ -15,6 +15,7 @@ fn everything() -> KernelCapabilities {
         steer: true,
         interrupt: true,
         usage: true,
+        resources: false,
     }
 }
 
@@ -79,6 +80,7 @@ fn a_conversation_session_gets_only_what_its_runtime_offers() {
             steer: false,
             interrupt: false,
             usage: true,
+            resources: false,
         },
     )
     .expect("ok");
