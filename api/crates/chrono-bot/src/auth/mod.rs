@@ -366,7 +366,18 @@ impl AuthState {
             let Some(token) = self.access_token(&owner).await else {
                 continue;
             };
-            for (id, session) in issuer.minted_here(&token).await {
+            let minted = match issuer.minted_here(&token).await {
+                Ok(minted) => minted,
+                Err(error) => {
+                    tracing::warn!(
+                        %owner,
+                        error = %error,
+                        "could not inspect this owner's keys for orphaned credentials"
+                    );
+                    continue;
+                }
+            };
+            for (id, session) in minted {
                 // Claimed, not merely running. A paused session is one its
                 // owner kept, and taking its key back leaves them to come
                 // back to a session whose credential was revoked underneath
