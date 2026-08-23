@@ -4,8 +4,8 @@
  * Three first-party sheets carry the palette itself beside this one:
  * `design-platform.css` (the ramps and aliases), `effects-typography.css`
  * (shadows and the composite type ramp) and `shiki.css` (syntax). This file
- * holds only what those sheets reference but do not define, plus the one face
- * this product downloads.
+ * holds only what those sheets reference but do not define, plus the
+ * self-hosted faces each appearance selects.
  *
  * Read §2 before adding anything here. Spacing, radius and z-index have no
  * tokens by design: they are literal pixels in the sheet that uses them,
@@ -14,23 +14,6 @@
  */
 
 :root {
-  /*
-   * The system stack. No interface webfont: the face a platform already
-   * renders is the one that costs nothing to load and never arrives late.
-   */
-  --dsw-font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-
-  /*
-   * The code stack, deliberately without a bare `monospace` tail: on Windows
-   * that resolves to a CJK serif, which is the one thing a terminal cannot
-   * use. Column widths are the whole point of this face.
-   */
-  --ds-font-family-code:
-    'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier,
-    'PingFang SC', 'Microsoft YaHei';
-
   /* One curve, three durations — §4. Nothing in the product eases differently. */
   --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ds-transition-duration: 0.2s;
@@ -38,22 +21,73 @@
   --ds-transition-duration-slow: 0.3s;
 }
 
-/*
- * The one face this product downloads. Everything else is the platform's.
- *
- * It is named in the code stack above rather than used directly, so a machine
- * that already has SF Mono never fetches it.
- */
+/* Every face is self-hosted, OFL-licensed, and visible through fallback while loading. */
+@font-face {
+  font-family: 'Archivo';
+  src: url('../assets/fonts/Archivo-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Familjen Grotesk';
+  src: url('../assets/fonts/FamiljenGrotesk-Variable.woff2') format('woff2-variations');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/IBMPlexMono-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: 'JetBrains Mono';
   src: url('../assets/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
   font-weight: 100 800;
   font-style: normal;
-  /*
-   * Text shows in the fallback immediately and swaps when the face arrives.
-   * Nothing is ever invisible waiting for a font.
-   */
   font-display: swap;
+}
+
+body {
+  --dsw-font-family:
+    'Familjen Grotesk', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica,
+    Arial, sans-serif;
+  /* No bare `monospace`: on Windows it may resolve to a CJK serif. */
+  --ds-font-family-code:
+    'IBM Plex Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo,
+    Courier, 'PingFang SC', 'Microsoft YaHei';
+}
+
+body[data-ds-dark-theme] {
+  --dsw-font-family:
+    'Archivo', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --ds-font-family-code:
+    'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier,
+    'PingFang SC', 'Microsoft YaHei';
 }
 
 /*
