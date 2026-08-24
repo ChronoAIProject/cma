@@ -32,9 +32,13 @@ pub(crate) fn spawn_relay(
         let reported = loop {
             match output.recv().await {
                 Some(TerminalOutput::Bytes(chunk)) => {
-                    screen.lock().await.apply(&chunk);
+                    let mut screen = screen.lock().await;
+                    screen.apply(&chunk);
                     // A send with no subscribers is not an error: the session is
                     // simply detached, and the screen has absorbed the bytes.
+                    // Keep the same guard through the send: an attachment takes
+                    // this lock before subscribing and repainting, making the
+                    // snapshot/live boundary indivisible.
                     let _ = live.send(chunk);
                 }
                 Some(TerminalOutput::Exited { code }) => {
