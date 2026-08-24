@@ -19,6 +19,10 @@ fn subject_state() -> SubjectAuthState {
             refresh_token: Some(SecretValue::new("refresh-plaintext".into())),
             expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000),
         }),
+        refresh_lease: Some(SubjectRefreshLease {
+            holder: "refresh-worker-a".into(),
+            expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_060),
+        }),
         authorization: Authorization::from_capabilities([
             Capability::CreateSession,
             Capability::ReadAllSessions,
@@ -97,6 +101,12 @@ fn subject_secrets_are_encrypted_and_round_trip() {
         "refresh-plaintext"
     );
     assert_eq!(restored.revision, 7);
+    let refresh_lease = restored.refresh_lease.unwrap();
+    assert_eq!(refresh_lease.holder, "refresh-worker-a");
+    assert_eq!(
+        refresh_lease.expires_at,
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_060)
+    );
     assert!(restored.authorization.allows(Capability::ReadAllSessions));
     assert_eq!(
         restored.profile.display_name.as_deref(),

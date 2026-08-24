@@ -328,7 +328,7 @@ impl KeyIssuer {
     /// this function and not about the consequence: these keys carry no
     /// expiry, so a reclaim that did not happen costs an open credential
     /// rather than a row in a list. The orphan sweep sees a surviving key again
-    /// by re-listing it; the superseded sweep sees it again because it remains
+    /// by re-listing it; the durable-debt sweep sees it again because it remains
     /// queued until this returns success. Every non-success response remains a
     /// failure: this client has no verified provider contract under which a 404
     /// proves that the intended credential was deleted. What must not happen is
@@ -338,15 +338,17 @@ impl KeyIssuer {
         let url = format!("{}{KEYS_PATH}/{id}", self.base_url);
         match self.http.delete(&url).bearer_auth(owner_token).send().await {
             Ok(resp) if resp.status().is_success() => {
-                tracing::info!(key_id = %id, "reclaimed a session credential");
+                tracing::info!("reclaimed a session credential");
                 true
             }
             Ok(resp) => {
-                tracing::warn!(key_id = %id, status = %resp.status(), "could not reclaim a session credential");
+                tracing::warn!(status = %resp.status(), "could not reclaim a session credential");
                 false
             }
-            Err(e) => {
-                tracing::warn!(key_id = %id, error = %e, "could not reach the platform to reclaim");
+            Err(_) => {
+                // The request error contains the URL, whose last component is
+                // the provider key identifier. Keep that value out of logs.
+                tracing::warn!("could not reach the platform to reclaim a session credential");
                 false
             }
         }
@@ -380,25 +382,6 @@ impl KeyIssuer {
             .into_rows()
             .into_iter()
             .filter_map(|k| session_of(&self.deployment, &k.name).map(|s| (k.id, s)))
-            .collect())
-    }
-
-    /// Every key this deployment named for one session on an owner's account.
-    ///
-    /// Kept over [`Self::minted_here`] rather than issuing a second listing
-    /// request shape: pagination and platform response handling belong to that
-    /// one path, whether a caller is sweeping an account or releasing one
-    /// session after this process has forgotten what it minted.
-    pub async fn minted_for(
-        &self,
-        session: &SessionId,
-        owner_token: &str,
-    ) -> Result<Vec<String>, reqwest::Error> {
-        Ok(self
-            .minted_here(owner_token)
-            .await?
-            .into_iter()
-            .filter_map(|(id, named)| (named == *session).then_some(id))
             .collect())
     }
 }

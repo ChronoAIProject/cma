@@ -10,12 +10,13 @@ use std::sync::Arc;
 use axum::{
     extract::State,
     http::{header, HeaderMap},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 
+use layer1_public::auth::StoreUnavailable;
 use layer1_public::AuthenticatedSubject;
 
-use super::{AuthState, LEGACY_SESSION_COOKIE, SESSION_COOKIE};
+use super::{AuthMode, AuthState, LEGACY_SESSION_COOKIE, SESSION_COOKIE};
 
 pub(crate) fn session_cookies(headers: &HeaderMap) -> Vec<String> {
     let Some(raw) = headers
@@ -42,20 +43,116 @@ pub async fn attach_subject(
     mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    if let Some(subject) = auth.resolve(req.headers()).await {
+    let subject = match auth.resolve(req.headers()).await {
+        Ok(subject) => subject,
+        Err(error) => {
+            tracing::error!(error = %error, "could not resolve identity from the auth store");
+            return StoreUnavailable.into_response();
+        }
+    };
+    if let Some(subject) = subject {
         // The credential rides separately from identity: nearly every handler
         // needs the subject, almost none needs a credential, so taking one has
         // to be deliberate.
-        if let Some(token) = auth.access_token(&subject).await {
-            req.extensions_mut()
-                .insert(layer1_public::auth::DelegatedCredential(token));
+        match &auth.mode {
+            AuthMode::Trusted { .. } => {
+                req.extensions_mut()
+                    .insert(AuthState::trusted_authorization());
+            }
+            AuthMode::Provider { .. } => {
+                let fact = match auth.subject_fact(&subject).await {
+                    Ok(fact) => fact,
+                    Err(error) => {
+                        tracing::error!(
+                            %subject,
+                            error = %error,
+                            "could not read subject authentication state"
+                        );
+                        return StoreUnavailable.into_response();
+                    }
+                };
+                if let Some(fact) = fact {
+                    if let Some(tokens) = fact
+                        .tokens
+                        .filter(|tokens| tokens.expires_at > std::time::SystemTime::now())
+                    {
+                        req.extensions_mut()
+                            .insert(layer1_public::auth::DelegatedCredential(
+                                tokens.access_token.into_inner(),
+                            ));
+                    }
+                    req.extensions_mut().insert(fact.authorization);
+                    req.extensions_mut().insert(fact.profile);
+                } else {
+                    req.extensions_mut()
+                        .insert(layer2_core::Authorization::none());
+                }
+            }
         }
-        // The same resolution the identity endpoint reports, so what a client
-        // was told it may do and what this request is allowed to do cannot
-        // drift apart.
-        req.extensions_mut()
-            .insert(auth.effective_authorization(&subject).await);
         req.extensions_mut().insert(AuthenticatedSubject(subject));
     }
     next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::{
+        body::{to_bytes, Body},
+        http::{header, Request, StatusCode},
+        routing::get,
+        Router,
+    };
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::auth::persistence::MemoryAuthStore;
+
+    #[tokio::test]
+    async fn cookie_store_failure_is_a_typed_503_not_a_401() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "client".into(),
+                client_secret: "secret".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+            store.clone(),
+        );
+        let cookie = auth
+            .issue_session(layer2_core::SubjectId("subject-a".into()))
+            .await
+            .expect("session persists");
+        store.set_unavailable(true);
+        let app = Router::new()
+            .route("/protected", get(|| async { StatusCode::NO_CONTENT }))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&auth),
+                attach_subject,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::get("/protected")
+                    .header(
+                        header::COOKIE,
+                        format!("{}={cookie}", super::SESSION_COOKIE),
+                    )
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("problem body"),
+        )
+        .expect("problem json");
+        assert_eq!(body["code"], "store_failed");
+    }
 }
