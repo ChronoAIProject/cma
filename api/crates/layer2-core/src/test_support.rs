@@ -355,9 +355,10 @@ impl ScreenModel for NullScreen {
 
 pub(crate) use crate::service_support::{
     credential_on, owned, service_as, service_on_version, service_on_version_with_settings,
-    service_on_version_with_skills, service_with_context, service_with_credentials,
-    service_with_environments_and_settings, service_with_environments_and_settings_service,
-    service_with_environments_on_version, write_screen,
+    service_on_version_with_skills, service_over_with_context, service_with_context,
+    service_with_credentials, service_with_environments_and_settings,
+    service_with_environments_and_settings_service, service_with_environments_on_version,
+    write_screen,
 };
 
 pub(crate) fn kernel() -> KernelId {

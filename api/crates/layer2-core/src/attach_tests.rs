@@ -10,11 +10,21 @@ use std::sync::Arc;
 use layer3_adapter::TerminalOutput;
 
 use crate::attach::AttachmentClaim;
+use crate::commit_fault_support::CommitFaultStore;
 use crate::error::CoreError;
+use crate::event::{Event, EventKind};
+use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
-    await_settled, service, service_on_version, spec, user, write_screen, FakeAdapter, FakeStore,
+    await_settled, service, service_on_version, service_over, spec, user, write_screen,
+    FakeAdapter, FakeStore,
 };
+
+fn is_terminal_attachment(_record: &crate::store::SessionRecord, events: &[Event]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event.kind, EventKind::TerminalAttached))
+}
 
 /// A service with one running session, and its owner.
 async fn attached_session() -> (
@@ -136,6 +146,156 @@ async fn the_live_grant_is_rechecked_before_the_attachment_is_mutated() {
             .all(|event| !matches!(event.kind, crate::event::EventKind::TerminalAttached)),
         "the repeated gate must run before attachment state or events change"
     );
+}
+
+#[tokio::test]
+async fn a_conflicted_attachment_has_no_live_or_runtime_side_effects() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment,
+    ));
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let alice = user("attachment-conflict-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+    let requested = TerminalGeometry::new(117, 39).expect("valid requested geometry");
+    let rival_geometry = TerminalGeometry::new(119, 41).expect("valid rival geometry");
+
+    store.pause_next();
+    let attach = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, requested, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    let mut rival = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("rival reads the record");
+    rival.session.geometry = rival_geometry;
+    inner
+        .commit_session_idempotent("rival-terminal-attachment", &rival, &[])
+        .await
+        .expect("the rival geometry commits first");
+    store.release();
+
+    let error = attach
+        .await
+        .expect("attachment task completes")
+        .err()
+        .expect("the conflicted attachment is refused");
+    assert!(matches!(error, CoreError::RuntimeUnavailable(_)));
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("session remains live");
+        assert_eq!(entry.session.geometry, before_screen.geometry);
+        assert!(entry.attached.is_none());
+        assert_eq!(entry.attachments_issued, 0);
+        assert_eq!(
+            entry
+                .live
+                .as_ref()
+                .expect("runtime output is live")
+                .receiver_count(),
+            0,
+            "a refused attachment publishes no output subscriber"
+        );
+    }
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry,
+        "the screen is resized only after the attachment is durable"
+    );
+    assert_eq!(
+        inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("record remains present")
+            .session
+            .geometry,
+        rival_geometry
+    );
+    assert!(
+        svc.events_since(&alice, &created.id, None)
+            .await
+            .expect("history is readable")
+            .iter()
+            .all(|event| !matches!(event.kind, EventKind::TerminalAttached)),
+        "a refused attachment has no durable event"
+    );
+}
+
+#[tokio::test]
+async fn four_store_outages_leave_an_attachment_entirely_unpublished() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment,
+    ));
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let alice = user("attachment-outage-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+
+    store.fail_next(4);
+    let error = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::new(117, 39).expect("valid requested geometry"),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err()
+        .expect("the fourth unavailable response is reported");
+
+    assert!(matches!(error, CoreError::RuntimeUnavailable(_)));
+    assert_eq!(store.matched_calls(), 4);
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&created.id).expect("session remains live");
+    assert_eq!(entry.session.geometry, before.session.geometry);
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    drop(entries);
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry
+    );
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, before.session.geometry);
+    assert_eq!(durable.session.last_seq, before.session.last_seq);
+    assert!(svc
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("history is readable")
+        .iter()
+        .all(|event| !matches!(event.kind, EventKind::TerminalAttached)));
 }
 
 #[tokio::test]
