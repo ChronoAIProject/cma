@@ -4,6 +4,7 @@ import { toEvent } from '../../src/agui/events.js';
 import type { ResponseMetadata } from '../../src/config.js';
 import { ApiError, ProtocolError, RequestAborted, TimeoutError } from '../../src/errors.js';
 import type { OperationOptions } from '../../src/http.js';
+import { KNOWN_EVENTS } from '../../src/wire.js';
 
 /**
  * The seam between what the interface serves and what this client reads.
@@ -29,6 +30,35 @@ function sse(records: readonly { id?: number; event: string; data: unknown }[]):
         `${r.id === undefined ? '' : `id: ${String(r.id)}\n`}event: ${r.event}\ndata: ${JSON.stringify(r.data)}\n\n`,
     )
     .join('');
+}
+
+const durableProjectionPrefixes = [
+  'TEXT_MESSAGE_START',
+  'TEXT_MESSAGE_CONTENT',
+  'TOOL_CALL_START',
+  'TOOL_CALL_END',
+] as const;
+const durableProjectionPrefixSet = new Set<string>(durableProjectionPrefixes);
+const durableFinalOrSingletonKinds = KNOWN_EVENTS.filter(
+  (kind) => !durableProjectionPrefixSet.has(kind),
+);
+const invalidSequenceLines = [
+  'id:',
+  'id: 0',
+  'id: -1',
+  'id: 01',
+  'id: nope',
+  'id: 9007199254740992',
+] as const;
+
+function literalFrame(kind: string, idLine?: string, live = false): string {
+  const frame = {
+    type: kind,
+    runId: 'run_1',
+    threadId: 'sesn_1',
+    ...(live ? { 'cma:live': true } : {}),
+  };
+  return `${idLine === undefined ? '' : `${idLine}\n`}data: ${JSON.stringify(frame)}\n\n`;
 }
 
 describe('what the interface serves is what this client reads', () => {
@@ -165,6 +195,59 @@ describe('what the interface serves is what this client reads', () => {
 
     expect(() => parseEventStream(body)).toThrow(ProtocolError);
   });
+});
+
+describe('the SSE id identifies only a complete durable projection', () => {
+  it.each(durableProjectionPrefixes)('accepts an omitted id for durable prefix %s', (kind) => {
+    expect(parseEventStream(literalFrame(kind))).toEqual([
+      expect.objectContaining({ type: kind, seq: 0 }),
+    ]);
+  });
+
+  it.each(durableFinalOrSingletonKinds)(
+    'rejects an omitted id for durable final or singleton %s',
+    (kind) => {
+      expect(() => parseEventStream(literalFrame(kind))).toThrow(ProtocolError);
+    },
+  );
+
+  it('rejects an omitted id for an unknown durable kind', () => {
+    expect(() => parseEventStream(literalFrame('SOMETHING_ADDED_LATER'))).toThrow(ProtocolError);
+  });
+
+  it.each([
+    ['known prefix', 'TEXT_MESSAGE_START'],
+    ['known final', 'TEXT_MESSAGE_END'],
+    ['unknown kind', 'SOMETHING_ADDED_LATER'],
+  ] as const)('rejects invalid ids on a %s', (_class, kind) => {
+    for (const idLine of invalidSequenceLines) {
+      expect(() => parseEventStream(literalFrame(kind, idLine))).toThrow(ProtocolError);
+    }
+  });
+
+  it.each([...KNOWN_EVENTS, 'SOMETHING_ADDED_LATER'] as const)(
+    'accepts a positive safe id for durable kind %s',
+    (kind) => {
+      expect(parseEventStream(literalFrame(kind, 'id: 7'))).toEqual([
+        expect.objectContaining({ type: kind, seq: 7 }),
+      ]);
+    },
+  );
+
+  it('accepts an omitted id for an explicitly live frame', () => {
+    expect(parseEventStream(literalFrame('STATE_DELTA', undefined, true))).toEqual([
+      expect.objectContaining({ type: 'STATE_DELTA', seq: 0, 'cma:live': true }),
+    ]);
+  });
+
+  it.each([...invalidSequenceLines, 'id: 7'])(
+    'rejects a present id on an explicitly live frame (%s)',
+    (idLine) => {
+      expect(() => parseEventStream(literalFrame('STATE_DELTA', idLine, true))).toThrow(
+        ProtocolError,
+      );
+    },
+  );
 });
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));

@@ -24,6 +24,7 @@ import {
   type OperationOptions,
 } from '../http.js';
 import type { AguiTransport } from './connection.js';
+import { isDurableProjectionPrefix } from './cursor.js';
 
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 
@@ -340,19 +341,22 @@ function frameFromMessage(message: EventSourceMessage): unknown {
     );
   }
   if (frame['cma:live'] === true) {
-    if (message.id !== undefined && message.id !== '') {
+    if (message.id !== undefined) {
       throw new ProtocolError('AG-UI liveness frame unexpectedly carried a sequence id');
     }
     return { ...frame, seq: 0 };
   }
-  return { ...frame, seq: sequenceOf(message.id) };
+  return { ...frame, seq: sequenceOf(message.id, type) };
 }
 
-function sequenceOf(raw: string | undefined): number {
+function sequenceOf(raw: string | undefined, kind: string): number {
   // Only the final frame of a durable projection is stamped. Zero is an
   // internal sentinel for a leading durable frame and never a resume cursor.
   if (raw === undefined) {
-    return 0;
+    if (isDurableProjectionPrefix(kind)) {
+      return 0;
+    }
+    throw new ProtocolError(`AG-UI durable ${kind} frame carried no sequence id`);
   }
   if (!/^[1-9]\d*$/.test(raw)) {
     throw new ProtocolError(`AG-UI durable frame id '${raw ?? ''}' was not a positive sequence`);

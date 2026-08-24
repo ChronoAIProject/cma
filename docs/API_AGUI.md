@@ -101,10 +101,10 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Run lifecycle | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | turn boundaries and outcome |
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
 | Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
-| Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
+| Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
 | State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
 
-Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
+Not emitted **today**: `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim.
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
 
@@ -281,6 +281,10 @@ A client that ignores `cma:returns` draws every rotation as a fault, and under �
 
 `TOOL_CALL_START` carries `cma:toolKind`, and `TOOL_CALL_END` carries `cma:status`, both verbatim from the kernel. They are not mapped onto a fixed set: the vocabularies differ between kernels and grow without warning, and a session must not fail because one invented a category. Render what you recognise.
 
+A durable tool-start record always projects `TOOL_CALL_START` and, when the record contains arguments, follows it with `TOOL_CALL_ARGS`. A durable tool update likewise projects `TOOL_CALL_END` and, when the record contains a result, follows it with `TOOL_CALL_RESULT`. Both frames in a pair carry the same `toolCallId`.
+
+That optional follow-up makes `TOOL_CALL_START` and `TOOL_CALL_END` deliberately ambiguous on their own. If no follow-up exists, the start or end is the projection's final frame and carries the durable sequence as its SSE `id`. If `TOOL_CALL_ARGS` or `TOOL_CALL_RESULT` follows, the start or end carries no id and the follow-up carries it instead. The start/end body does not announce which case applies, so a client must accept both shapes, upsert by `toolCallId`, and advance its cursor only when the numbered final frame arrives.
+
 **`STATE_DELTA` is where `get_usage` lands.** Token counts and cost arrive as state patches rather than a separate call, so a chat UI can show spend without polling.
 
 ---
@@ -355,8 +359,8 @@ GET /api/v1/agui/capabilities
   "events": {
     "RUN_STARTED": true, "RUN_FINISHED": true, "RUN_ERROR": true,
     "TEXT_MESSAGE_START": true, "TEXT_MESSAGE_CONTENT": true, "TEXT_MESSAGE_END": true,
-    "TOOL_CALL_START": true, "TOOL_CALL_ARGS": false, "TOOL_CALL_END": true,
-    "TOOL_CALL_RESULT": false, "THINKING_START": false, "THINKING_END": false,
+    "TOOL_CALL_START": true, "TOOL_CALL_ARGS": true, "TOOL_CALL_END": true,
+    "TOOL_CALL_RESULT": true, "THINKING_START": false, "THINKING_END": false,
     "STATE_SNAPSHOT": false, "STATE_DELTA": true
   },
   "features": {
