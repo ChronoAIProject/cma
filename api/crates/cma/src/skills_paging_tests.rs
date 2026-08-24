@@ -874,7 +874,6 @@ async fn an_eighth_in_flight_detail_blocks_the_ninth_until_one_finishes() {
             "each selected detail starts once"
         );
     }
-    tokio::task::yield_now().await;
     assert_eq!(
         current.load(Ordering::SeqCst),
         DESCRIPTION_LOOKUP_CONCURRENCY
@@ -883,10 +882,12 @@ async fn an_eighth_in_flight_detail_blocks_the_ninth_until_one_finishes() {
         maximum.load(Ordering::SeqCst),
         DESCRIPTION_LOOKUP_CONCURRENCY
     );
-    assert!(matches!(
-        started.try_recv(),
-        Err(mpsc::error::TryRecvError::Empty)
-    ));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), started.recv())
+            .await
+            .is_err(),
+        "the ninth detail must remain gated while eight handlers are blocked"
+    );
 
     blocked
         .remove("skill-0")
