@@ -150,22 +150,30 @@ describe('the shared session fixture', () => {
     expect(url).toBe('/api/v1/sessions/sesn%2Ffixture');
   });
 
-  it('follows same-collection next links until every session is listed', async () => {
+  it('finds next across Link fields and accepts unrelated links on the final page', async () => {
+    const firstHeaders = new Headers({ 'content-type': 'application/json' });
+    firstHeaders.append(
+      'link',
+      '<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel="profile"',
+    );
+    firstHeaders.append('link', '</api/v1/sessions?limit=50&cursor=opaque>; rel="next"');
+    const finalHeaders = new Headers({ 'content-type': 'application/json' });
+    finalHeaders.append(
+      'link',
+      '<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel="profile"',
+    );
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(
         new Response(JSON.stringify([sessionFixture({ id: 'sesn_newer' })]), {
           status: 200,
-          headers: {
-            'content-type': 'application/json',
-            link: '</api/v1/sessions?limit=50&cursor=opaque>; rel="next"',
-          },
+          headers: firstHeaders,
         }),
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify([sessionFixture({ id: 'sesn_older' })]), {
           status: 200,
-          headers: { 'content-type': 'application/json' },
+          headers: finalHeaders,
         }),
       );
 
@@ -397,6 +405,23 @@ describe('the shared session fixture', () => {
         headers: {
           'content-type': 'application/json',
           link: '</api/v1/environment-profiles?cursor=x>; rel="next"',
+        },
+      }),
+    );
+
+    await expect(
+      listSessions(resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch })),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a malformed Link entry that declares a next relation', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([sessionFixture()]), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          link: '/api/v1/sessions?cursor=x; rel="next"',
         },
       }),
     );

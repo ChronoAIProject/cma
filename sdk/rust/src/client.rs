@@ -775,37 +775,57 @@ async fn decode_json_page<T: DeserializeOwned>(
 }
 
 fn response_next_link(response: &Response) -> Result<Option<String>> {
-    let Some(value) = response.headers().get(LINK) else {
-        return Ok(None);
-    };
-    let value = value
-        .to_str()
-        .map_err(|_| Error::protocol("pagination Link header was not visible ASCII"))?;
-    for entry in value.split(',') {
-        let Some(rest) = entry.trim().strip_prefix('<') else {
-            continue;
-        };
-        let Some((target, parameters)) = rest.split_once('>') else {
-            continue;
-        };
-        let is_next = parameters.split(';').any(|parameter| {
-            let Some((name, value)) = parameter.split_once('=') else {
-                return false;
+    for value in response.headers().get_all(LINK) {
+        let value = value
+            .to_str()
+            .map_err(|_| Error::protocol("pagination Link header was not visible ASCII"))?;
+        for entry in value.split(',') {
+            let Some(rest) = entry.trim().strip_prefix('<') else {
+                if link_declares_next(entry)? {
+                    return Err(Error::protocol("pagination next link was malformed"));
+                }
+                continue;
             };
-            name.trim().eq_ignore_ascii_case("rel")
-                && value
-                    .trim()
-                    .trim_matches('"')
-                    .split_ascii_whitespace()
-                    .any(|relation| relation.eq_ignore_ascii_case("next"))
-        });
-        if is_next {
-            return Ok(Some(target.to_string()));
+            let Some((target, parameters)) = rest.split_once('>') else {
+                if link_declares_next(rest)? {
+                    return Err(Error::protocol("pagination next link was malformed"));
+                }
+                continue;
+            };
+            if link_declares_next(parameters)? {
+                return Ok(Some(target.to_string()));
+            }
         }
     }
-    Err(Error::protocol(
-        "pagination Link header carried no valid next relation",
-    ))
+    Ok(None)
+}
+
+fn link_declares_next(parameters: &str) -> Result<bool> {
+    for parameter in parameters.split(';') {
+        let Some((name, value)) = parameter.split_once('=') else {
+            continue;
+        };
+        if !name.trim().eq_ignore_ascii_case("rel") {
+            continue;
+        }
+        let value = value.trim();
+        let relations = if let Some(quoted) = value.strip_prefix('"') {
+            quoted.strip_suffix('"').ok_or_else(|| {
+                Error::protocol("pagination Link header carried a malformed relation")
+            })?
+        } else {
+            if value.is_empty() || value.contains('"') {
+                return Err(Error::protocol(
+                    "pagination Link header carried a malformed relation",
+                ));
+            }
+            value
+        };
+        return Ok(relations
+            .split_ascii_whitespace()
+            .any(|relation| relation.eq_ignore_ascii_case("next")));
+    }
+    Ok(false)
 }
 
 async fn decode_empty(response: Response, expected: StatusCode) -> Result<()> {
