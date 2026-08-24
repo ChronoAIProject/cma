@@ -354,17 +354,21 @@ impl SessionService {
                 record
             }
             Ok(current) => {
-                drop(installation);
-                if let Err(error) = adapter.terminate(&handle).await {
-                    tracing::warn!(session_id = %id, %error, "could not tear down a superseded runtime");
-                }
                 if let Some(mut record) = current {
                     if record.runtime_id.as_deref() == Some(handle.0.as_str()) {
                         record.runtime_id = None;
-                        if let Err(error) = self.persist_durably(&mut record, Vec::new()).await {
-                            tracing::warn!(session_id = %id, %error, "could not clear a superseded runtime reference");
-                        }
+                        self.persist_durably(&mut record, Vec::new())
+                            .await
+                            .map_err(|error| {
+                                StartFailure::transient(format!(
+                                    "the superseded runtime reference could not be cleared: {error}"
+                                ))
+                            })?;
                     }
+                }
+                drop(installation);
+                if let Err(error) = adapter.terminate(&handle).await {
+                    tracing::warn!(session_id = %id, %error, "could not tear down a superseded runtime");
                 }
                 return Ok(());
             }

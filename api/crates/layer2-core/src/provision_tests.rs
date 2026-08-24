@@ -7,10 +7,13 @@
 
 use std::sync::Arc;
 
+use layer3_adapter::KernelAdapter;
+
 use crate::commit_fault_support::CommitFaultStore;
 use crate::event::{Event, EventKind};
+use crate::provision_failure::{Abandonment, StartFailure};
 use crate::session::{SessionStatus, StopReason};
-use crate::store::SessionStore;
+use crate::store::{SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, service, service_over, spec, user, FakeAdapter, FakeStore,
 };
@@ -25,6 +28,35 @@ fn is_ready_commit(_record: &crate::store::SessionRecord, events: &[Event]) -> b
             }
         )
     })
+}
+
+fn is_runtime_reference_clear(record: &SessionRecord, events: &[Event]) -> bool {
+    events.is_empty() && record.runtime_id.is_none()
+}
+
+fn is_retirement_commit(_record: &SessionRecord, events: &[Event]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event.kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Terminated,
+                ..
+            }
+        )
+    })
+}
+
+async fn await_live_entry(
+    service: &Arc<crate::service::SessionService>,
+    id: &crate::ids::SessionId,
+) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !service.entries.read().await.contains_key(id) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the durably ready runtime is published locally");
 }
 
 #[tokio::test]
@@ -231,6 +263,113 @@ async fn repeated_ready_outages_publish_no_runtime_side_effects() {
             }),
         "no rejected runtime announces false readiness"
     );
+}
+
+#[tokio::test]
+async fn a_conflicted_runtime_clear_keeps_the_runtime_record_and_entry_together() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_reference_clear,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let caller = user("discard-conflict-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+    await_live_entry(&svc, &created.id).await;
+    let handle = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("ready record exists")
+        .runtime_id
+        .expect("ready record names its runtime");
+
+    store.pause_next();
+    let discard = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let id = created.id.clone();
+        let adapter = Arc::clone(&runtime_adapter);
+        async move { svc.discard_runtime(&id, &adapter).await }
+    });
+    store.wait_until_held().await;
+    let mut rival = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("rival reads the ready record");
+    rival.context_ref = Some("rival-before-runtime-clear".into());
+    inner
+        .commit_session_idempotent("rival-before-runtime-clear", &rival, &[])
+        .await
+        .expect("the rival record commits first");
+    store.release();
+
+    assert!(matches!(
+        discard
+            .await
+            .expect("discard task completes")
+            .expect_err("the exact cleanup is conflicted"),
+        StoreError::RevisionConflict { .. }
+    ));
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.runtime_id.as_deref(), Some(handle.as_str()));
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some("rival-before-runtime-clear")
+    );
+    assert!(svc.entries.read().await.contains_key(&created.id));
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(adapter.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn four_abandonment_outages_leave_the_runtime_record_and_entry_intact() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_retirement_commit,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let caller = user("abandonment-outage-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+    await_live_entry(&svc, &created.id).await;
+    let before = inner.get(&created.id).await.unwrap().unwrap();
+    let handle = before
+        .runtime_id
+        .clone()
+        .expect("ready record names its runtime");
+    let failure = StartFailure::transient("selected abandonment failure".into());
+
+    store.fail_next(4);
+    assert!(matches!(
+        svc.abandon(&created.id, &runtime_adapter, &failure, Abandonment::Retire,)
+            .await
+            .expect_err("the fourth unavailable response is propagated"),
+        StoreError::Unavailable(_)
+    ));
+    assert_eq!(store.matched_calls(), 4);
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+    assert_eq!(durable.runtime_id.as_deref(), Some(handle.as_str()));
+    assert!(svc.entries.read().await.contains_key(&created.id));
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(adapter.terminated.lock().await.is_empty());
+
+    svc.abandon(&created.id, &runtime_adapter, &failure, Abandonment::Retire)
+        .await
+        .expect("the unchanged cleanup is retryable after recovery");
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert!(durable.runtime_id.is_none());
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert_eq!(adapter.running_count().await, 0);
+    assert_eq!(adapter.terminated.lock().await.as_slice(), &[handle]);
 }
 
 #[tokio::test]
