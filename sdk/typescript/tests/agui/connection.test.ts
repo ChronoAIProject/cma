@@ -502,21 +502,14 @@ describe('liveness is not history', () => {
 });
 
 describe('a durable event that projects to several frames', () => {
-  it('delivers every one of them, not just the first', async () => {
-    // The defect this exists for: a committed message projects to
-    // TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT and TEXT_MESSAGE_END, and all
-    // three carry the sequence of the event they came from — that sequence is
-    // the cursor a reconnect resumes on. Deduplicated by sequence alone, the
-    // START was delivered and its siblings dropped as duplicates, so every
-    // agent message opened and then received none of its own text: the chat
-    // surface drew an empty turn for an agent that had answered.
+  it('delivers every frame and advances only on the final one', async () => {
     const fake = new Fake();
     fake.onOpen = [
       {
         type: 'TEXT_MESSAGE_START',
         threadId: 'sesn_1',
         runId: 'run_1',
-        seq: 7,
+        seq: 0,
         messageId: 'm_7',
         role: 'assistant',
       },
@@ -524,13 +517,13 @@ describe('a durable event that projects to several frames', () => {
         type: 'TEXT_MESSAGE_CONTENT',
         threadId: 'sesn_1',
         runId: 'run_1',
-        seq: 7,
+        seq: 0,
         messageId: 'm_7',
         delta: 'hello',
       },
       { type: 'TEXT_MESSAGE_END', threadId: 'sesn_1', runId: 'run_1', seq: 7, messageId: 'm_7' },
     ];
-    const { seen, stop } = connect(fake);
+    const { connection, seen, stop } = connect(fake);
     await tick();
     stop();
 
@@ -539,6 +532,126 @@ describe('a durable event that projects to several frames', () => {
       'TEXT_MESSAGE_CONTENT',
       'TEXT_MESSAGE_END',
     ]);
+    expect(seen.map((event) => event.seq)).toEqual([0, 0, 7]);
+    expect(connection.cursor).toBe(7);
+  });
+
+  it('replays an interrupted projection whole without delivering its prefix twice', async () => {
+    const fake = new Fake();
+    const start = {
+      type: 'TEXT_MESSAGE_START',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId: 'm_7',
+      role: 'assistant',
+    };
+    const content = {
+      type: 'TEXT_MESSAGE_CONTENT',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId: 'm_7',
+      delta: 'nothing after the drop is lost',
+    };
+    const end = {
+      type: 'TEXT_MESSAGE_END',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 7,
+      messageId: 'm_7',
+    };
+    fake.responses = [
+      [{ type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 6 }],
+      [start, content, end, text(8, 'the next event')],
+    ];
+
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(6));
+
+    fake.frames?.(start);
+    expect(connection.cursor).toBe(6);
+
+    fake.drop?.('the connection closed after START');
+    await vi.waitFor(() => expect(connection.cursor).toBe(8));
+    stop();
+
+    expect(fake.openCursors).toEqual([0, 6]);
+    expect(fake.historyReads).toEqual([0, 6]);
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+      'TEXT_MESSAGE_CONTENT',
+    ]);
+    expect(seen.filter((event) => event.type === 'TEXT_MESSAGE_START')).toHaveLength(1);
+  });
+
+  it('deduplicates an unnumbered projection across the history and stream overlap', async () => {
+    const fake = new Fake();
+    const projection = [
+      {
+        type: 'TEXT_MESSAGE_START',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 0,
+        messageId: 'm_7',
+        role: 'assistant',
+      },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 0,
+        messageId: 'm_7',
+        delta: 'one answer',
+      },
+      {
+        type: 'TEXT_MESSAGE_END',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 7,
+        messageId: 'm_7',
+      },
+    ];
+    fake.onOpen = projection;
+    fake.responses = [projection];
+
+    const { seen, stop } = connect(fake);
+    await tick();
+    stop();
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+    ]);
+  });
+
+  it('deduplicates unnumbered tool frames by tool-call identity', async () => {
+    const fake = new Fake();
+    const start = (toolCallId: string) => ({
+      type: 'TOOL_CALL_START',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      toolCallId,
+      toolCallName: `Read for ${toolCallId}`,
+      'cma:toolKind': 'read',
+    });
+    const { seen, stop } = connect(fake);
+    await tick();
+
+    fake.frames?.(start('call-1'));
+    fake.frames?.(start('call-1'));
+    fake.frames?.(start('call-2'));
+    await tick();
+    stop();
+
+    expect(
+      seen.flatMap((event) => (event.type === 'TOOL_CALL_START' ? [event.toolCallId] : [])),
+    ).toEqual(['call-1', 'call-2']);
   });
 
   it('still drops a frame the reconnect overlap replays', async () => {

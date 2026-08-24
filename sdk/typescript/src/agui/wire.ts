@@ -349,7 +349,12 @@ function frameFromMessage(message: EventSourceMessage): unknown {
 }
 
 function sequenceOf(raw: string | undefined): number {
-  if (raw === undefined || !/^[1-9]\d*$/.test(raw)) {
+  // Only the final frame of a durable projection is stamped. Zero is an
+  // internal sentinel for a leading durable frame and never a resume cursor.
+  if (raw === undefined) {
+    return 0;
+  }
+  if (!/^[1-9]\d*$/.test(raw)) {
     throw new ProtocolError(`AG-UI durable frame id '${raw ?? ''}' was not a positive sequence`);
   }
   const value = Number(raw);
