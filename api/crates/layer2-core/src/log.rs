@@ -938,7 +938,12 @@ impl SessionService {
             .map_err(|_| StoreError::Unavailable("session delete worker stopped".into()))?
     }
 
-    /// Persist the current live record after all event snapshots queued before it.
+    /// Wait for every earlier event snapshot and synchronize the live event tail.
+    ///
+    /// The empty commit is an ordering and cursor barrier only. Semantic state is
+    /// owned by the event-bearing commit that describes it; replaying differences
+    /// from this later live snapshot could resurrect a semantic write the store
+    /// rejected.
     pub(crate) async fn flush(&self, id: &SessionId) {
         let receiver = {
             let entries = self.entries.read().await;
@@ -946,7 +951,7 @@ impl SessionService {
                 return;
             };
             // Queue before releasing the entry snapshot: a later writer cannot
-            // enqueue newer state ahead of this record-only barrier.
+            // enqueue newer state ahead of this cursor barrier.
             entry
                 .event_log
                 .enqueue_commit(
@@ -987,6 +992,13 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
 
 impl RecordFields {
     fn for_commit(before: &SessionRecord, intended: &SessionRecord, events: &[Event]) -> Self {
+        if events.is_empty() {
+            // An empty unit is only an ordering/cursor barrier. Its live snapshot
+            // may still contain semantic state from an earlier rejected event,
+            // so differences in that snapshot can never establish ownership.
+            return Self::default();
+        }
+
         let mut fields = Self::for_events(events);
 
         fields.configuration = before.session.owner != intended.session.owner
@@ -998,25 +1010,6 @@ impl RecordFields {
             || before.session.created_at != intended.session.created_at;
         fields.runtime = before.runtime_id != intended.runtime_id;
         fields.context = before.context_ref != intended.context_ref;
-
-        if !events.is_empty() {
-            return fields;
-        }
-
-        // A record-only barrier owns only the delta it observed. In particular,
-        // it must not inherit the intended snapshot of a semantic event queued
-        // immediately before it: if that event is rejected during rebase, the
-        // barrier must remain a barrier rather than replaying the rejected state
-        // without its event.
-        fields.status = before.session.status != intended.session.status
-            || before.session.recovery_state != intended.session.recovery_state
-            || before.session.stop_reason != intended.session.stop_reason;
-        fields.geometry = before.session.geometry != intended.session.geometry;
-        fields.plane = before.session.options != intended.session.options
-            || before.session.runtime_version != intended.session.runtime_version
-            || before.session.rotations != intended.session.rotations
-            || before.session.rotated_at != intended.session.rotated_at
-            || before.session.capabilities != intended.session.capabilities;
         fields
     }
 
