@@ -14,7 +14,27 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::Bridge;
 use crate::supervisor;
-use crate::AdapterError;
+use crate::{AdapterError, RuntimeHandle};
+
+fn hosted() -> super::super::HostedKernel {
+    super::super::HostedKernel::new(
+        crate::sandbox::SandboxClient::new("http://127.0.0.1:1", "test-key"),
+        super::super::SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    )
+}
+
+async fn wait_until_link_is_gone(kernel: &super::super::HostedKernel, handle: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while kernel.link_to(handle).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the closed generation is promptly removed");
+}
 
 /// What the fake bridge did during one handshake.
 struct Handshake {
@@ -272,7 +292,7 @@ async fn open_bridge(
     cwd: String,
     mode: Option<String>,
     rejoin: Option<String>,
-    switches: Option<(super::super::SwitchWaiters, String)>,
+    link: Option<super::super::LinkLifecycle>,
     own_credential: bool,
 ) -> Result<
     (
@@ -283,17 +303,77 @@ async fn open_bridge(
     AdapterError,
 > {
     let (updates_tx, updates_rx) = mpsc::channel(64);
-    let (channel, control) = Bridge::open(
-        stream,
-        cwd,
-        mode,
-        rejoin,
-        switches,
-        own_credential,
-        updates_tx,
-    )
-    .await?;
+    let (channel, control) =
+        Bridge::open(stream, cwd, mode, rejoin, link, own_credential, updates_tx).await?;
     Ok((channel, control, updates_rx))
+}
+
+#[tokio::test]
+async fn a_close_as_open_finishes_cannot_register_a_dead_generation() {
+    // The fixture closes immediately after answering the two-call handshake.
+    // Previously the reader cleaned up first and the caller then inserted its
+    // dead control sender after `open` returned.
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_close_during_open".into());
+    let (url, served) = bridging(None, None, Some(2)).await;
+    let stream = connect(&url).await;
+    let (_channel, _control, _updates) = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+    )
+    .await
+    .expect("the handshake answers before the socket closes");
+    served
+        .await
+        .expect("the fixture closes after the handshake");
+    wait_until_link_is_gone(&kernel, &handle.0).await;
+
+    assert!(
+        kernel.refresh_credential(&handle, "unused").await.is_err(),
+        "a closed queue must not report credential delivery"
+    );
+    let switched = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        kernel.switch_plane(&handle, "codex-acp"),
+    )
+    .await
+    .expect("a closed generation is rejected without waiting for the switch deadline");
+    assert!(
+        matches!(switched, Err(AdapterError::Unavailable(ref why)) if why.contains("no open link")),
+        "the closed generation is absent: {switched:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_close_removes_its_registered_generation() {
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_close_after_open".into());
+    let (url, served) = bridging(None, None, None).await;
+    let stream = connect(&url).await;
+    let (_channel, control, _updates) = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+    )
+    .await
+    .expect("the live bridge opens");
+
+    let registered = kernel
+        .link_to(&handle.0)
+        .await
+        .expect("the bridge registers before returning");
+    assert!(registered.same_channel(&control));
+
+    served.abort();
+    let _ = served.await;
+    wait_until_link_is_gone(&kernel, &handle.0).await;
 }
 
 #[tokio::test]

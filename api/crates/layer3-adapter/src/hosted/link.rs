@@ -68,27 +68,6 @@ pub(crate) fn exit_report(text: &str) -> Option<TerminalOutput> {
     Some(TerminalOutput::Exited { code })
 }
 
-/// Forget a link only while it is still the one registered for this runtime.
-pub(super) async fn forget_link_generation(
-    links: &tokio::sync::Mutex<std::collections::BTreeMap<String, mpsc::Sender<TerminalInput>>>,
-    answers: &super::SwitchWaiters,
-    sandbox: &str,
-    link: &mpsc::Sender<TerminalInput>,
-) {
-    let mut links = links.lock().await;
-    let still_current = links
-        .get(sandbox)
-        .is_some_and(|held| held.same_channel(link));
-    if still_current {
-        links.remove(sandbox);
-    }
-    drop(links);
-    // The registry may already hold a successor, but this generation can
-    // still own the old waiter. The identity check inside `forget` removes
-    // that waiter without disturbing one the successor has since installed.
-    answers.forget(sandbox, link).await;
-}
-
 /// Read a runtime's answer to a plane switch, if that is what this frame is.
 ///
 /// `None` for anything else, including a frame from a runtime that speaks a
@@ -200,18 +179,18 @@ impl HostedKernel {
 
         // Registered before either half can finish, so cleanup cannot race a
         // dead sender into the map after it has already removed this link.
-        self.remember_link(&handle.0, in_tx.clone()).await;
+        let lifecycle = self.link_lifecycle(&handle.0);
+        lifecycle.register(in_tx.clone()).await;
 
         let sandbox = handle.0.clone();
-        let answers = self.switch_waiters();
-        let links = std::sync::Arc::clone(&self.links);
         let link_for_cleanup = in_tx.clone();
+        let lifecycle_for_reader = lifecycle.clone();
         tokio::spawn(async move {
             // Output that arrived while the wire was being settled. Sent
             // first, because it is the top of somebody's screen.
             if let Some(bytes) = early {
                 if out_tx.send(TerminalOutput::Bytes(bytes)).await.is_err() {
-                    forget_link_generation(&links, &answers, &sandbox, &link_for_cleanup).await;
+                    lifecycle_for_reader.forget(&link_for_cleanup).await;
                     return;
                 }
             }
@@ -239,7 +218,9 @@ impl HostedKernel {
                     }
                     Ok(Message::Text(text)) => {
                         if let Some(accepted) = switch_answer(&text) {
-                            answers.settle(&sandbox, &link_for_cleanup, accepted).await;
+                            lifecycle_for_reader
+                                .settle(&link_for_cleanup, accepted)
+                                .await;
                         } else if let Some(ending) = exit_report(&text) {
                             // The supervisor sends this only after it has
                             // stopped forwarding pty bytes. Sharing the output
@@ -258,7 +239,7 @@ impl HostedKernel {
             }
             // Remove only this link. A reconnect can install its successor
             // before the old reader notices that its socket ended.
-            forget_link_generation(&links, &answers, &sandbox, &link_for_cleanup).await;
+            lifecycle_for_reader.forget(&link_for_cleanup).await;
             tracing::info!(%sandbox, "sandbox output relay ended");
         });
 
@@ -307,7 +288,7 @@ impl HostedKernel {
             // The link died since it was recorded. Forgotten rather than
             // retried: the next attachment records a live one, and keeping a
             // dead sender would make every renewal fail the same way forever.
-            forget_link_generation(&self.links, &self.switch_waiters, &handle.0, &link).await;
+            self.link_lifecycle(&handle.0).forget(&link).await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the credential reached it",
                 handle.0
@@ -354,7 +335,7 @@ impl HostedKernel {
             .await
             .is_err()
         {
-            forget_link_generation(&self.links, &self.switch_waiters, &handle.0, &link).await;
+            self.link_lifecycle(&handle.0).forget(&link).await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the switch reached it",
                 handle.0

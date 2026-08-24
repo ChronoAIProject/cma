@@ -92,6 +92,7 @@ impl Harness {
         cwd: String,
         spec: &DshSandboxSpec,
         rejoin: Option<String>,
+        link: crate::hosted::LinkLifecycle,
         // Supplied by the caller and already being drained. This harness has
         // no sign-in of its own, but the contract is one contract: a kernel
         // that reported nothing during its open would be indistinguishable
@@ -124,6 +125,8 @@ impl Harness {
             session: rejoin.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             folder: Arc::new(Mutex::new(Folder::default())),
         });
+        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
+        link.register(control.clone()).await;
 
         let writer = Arc::clone(&harness);
         let (input, input_task) =
@@ -136,6 +139,8 @@ impl Harness {
         // this loop, so it has to be running to receive it.
         let reader = Arc::clone(&harness);
         let updates = updates_tx.clone();
+        let control_for_reader = control.clone();
+        let link_for_reader = link.clone();
         tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
@@ -161,14 +166,17 @@ impl Harness {
                 }
             }
             reader.pending.lock().await.clear();
+            link_for_reader.forget(&control_for_reader).await;
             input_task.abort();
             tracing::info!("conversation link ended");
         });
 
-        harness.handshake(cwd, spec).await?;
+        if let Err(error) = harness.handshake(cwd, spec).await {
+            link.forget(&control).await;
+            return Err(error);
+        }
 
         let conversation_id = harness.session.clone();
-        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
 
         Ok((
             ConversationChannel {
