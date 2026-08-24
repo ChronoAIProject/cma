@@ -29,7 +29,7 @@ use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
     TerminalChannel,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Semaphore};
 use tower::ServiceExt;
 
 use super::{rest_api_router, with_cors};
@@ -323,12 +323,27 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
     }
 }
 
+struct FirstProfilePagePause {
+    reached: Semaphore,
+    resume: Semaphore,
+}
+
+impl FirstProfilePagePause {
+    fn new() -> Self {
+        Self {
+            reached: Semaphore::new(0),
+            resume: Semaphore::new(0),
+        }
+    }
+}
+
 #[derive(Default)]
 struct MemoryProfiles {
     records: Mutex<HashMap<String, EnvironmentProfile>>,
     list_calls: AtomicUsize,
     list_limits: Mutex<Vec<u32>>,
     preference_writes: AtomicUsize,
+    first_page_pause: Mutex<Option<Arc<FirstProfilePagePause>>>,
 }
 
 #[async_trait::async_trait]
@@ -355,7 +370,7 @@ impl EnvironmentProfileStore for MemoryProfiles {
     ) -> Result<Page<EnvironmentProfile>, StoreError> {
         self.list_calls.fetch_add(1, Ordering::SeqCst);
         self.list_limits.lock().await.push(page.limit());
-        Ok(page_profiles(
+        let listed = page_profiles(
             self.records
                 .lock()
                 .await
@@ -364,7 +379,22 @@ impl EnvironmentProfileStore for MemoryProfiles {
                 .cloned()
                 .collect(),
             page,
-        ))
+        );
+        let pause = if page.cursor().is_none() {
+            self.first_page_pause.lock().await.take()
+        } else {
+            None
+        };
+        if let Some(pause) = pause {
+            pause.reached.add_permits(1);
+            pause
+                .resume
+                .acquire()
+                .await
+                .expect("the test still owns the page pause")
+                .forget();
+        }
+        Ok(listed)
     }
 
     async fn set_preferred(
@@ -1807,7 +1837,7 @@ async fn admin_sessions_and_environment_profiles_use_the_same_page_contract() {
 }
 
 #[tokio::test]
-async fn preferred_profile_action_returns_every_profile_through_bounded_pages() {
+async fn preferred_profile_response_pins_its_winner_across_bounded_pages() {
     let TestSurface {
         app,
         profiles,
@@ -1817,40 +1847,64 @@ async fn preferred_profile_action_returns_every_profile_through_bounded_pages() 
     const PROFILE_COUNT: usize = 205;
     seed_profiles(&profiles, &caller.subject, PROFILE_COUNT).await;
 
-    let first = assert_json(
-        app.clone()
-            .oneshot(json_request(
-                Method::PUT,
-                "/api/v1/environment-profiles/preferred",
-                r#"{"profile":"envp_page_0204"}"#,
-            ))
-            .await
-            .expect("router answers"),
-        StatusCode::OK,
-    )
-    .await;
-    assert_complete_preference_response(&first, PROFILE_COUNT, "envp_page_0204");
-    assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 1);
-    assert_eq!(profiles.list_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(
-        profiles.list_limits.lock().await.as_slice(),
-        [MAX_PAGE_SIZE, MAX_PAGE_SIZE]
-    );
+    let pause = Arc::new(FirstProfilePagePause::new());
+    *profiles.first_page_pause.lock().await = Some(Arc::clone(&pause));
+    let request_app = app.clone();
+    let pending = tokio::spawn(async move {
+        assert_json(
+            request_app
+                .oneshot(json_request(
+                    Method::PUT,
+                    "/api/v1/environment-profiles/preferred",
+                    r#"{"profile":"envp_page_0204"}"#,
+                ))
+                .await
+                .expect("router answers"),
+            StatusCode::OK,
+        )
+        .await
+    });
 
-    let moved = assert_json(
-        app.clone()
-            .oneshot(json_request(
-                Method::PUT,
-                "/api/v1/environment-profiles/preferred",
-                r#"{"profile":"envp_page_0000"}"#,
-            ))
+    tokio::time::timeout(std::time::Duration::from_secs(1), pause.reached.acquire())
+        .await
+        .expect("request A reaches its first profile page")
+        .expect("the test still owns the page pause")
+        .forget();
+    assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 1);
+
+    let second_page_winner = EnvironmentProfileId("envp_page_0000".into());
+    profiles
+        .set_preferred(&caller.subject, Some(&second_page_winner))
+        .await
+        .expect("a concurrent preference write succeeds");
+    assert_eq!(
+        profiles
+            .preferred_for(&caller.subject)
             .await
-            .expect("router answers"),
+            .expect("the concurrent winner is readable")
+            .map(|profile| profile.id),
+        Some(second_page_winner)
+    );
+    pause.resume.add_permits(1);
+
+    let first = pending.await.expect("request A completes after it resumes");
+    assert_complete_preference_response(&first, PROFILE_COUNT, Some("envp_page_0204"));
+    assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 2);
+    assert_eq!(profiles.list_calls.load(Ordering::SeqCst), 2);
+
+    let cleared = assert_json(
+        app.oneshot(json_request(
+            Method::PUT,
+            "/api/v1/environment-profiles/preferred",
+            r#"{"profile":null}"#,
+        ))
+        .await
+        .expect("router answers"),
         StatusCode::OK,
     )
     .await;
-    assert_complete_preference_response(&moved, PROFILE_COUNT, "envp_page_0000");
-    assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 2);
+    assert_complete_preference_response(&cleared, PROFILE_COUNT, None);
+    assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 3);
     assert_eq!(profiles.list_calls.load(Ordering::SeqCst), 4);
     let limits = profiles.list_limits.lock().await;
     assert_eq!(limits.len(), 4, "each response needs two store pages");
@@ -1867,13 +1921,13 @@ async fn preferred_profile_action_returns_every_profile_through_bounded_pages() 
         .filter(|profile| profile.preferred)
         .map(|profile| profile.id.0.clone())
         .collect();
-    assert_eq!(held, vec!["envp_page_0000"]);
+    assert!(held.is_empty());
 }
 
 fn assert_complete_preference_response(
     body: &serde_json::Value,
     profile_count: usize,
-    preferred_id: &str,
+    preferred_id: Option<&str>,
 ) {
     let rows = body.as_array().expect("the action response is an array");
     assert_eq!(rows.len(), profile_count);
@@ -1895,7 +1949,7 @@ fn assert_complete_preference_response(
         .filter(|row| row["preferred"].as_bool() == Some(true))
         .map(|row| row["id"].as_str().expect("profile id"))
         .collect();
-    assert_eq!(preferred, vec![preferred_id]);
+    assert_eq!(preferred, preferred_id.into_iter().collect::<Vec<_>>());
 }
 
 #[tokio::test]
