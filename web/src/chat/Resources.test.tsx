@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import type { MemoryPressure, Resources as ResourceReading } from './conversation';
+import type { MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
 import { MemoryPressureNotice, Resources, formatBytes } from './Resources';
 
 function reading(overrides: Partial<ResourceReading> = {}): ResourceReading {

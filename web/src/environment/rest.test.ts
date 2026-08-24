@@ -12,13 +12,35 @@ import { DEFAULT_AGENT } from './types';
  */
 
 function respond(body: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
+  return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
-    json: () => Promise.resolve(body),
-    arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
-  } as unknown as Response;
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
+
+const PROFILE_WIRE = {
+  id: 'envp_1',
+  name: 'build tools',
+  variables: [{ key: 'BUILD_MODE', value: 'release' }],
+  packages: [{ name: 'ripgrep', version: '14' }],
+  agent: {
+    kernel: 'codex',
+    mode: 'conversation',
+    model: null,
+    reasoning_effort: 'high',
+    permission: 'guarded',
+    credential: 'delegated',
+    size: { cpu_millis: 1500, memory_mib: 3072 },
+    record_tool_bodies: true,
+    skills: ['nyxid'],
+  },
+  nyxid: { services: [] },
+  agent_notes: '',
+  mandatory: { packages: ['nyxid'], skills: ['ornn-agent-manual-cli'] },
+  created_at: '2026-08-14T00:00:00Z',
+  updated_at: '2026-08-14T01:00:00Z',
+  preferred: false,
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -26,44 +48,29 @@ afterEach(() => {
 
 describe('reading a profile off the wire', () => {
   it('keeps what the control plane said', () => {
-    const profile = toProfile({
-      id: 'envp_1',
-      name: 'build tools',
-      variables: [{ key: 'BUILD_MODE', value: 'release' }],
-      packages: [{ name: 'ripgrep', version: '14' }],
-      agent: { ...DEFAULT_AGENT, skills: ['nyxid'] },
-      nyxid: { services: [] },
-      agentNotes: '',
-      mandatory: { packages: ['nyxid'], skills: ['ornn-agent-manual-cli'] },
-      created_at: '2026-08-14T00:00:00Z',
-      updated_at: '2026-08-14T01:00:00Z',
-    });
+    const profile = toProfile(PROFILE_WIRE);
     expect(profile.name).toBe('build tools');
     expect(profile.variables[0]).toEqual({ key: 'BUILD_MODE', value: 'release' });
     expect(profile.packages[0]).toEqual({ name: 'ripgrep', version: '14' });
     expect(profile.mandatory.skills).toEqual(['ornn-agent-manual-cli']);
+    expect(profile.agent.size).toEqual({ cpuMillis: 1500, memoryMib: 3072 });
+    expect(profile.agent.recordToolBodies).toBe(true);
   });
 
   it('refuses a profile with no identifier', () => {
     // Rendering one would produce a row nobody can edit or delete, which reads
     // as the interface being broken rather than the payload.
-    expect(() => toProfile({ name: 'nameless' })).toThrow(/identifier/i);
+    expect(() => toProfile({ ...PROFILE_WIRE, id: undefined })).toThrow(/\bid\b|identifier/i);
   });
 
-  it('treats missing collections as empty rather than failing', () => {
-    // A profile with nothing in it is a legitimate profile, and a control plane
-    // that omits an empty array must not take the editor down.
-    const profile = toProfile({ id: 'envp_2', name: 'bare' });
-    expect(profile.variables).toEqual([]);
-    expect(profile.packages).toEqual([]);
-    expect(profile.agent.skills).toEqual([]);
-    expect(profile.mandatory.packages).toEqual([]);
+  it('reports a response that omits a required collection', () => {
+    expect(() => toProfile({ ...PROFILE_WIRE, variables: undefined })).toThrow(/variables/i);
   });
 
   it('leaves an unstated package version absent', () => {
     // Absent means "whatever the runtime provides", which is not the same as
     // an empty version anyone could pin against.
-    const profile = toProfile({ id: 'envp_3', name: 'x', packages: [{ name: 'ripgrep' }] });
+    const profile = toProfile({ ...PROFILE_WIRE, packages: [{ name: 'ripgrep' }] });
     expect(profile.packages[0]?.version).toBeUndefined();
   });
 });
@@ -72,7 +79,7 @@ describe('talking to the control plane', () => {
   it('sends the session cookie', async () => {
     // Without this every call reads as anonymous and the list comes back empty
     // rather than refused, which is the confusing failure.
-    const fetchMock = vi.fn().mockResolvedValue(respond({ profiles: [] }));
+    const fetchMock = vi.fn().mockResolvedValue(respond([]));
     vi.stubGlobal('fetch', fetchMock);
 
     await createRestProfileStore().list();
@@ -83,8 +90,8 @@ describe('talking to the control plane', () => {
     );
   });
 
-  it('accepts a bare list as well as a wrapped one', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond([{ id: 'envp_1', name: 'a' }])));
+  it('accepts the server bare-list response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond([PROFILE_WIRE])));
     const profiles = await createRestProfileStore().list();
     expect(profiles).toHaveLength(1);
   });
@@ -113,7 +120,7 @@ describe('talking to the control plane', () => {
   });
 
   it('replaces a profile through its own address', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(respond({ id: 'envp_1', name: 'renamed' }));
+    const fetchMock = vi.fn().mockResolvedValue(respond({ ...PROFILE_WIRE, name: 'renamed' }));
     vi.stubGlobal('fetch', fetchMock);
 
     await createRestProfileStore().update('envp 1', {
@@ -161,31 +168,29 @@ describe('talking to the control plane', () => {
 describe('the plane a profile starts sessions on', () => {
   it('reads what the control plane recorded', () => {
     const profile = toProfile({
-      id: 'envp_1',
+      ...PROFILE_WIRE,
       name: 'reviewer',
-      agent: { kernel: 'claude-code', mode: 'conversation' },
+      agent: { ...PROFILE_WIRE.agent, kernel: 'claude-code', mode: 'conversation' },
     });
     expect(profile.agent.mode).toBe('conversation');
   });
 
-  it('reads a profile written before planes existed as a terminal', () => {
-    // What every session was then, and what the core still defaults to.
-    // Reading it back as anything else would change what an existing profile
-    // starts.
-    expect(toProfile({ id: 'envp_1', name: 'old', agent: { kernel: 'codex' } }).agent.mode).toBe(
-      'terminal',
-    );
+  it('reports a response that omits its plane', () => {
+    expect(() =>
+      toProfile({ ...PROFILE_WIRE, agent: { ...PROFILE_WIRE.agent, mode: undefined } }),
+    ).toThrow(/mode/i);
   });
 
   it('refuses to invent a plane from a value it does not recognise', () => {
-    expect(
-      toProfile({ id: 'envp_1', name: 'odd', agent: { kernel: 'codex', mode: 'holodeck' } }).agent
-        .mode,
-    ).toBe('terminal');
+    expect(() =>
+      toProfile({ ...PROFILE_WIRE, agent: { ...PROFILE_WIRE.agent, mode: 'holodeck' } }),
+    ).toThrow(/mode/i);
   });
 
   it('sends the plane back when a profile is stored', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(respond({ id: 'envp_1', name: 'reviewer' }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(respond({ ...PROFILE_WIRE, name: 'reviewer' }, 201));
     vi.stubGlobal('fetch', fetchMock);
 
     await createRestProfileStore().create({
