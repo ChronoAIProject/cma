@@ -15,7 +15,7 @@ use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::log::append_with;
+use crate::log::{append_with, drop_undelivered};
 use crate::service::{store_failed, SessionService};
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
@@ -115,47 +115,80 @@ impl SessionService {
     /// Unguarded here for the same reason as input: the attached client
     /// declares its own geometry through this call.
     pub async fn resize_terminal(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
         let gate = self.lifecycle_gates.gate(id);
-        let _guard = gate.lock_owned().await;
+        let lifecycle = gate.lock_owned().await;
         self.may_drive_terminal(caller, id).await?;
-        let (screen, commit) = {
+        let commit = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
             if !entry.session.is_owned_by(&caller.subject) {
                 return Err(CoreError::Forbidden);
             }
-            let commit = append_with(
+            let screen = Arc::clone(&entry.screen);
+            let input = entry.input.clone();
+            let service = Arc::clone(self);
+            let id = id.clone();
+            let rejected_service = Arc::clone(self);
+            let rejected_id = id.clone();
+            let rejected_screen = Arc::clone(&screen);
+            append_with(
                 entry,
                 EventKind::TerminalResized {
                     columns: geometry.columns(),
                     rows: geometry.rows(),
                 },
                 |record| record.session.geometry = geometry,
-            );
-            (Arc::clone(&entry.screen), commit)
+                move |committed| async move {
+                    let geometry = committed.session.geometry;
+                    let installed = {
+                        let mut entries = service.entries.write().await;
+                        if let Some(entry) = entries
+                            .get_mut(&id)
+                            .filter(|entry| Arc::ptr_eq(&entry.screen, &screen))
+                        {
+                            entry.session.geometry = geometry;
+                            entry.session.last_seq = committed.session.last_seq;
+                            let event_log = Arc::clone(&entry.event_log);
+                            event_log.synchronize_tail(&mut entry.session.last_seq);
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    let result = if installed {
+                        screen.lock().await.resize(geometry);
+                        if let Some(input) = input {
+                            if input
+                                .send(TerminalInput::Resize(TermSize {
+                                    cols: geometry.columns(),
+                                    rows: geometry.rows(),
+                                }))
+                                .await
+                                .is_err()
+                            {
+                                tracing::warn!(session_id = %id, "runtime input channel closed");
+                            }
+                        }
+                        Ok(())
+                    } else {
+                        Err(CoreError::SessionNotFound)
+                    };
+                    (result, lifecycle)
+                },
+                move |_error| async move {
+                    rejected_service
+                        .synchronize_live_tail_for(&rejected_id, &rejected_screen)
+                        .await;
+                },
+                drop_undelivered,
+            )
         };
-        let committed = commit.committed().await.map_err(store_failed)?;
-        {
-            let mut entries = self.entries.write().await;
-            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-            entry.session.geometry = committed.session.geometry;
-            entry.session.last_seq = committed.session.last_seq;
-        }
-        screen.lock().await.resize(geometry);
-        self.forward_input(
-            id,
-            TerminalInput::Resize(TermSize {
-                cols: geometry.columns(),
-                rows: geometry.rows(),
-            }),
-        )
-        .await;
-        Ok(())
+        commit.committed().await.map_err(store_failed)?
     }
     /// Whether this caller may drive this session's terminal at all.
     ///
