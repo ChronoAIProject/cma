@@ -20,7 +20,8 @@ use layer2_core::{
 };
 use mongodb::bson::{doc, Binary, Bson, Document};
 use mongodb::options::{
-    IndexOptions, ReadConcern, ReplaceOptions, ValidationAction, ValidationLevel, WriteConcern,
+    IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, ValidationAction, ValidationLevel,
+    WriteConcern,
 };
 use mongodb::results::{CollectionSpecification, CollectionType};
 use mongodb::{Client, Collection, Database, IndexModel};
@@ -38,6 +39,10 @@ const HISTORY_AUDIT_INTERVAL: Duration = Duration::from_secs(30);
 const WRITES: &str = "session_writes";
 const TOMBSTONES: &str = "session_tombstones";
 const TRANSACTION_PROBE: &str = "_cma_transaction_probe";
+const NAMESPACE_CUTOVERS: &str = "_cma_session_namespace_cutovers";
+const NAMESPACE_CUTOVER_ID: &str = "sessions-v2";
+const NAMESPACE_CUTOVER_PROTOCOL: i32 = 1;
+const NAMESPACE_CUTOVER_OBSERVED_ORIGIN: &str = "observed-complete";
 pub(super) const WRITE_PROTOCOL: i32 = 1;
 const WRITE_PROTOCOL_FIELD: &str = "_cma_write_protocol";
 
@@ -221,6 +226,7 @@ pub struct MongoSessionStore {
     tombstones: Collection<SessionTombstoneDoc>,
     collection_ids: Arc<BTreeMap<String, Binary>>,
     integrity: Arc<tokio::sync::Mutex<IntegrityAudit>>,
+    readiness_probe: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -263,6 +269,40 @@ impl TransactionQualified {
     }
 }
 
+/// Proof that this namespace state is either new, complete, or explicitly
+/// authorized after every legacy writer was stopped and drained.
+#[derive(Debug)]
+struct NamespaceCutoverAuthorized;
+
+impl NamespaceCutoverAuthorized {
+    fn authorize(&self, action: NamespaceAction) -> NamespaceAction {
+        action
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NamespaceCutoverAuthorization {
+    Complete,
+    Proven,
+    RecordNewDatabase,
+    RecordOperatorDrain,
+    RecordCompletion {
+        origin: String,
+        collection_ids: BTreeMap<String, Binary>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NamespaceCutoverMarker {
+    InProgress {
+        origin: String,
+    },
+    Complete {
+        origin: String,
+        collection_ids: BTreeMap<String, Binary>,
+    },
+}
+
 struct EventTransaction {
     events_collection: Collection<Document>,
     sessions_collection: Collection<SessionDoc>,
@@ -290,6 +330,11 @@ enum NamespaceKind {
 struct NamespacePair {
     legacy: Option<NamespaceKind>,
     authoritative: Option<NamespaceKind>,
+    legacy_marked: bool,
+    authoritative_marked: bool,
+    legacy_fenced: bool,
+    authoritative_fenced: bool,
+    authoritative_uuid: Option<Binary>,
 }
 
 #[derive(Debug, Default)]
@@ -298,11 +343,23 @@ struct StoredEventSequence {
     next: u64,
 }
 
+#[derive(Debug)]
+struct CutoverEvent {
+    session_id: String,
+    seq: u64,
+    position: Document,
+    document: Document,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NamespaceAction {
     CreateAuthoritative,
+    FenceLegacy,
     RenameLegacy,
+    FenceAuthoritative,
     CreateLegacyView,
+    FenceLateLegacy,
+    MergeLateLegacy,
     Ready,
 }
 
@@ -312,7 +369,11 @@ impl MongoSessionStore {
     ///
     /// Takes a client rather than a URI so one connection serves every store
     /// this deployment keeps in the same database. See `super::connect`.
-    pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+    pub(super) async fn open(
+        client: &Client,
+        database: &str,
+        legacy_cutover_confirmed: bool,
+    ) -> Result<Self, StoreError> {
         let db = client.database(database);
         let mut store = Self {
             client: client.clone(),
@@ -323,24 +384,48 @@ impl MongoSessionStore {
             database: db,
             collection_ids: Arc::new(BTreeMap::new()),
             integrity: Arc::new(tokio::sync::Mutex::new(IntegrityAudit::default())),
+            readiness_probe: Arc::new(tokio::sync::Semaphore::new(1)),
         };
         store
             .validate_transaction_topology(STORE_OPEN_TIMEOUT)
             .await?;
         let qualification = store.qualify_transaction(STORE_OPEN_TIMEOUT).await?;
-        // Fence the old session writer first. Its write and delete paths both
-        // touch the session collection before they touch event history, so a
-        // read-only session view stops a new old operation at its first step.
-        store
-            .ensure_versioned_namespace(&qualification, LEGACY_SESSIONS, SESSIONS)
+        let cutover = store
+            .authorize_namespace_cutover(legacy_cutover_confirmed)
             .await?;
-        store
-            .ensure_versioned_namespace(&qualification, LEGACY_EVENTS, EVENTS)
-            .await?;
-        store.ensure_indexes().await?;
         store.ensure_tombstone_collection().await?;
+        // Legacy flushes mutate the session record before appending events, and
+        // legacy deletes remove the session before removing its events. First
+        // prove the pre-cutover owner relation, then fence session mutations in
+        // place. Validators do not stop deletes, so event history is moved to
+        // its protected namespace before the session collection is renamed.
+        store
+            .prepare_legacy_session_fence(&qualification, &cutover)
+            .await?;
+        store
+            .capture_legacy_events(&qualification, &cutover)
+            .await?;
+        // An old flush which passed the session fence may now append into a
+        // race-created legacy event spill. Keep that name writable until every
+        // position its record advertised has arrived, then freeze and absorb
+        // the spill before exposing the compatibility view.
+        store.verify_legacy_writers_drained().await?;
+        store
+            .ensure_versioned_namespace(&qualification, &cutover, LEGACY_EVENTS, EVENTS)
+            .await?;
+        store.reconcile_cutover_deletes(LEGACY_SESSIONS).await?;
+        store
+            .ensure_versioned_namespace(&qualification, &cutover, LEGACY_SESSIONS, SESSIONS)
+            .await?;
+        // A legacy delete can remove its session after the first reconciliation
+        // and before the session rename. Once the view exists no further old
+        // delete can cross that boundary, so this closes the last such race.
+        store.reconcile_cutover_deletes(SESSIONS).await?;
+        let cutover_collection_ids = store.finalize_namespace_cutover_marker().await?;
+        store.ensure_indexes().await?;
         store.install_protocol_validators().await?;
         let collection_ids = store.authoritative_collection_ids().await?;
+        validate_completed_namespace_ids(&cutover_collection_ids, &collection_ids)?;
         store
             .verify_collection_contracts(Some(&collection_ids))
             .await?;
@@ -357,28 +442,28 @@ impl MongoSessionStore {
     }
 
     async fn validate_transaction_topology(&self, timeout: Duration) -> Result<(), StoreError> {
-        let database = self.database.clone();
-        let hello = bounded_mongo_command(
-            "MongoDB topology hello",
-            async move { database.run_command(doc! { "hello": 1_i32 }).await },
+        let store = self.clone();
+        bounded_store_check(
+            "MongoDB topology validation",
+            async move { store.validate_transaction_topology_unbounded().await },
             timeout,
         )
-        .await?;
+        .await
+    }
+
+    async fn validate_transaction_topology_unbounded(&self) -> Result<(), StoreError> {
+        let hello = self.database.run_command(doc! { "hello": 1_i32 }).await;
         let reply = match hello {
             Ok(reply) => reply,
             Err(error) if command_error_code(&error) == Some(59) => {
                 // `hello` replaced `isMaster` after transactions already
                 // existed. Keep older transaction-capable replica sets usable.
-                let database = self.database.clone();
-                bounded_mongo_command(
-                    "MongoDB topology isMaster",
-                    async move { database.run_command(doc! { "isMaster": 1_i32 }).await },
-                    timeout,
-                )
-                .await?
-                .map_err(|error| {
-                    StoreError::Unavailable(format!("MongoDB topology isMaster: {error}"))
-                })?
+                self.database
+                    .run_command(doc! { "isMaster": 1_i32 })
+                    .await
+                    .map_err(|error| {
+                        StoreError::Unavailable(format!("MongoDB topology isMaster: {error}"))
+                    })?
             }
             Err(error) => {
                 return Err(StoreError::Unavailable(format!(
@@ -387,6 +472,19 @@ impl MongoSessionStore {
             }
         };
         validate_transaction_topology_reply(&reply)
+    }
+
+    async fn check_readiness(&self) -> Result<(), StoreError> {
+        self.database
+            .run_command(doc! { "ping": 1_i32 })
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("ping: {error}")))?;
+        self.validate_transaction_topology_unbounded().await?;
+        self.verify_versioned_namespaces().await?;
+        self.verify_collection_contracts(Some(self.collection_ids.as_ref()))
+            .await?;
+        self.verify_required_indexes().await?;
+        self.audit_history_if_due().await
     }
 
     async fn qualify_transaction(
@@ -436,6 +534,369 @@ impl MongoSessionStore {
         Ok(TransactionQualified)
     }
 
+    async fn authorize_namespace_cutover(
+        &self,
+        legacy_cutover_confirmed: bool,
+    ) -> Result<NamespaceCutoverAuthorized, StoreError> {
+        let sessions = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        let marker = self.namespace_cutover_marker().await?;
+        let authorization = namespace_cutover_authorization(
+            &sessions,
+            &events,
+            legacy_cutover_confirmed,
+            marker.as_ref(),
+        )?;
+        match authorization {
+            NamespaceCutoverAuthorization::RecordNewDatabase => {
+                self.record_namespace_cutover_marker("new-database").await?;
+            }
+            NamespaceCutoverAuthorization::RecordOperatorDrain => {
+                self.record_namespace_cutover_marker("operator-drained")
+                    .await?;
+            }
+            NamespaceCutoverAuthorization::RecordCompletion {
+                origin,
+                collection_ids,
+            } => {
+                self.record_completed_namespace_cutover_marker(&origin, &collection_ids)
+                    .await?;
+            }
+            NamespaceCutoverAuthorization::Complete | NamespaceCutoverAuthorization::Proven => {}
+        }
+        Ok(NamespaceCutoverAuthorized)
+    }
+
+    async fn namespace_cutover_marker(&self) -> Result<Option<NamespaceCutoverMarker>, StoreError> {
+        let marker = self
+            .database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": NAMESPACE_CUTOVER_ID })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "read MongoDB namespace-cutover provenance: {error}"
+                ))
+            })?;
+        marker.map(validate_namespace_cutover_marker).transpose()
+    }
+
+    async fn record_namespace_cutover_marker(&self, origin: &str) -> Result<(), StoreError> {
+        if self.namespace_cutover_marker().await?.is_some() {
+            return Ok(());
+        }
+        let marker = namespace_cutover_marker_document(&NamespaceCutoverMarker::InProgress {
+            origin: origin.to_owned(),
+        })?;
+        let insert = self
+            .database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .insert_one(marker)
+            .with_options(
+                InsertOneOptions::builder()
+                    .write_concern(WriteConcern::majority())
+                    .build(),
+            )
+            .await;
+        match insert {
+            Ok(_) => Ok(()),
+            Err(insert_error) => {
+                if self.namespace_cutover_marker().await?.is_some() {
+                    // A concurrent opener established the same immutable proof.
+                    Ok(())
+                } else {
+                    Err(StoreError::Unavailable(format!(
+                        "record MongoDB namespace-cutover provenance before mutating legacy namespaces: {insert_error}"
+                    )))
+                }
+            }
+        }
+    }
+
+    async fn current_completed_namespace_ids(
+        &self,
+    ) -> Result<BTreeMap<String, Binary>, StoreError> {
+        let sessions = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        completed_namespace_ids(&sessions, &events)?.ok_or_else(|| {
+            StoreError::Unavailable(
+                "MongoDB namespace cutover cannot be marked complete until both legacy names are read-only views of their authoritative collections"
+                    .into(),
+            )
+        })
+    }
+
+    async fn verify_current_completed_namespace_ids(
+        &self,
+        expected: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let actual = self.current_completed_namespace_ids().await?;
+        validate_completed_namespace_ids(expected, &actual)
+    }
+
+    async fn record_completed_namespace_cutover_marker(
+        &self,
+        fallback_origin: &str,
+        expected: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        for _ in 0..4 {
+            // Do not bless UUIDs from a stale namespace snapshot. Recheck the
+            // complete pair immediately before each conditional marker write.
+            self.verify_current_completed_namespace_ids(expected)
+                .await?;
+            match self.namespace_cutover_marker().await? {
+                Some(NamespaceCutoverMarker::Complete { collection_ids, .. }) => {
+                    return validate_completed_namespace_ids(expected, &collection_ids);
+                }
+                Some(NamespaceCutoverMarker::InProgress { origin }) => {
+                    let marker = NamespaceCutoverMarker::Complete {
+                        origin: origin.clone(),
+                        collection_ids: expected.clone(),
+                    };
+                    let replacement = namespace_cutover_marker_document(&marker)?;
+                    let updated = self
+                        .database
+                        .collection::<Document>(NAMESPACE_CUTOVERS)
+                        .replace_one(
+                            doc! {
+                                "_id": NAMESPACE_CUTOVER_ID,
+                                "protocol": NAMESPACE_CUTOVER_PROTOCOL,
+                                "origin": &origin,
+                                "phase": "in-progress",
+                            },
+                            replacement,
+                        )
+                        .with_options(
+                            ReplaceOptions::builder()
+                                .upsert(false)
+                                .write_concern(WriteConcern::majority())
+                                .build(),
+                        )
+                        .await;
+                    match updated {
+                        Ok(result) if result.matched_count == 1 => continue,
+                        Ok(_) => continue,
+                        Err(error) => {
+                            if self.namespace_cutover_marker().await?.is_some() {
+                                continue;
+                            }
+                            return Err(StoreError::Unavailable(format!(
+                                "complete MongoDB namespace-cutover provenance: {error}"
+                            )));
+                        }
+                    }
+                }
+                None => {
+                    let marker = NamespaceCutoverMarker::Complete {
+                        origin: fallback_origin.to_owned(),
+                        collection_ids: expected.clone(),
+                    };
+                    let document = namespace_cutover_marker_document(&marker)?;
+                    let inserted = self
+                        .database
+                        .collection::<Document>(NAMESPACE_CUTOVERS)
+                        .insert_one(document)
+                        .with_options(
+                            InsertOneOptions::builder()
+                                .write_concern(WriteConcern::majority())
+                                .build(),
+                        )
+                        .await;
+                    match inserted {
+                        Ok(_) => continue,
+                        Err(error) => {
+                            if self.namespace_cutover_marker().await?.is_some() {
+                                continue;
+                            }
+                            return Err(StoreError::Unavailable(format!(
+                                "record completed MongoDB namespace-cutover provenance: {error}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB namespace-cutover provenance did not reach a stable completed state".into(),
+        ))
+    }
+
+    async fn finalize_namespace_cutover_marker(
+        &self,
+    ) -> Result<BTreeMap<String, Binary>, StoreError> {
+        let expected = self.current_completed_namespace_ids().await?;
+        self.record_completed_namespace_cutover_marker(
+            NAMESPACE_CUTOVER_OBSERVED_ORIGIN,
+            &expected,
+        )
+        .await?;
+        let Some(NamespaceCutoverMarker::Complete { collection_ids, .. }) =
+            self.namespace_cutover_marker().await?
+        else {
+            return Err(StoreError::Unavailable(
+                "MongoDB namespace-cutover provenance was not durably completed".into(),
+            ));
+        };
+        validate_completed_namespace_ids(&expected, &collection_ids)?;
+        self.verify_current_completed_namespace_ids(&collection_ids)
+            .await?;
+        Ok(collection_ids)
+    }
+
+    async fn prepare_legacy_session_fence(
+        &self,
+        qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
+    ) -> Result<(), StoreError> {
+        for _ in 0..12 {
+            let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            match (&pair.legacy, &pair.authoritative) {
+                (None, None) => {
+                    self.verify_legacy_pre_cutover_owners().await?;
+                    return Ok(());
+                }
+                (Some(NamespaceKind::Collection), None) if pair.legacy_fenced => return Ok(()),
+                (Some(NamespaceKind::Collection), None) => {
+                    self.verify_legacy_pre_cutover_owners().await?;
+                    self.execute_namespace_action(
+                        qualification,
+                        cutover,
+                        NamespaceAction::FenceLegacy,
+                        LEGACY_SESSIONS,
+                        SESSIONS,
+                    )
+                    .await?;
+                }
+                (None, Some(NamespaceKind::Collection)) if pair.authoritative_fenced => {
+                    return Ok(())
+                }
+                (None, Some(NamespaceKind::Collection)) => {
+                    self.verify_legacy_pre_cutover_owners().await?;
+                    self.execute_namespace_action(
+                        qualification,
+                        cutover,
+                        NamespaceAction::FenceAuthoritative,
+                        LEGACY_SESSIONS,
+                        SESSIONS,
+                    )
+                    .await?;
+                }
+                (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection)) => {
+                    return Err(StoreError::Unavailable(
+                        "legacy MongoDB session collection reappeared after its authoritative namespace was established; this violates the drained-writer cutover precondition, so CMA will not merge or drop either collection"
+                            .into(),
+                    ))
+                }
+                (
+                    Some(NamespaceKind::View {
+                        source: Some(source),
+                        pipeline_is_empty: true,
+                    }),
+                    Some(NamespaceKind::Collection),
+                ) if source == SESSIONS && pair.authoritative_fenced => return Ok(()),
+                _ => {
+                    return Err(StoreError::Unavailable(format!(
+                    "MongoDB session namespace cannot establish the legacy-writer fence: {pair:?}"
+                )))
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB session namespace did not reach a stable pre-cutover fence".into(),
+        ))
+    }
+
+    async fn capture_legacy_events(
+        &self,
+        qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
+    ) -> Result<(), StoreError> {
+        for _ in 0..12 {
+            let pair = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+            let action = match (&pair.legacy, &pair.authoritative) {
+                (None, None) => NamespaceAction::CreateAuthoritative,
+                (Some(NamespaceKind::Collection), None) if !pair.legacy_marked => {
+                    self.install_namespace_marker(LEGACY_EVENTS, EVENTS).await?;
+                    continue;
+                }
+                (Some(NamespaceKind::Collection), None) => NamespaceAction::RenameLegacy,
+                (None, Some(NamespaceKind::Collection)) if !pair.authoritative_fenced => {
+                    NamespaceAction::FenceAuthoritative
+                }
+                (None, Some(NamespaceKind::Collection)) => return Ok(()),
+                (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+                    if pair.authoritative_marked && !pair.authoritative_fenced =>
+                {
+                    NamespaceAction::FenceAuthoritative
+                }
+                (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+                    if pair.authoritative_fenced =>
+                {
+                    return Ok(())
+                }
+                (
+                    Some(NamespaceKind::View {
+                        source: Some(source),
+                        pipeline_is_empty: true,
+                    }),
+                    Some(NamespaceKind::Collection),
+                ) if source == EVENTS && pair.authoritative_fenced => return Ok(()),
+                _ => {
+                    return Err(StoreError::Unavailable(format!(
+                        "MongoDB event namespace cannot establish a protected cutover capture: {pair:?}"
+                    )))
+                }
+            };
+            self.execute_namespace_action(qualification, cutover, action, LEGACY_EVENTS, EVENTS)
+                .await?;
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB event namespace did not reach a stable protected capture".into(),
+        ))
+    }
+
+    async fn verify_legacy_pre_cutover_owners(&self) -> Result<(), StoreError> {
+        let sessions = self.validated_cutover_session_tails().await?;
+        let events = self.validated_cutover_event_tails().await?;
+        let tombstones = self.validated_tombstone_ids().await?;
+        validate_legacy_pre_cutover_owners(&sessions, &events, &tombstones)
+    }
+
+    async fn reconcile_cutover_deletes(&self, owner_collection: &str) -> Result<(), StoreError> {
+        if owner_collection == LEGACY_SESSIONS {
+            let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            if matches!(pair.legacy, Some(NamespaceKind::Collection))
+                && matches!(pair.authoritative, Some(NamespaceKind::Collection))
+            {
+                return Err(StoreError::Unavailable(
+                    "legacy MongoDB session collection reappeared during cutover; refusing delete reconciliation against an ambiguous owner namespace"
+                        .into(),
+                ));
+            }
+        }
+        let event_tails = self.validated_event_tails().await?;
+        let tombstones = self.validated_tombstone_ids().await?;
+        let owners = self.database.collection::<Document>(owner_collection);
+        for id in event_tails.keys() {
+            if tombstones.contains(id) {
+                continue;
+            }
+            let owner = owners.find_one(doc! { "_id": id }).await.map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "recheck legacy-delete owner {id} in {owner_collection}: {error}"
+                ))
+            })?;
+            if cutover_delete_requires_reconciliation(tombstones.contains(id), owner.is_some()) {
+                // The pre-cutover audit proved that every history had an owner
+                // before the session mutation fence. The only legacy operation
+                // still able to remove one after that fence is delete, so finish
+                // its second half transactionally and leave a permanent marker.
+                self.transactional_delete(&SessionId(id.clone())).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn verify_versioned_namespaces(&self) -> Result<(), StoreError> {
         for (legacy, authoritative) in [(LEGACY_SESSIONS, SESSIONS), (LEGACY_EVENTS, EVENTS)] {
             let pair = self.namespace_pair(legacy, authoritative).await?;
@@ -451,13 +912,16 @@ impl MongoSessionStore {
     async fn ensure_versioned_namespace(
         &self,
         qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
         legacy: &str,
         authoritative: &str,
     ) -> Result<(), StoreError> {
         // Another replica may be performing the same cutover, and a process may
         // have stopped after the rename but before creating the view. Re-read
-        // after every action; never infer that an ambiguous NamespaceExists
-        // means the two namespaces contain the same data.
+        // after every action. A protocol-fenced authoritative collection is the
+        // durable proof that another collection under the legacy name is a late
+        // old-writer spill from that exact gap; an unfenced pair stays
+        // ambiguous and is never guessed between.
         for _ in 0..12 {
             let before = self.namespace_pair(legacy, authoritative).await?;
             let action = next_namespace_action(&before, legacy, authoritative)?;
@@ -466,7 +930,7 @@ impl MongoSessionStore {
             }
 
             if let Err(error) = self
-                .execute_namespace_action(qualification, action, legacy, authoritative)
+                .execute_namespace_action(qualification, cutover, action, legacy, authoritative)
                 .await
             {
                 let after = self.namespace_pair(legacy, authoritative).await?;
@@ -475,7 +939,7 @@ impl MongoSessionStore {
                     continue;
                 }
                 return Err(StoreError::Unavailable(format!(
-                    "MongoDB namespace cutover {legacy} -> {authoritative} requires createCollection, renameCollectionSameDB, listCollections, find, and insert privileges: {error}"
+                    "MongoDB namespace cutover {legacy} -> {authoritative} requires createCollection, renameCollectionSameDB, collMod, listCollections, find, insert, createIndex, and dropCollection privileges: {error}"
                 )));
             }
         }
@@ -502,10 +966,17 @@ impl MongoSessionStore {
             StoreError::Unavailable(format!("MongoDB namespace cursor: {error}"))
         })? {
             let kind = namespace_kind(&specification);
+            let marked = namespace_has_protocol_validator(&specification, authoritative);
+            let fenced = namespace_is_protocol_fenced(&specification, authoritative);
             if specification.name == legacy {
                 pair.legacy = Some(kind);
+                pair.legacy_marked = marked;
+                pair.legacy_fenced = fenced;
             } else if specification.name == authoritative {
                 pair.authoritative = Some(kind);
+                pair.authoritative_marked = marked;
+                pair.authoritative_fenced = fenced;
+                pair.authoritative_uuid = specification.info.uuid.clone();
             }
         }
         Ok(pair)
@@ -514,13 +985,19 @@ impl MongoSessionStore {
     async fn execute_namespace_action(
         &self,
         qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
         action: NamespaceAction,
         legacy: &str,
         authoritative: &str,
-    ) -> mongodb::error::Result<()> {
-        match qualification.authorize(action) {
-            NamespaceAction::CreateAuthoritative => {
-                self.database.create_collection(authoritative).await
+    ) -> Result<(), StoreError> {
+        match qualification.authorize(cutover.authorize(action)) {
+            NamespaceAction::CreateAuthoritative => self
+                .database
+                .create_collection(authoritative)
+                .await
+                .map_err(|error| StoreError::Unavailable(error.to_string())),
+            NamespaceAction::FenceLegacy => {
+                self.install_namespace_fence(legacy, authoritative).await
             }
             NamespaceAction::RenameLegacy => {
                 let source = format!("{}.{}", self.database.name(), legacy);
@@ -534,16 +1011,276 @@ impl MongoSessionStore {
                     })
                     .await
                     .map(|_| ())
+                    .map_err(|error| StoreError::Unavailable(error.to_string()))
             }
-            NamespaceAction::CreateLegacyView => {
-                self.database
-                    .create_collection(legacy)
-                    .view_on(authoritative)
-                    .pipeline(Vec::<Document>::new())
+            NamespaceAction::FenceAuthoritative => {
+                self.install_namespace_fence(authoritative, authoritative)
                     .await
+            }
+            NamespaceAction::CreateLegacyView => self
+                .database
+                .create_collection(legacy)
+                .view_on(authoritative)
+                .pipeline(Vec::<Document>::new())
+                .await
+                .map_err(|error| StoreError::Unavailable(error.to_string())),
+            NamespaceAction::FenceLateLegacy => {
+                self.install_namespace_fence(legacy, authoritative).await
+            }
+            NamespaceAction::MergeLateLegacy => {
+                self.merge_late_legacy_namespace(legacy, authoritative)
+                    .await?;
+                self.database
+                    .collection::<Document>(legacy)
+                    .drop()
+                    .await
+                    .map_err(|error| StoreError::Unavailable(error.to_string()))
             }
             NamespaceAction::Ready => Ok(()),
         }
+    }
+
+    async fn install_namespace_fence(
+        &self,
+        namespace: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        let validator = expected_validator(authoritative).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "no MongoDB cutover fence is defined for {authoritative}"
+            ))
+        })?;
+        self.database
+            .run_command(doc! {
+                "collMod": namespace,
+                "validator": validator,
+                "validationLevel": "strict",
+                "validationAction": "error",
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "install old-writer fence on MongoDB collection {namespace}: {error}"
+                ))
+            })
+    }
+
+    async fn install_namespace_marker(
+        &self,
+        namespace: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        let validator = expected_validator(authoritative).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "no MongoDB cutover marker is defined for {authoritative}"
+            ))
+        })?;
+        self.database
+            .run_command(doc! {
+                "collMod": namespace,
+                "validator": validator,
+                "validationLevel": "strict",
+                // The marker must travel with the collection through rename,
+                // while a legacy append already released by its session upsert
+                // must still be accepted. `warn` supplies that durable identity
+                // without changing write behaviour.
+                "validationAction": "warn",
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "install MongoDB cutover marker on {namespace}: {error}"
+                ))
+            })
+    }
+
+    async fn merge_late_legacy_namespace(
+        &self,
+        legacy: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        match (legacy, authoritative) {
+            (LEGACY_EVENTS, EVENTS) => self.merge_late_legacy_events().await,
+            _ => Err(StoreError::Unavailable(format!(
+                "no MongoDB late-writer merge is defined for {legacy} -> {authoritative}"
+            ))),
+        }
+    }
+
+    async fn merge_late_legacy_events(&self) -> Result<(), StoreError> {
+        let position_index = required_indexes()
+            .into_iter()
+            .find(|required| required.collection == EVENTS && required.unique)
+            .expect("the authoritative event-position index is required");
+        let target = self.database.collection::<Document>(EVENTS);
+        target
+            .create_index(required_index_model(&position_index))
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "create event-position index before late-writer merge: {error}"
+                ))
+            })?;
+
+        let source = self.database.collection::<Document>(LEGACY_EVENTS);
+        let mut cursor = source
+            .find(doc! {})
+            .sort(doc! { "session_id": 1, "seq": 1 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read late legacy events during cutover: {error}"))
+            })?;
+        while let Some(document) = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!("late legacy event cursor during cutover: {error}"))
+        })? {
+            let event = normalize_cutover_event_document(document)?;
+            if let Some(existing) =
+                target
+                    .find_one(event.position.clone())
+                    .await
+                    .map_err(|error| {
+                        StoreError::Unavailable(format!(
+                            "check late legacy event {}:{} during cutover: {error}",
+                            event.session_id, event.seq
+                        ))
+                    })?
+            {
+                validate_same_cutover_event(&existing, &event.document)?;
+                continue;
+            }
+
+            if let Err(error) = target.insert_one(event.document.clone()).await {
+                // A concurrent opener can win the unique-position insert. Read
+                // its value and accept only the same event; never overwrite a
+                // different history entry merely because it has the same cursor.
+                let existing =
+                    target
+                        .find_one(event.position.clone())
+                        .await
+                        .map_err(|read_error| {
+                            StoreError::Unavailable(format!(
+                            "resolve concurrent late-event merge {}:{} after {error}: {read_error}",
+                            event.session_id, event.seq
+                        ))
+                        })?;
+                let Some(existing) = existing else {
+                    return Err(StoreError::Unavailable(format!(
+                        "merge late legacy event {}:{}: {error}",
+                        event.session_id, event.seq
+                    )));
+                };
+                validate_same_cutover_event(&existing, &event.document)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn verify_legacy_writers_drained(&self) -> Result<(), StoreError> {
+        let sessions = self.validated_cutover_session_tails().await?;
+        let events = self.validated_cutover_event_tails().await?;
+        validate_legacy_writer_drain(&sessions, &events)
+    }
+
+    async fn validated_cutover_session_tails(&self) -> Result<BTreeMap<String, u64>, StoreError> {
+        let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let mut collections = Vec::new();
+        if matches!(pair.legacy, Some(NamespaceKind::Collection)) {
+            collections.push(LEGACY_SESSIONS);
+        }
+        if matches!(pair.authoritative, Some(NamespaceKind::Collection)) {
+            collections.push(SESSIONS);
+        }
+        if matches!(pair.legacy, Some(NamespaceKind::View { .. }))
+            && !matches!(pair.authoritative, Some(NamespaceKind::Collection))
+        {
+            return Err(StoreError::Unavailable(
+                "legacy MongoDB session view has no authoritative collection during cutover".into(),
+            ));
+        }
+
+        let mut tails = BTreeMap::<String, u64>::new();
+        for collection in collections {
+            let mut cursor = self
+                .database
+                .collection::<Document>(collection)
+                .find(doc! {})
+                .sort(doc! { "_id": 1 })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "validate sessions in MongoDB cutover namespace {collection}: {error}"
+                    ))
+                })?;
+            while let Some(document) = cursor.try_next().await.map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "MongoDB cutover session cursor in {collection}: {error}"
+                ))
+            })? {
+                let (id, tail) = validate_stored_session_document(&document)?;
+                tails
+                    .entry(id)
+                    .and_modify(|existing| *existing = (*existing).max(tail))
+                    .or_insert(tail);
+            }
+        }
+        Ok(tails)
+    }
+
+    async fn validated_cutover_event_tails(&self) -> Result<BTreeMap<String, u64>, StoreError> {
+        let pair = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        let mut collections = Vec::new();
+        if matches!(pair.legacy, Some(NamespaceKind::Collection)) {
+            collections.push(LEGACY_EVENTS);
+        }
+        if matches!(pair.authoritative, Some(NamespaceKind::Collection)) {
+            collections.push(EVENTS);
+        }
+        if matches!(pair.legacy, Some(NamespaceKind::View { .. }))
+            && !matches!(pair.authoritative, Some(NamespaceKind::Collection))
+        {
+            return Err(StoreError::Unavailable(
+                "legacy MongoDB event view has no authoritative collection during writer drain"
+                    .into(),
+            ));
+        }
+
+        let mut positions = BTreeMap::<(String, u64), Document>::new();
+        for collection in collections {
+            let mut cursor = self
+                .database
+                .collection::<Document>(collection)
+                .find(doc! {})
+                .sort(doc! { "session_id": 1, "seq": 1 })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "validate events in MongoDB cutover namespace {collection}: {error}"
+                    ))
+                })?;
+            while let Some(document) = cursor.try_next().await.map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "MongoDB cutover event cursor in {collection}: {error}"
+                ))
+            })? {
+                let event = normalize_cutover_event_document(document)?;
+                let key = (event.session_id.clone(), event.seq);
+                if let Some(existing) = positions.get(&key) {
+                    validate_same_cutover_event(existing, &event.document)?;
+                } else {
+                    positions.insert(key, event.document);
+                }
+            }
+        }
+
+        let mut sequence = StoredEventSequence::default();
+        let mut tails = BTreeMap::new();
+        for document in positions.into_values() {
+            let (id, seq) = sequence.observe(&document)?;
+            tails.insert(id, seq);
+        }
+        Ok(tails)
     }
 
     async fn ensure_indexes(&self) -> Result<(), StoreError> {
@@ -813,13 +1550,17 @@ impl MongoSessionStore {
     }
 
     async fn audit_history_if_due(&self) -> Result<(), StoreError> {
-        let mut audit = self.integrity.lock().await;
-        if let Some(cached) = audit.cached_result(Instant::now()) {
-            return cached;
-        }
+        let previous = {
+            let audit = self.integrity.lock().await;
+            if let Some(cached) = audit.cached_result(Instant::now()) {
+                return cached;
+            }
+            audit.snapshot.clone()
+        };
 
-        let result = self.audited_history_snapshot(audit.snapshot.as_ref()).await;
+        let result = self.audited_history_snapshot(previous.as_ref()).await;
         let checked_at = Instant::now();
+        let mut audit = self.integrity.lock().await;
         match result {
             Ok(snapshot) => {
                 audit.record_success(checked_at, snapshot);
@@ -947,6 +1688,29 @@ fn collection_contract(specification: &CollectionSpecification) -> CollectionCon
         validation_action: specification.options.validation_action.clone(),
         uuid: specification.info.uuid.clone(),
     }
+}
+
+fn namespace_has_protocol_validator(
+    specification: &CollectionSpecification,
+    authoritative: &str,
+) -> bool {
+    specification.collection_type == CollectionType::Collection
+        && expected_validator(authoritative).is_some_and(|expected| {
+            specification
+                .options
+                .validator
+                .as_ref()
+                .is_some_and(|actual| documents_equivalent(actual, &expected))
+        })
+        && specification.options.validation_level == Some(ValidationLevel::Strict)
+}
+
+fn namespace_is_protocol_fenced(
+    specification: &CollectionSpecification,
+    authoritative: &str,
+) -> bool {
+    namespace_has_protocol_validator(specification, authoritative)
+        && specification.options.validation_action == Some(ValidationAction::Error)
 }
 
 fn expected_validator(collection: &str) -> Option<Document> {
@@ -1119,6 +1883,42 @@ fn validate_required_index(
     Ok(())
 }
 
+fn validate_legacy_pre_cutover_owners(
+    sessions: &BTreeMap<String, u64>,
+    events: &BTreeMap<String, u64>,
+    tombstones: &HashSet<String>,
+) -> Result<(), StoreError> {
+    if let Some((id, event_tail)) = events
+        .iter()
+        .find(|(id, _)| !sessions.contains_key(*id) && !tombstones.contains(*id))
+    {
+        return Err(StoreError::Unavailable(format!(
+            "legacy MongoDB history for session {id} ends at {event_tail} without its owner; retry after an in-flight legacy delete finishes"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_legacy_writer_drain(
+    sessions: &BTreeMap<String, u64>,
+    events: &BTreeMap<String, u64>,
+) -> Result<(), StoreError> {
+    if let Some((id, recorded_tail)) = sessions
+        .iter()
+        .find(|(id, recorded_tail)| events.get(*id).copied().unwrap_or(0) < **recorded_tail)
+    {
+        let event_tail = events.get(id).copied().unwrap_or(0);
+        return Err(StoreError::Unavailable(format!(
+            "legacy MongoDB writer drain is incomplete for session {id}: record advertises event {recorded_tail}, history currently ends at {event_tail}; retry after the in-flight legacy flush completes"
+        )));
+    }
+    Ok(())
+}
+
+fn cutover_delete_requires_reconciliation(tombstoned: bool, owner_exists: bool) -> bool {
+    !tombstoned && !owner_exists
+}
+
 fn validate_history_progress(
     previous: &HistorySnapshot,
     current: &HistorySnapshot,
@@ -1184,31 +1984,29 @@ fn validate_history_progress(
     Ok(())
 }
 
-async fn bounded_ping(
-    ping: impl Future<Output = mongodb::error::Result<Document>> + Send + 'static,
+async fn bounded_readiness_probe(
+    permit: Arc<tokio::sync::Semaphore>,
+    probe: impl Future<Output = Result<(), StoreError>> + Send + 'static,
     timeout: Duration,
 ) -> Result<(), StoreError> {
-    match bounded_mongo_command("ping", ping, timeout).await? {
-        Ok(_) => Ok(()),
-        Err(error) => Err(StoreError::Unavailable(format!("ping: {error}"))),
-    }
-}
-
-async fn bounded_mongo_command(
-    operation: &'static str,
-    command: impl Future<Output = mongodb::error::Result<Document>> + Send + 'static,
-    timeout: Duration,
-) -> Result<mongodb::error::Result<Document>, StoreError> {
-    // MongoDB driver futures must be polled to completion. Timing out the
-    // JoinHandle detaches the task instead of cancelling the driver operation.
-    let command = tokio::spawn(command);
-    match tokio::time::timeout(timeout, command).await {
-        Ok(Ok(result)) => Ok(result),
+    let deadline = tokio::time::Instant::now() + timeout;
+    let permit = permit.try_acquire_owned().map_err(|_| {
+        StoreError::Unavailable("MongoDB readiness probe is already in progress".into())
+    })?;
+    // MongoDB driver futures must be polled to completion. Timing out this
+    // JoinHandle detaches the whole probe with its permit still held, so a
+    // stalled driver operation cannot create a queue of detached audit tasks.
+    let probe = tokio::spawn(async move {
+        let _permit = permit;
+        probe.await
+    });
+    match tokio::time::timeout_at(deadline, probe).await {
+        Ok(Ok(result)) => result,
         Ok(Err(error)) => Err(StoreError::Unavailable(format!(
-            "{operation} task failed: {error}"
+            "MongoDB readiness probe task failed: {error}"
         ))),
         Err(_) => Err(StoreError::Unavailable(format!(
-            "{operation} timed out after {} ms",
+            "MongoDB readiness probe timed out after {} ms",
             timeout.as_millis()
         ))),
     }
@@ -1268,6 +2066,238 @@ fn namespace_kind(specification: &CollectionSpecification) -> NamespaceKind {
     }
 }
 
+fn namespace_cutover_marker_document(
+    marker: &NamespaceCutoverMarker,
+) -> Result<Document, StoreError> {
+    let (origin, phase, collection_ids) = match marker {
+        NamespaceCutoverMarker::InProgress { origin } => (origin, "in-progress", None),
+        NamespaceCutoverMarker::Complete {
+            origin,
+            collection_ids,
+        } => (origin, "complete", Some(collection_ids)),
+    };
+    validate_namespace_cutover_origin(origin, phase == "complete")?;
+    let mut document = doc! {
+        "_id": NAMESPACE_CUTOVER_ID,
+        "protocol": NAMESPACE_CUTOVER_PROTOCOL,
+        "origin": origin,
+        "phase": phase,
+    };
+    if let Some(collection_ids) = collection_ids {
+        let sessions = required_cutover_uuid(collection_ids, SESSIONS)?;
+        let events = required_cutover_uuid(collection_ids, EVENTS)?;
+        let mut stored = Document::new();
+        stored.insert(SESSIONS, sessions.clone());
+        stored.insert(EVENTS, events.clone());
+        document.insert("collection_uuids", stored);
+    }
+    Ok(document)
+}
+
+fn validate_namespace_cutover_marker(
+    document: Document,
+) -> Result<NamespaceCutoverMarker, StoreError> {
+    let id = document.get_str("_id").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker _id must be a string".into())
+    })?;
+    let protocol = document.get_i32("protocol").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker protocol must be an int".into())
+    })?;
+    let origin = document.get_str("origin").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker origin must be a string".into())
+    })?;
+    let phase = document.get_str("phase").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker phase must be a string".into())
+    })?;
+    if id != NAMESPACE_CUTOVER_ID || protocol != NAMESPACE_CUTOVER_PROTOCOL {
+        return Err(StoreError::Malformed(format!(
+            "MongoDB namespace-cutover marker is not the supported {NAMESPACE_CUTOVER_ID} protocol {NAMESPACE_CUTOVER_PROTOCOL} proof"
+        )));
+    }
+    match phase {
+        "in-progress" if document.len() == 4 => {
+            validate_namespace_cutover_origin(origin, false)?;
+            Ok(NamespaceCutoverMarker::InProgress {
+                origin: origin.to_owned(),
+            })
+        }
+        "complete" if document.len() == 5 => {
+            validate_namespace_cutover_origin(origin, true)?;
+            let stored = document.get_document("collection_uuids").map_err(|_| {
+                StoreError::Malformed(
+                    "completed MongoDB namespace-cutover marker must contain collection_uuids"
+                        .into(),
+                )
+            })?;
+            if stored.len() != 2 {
+                return Err(StoreError::Malformed(
+                    "completed MongoDB namespace-cutover marker must name exactly the two authoritative collection UUIDs"
+                        .into(),
+                ));
+            }
+            let collection_ids = BTreeMap::from([
+                (SESSIONS.to_owned(), stored_cutover_uuid(stored, SESSIONS)?),
+                (EVENTS.to_owned(), stored_cutover_uuid(stored, EVENTS)?),
+            ]);
+            Ok(NamespaceCutoverMarker::Complete {
+                origin: origin.to_owned(),
+                collection_ids,
+            })
+        }
+        _ => Err(StoreError::Malformed(
+            "MongoDB namespace-cutover marker has an unsupported phase or field set".into(),
+        )),
+    }
+}
+
+fn validate_namespace_cutover_origin(origin: &str, complete: bool) -> Result<(), StoreError> {
+    if matches!(origin, "new-database" | "operator-drained")
+        || (complete && origin == NAMESPACE_CUTOVER_OBSERVED_ORIGIN)
+    {
+        return Ok(());
+    }
+    Err(StoreError::Malformed(
+        "MongoDB namespace-cutover marker has an unsupported origin".into(),
+    ))
+}
+
+fn required_cutover_uuid<'a>(
+    collection_ids: &'a BTreeMap<String, Binary>,
+    collection: &str,
+) -> Result<&'a Binary, StoreError> {
+    let uuid = collection_ids.get(collection).ok_or_else(|| {
+        StoreError::Malformed(format!(
+            "completed MongoDB namespace-cutover marker is missing the {collection} UUID"
+        ))
+    })?;
+    validate_cutover_uuid(collection, uuid)?;
+    Ok(uuid)
+}
+
+fn stored_cutover_uuid(document: &Document, collection: &str) -> Result<Binary, StoreError> {
+    let uuid = match document.get(collection) {
+        Some(Bson::Binary(uuid)) => uuid.clone(),
+        _ => {
+            return Err(StoreError::Malformed(format!(
+                "completed MongoDB namespace-cutover marker {collection} UUID must be binary"
+            )))
+        }
+    };
+    validate_cutover_uuid(collection, &uuid)?;
+    Ok(uuid)
+}
+
+fn validate_cutover_uuid(collection: &str, uuid: &Binary) -> Result<(), StoreError> {
+    if uuid.subtype == mongodb::bson::spec::BinarySubtype::Uuid && uuid.bytes.len() == 16 {
+        return Ok(());
+    }
+    Err(StoreError::Malformed(format!(
+        "completed MongoDB namespace-cutover marker {collection} UUID is not a standard UUID"
+    )))
+}
+
+fn completed_namespace_ids(
+    sessions: &NamespacePair,
+    events: &NamespacePair,
+) -> Result<Option<BTreeMap<String, Binary>>, StoreError> {
+    let ready = matches!(
+        next_namespace_action(sessions, LEGACY_SESSIONS, SESSIONS),
+        Ok(NamespaceAction::Ready)
+    ) && matches!(
+        next_namespace_action(events, LEGACY_EVENTS, EVENTS),
+        Ok(NamespaceAction::Ready)
+    );
+    if !ready {
+        return Ok(None);
+    }
+    let sessions_uuid = sessions.authoritative_uuid.clone().ok_or_else(|| {
+        StoreError::Unavailable(
+            "completed MongoDB namespace cutover sessions_v2 collection has no stable UUID".into(),
+        )
+    })?;
+    let events_uuid = events.authoritative_uuid.clone().ok_or_else(|| {
+        StoreError::Unavailable(
+            "completed MongoDB namespace cutover session_events_v2 collection has no stable UUID"
+                .into(),
+        )
+    })?;
+    Ok(Some(BTreeMap::from([
+        (SESSIONS.to_owned(), sessions_uuid),
+        (EVENTS.to_owned(), events_uuid),
+    ])))
+}
+
+fn validate_completed_namespace_ids(
+    recorded: &BTreeMap<String, Binary>,
+    actual: &BTreeMap<String, Binary>,
+) -> Result<(), StoreError> {
+    for collection in [SESSIONS, EVENTS] {
+        let recorded_uuid = required_cutover_uuid(recorded, collection)?;
+        let actual_uuid = actual.get(collection).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "completed MongoDB namespace cutover no longer has authoritative collection {collection}; refusing to recreate or replace it"
+            ))
+        })?;
+        if actual_uuid != recorded_uuid {
+            return Err(StoreError::Unavailable(format!(
+                "completed MongoDB namespace cutover {collection} UUID no longer matches its durable completion record; refusing to accept replacement data"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn namespace_cutover_authorization(
+    sessions: &NamespacePair,
+    events: &NamespacePair,
+    legacy_cutover_confirmed: bool,
+    marker: Option<&NamespaceCutoverMarker>,
+) -> Result<NamespaceCutoverAuthorization, StoreError> {
+    let new_database = [sessions, events]
+        .iter()
+        .all(|pair| pair.legacy.is_none() && pair.authoritative.is_none());
+    let completed = completed_namespace_ids(sessions, events)?;
+    match marker {
+        Some(NamespaceCutoverMarker::Complete { collection_ids, .. }) => {
+            let actual = completed.as_ref().ok_or_else(|| {
+                StoreError::Unavailable(
+                    "completed MongoDB namespace cutover is no longer complete; refusing to recreate missing namespaces from an empty state"
+                        .into(),
+                )
+            })?;
+            validate_completed_namespace_ids(collection_ids, actual)?;
+            return Ok(NamespaceCutoverAuthorization::Complete);
+        }
+        Some(NamespaceCutoverMarker::InProgress { origin }) => {
+            if let Some(collection_ids) = completed {
+                return Ok(NamespaceCutoverAuthorization::RecordCompletion {
+                    origin: origin.clone(),
+                    collection_ids,
+                });
+            }
+            return Ok(NamespaceCutoverAuthorization::Proven);
+        }
+        None => {}
+    }
+    if let Some(collection_ids) = completed {
+        return Ok(NamespaceCutoverAuthorization::RecordCompletion {
+            origin: NAMESPACE_CUTOVER_OBSERVED_ORIGIN.to_owned(),
+            collection_ids,
+        });
+    }
+    if new_database {
+        return Ok(NamespaceCutoverAuthorization::RecordNewDatabase);
+    }
+    if legacy_cutover_confirmed {
+        return Ok(NamespaceCutoverAuthorization::RecordOperatorDrain);
+    }
+
+    Err(StoreError::Unavailable(
+        "legacy MongoDB session namespaces require an offline cutover: stop every pre-cutover CMA replica and wait for all of its MongoDB operations to finish, then start exactly one replacement with CHRONO_MONGODB_LEGACY_CUTOVER=drained; CMA cannot prove that external drain itself"
+            .into(),
+    ))
+}
+
 fn next_namespace_action(
     pair: &NamespacePair,
     legacy: &str,
@@ -1275,8 +2305,39 @@ fn next_namespace_action(
 ) -> Result<NamespaceAction, StoreError> {
     match (&pair.legacy, &pair.authoritative) {
         (None, None) => Ok(NamespaceAction::CreateAuthoritative),
+        (Some(NamespaceKind::Collection), None) if !pair.legacy_fenced => {
+            Ok(NamespaceAction::FenceLegacy)
+        }
         (Some(NamespaceKind::Collection), None) => Ok(NamespaceAction::RenameLegacy),
+        (None, Some(NamespaceKind::Collection)) if !pair.authoritative_fenced => {
+            Ok(NamespaceAction::FenceAuthoritative)
+        }
         (None, Some(NamespaceKind::Collection)) => Ok(NamespaceAction::CreateLegacyView),
+        (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+            if legacy == LEGACY_EVENTS
+                && authoritative == EVENTS
+                && pair.authoritative_fenced
+                && !pair.legacy_fenced =>
+        {
+            Ok(NamespaceAction::FenceLateLegacy)
+        }
+        (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+            if legacy == LEGACY_EVENTS
+                && authoritative == EVENTS
+                && pair.authoritative_fenced
+                && pair.legacy_fenced =>
+        {
+            Ok(NamespaceAction::MergeLateLegacy)
+        }
+        (
+            Some(NamespaceKind::View {
+                source: Some(source),
+                pipeline_is_empty: true,
+            }),
+            Some(NamespaceKind::Collection),
+        ) if source == authoritative && !pair.authoritative_fenced => {
+            Ok(NamespaceAction::FenceAuthoritative)
+        }
         (
             Some(NamespaceKind::View {
                 source: Some(source),
@@ -1288,6 +2349,49 @@ fn next_namespace_action(
             "MongoDB namespace cutover is ambiguous for {legacy} -> {authoritative}: {pair:?}; refusing to merge, replace, or drop data"
         ))),
     }
+}
+
+fn normalize_cutover_event_document(mut document: Document) -> Result<CutoverEvent, StoreError> {
+    let event = event_doc::from_document(document.clone())?;
+    document.remove("_id");
+    document.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
+    let position = doc! {
+        "session_id": &event.session_id.0,
+        "seq": i64::try_from(event.seq).map_err(|_| {
+            StoreError::Malformed(format!(
+                "late legacy event {}:{} exceeds MongoDB's sequence range",
+                event.session_id, event.seq
+            ))
+        })?,
+    };
+    Ok(CutoverEvent {
+        session_id: event.session_id.0,
+        seq: event.seq,
+        position,
+        document,
+    })
+}
+
+fn validate_same_cutover_event(left: &Document, right: &Document) -> Result<(), StoreError> {
+    let left = canonical_cutover_event(left.clone())?;
+    let right = canonical_cutover_event(right.clone())?;
+    if documents_equivalent(&left, &right) {
+        return Ok(());
+    }
+    let id = right
+        .get_str("session_id")
+        .unwrap_or("<invalid session id>");
+    let seq = right.get_i64("seq").unwrap_or(-1);
+    Err(StoreError::Malformed(format!(
+        "late legacy event {id}:{seq} conflicts with a different authoritative event at the same cursor"
+    )))
+}
+
+fn canonical_cutover_event(mut document: Document) -> Result<Document, StoreError> {
+    event_doc::from_document(document.clone())?;
+    document.remove("_id");
+    document.remove(WRITE_PROTOCOL_FIELD);
+    Ok(document)
 }
 
 fn protocol_validator(mut required: Vec<&str>, long_fields: &[&str]) -> Document {
@@ -1904,25 +3008,10 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
 #[async_trait::async_trait]
 impl SessionStore for MongoSessionStore {
     async fn ping(&self) -> Result<(), StoreError> {
-        let database = self.database.clone();
-        bounded_ping(
-            async move { database.run_command(doc! { "ping": 1_i32 }).await },
-            STORE_PING_TIMEOUT,
-        )
-        .await?;
-        self.validate_transaction_topology(STORE_PING_TIMEOUT)
-            .await?;
         let store = self.clone();
-        bounded_store_check(
-            "MongoDB session-store readiness",
-            async move {
-                store.verify_versioned_namespaces().await?;
-                store
-                    .verify_collection_contracts(Some(store.collection_ids.as_ref()))
-                    .await?;
-                store.verify_required_indexes().await?;
-                store.audit_history_if_due().await
-            },
+        bounded_readiness_probe(
+            Arc::clone(&self.readiness_probe),
+            async move { store.check_readiness().await },
             STORE_PING_TIMEOUT,
         )
         .await
