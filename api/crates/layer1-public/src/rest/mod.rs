@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{FromRef, Path, Query, State},
-    http::{header, HeaderValue, StatusCode},
+    extract::{FromRef, FromRequest, Path, Query, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -27,8 +27,8 @@ mod operate;
 mod problems;
 mod tickets;
 
-pub(crate) use problems::problem_document;
-pub use problems::Problem;
+pub(crate) use problems::{problem_document, problem_response};
+pub use problems::{HttpProblem, Problem};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::tickets::TerminalTickets;
@@ -117,14 +117,15 @@ impl InterfaceProfile for RestInterface {
 pub struct CreateSessionRequest {
     /// Declared only so it can be refused in words a caller can act on.
     ///
-    /// Left to `deny_unknown_fields`, this gets serde's generic sentence: it
-    /// names the field and lists the ones that were expected, which answers
-    /// "what is wrong" and not "then how do I get `claude_code`?". That second
-    /// question is the only reason anybody sent it, and §3's bar is a refusal
-    /// "in words a caller can act on".
+    /// Left to `deny_unknown_fields`, this would be an ordinary schema
+    /// mismatch with fixed transport detail. Declaring it lets the handler
+    /// answer the useful second question: how a caller actually selects a
+    /// kernel. That is the only reason anybody sent it, and §3's bar is a
+    /// refusal "in words a caller can act on".
     ///
-    /// Every other unknown field keeps serde's message, which is right for
-    /// them: a typo has no remedy worth spelling out.
+    /// Every other unknown field is refused as a schema mismatch. The wire
+    /// deliberately does not carry Serde's raw diagnostic because it can quote
+    /// submitted values on other mismatch branches.
     #[serde(default)]
     kernel: Option<String>,
     /// Initial terminal width.
@@ -620,6 +621,8 @@ async fn named(users: &UserDirectory, caller: &Caller, sessions: Vec<Session>) -
 pub enum RequestFailure {
     /// The body did not parse, or carried something this interface cannot take.
     Body(BodyProblem),
+    /// The query string did not match the route's declared parameters.
+    Query(QueryProblem),
     /// The body was fine and the core would not do it.
     Refused(Problem),
 }
@@ -630,9 +633,27 @@ impl From<CoreError> for RequestFailure {
     }
 }
 
+impl From<Problem> for RequestFailure {
+    fn from(problem: Problem) -> Self {
+        Self::Refused(problem)
+    }
+}
+
 impl From<BodyProblem> for RequestFailure {
     fn from(e: BodyProblem) -> Self {
         Self::Body(e)
+    }
+}
+
+impl From<axum::extract::rejection::JsonRejection> for RequestFailure {
+    fn from(error: axum::extract::rejection::JsonRejection) -> Self {
+        Self::Body(error.into())
+    }
+}
+
+impl From<axum::extract::rejection::QueryRejection> for RequestFailure {
+    fn from(error: axum::extract::rejection::QueryRejection) -> Self {
+        Self::Query(QueryProblem(error))
     }
 }
 
@@ -640,8 +661,51 @@ impl IntoResponse for RequestFailure {
     fn into_response(self) -> Response {
         match self {
             Self::Body(e) => e.into_response(),
+            Self::Query(e) => e.into_response(),
             Self::Refused(e) => e.into_response(),
         }
+    }
+}
+
+/// An optional JSON body which distinguishes absence from a missing media type.
+///
+/// Axum's `Option<Json<T>>` treats every request without a `Content-Type`
+/// header as absent, even when it carries bytes. That is right for a generic
+/// optional extractor and wrong for an operation where a supplied body must be
+/// JSON: silently ignoring it can change the act the caller requested.
+pub(crate) struct OptionalJson<T>(pub(crate) Option<T>);
+
+impl<T, S> FromRequest<S> for OptionalJson<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = BodyProblem;
+
+    async fn from_request(
+        request: axum::extract::Request,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        if request
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .is_none()
+        {
+            let bytes = axum::body::Bytes::from_request(request, state)
+                .await
+                .map_err(|error| {
+                    BodyProblem::from(axum::extract::rejection::JsonRejection::from(error))
+                })?;
+            if bytes.is_empty() {
+                return Ok(Self(None));
+            }
+            return Err(BodyProblem::missing_json_content_type());
+        }
+
+        let Json(value) = Json::<T>::from_request(request, state)
+            .await
+            .map_err(BodyProblem::from)?;
+        Ok(Self(Some(value)))
     }
 }
 
@@ -655,91 +719,124 @@ impl IntoResponse for RequestFailure {
 /// three into one status would send somebody whose header is wrong to go and
 /// stare at their JSON.
 ///
-/// Applied to session creation only, so far. The other routes still answer a
-/// bad body in axum's words, and saying so is cheaper than implying an
-/// evenness this does not yet have.
-///
-/// One caveat travels with `body_text()`: `CoreError::InvalidRequest` promises
-/// to name what is wrong without quoting a value, and this is a foreign string
-/// that cannot promise the same. Serde's unknown-field branch carries the key
-/// alone, but its `invalid type` branch echoes what was sent. No field on this
-/// body is a credential, so there is nothing to leak today — but a field that
-/// could carry one must not be added without revisiting this.
-pub struct BodyProblem(pub(crate) axum::extract::rejection::JsonRejection);
+/// Axum's rejection prose can quote a submitted scalar. The fixed details below
+/// deliberately give up that unstable diagnostic text: environment variables,
+/// terminal input and administrator prose may all contain credentials, and an
+/// invalid request must not copy one into response telemetry.
+pub struct BodyProblem(BodyProblemKind);
+
+enum BodyProblemKind {
+    Axum(axum::extract::rejection::JsonRejection),
+    MissingJsonContentType,
+}
+
+impl BodyProblem {
+    fn missing_json_content_type() -> Self {
+        Self(BodyProblemKind::MissingJsonContentType)
+    }
+}
+
+impl From<axum::extract::rejection::JsonRejection> for BodyProblem {
+    fn from(error: axum::extract::rejection::JsonRejection) -> Self {
+        Self(BodyProblemKind::Axum(error))
+    }
+}
 
 impl IntoResponse for BodyProblem {
     fn into_response(self) -> Response {
-        use axum::extract::rejection::JsonRejection;
+        match self.0 {
+            BodyProblemKind::Axum(error) => json_rejection_response(error),
+            BodyProblemKind::MissingJsonContentType => json_problem_response(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                JsonProblemKind::MissingContentType,
+            ),
+        }
+    }
+}
+
+/// A query string this interface could not read, rendered like every other
+/// refusal.
+pub struct QueryProblem(pub(crate) axum::extract::rejection::QueryRejection);
+
+impl IntoResponse for QueryProblem {
+    fn into_response(self) -> Response {
         let status = self.0.status();
-        // Slug and code together, so the two cannot drift. `Problem` reads its
-        // code from `CoreError::code()`; deriving one from the other by string
-        // substitution would be a second source of truth that happens to agree.
-        let (slug, code) = match &self.0 {
-            // Deliberately the same pair the core uses for a request it
-            // understood and would not act on. To a caller this is that: the
-            // body was read and could not be honoured.
-            JsonRejection::JsonDataError(_) => ("invalid-request", "invalid_request"),
-            JsonRejection::JsonSyntaxError(_) => ("malformed-json", "malformed_json"),
-            JsonRejection::MissingJsonContentType(_) => {
-                ("unsupported-media-type", "unsupported_media_type")
-            }
-            // Axum's rejection is non-exhaustive, so anything added later
-            // reads as a body we could not take rather than as a panic.
-            _ => ("unreadable-request-body", "unreadable_request_body"),
-        };
-        // Axum's own sentence. For the unknown-field case it carries serde's
-        // message, which names the field and lists what was expected — more
-        // than this could say by hand, and it stays correct when a field is
-        // added.
         let detail = self.0.body_text();
-        let body = problem_document(status, slug, &detail, code);
-        (status, Json(body)).into_response()
+        let body = problem_document(status, "invalid-query", &detail, "invalid_query");
+        problem_response(status, body)
     }
 }
 
 /// A settings body this interface could not read, without reflecting it.
 ///
-/// Axum's JSON rejection text may quote an invalid value. That is useful for
-/// ordinary request shapes, but platform settings contain administrator prose
-/// which must not travel into a response, activity record, or log merely
-/// because it was sent with the wrong JSON type. This renderer keeps axum's
-/// precise status and this API's stable code while using only fixed detail.
+/// Platform settings contain administrator prose which must not travel into a
+/// response, activity record, or log merely because it was sent with the wrong
+/// JSON type. This named wrapper preserves that explicit ownership while using
+/// the same fixed-detail renderer as every other JSON request.
 pub(crate) struct ConfidentialBodyProblem(pub(crate) axum::extract::rejection::JsonRejection);
 
 impl IntoResponse for ConfidentialBodyProblem {
     fn into_response(self) -> Response {
-        use axum::extract::rejection::JsonRejection;
-        let status = self.0.status();
-        let (slug, code, detail) = match &self.0 {
-            JsonRejection::JsonDataError(_) => (
-                "invalid-request",
-                "invalid_request",
-                "The JSON body does not match this operation's request schema.",
-            ),
-            JsonRejection::JsonSyntaxError(_) => (
-                "malformed-json",
-                "malformed_json",
-                "The request body is not valid JSON.",
-            ),
-            JsonRejection::MissingJsonContentType(_) => (
-                "unsupported-media-type",
-                "unsupported_media_type",
-                "The request must use the application/json media type.",
-            ),
-            _ => (
-                "unreadable-request-body",
-                "unreadable_request_body",
-                "The request body could not be read.",
-            ),
-        };
-        let body = problem_document(status, slug, detail, code);
-        let mut response = (status, Json(body)).into_response();
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/problem+json"),
-        );
-        response
+        json_rejection_response(self.0)
     }
+}
+
+/// Render an Axum JSON rejection without copying request values into the wire.
+fn json_rejection_response(error: axum::extract::rejection::JsonRejection) -> Response {
+    use axum::extract::rejection::JsonRejection;
+
+    let status = error.status();
+    // Body collection can fail before Serde sees anything. Keep that path
+    // identical to the composition layer's own limit instead of describing a
+    // known oversized request as generically unreadable.
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        return HttpProblem::RequestTooLarge.into_response();
+    }
+    let kind = match &error {
+        JsonRejection::JsonDataError(_) => JsonProblemKind::Data,
+        JsonRejection::JsonSyntaxError(_) => JsonProblemKind::Syntax,
+        JsonRejection::MissingJsonContentType(_) => JsonProblemKind::MissingContentType,
+        // Axum's rejection is non-exhaustive, so anything added later reads as
+        // a body we could not take rather than as a panic.
+        _ => JsonProblemKind::Unreadable,
+    };
+    json_problem_response(status, kind)
+}
+
+enum JsonProblemKind {
+    Data,
+    Syntax,
+    MissingContentType,
+    Unreadable,
+}
+
+fn json_problem_response(status: StatusCode, kind: JsonProblemKind) -> Response {
+    // Slug and code stay beside each other so the two cannot drift. The detail
+    // is fixed per class because Serde's diagnostics can quote input values.
+    let (slug, code, detail) = match kind {
+        JsonProblemKind::Data => (
+            "invalid-request",
+            "invalid_request",
+            "The JSON body does not match this operation's request schema.",
+        ),
+        JsonProblemKind::Syntax => (
+            "malformed-json",
+            "malformed_json",
+            "The request body is not valid JSON.",
+        ),
+        JsonProblemKind::MissingContentType => (
+            "unsupported-media-type",
+            "unsupported_media_type",
+            "The request must use the application/json media type.",
+        ),
+        JsonProblemKind::Unreadable => (
+            "unreadable-request-body",
+            "unreadable_request_body",
+            "The request body could not be read.",
+        ),
+    };
+    let body = problem_document(status, slug, detail, code);
+    problem_response(status, body)
 }
 
 /// Environment bundles a session can be started with.
@@ -866,8 +963,9 @@ pub fn router(state: SessionsState) -> Router {
 async fn pricing_quote(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(params): Query<PricingQuoteParams>,
-) -> Result<Json<PricingQuoteView>, Problem> {
+    params: Result<Query<PricingQuoteParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<PricingQuoteView>, RequestFailure> {
+    let Query(params) = params?;
     let profile = params
         .environment_profile
         .map(layer2_core::EnvironmentProfileId);
@@ -890,7 +988,7 @@ async fn create(
     // request was wrong.
     body: Result<Json<CreateSessionRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<SessionView>), RequestFailure> {
-    let Json(body) = body.map_err(BodyProblem)?;
+    let Json(body) = body?;
     let parts = body.into_parts()?;
     let credential_value = credential.as_ref().map(|axum::Extension(c)| c.0.clone());
     let session = service
@@ -1023,8 +1121,9 @@ async fn plane(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Json(body): Json<PlaneRequest>,
-) -> Result<Json<SessionView>, Problem> {
+    body: Result<Json<PlaneRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<SessionView>, RequestFailure> {
+    let Json(body) = body?;
     let session = service
         .change_plane(&caller, &SessionId(id), body.plane)
         .await?;

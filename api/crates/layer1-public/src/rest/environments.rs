@@ -25,7 +25,7 @@ use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
     MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
 };
-use crate::rest::Problem;
+use crate::rest::{Problem, RequestFailure};
 
 /// Routes this resource contributes.
 ///
@@ -57,8 +57,9 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
 async fn create(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Json(body): Json<ProfileRequest>,
-) -> Result<(StatusCode, Json<ProfileView>), Problem> {
+    body: Result<Json<ProfileRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<(StatusCode, Json<ProfileView>), RequestFailure> {
+    let Json(body) = body?;
     let profile = service.create(&caller, body.try_into()?).await?;
     Ok((
         StatusCode::CREATED,
@@ -94,8 +95,9 @@ struct PreferredRequest {
 async fn prefer(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Json(body): Json<PreferredRequest>,
-) -> Result<Json<Vec<ProfileView>>, Problem> {
+    body: Result<Json<PreferredRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<Vec<ProfileView>>, RequestFailure> {
+    let Json(body) = body?;
     let wanted = body.profile.map(EnvironmentProfileId);
     let profiles = service.prefer(&caller, wanted.as_ref()).await?;
     Ok(Json(
@@ -119,8 +121,9 @@ async fn replace(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Json(body): Json<ProfileRequest>,
-) -> Result<Json<ProfileView>, Problem> {
+    body: Result<Json<ProfileRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<ProfileView>, RequestFailure> {
+    let Json(body) = body?;
     let profile = service
         .update(&caller, &EnvironmentProfileId(id), body.try_into()?)
         .await?;
@@ -416,12 +419,15 @@ mod tests {
         )
         .expect("parses");
 
-        let refusal = create(State(service), AuthenticatedCaller(caller), Json(body)).await;
+        let refusal = create(State(service), AuthenticatedCaller(caller), Ok(Json(body))).await;
         let problem = match refusal {
             Err(problem) => problem,
             Ok(_) => panic!("a zero size must be refused"),
         };
-        assert!(matches!(problem.0, CoreError::InvalidSessionSize(_)));
+        assert!(matches!(
+            &problem,
+            RequestFailure::Refused(Problem(CoreError::InvalidSessionSize(_)))
+        ));
         let response = problem.into_response();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)

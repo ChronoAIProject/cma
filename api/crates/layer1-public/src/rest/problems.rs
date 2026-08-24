@@ -9,6 +9,49 @@ use layer2_core::CoreError;
 
 use super::PROBLEM_BASE;
 
+/// An HTTP-level refusal raised outside a core operation.
+///
+/// These variants are public because the composition layer can reject a
+/// request before a Layer 1 handler runs. Their wire representation remains
+/// owned here, beside the domain-problem renderer, so every refusal has one
+/// serializer and one media type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpProblem {
+    /// The request body exceeded the service's accepted limit.
+    RequestTooLarge,
+    /// No REST route matched the request path.
+    NotFound,
+    /// The REST route exists but does not accept this method.
+    MethodNotAllowed,
+}
+
+impl IntoResponse for HttpProblem {
+    fn into_response(self) -> Response {
+        let (status, slug, detail, code) = match self {
+            Self::RequestTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request-too-large",
+                "The request body exceeds what this service accepts.",
+                "request_too_large",
+            ),
+            Self::NotFound => (
+                StatusCode::NOT_FOUND,
+                "not-found",
+                "No REST route matches this request path.",
+                "not_found",
+            ),
+            Self::MethodNotAllowed => (
+                StatusCode::METHOD_NOT_ALLOWED,
+                "method-not-allowed",
+                "This REST route does not accept the request method.",
+                "method_not_allowed",
+            ),
+        };
+        let body = problem_document(status, slug, detail, code);
+        problem_response(status, body)
+    }
+}
+
 /// A core failure rendered as an RFC 9457 problem document.
 pub struct Problem(pub(crate) CoreError);
 
@@ -127,12 +170,7 @@ impl IntoResponse for Problem {
                 _ => {}
             }
         }
-        let mut response = (status, Json(body)).into_response();
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/problem+json"),
-        );
-        response
+        problem_response(status, body)
     }
 }
 
@@ -160,6 +198,20 @@ pub(crate) fn problem_document(
         "detail": detail,
         "code": code,
     })
+}
+
+/// Put a completed problem document on the wire with its registered media type.
+///
+/// Every source of an HTTP refusal finishes here. Keeping the header beside the
+/// conversion means a new problem renderer cannot accidentally inherit Axum's
+/// ordinary `application/json` response type.
+pub(crate) fn problem_response(status: StatusCode, body: serde_json::Value) -> Response {
+    let mut response = (status, Json(body)).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/problem+json"),
+    );
+    response
 }
 
 #[cfg(test)]
