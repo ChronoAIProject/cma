@@ -336,3 +336,16 @@ fn control_frames_parse_from_their_tag() {
     assert!(matches!(s, ClientControl::Signal { .. }));
     assert!(serde_json::from_str::<ClientControl>(r#"{"t":"nope"}"#).is_err());
 }
+
+#[test]
+fn every_documented_signal_name_is_supported() {
+    for signal in ["INT", "TERM", "QUIT", "HUP"] {
+        assert!(supported_signal(signal), "{signal} must remain accepted");
+    }
+}
+
+#[test]
+fn an_unknown_signal_name_is_rejected() {
+    assert!(!supported_signal("XYZ"));
+    assert!(!supported_signal("int"), "signal names are case-sensitive");
+}

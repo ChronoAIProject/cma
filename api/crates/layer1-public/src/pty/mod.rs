@@ -44,6 +44,14 @@ const SCROLLBACK_LINES: u32 = 2000;
 /// Largest inbound frame accepted, in bytes.
 const MAX_FRAME_BYTES: u32 = 262_144;
 
+/// Signal names the public terminal contract accepts.
+const SUPPORTED_SIGNALS: &[&str] = &["INT", "TERM", "QUIT", "HUP"];
+
+/// Whether a signal name can be represented by the runtime's bounded mapping.
+fn supported_signal(sig: &str) -> bool {
+    SUPPORTED_SIGNALS.contains(&sig)
+}
+
 /// The interface profile.
 pub struct PtyInterface;
 
