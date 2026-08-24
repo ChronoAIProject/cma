@@ -12,14 +12,15 @@ use std::sync::Arc;
 use axum::{
     extract::State,
     response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use layer2_core::{
     CapacityBounds, CoreError, DeploymentCapacity, PlatformSettings, PlatformSettingsService,
     SessionBriefing, StoredSettings,
 };
 use serde::{Deserialize, Deserializer, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::AdminProblem;
 use crate::auth::{AuthenticatedCaller, SettingsTouched};
@@ -28,18 +29,15 @@ use crate::rest::ConfidentialBodyProblem;
 /// The two exact paths owned by this module remain in the parent surface's
 /// route list, so its invariant test still covers everything a gateway must
 /// restrict.
-pub(super) fn router(service: Arc<PlatformSettingsService>) -> Router {
-    Router::new()
-        .route(
-            super::OPERATOR_ROUTES[6],
-            get(read).put(replace).patch(change),
-        )
-        .route(super::OPERATOR_ROUTES[7], post(reset))
+pub(super) fn router(service: Arc<PlatformSettingsService>) -> OpenApiRouter {
+    OpenApiRouter::new()
+        .routes(routes!(read, replace, change))
+        .routes(routes!(reset))
         .with_state(service)
 }
 
 /// The settings document together with the revision a future write must name.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct SettingsView {
     revision: u64,
     settings: PlatformSettings,
@@ -92,7 +90,7 @@ where
 /// Every field is required when the briefing setting is replaced. This keeps
 /// a PATCH from silently filling an accidentally omitted field with shipped
 /// prose, which would be neither "leave alone" nor what the client sent.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct BriefingRequest {
     before: Vec<String>,
@@ -118,12 +116,16 @@ impl From<BriefingRequest> for SessionBriefing {
 
 /// The complete range setting. Partial ranges are not meaningful: every
 /// minimum must arrive with the maximum it is compared against.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct BoundsRequest {
+    #[schema(value_type = u32, minimum = 1)]
     min_cpu_millis: NonZeroU32,
+    #[schema(value_type = u32, minimum = 1)]
     max_cpu_millis: NonZeroU32,
+    #[schema(value_type = u32, minimum = 1)]
     min_memory_mib: NonZeroU32,
+    #[schema(value_type = u32, minimum = 1)]
     max_memory_mib: NonZeroU32,
 }
 
@@ -139,22 +141,26 @@ impl From<BoundsRequest> for CapacityBounds {
 }
 
 /// One conditional settings change.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct ChangeRequest {
     expected_revision: u64,
     #[serde(default)]
+    #[schema(value_type = Option<BriefingRequest>)]
     briefing: PatchField<BriefingRequest>,
     #[serde(default)]
+    #[schema(value_type = Option<DeploymentCapacity>)]
     deployment_capacity: PatchField<DeploymentCapacity>,
     #[serde(default)]
+    #[schema(value_type = Option<BoundsRequest>)]
     size_bounds: PatchField<BoundsRequest>,
     #[serde(default)]
+    #[schema(value_type = Option<u32>)]
     live_sessions: PatchField<NonZeroU32>,
 }
 
 /// A conditional replacement of the complete settings document.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct ReplaceRequest {
     expected_revision: u64,
@@ -213,7 +219,7 @@ impl ChangeRequest {
 }
 
 /// A conditional request to restore only the briefing.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct ResetRequest {
     expected_revision: u64,
@@ -246,6 +252,12 @@ impl IntoResponse for SettingsFailure {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/settings",
+    tag = "administration",
+    responses((status = 200, description = "Deployment settings", body = SettingsView))
+)]
 async fn read(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -253,6 +265,13 @@ async fn read(
     Ok(Json(service.read(&caller).await?.into()))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/admin/settings",
+    tag = "administration",
+    request_body = ChangeRequest,
+    responses((status = 200, description = "Changed deployment settings", body = SettingsView))
+)]
 async fn change(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -266,6 +285,13 @@ async fn change(
     Ok(changed_response(stored, &previous))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/settings",
+    tag = "administration",
+    request_body = ReplaceRequest,
+    responses((status = 200, description = "Replaced deployment settings", body = SettingsView))
+)]
 async fn replace(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -279,6 +305,13 @@ async fn replace(
     Ok(changed_response(stored, &previous))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/settings/reset",
+    tag = "administration",
+    request_body = ResetRequest,
+    responses((status = 200, description = "Settings with shipped briefing restored", body = SettingsView))
+)]
 async fn reset(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,

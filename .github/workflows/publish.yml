@@ -182,6 +182,8 @@ jobs:
           push: false
           load: true
           tags: cma-${{ matrix.component }}:release
+          build-args: |
+            CHRONO_BUILD_SHA=${{ github.sha }}
           # Populated by ci.yml. A run on main can restore caches from main and
           # from the default branch, and develop is the default branch, so the
           # layers the merged pull request built are still warm here.
@@ -222,6 +224,7 @@ jobs:
           # release it is actually running. Ignored by the other two images.
           build-args: |
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
+            CHRONO_BUILD_SHA=${{ github.sha }}
           tags: |
             ${{ steps.image.outputs.repository }}:${{ needs.plan.outputs.version }}
             ${{ steps.image.outputs.repository }}:${{ steps.image.outputs.revision }}

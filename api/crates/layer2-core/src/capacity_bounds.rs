@@ -49,15 +49,19 @@ impl fmt::Display for SizeDimension {
 /// across the deployment. A request can be inside this range and still be
 /// unschedulable because other sessions have consumed the available capacity;
 /// a deployment-wide capacity ledger is a separate decision and type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CapacityBounds {
     /// Smallest processor request accepted, in thousandths of one core.
+    #[schema(value_type = u32, minimum = 1)]
     pub min_cpu_millis: NonZeroU32,
     /// Largest processor request accepted, in thousandths of one core.
+    #[schema(value_type = u32, minimum = 1)]
     pub max_cpu_millis: NonZeroU32,
     /// Smallest working-memory request accepted, in mebibytes.
+    #[schema(value_type = u32, minimum = 1)]
     pub min_memory_mib: NonZeroU32,
     /// Largest working-memory request accepted, in mebibytes.
+    #[schema(value_type = u32, minimum = 1)]
     pub max_memory_mib: NonZeroU32,
 }
 

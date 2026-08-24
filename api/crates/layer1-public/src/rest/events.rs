@@ -22,6 +22,7 @@ use axum::{
 use futures_util::stream::{self, Stream};
 use layer2_core::{SessionId, SessionService};
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
 
@@ -35,13 +36,24 @@ use super::RequestFailure;
 /// events, so an idle stream costs one small read per interval.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(super) struct Cursor {
     /// Resume after this sequence. Absent means from the beginning.
     after: Option<u64>,
 }
 
 /// Stream a session's events, resuming from a cursor.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}/events",
+    tag = "events",
+    params(
+        ("id" = String, Path),
+        ("after" = Option<u64>, Query),
+        ("Last-Event-Id" = Option<u64>, Header)
+    ),
+    responses((status = 200, description = "Resumable server-sent event stream", body = String, content_type = "text/event-stream"))
+)]
 pub(super) async fn stream(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,

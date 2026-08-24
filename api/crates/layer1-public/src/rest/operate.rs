@@ -36,13 +36,14 @@ use layer2_core::{
     SessionId, SessionService, Spend, TerminalGeometry, Usage, CURRENCY,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
 
 use super::{Problem, RequestFailure};
 
 /// What a caller sends to a session.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(super) struct InputRequest {
     /// Text to deliver.
     #[serde(default)]
@@ -67,20 +68,20 @@ fn yes() -> bool {
 }
 
 /// A geometry change.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(super) struct ResizeRequest {
     cols: u16,
     rows: u16,
 }
 
 /// An owner's answer to something the runtime is blocked on.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(super) struct ApprovalRequestBody {
     decision: DecisionBody,
 }
 
 /// What the owner decided, in the words every interface uses.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum DecisionBody {
     /// Let it proceed.
@@ -102,7 +103,7 @@ impl From<DecisionBody> for ApprovalDecision {
 }
 
 /// What a session has used.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(super) struct UsageView {
     input_tokens: u64,
     output_tokens: u64,
@@ -123,7 +124,7 @@ impl From<Usage> for UsageView {
 }
 
 /// One resource reading in REST's snake-case vocabulary.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(super) struct ResourceReadingView {
     cpu_millis_used: Option<u32>,
     cpu_millis_limit: Option<u32>,
@@ -179,7 +180,7 @@ impl From<ResourceReading> for ResourceReadingView {
 }
 
 /// What is known about a session's resource use at this moment.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(super) struct ResourceStatusView {
     reading: Option<ResourceReadingView>,
     observed_at: Option<String>,
@@ -209,7 +210,7 @@ impl From<ResourceStatus> for ResourceStatusView {
 }
 
 /// Reserved-capacity spend derived from one session's durable history.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(super) struct SpendView {
     priced: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -247,6 +248,14 @@ impl From<Spend> for SpendView {
 }
 
 /// Send something to a session, on whichever plane it holds.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/input",
+    tag = "operations",
+    params(("id" = String, Path)),
+    request_body = InputRequest,
+    responses((status = 202, description = "Input accepted"))
+)]
 pub(super) async fn input(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -302,6 +311,13 @@ pub(super) async fn input(
 }
 
 /// Stop what the session is doing, without ending it.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/interrupt",
+    tag = "operations",
+    params(("id" = String, Path)),
+    responses((status = 202, description = "Interrupt accepted"))
+)]
 pub(super) async fn interrupt(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -320,6 +336,14 @@ pub(super) async fn interrupt(
 }
 
 /// Tell the runtime its terminal changed size.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/resize",
+    tag = "terminal",
+    params(("id" = String, Path)),
+    request_body = ResizeRequest,
+    responses((status = 204, description = "Terminal resized"))
+)]
 pub(super) async fn resize(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -339,6 +363,14 @@ pub(super) async fn resize(
 }
 
 /// Answer something the runtime is blocked on.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/approvals/{request_id}",
+    tag = "operations",
+    params(("id" = String, Path), ("request_id" = String, Path)),
+    request_body = ApprovalRequestBody,
+    responses((status = 202, description = "Approval decision accepted"))
+)]
 pub(super) async fn resolve_approval(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -353,6 +385,13 @@ pub(super) async fn resolve_approval(
 }
 
 /// What this session has used.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}/usage",
+    tag = "usage",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Token usage", body = UsageView))
+)]
 pub(super) async fn usage(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -363,6 +402,13 @@ pub(super) async fn usage(
 }
 
 /// What this session is using right now, or why no reading exists.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}/resources",
+    tag = "usage",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Latest sandbox resource reading", body = ResourceStatusView))
+)]
 pub(super) async fn resources(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -373,6 +419,13 @@ pub(super) async fn resources(
 }
 
 /// What this session has accrued for reserved capacity.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}/spend",
+    tag = "pricing",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Accrued reserved-capacity spend", body = SpendView))
+)]
 pub(super) async fn spend(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -388,6 +441,14 @@ pub(super) async fn spend(
 /// what you are already doing" is saying something different from "here is a
 /// new turn", and a kernel that cannot tell them apart must say so rather than
 /// silently treat one as the other.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/steer",
+    tag = "operations",
+    params(("id" = String, Path)),
+    request_body = InputRequest,
+    responses((status = 202, description = "Steering input accepted"))
+)]
 pub(super) async fn steer(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
