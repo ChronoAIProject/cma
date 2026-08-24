@@ -1044,8 +1044,8 @@ async fn list(
     State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
-) -> Json<Vec<SessionView>> {
-    let sessions = service.list_sessions(&caller).await;
+) -> Result<Json<Vec<SessionView>>, Problem> {
+    let sessions = service.list_sessions(&caller).await?;
     let mut views = named(&users, &caller, sessions.clone()).await;
     let credential = credential.map(|axum::Extension(c)| c.0);
     reached(
@@ -1056,7 +1056,7 @@ async fn list(
         &mut views,
     )
     .await;
-    Json(views)
+    Ok(Json(views))
 }
 
 async fn read(

@@ -53,7 +53,8 @@ async fn a_restarted_service_still_lists_the_session() {
 
     let listed = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
         .list_sessions(&caller)
-        .await;
+        .await
+        .expect("session list is readable");
     assert_eq!(listed.len(), 1, "the list must come from the store");
 }
 
@@ -142,7 +143,11 @@ async fn one_subject_cannot_read_another_subjects_persisted_session() {
         Err(CoreError::Forbidden)
     ));
     assert!(
-        restarted.list_sessions(&user("mallory")).await.is_empty(),
+        restarted
+            .list_sessions(&user("mallory"))
+            .await
+            .expect("session list is readable")
+            .is_empty(),
         "another subject's sessions must not be listed"
     );
 }
@@ -161,7 +166,8 @@ async fn a_privileged_reader_sees_persisted_sessions_it_does_not_own() {
 
     let listed = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
         .list_sessions(&admin())
-        .await;
+        .await
+        .expect("session list is readable");
     assert_eq!(listed.len(), 2, "the dashboard must see every session");
 }
 
@@ -200,6 +206,13 @@ async fn an_unreachable_store_is_reported_rather_than_read_as_absent() {
             Err(CoreError::RuntimeUnavailable(_))
         ),
         "an unreachable store must not report the session as missing"
+    );
+    assert!(
+        matches!(
+            svc.list_sessions(&caller).await,
+            Err(CoreError::RuntimeUnavailable(_))
+        ),
+        "an unreachable store must not report an empty session list"
     );
 }
 
