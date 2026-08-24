@@ -57,6 +57,15 @@ const CURSOR_LENGTH_LIMIT: usize = 2_048;
 /// Single-skill reads run concurrently, but never without a ceiling.
 const DESCRIPTION_LOOKUP_CONCURRENCY: usize = 8;
 
+/// Maximum single-skill detail reads one CMA request may make.
+///
+/// A profile may record at most 100 skills. The bounded session collection may
+/// contain 200 rows, so using every distinct grant on that page could otherwise
+/// turn one read into 20,000 provider calls. One profile's complete grant set is
+/// a useful enrichment budget; grants beyond it still render from their durable
+/// identifiers and versions.
+const DESCRIPTION_LOOKUP_LIMIT: usize = 100;
+
 /// A skill as the registry describes it.
 ///
 /// Deliberately forward-compatible: fields the registry adds later are ignored
@@ -341,11 +350,14 @@ impl SkillCatalog for PlatformSkillCatalog {
     ) -> Result<Vec<CatalogSkill>, CatalogError> {
         let bearer = self.bearer(credential).await?;
         let mut seen = HashSet::new();
-        let requested: Vec<SkillId> = skills
+        let mut requested: Vec<SkillId> = skills
             .iter()
             .filter(|skill| seen.insert(skill.0.clone()))
             .cloned()
             .collect();
+        let distinct = requested.len();
+        requested.truncate(DESCRIPTION_LOOKUP_LIMIT);
+        let lookups = requested.len();
         let described: Vec<Option<CatalogSkill>> =
             stream::iter(requested.into_iter().map(|skill| {
                 let bearer = &bearer;
@@ -358,6 +370,8 @@ impl SkillCatalog for PlatformSkillCatalog {
         tracing::info!(
             %subject,
             count = described.len(),
+            lookups,
+            omitted = distinct.saturating_sub(lookups),
             delegated = credential.is_some(),
             "described this page's session skills"
         );

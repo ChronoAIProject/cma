@@ -115,6 +115,27 @@ fn rows(start: usize, count: usize) -> Vec<serde_json::Value> {
     (start..start + count).map(row).collect()
 }
 
+fn detail_replies(count: usize) -> Vec<Reply> {
+    (0..count)
+        .map(|number| {
+            Reply::at(
+                &format!("/api/v1/proxy/s/ornn-api/api/v1/skills/skill-{number}"),
+                StatusCode::OK,
+                serde_json::json!({
+                    "data": row(number),
+                    "error": null
+                }),
+            )
+        })
+        .collect()
+}
+
+fn skill_ids(count: usize) -> Vec<SkillId> {
+    (0..count)
+        .map(|number| SkillId::new(format!("skill-{number}")))
+        .collect()
+}
+
 fn page(
     items: Vec<serde_json::Value>,
     has_more: bool,
@@ -500,5 +521,97 @@ async fn one_missing_grant_does_not_hide_another_grants_description() {
     assert!(requests
         .iter()
         .any(|request| parsed(request).path() == visible_path));
+    server.abort();
+}
+
+#[tokio::test]
+async fn description_lookups_below_the_ceiling_call_every_distinct_skill_once() {
+    let count = 3;
+    let (base, requests, server) = registry(detail_replies(count)).await;
+
+    let described = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &skill_ids(count),
+        )
+        .await
+        .expect("all detail reads fit below the ceiling");
+
+    assert_eq!(requests.lock().await.len(), count);
+    assert_eq!(
+        described
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        ["skill-0", "skill-1", "skill-2"]
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn description_lookups_at_the_ceiling_call_every_distinct_skill_once() {
+    let (base, requests, server) = registry(detail_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
+
+    let described = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &skill_ids(DESCRIPTION_LOOKUP_LIMIT),
+        )
+        .await
+        .expect("the exact ceiling is accepted");
+
+    assert_eq!(requests.lock().await.len(), DESCRIPTION_LOOKUP_LIMIT);
+    assert_eq!(described.len(), DESCRIPTION_LOOKUP_LIMIT);
+    assert_eq!(described.first().expect("first").name, "skill-0");
+    assert_eq!(
+        described.last().expect("last").name,
+        format!("skill-{}", DESCRIPTION_LOOKUP_LIMIT - 1)
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn description_lookups_over_the_ceiling_use_the_first_distinct_skills_only() {
+    let (base, requests, server) = registry(detail_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
+    let mut requested = vec![
+        SkillId::new("skill-0"),
+        SkillId::new("skill-1"),
+        SkillId::new("skill-0"),
+    ];
+    requested.extend(
+        (2..DESCRIPTION_LOOKUP_LIMIT + 2).map(|number| SkillId::new(format!("skill-{number}"))),
+    );
+
+    let described = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &requested,
+        )
+        .await
+        .expect("overflow is intentionally left undescribed");
+
+    assert_eq!(
+        requests.lock().await.len(),
+        DESCRIPTION_LOOKUP_LIMIT,
+        "duplicates and overflow must not become provider calls"
+    );
+    assert_eq!(described.len(), DESCRIPTION_LOOKUP_LIMIT);
+    assert_eq!(
+        described
+            .iter()
+            .map(|skill| skill.name.clone())
+            .collect::<Vec<_>>(),
+        (0..DESCRIPTION_LOOKUP_LIMIT)
+            .map(|number| format!("skill-{number}"))
+            .collect::<Vec<_>>(),
+        "first appearance selects a stable enrichment prefix"
+    );
+    assert!(!described.iter().any(|skill| {
+        skill.name == format!("skill-{DESCRIPTION_LOOKUP_LIMIT}")
+            || skill.name == format!("skill-{}", DESCRIPTION_LOOKUP_LIMIT + 1)
+    }));
     server.abort();
 }
