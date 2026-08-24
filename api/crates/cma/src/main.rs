@@ -16,9 +16,10 @@ mod skills;
 mod store;
 mod sweep;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
+    http::{header, HeaderName, HeaderValue, Method},
     routing::{any, get},
     Json, Router,
 };
@@ -40,6 +41,8 @@ use crate::activity::ActivityRecorder;
 use crate::auth::{AuthState, SignInRecords};
 use crate::config::Config;
 use crate::screen::VtScreen;
+
+const CORS_PREFLIGHT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
@@ -71,6 +74,31 @@ fn rest_api_router(
         .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
         .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
         .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
+}
+
+/// Apply the browser boundary shared by every public interface.
+///
+/// Origins remain an explicit deployment grant. A wildcard is incompatible
+/// with credentialed requests and would let any site embed this service.
+fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
+    router.layer(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_credentials(true)
+            .allow_headers([
+                header::CONTENT_TYPE,
+                header::AUTHORIZATION,
+                HeaderName::from_static("last-event-id"),
+            ])
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+            ])
+            .max_age(CORS_PREFLIGHT_MAX_AGE),
+    )
 }
 
 #[tokio::main]
@@ -318,18 +346,6 @@ async fn main() {
     // whose start-up died with an earlier process.
     sweep::spawn(Arc::clone(&service));
 
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(config.cors_origins.clone()))
-        .allow_credentials(true)
-        .allow_headers([axum::http::header::CONTENT_TYPE])
-        .allow_methods([
-            axum::http::Method::GET,
-            axum::http::Method::POST,
-            axum::http::Method::PUT,
-            axum::http::Method::PATCH,
-            axum::http::Method::DELETE,
-        ]);
-
     // What somebody running the service can see and do. Its own router under
     // its own path segment so the whole surface can be restricted in front of
     // this process as well as inside it.
@@ -353,34 +369,36 @@ async fn main() {
         }),
     );
 
-    let app = Router::new()
-        .route("/livez", get(|| async { "ok" }))
-        .route("/ready", get(ready))
-        .merge(rest)
-        // The priority-1 interface, sharing the facade's state because it
-        // projects the same sessions: a thread here is a session there, and
-        // two states would be two answers to the same question.
-        .merge(layer1_public::agui::router(public_state))
-        .merge(layer1_public::pty::router(
-            layer1_public::pty::TerminalState {
-                sessions: Arc::clone(&service),
-                tickets: Arc::clone(&tickets),
-            },
-        ))
-        .merge(auth::router(Arc::clone(&auth_state)))
-        // Ordered deliberately. A layer added later wraps the ones before it,
-        // so identity is established first and recording sees both who called
-        // and how their request came out. Reversing these two would record
-        // every request as having no actor.
-        .layer(axum::middleware::from_fn_with_state(
-            ActivityRecorder::new(Arc::clone(&activity)),
-            activity::record,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&auth_state),
-            auth::attach_subject,
-        ))
-        .layer(cors);
+    let app = with_cors(
+        Router::new()
+            .route("/livez", get(|| async { "ok" }))
+            .route("/ready", get(ready))
+            .merge(rest)
+            // The priority-1 interface, sharing the facade's state because it
+            // projects the same sessions: a thread here is a session there, and
+            // two states would be two answers to the same question.
+            .merge(layer1_public::agui::router(public_state))
+            .merge(layer1_public::pty::router(
+                layer1_public::pty::TerminalState {
+                    sessions: Arc::clone(&service),
+                    tickets: Arc::clone(&tickets),
+                },
+            ))
+            .merge(auth::router(Arc::clone(&auth_state)))
+            // Ordered deliberately. A layer added later wraps the ones before it,
+            // so identity is established first and recording sees both who called
+            // and how their request came out. Reversing these two would record
+            // every request as having no actor.
+            .layer(axum::middleware::from_fn_with_state(
+                ActivityRecorder::new(Arc::clone(&activity)),
+                activity::record,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&auth_state),
+                auth::attach_subject,
+            )),
+        config.cors_origins.clone(),
+    );
 
     let listener = match tokio::net::TcpListener::bind(&config.bind).await {
         Ok(l) => l,

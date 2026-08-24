@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     body::{to_bytes, Body},
-    http::{header, Method, Request, Response, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
     Extension, Router,
 };
 use layer1_public::{tickets::TerminalTickets, AuthenticatedSubject};
@@ -22,10 +22,12 @@ use layer3_adapter::{
 use tokio::sync::{mpsc, Mutex};
 use tower::ServiceExt;
 
-use super::rest_api_router;
+use super::{rest_api_router, with_cors};
 use crate::activity::{self, ActivityRecorder};
 
 const OVERSIZED_BODY_LEN: usize = 2 * 1024 * 1024 + 1;
+const LISTED_ORIGIN: &str = "https://integrator.example";
+const UNLISTED_ORIGIN: &str = "https://unlisted.example";
 
 #[derive(Default)]
 struct MemorySessions {
@@ -321,6 +323,42 @@ fn json_request(method: Method, uri: &str, body: impl Into<Body>) -> Request<Bod
         .expect("request builds")
 }
 
+fn preflight_request(
+    uri: &str,
+    origin: &'static str,
+    requested_method: Method,
+    requested_headers: Option<&'static str>,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::OPTIONS)
+        .uri(uri)
+        .header(header::ORIGIN, origin)
+        .header(
+            header::ACCESS_CONTROL_REQUEST_METHOD,
+            requested_method.as_str(),
+        );
+    if let Some(requested_headers) = requested_headers {
+        request = request.header(header::ACCESS_CONTROL_REQUEST_HEADERS, requested_headers);
+    }
+    request
+        .body(Body::empty())
+        .expect("preflight request builds")
+}
+
+fn assert_header_list_contains(headers: &HeaderMap, name: HeaderName, expected: &str) {
+    let value = headers
+        .get(&name)
+        .unwrap_or_else(|| panic!("response is missing {name}"))
+        .to_str()
+        .unwrap_or_else(|_| panic!("{name} is not text"));
+    assert!(
+        value
+            .split(',')
+            .any(|item| item.trim().eq_ignore_ascii_case(expected)),
+        "{name} did not contain {expected:?}: {value:?}"
+    );
+}
+
 async fn assert_problem(response: Response<Body>, status: StatusCode) -> serde_json::Value {
     assert_eq!(response.status(), status);
     assert_eq!(
@@ -382,6 +420,191 @@ async fn create_ready_session(
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     panic!("the in-memory runtime did not become ready");
+}
+
+#[tokio::test]
+async fn listed_origin_completes_an_authorized_http_cors_sequence() {
+    let app = with_cors(
+        test_surface(true).app,
+        vec![HeaderValue::from_static(LISTED_ORIGIN)],
+    );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("loopback listener binds");
+    let address = listener.local_addr().expect("listener has an address");
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .request(Method::OPTIONS, format!("http://{address}/api/v1/sessions"))
+        .header(header::ORIGIN, LISTED_ORIGIN)
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .header(
+            header::ACCESS_CONTROL_REQUEST_HEADERS,
+            "authorization,content-type",
+        )
+        .send()
+        .await
+        .expect("the HTTP server answers the preflight");
+    let status = response.status();
+    let headers = response.headers().clone();
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .expect("listed origin is allowed"),
+        LISTED_ORIGIN
+    );
+    assert_eq!(
+        headers
+            .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+            .expect("credential mode is retained"),
+        "true"
+    );
+    assert_header_list_contains(
+        &headers,
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "authorization",
+    );
+    assert_header_list_contains(
+        &headers,
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "content-type",
+    );
+    assert_header_list_contains(&headers, header::ACCESS_CONTROL_ALLOW_METHODS, "POST");
+    assert_eq!(
+        headers
+            .get(header::ACCESS_CONTROL_MAX_AGE)
+            .expect("preflight decisions are cacheable"),
+        "3600"
+    );
+
+    let response = client
+        .post(format!("http://{address}/api/v1/sessions"))
+        .header(header::ORIGIN, LISTED_ORIGIN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer browser-fixture")
+        .body("{}")
+        .send()
+        .await
+        .expect("the admitted browser request reaches the HTTP server");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .expect("the actual response retains the browser grant"),
+        LISTED_ORIGIN
+    );
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("the authenticated create response is JSON");
+    assert!(
+        body["id"].is_string(),
+        "the authenticated call created no session: {body}"
+    );
+
+    shutdown_tx.send(()).expect("the server is still running");
+    server
+        .await
+        .expect("the server task joins")
+        .expect("the server stops cleanly");
+}
+
+#[tokio::test]
+async fn listed_origin_allows_the_sdk_reconnect_cursor_header() {
+    let app = with_cors(
+        test_surface(true).app,
+        vec![HeaderValue::from_static(LISTED_ORIGIN)],
+    );
+    let response = app
+        .oneshot(preflight_request(
+            "/api/v1/sessions/session/events?after=17",
+            LISTED_ORIGIN,
+            Method::GET,
+            Some("authorization,last-event-id"),
+        ))
+        .await
+        .expect("router answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&HeaderValue::from_static(LISTED_ORIGIN))
+    );
+    assert_header_list_contains(
+        response.headers(),
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "authorization",
+    );
+    assert_header_list_contains(
+        response.headers(),
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "last-event-id",
+    );
+}
+
+#[tokio::test]
+async fn listed_origin_allows_profile_put_preflight() {
+    let app = with_cors(
+        test_surface(true).app,
+        vec![HeaderValue::from_static(LISTED_ORIGIN)],
+    );
+    let response = app
+        .oneshot(preflight_request(
+            "/api/v1/environment-profiles/x",
+            LISTED_ORIGIN,
+            Method::PUT,
+            None,
+        ))
+        .await
+        .expect("router answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&HeaderValue::from_static(LISTED_ORIGIN))
+    );
+    assert_header_list_contains(
+        response.headers(),
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        "PUT",
+    );
+}
+
+#[tokio::test]
+async fn unlisted_origin_receives_no_cors_grant() {
+    let app = with_cors(
+        test_surface(true).app,
+        vec![HeaderValue::from_static(LISTED_ORIGIN)],
+    );
+    let response = app
+        .oneshot(preflight_request(
+            "/api/v1/sessions",
+            UNLISTED_ORIGIN,
+            Method::POST,
+            Some("authorization"),
+        ))
+        .await
+        .expect("router answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none(),
+        "an unlisted origin must not receive a browser grant"
+    );
 }
 
 #[tokio::test]
