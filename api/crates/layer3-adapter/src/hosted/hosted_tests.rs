@@ -616,13 +616,10 @@ async fn cleanup_from_an_old_link_preserves_its_successor_and_waiter() {
 
     // The old socket notices its close only after the successor is registered
     // and waiting. Neither registry entry belongs to the old reader anymore.
-    super::link::forget_link_generation(
-        &kernel.links,
-        &kernel.switch_waiters,
-        "sbx_generation",
-        &old_link,
-    )
-    .await;
+    kernel
+        .link_lifecycle("sbx_generation")
+        .forget(&old_link)
+        .await;
 
     let current = kernel
         .link_to("sbx_generation")

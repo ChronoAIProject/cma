@@ -299,6 +299,62 @@ impl SwitchWaiters {
     }
 }
 
+/// Registration and cleanup for one runtime link generation.
+///
+/// The socket reader owns the ending of a generation, while callers use the
+/// shared map to deliver credentials and switches. Keeping both pieces here
+/// makes registration happen before the reader can close and makes every close
+/// remove only the sender belonging to that socket.
+#[derive(Clone)]
+pub(crate) struct LinkLifecycle {
+    runtime: String,
+    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>>,
+    switch_waiters: SwitchWaiters,
+}
+
+impl LinkLifecycle {
+    /// Record this generation before its reader begins observing the socket.
+    pub(crate) async fn register(&self, link: mpsc::Sender<TerminalInput>) {
+        let previous = {
+            let mut links = self.links.lock().await;
+            if links
+                .get(&self.runtime)
+                .is_some_and(|current| current.same_channel(&link))
+            {
+                return;
+            }
+            links.insert(self.runtime.clone(), link)
+        };
+        if let Some(previous) = previous {
+            // Replacing a generation invalidates only a request that was sent
+            // through that old socket.
+            self.switch_waiters.forget(&self.runtime, &previous).await;
+        }
+    }
+
+    /// Forget this generation without disturbing a successor already present.
+    pub(crate) async fn forget(&self, link: &mpsc::Sender<TerminalInput>) {
+        let mut links = self.links.lock().await;
+        if links
+            .get(&self.runtime)
+            .is_some_and(|current| current.same_channel(link))
+        {
+            links.remove(&self.runtime);
+        }
+        drop(links);
+        // A successor may be in the map while this generation still owns the
+        // previous waiter, so waiter cleanup independently checks identity.
+        self.switch_waiters.forget(&self.runtime, link).await;
+    }
+
+    /// Settle a switch only when it was sent through this same generation.
+    pub(crate) async fn settle(&self, link: &mpsc::Sender<TerminalInput>, accepted: bool) {
+        self.switch_waiters
+            .settle(&self.runtime, link, accepted)
+            .await;
+    }
+}
+
 /// A kernel running in a provider-managed sandbox.
 pub struct HostedKernel {
     pub(crate) client: SandboxClient,
@@ -611,23 +667,9 @@ impl HostedKernel {
     }
 
     /// Remember the link to a runtime, so a credential can reach it later.
+    #[cfg(test)]
     pub(crate) async fn remember_link(&self, handle: &str, link: mpsc::Sender<TerminalInput>) {
-        let previous = {
-            let mut links = self.links.lock().await;
-            if links
-                .get(handle)
-                .is_some_and(|current| current.same_channel(&link))
-            {
-                return;
-            }
-            links.insert(handle.to_string(), link)
-        };
-        if let Some(previous) = previous {
-            // Replacing a generation invalidates any request still waiting on
-            // that old socket. Scope the cancellation so a successor that has
-            // already registered its own waiter remains intact.
-            self.switch_waiters.forget(handle, &previous).await;
-        }
+        self.link_lifecycle(handle).register(link).await;
     }
 
     /// The link to a runtime, if one is open.
@@ -638,6 +680,15 @@ impl HostedKernel {
     /// The registry a link's inbound task answers into.
     pub(crate) fn switch_waiters(&self) -> SwitchWaiters {
         self.switch_waiters.clone()
+    }
+
+    /// Registration and cleanup shared by both halves of a runtime link.
+    pub(crate) fn link_lifecycle(&self, handle: &str) -> LinkLifecycle {
+        LinkLifecycle {
+            runtime: handle.to_string(),
+            links: std::sync::Arc::clone(&self.links),
+            switch_waiters: self.switch_waiters.clone(),
+        }
     }
 
     /// Wait until a sandbox reports itself running.

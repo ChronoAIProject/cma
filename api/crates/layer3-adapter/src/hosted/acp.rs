@@ -136,7 +136,7 @@ impl Bridge {
         // runtime they are about. A conversation link is the only link a
         // conversation-only kernel has, so without this such a session could
         // never confirm a switch and every one of them would rotate (#289).
-        switches: Option<(super::SwitchWaiters, String)>,
+        link: Option<super::LinkLifecycle>,
         // Whether this session spends its owner's own account with the model
         // vendor. It decides whether the agent has to be signed in before a
         // conversation can be opened at all — an unauthenticated kernel
@@ -180,6 +180,12 @@ impl Bridge {
         // settle a waiter installed by a replacement connection.
         let control = super::control_lane(Arc::clone(&bridge.sink));
         let control_for_reader = control.clone();
+        if let Some(lifecycle) = link.as_ref() {
+            // Registered before the reader can observe a close. Registering in
+            // the caller after the handshake allowed a just-closed socket to
+            // be inserted as the current generation.
+            lifecycle.register(control.clone()).await;
+        }
 
         let writer = Arc::clone(&bridge);
         let writer_updates = updates_tx.clone();
@@ -194,6 +200,7 @@ impl Bridge {
         // this loop, so it has to be running to receive them.
         let reader = Arc::clone(&bridge);
         let updates = updates_tx.clone();
+        let link_for_reader = link.clone();
         tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
@@ -214,10 +221,10 @@ impl Bridge {
                         // A runtime's answer to a plane switch, and nothing
                         // else: the conversation itself travels framed on its
                         // own lane.
-                        if let (Some(accepted), Some((waiters, runtime))) =
-                            (super::link::switch_answer(&text), switches.as_ref())
+                        if let (Some(accepted), Some(lifecycle)) =
+                            (super::link::switch_answer(&text), link_for_reader.as_ref())
                         {
-                            waiters.settle(runtime, &control_for_reader, accepted).await;
+                            lifecycle.settle(&control_for_reader, accepted).await;
                         }
                     }
                     Ok(Message::Close(_)) => break,
@@ -239,8 +246,8 @@ impl Bridge {
              * and it has to be delivered as one.
              */
             reader.pending.lock().await.clear();
-            if let Some((waiters, runtime)) = switches.as_ref() {
-                waiters.forget(runtime, &control_for_reader).await;
+            if let Some(lifecycle) = link_for_reader.as_ref() {
+                lifecycle.forget(&control_for_reader).await;
             }
             input_task.abort();
             tracing::info!("conversation link ended");
@@ -250,9 +257,15 @@ impl Bridge {
         // They answer different questions — one is a control plane taking back
         // over a live runtime, the other a runtime taking over a session — and
         // when both are present the first is the more recent truth.
-        bridge
+        let handshake = bridge
             .handshake(rejoin, resuming, cwd, mode, own_credential)
-            .await?;
+            .await;
+        if let Err(error) = handshake {
+            if let Some(lifecycle) = link.as_ref() {
+                lifecycle.forget(&control).await;
+            }
+            return Err(error);
+        }
         let conversation_id = bridge.session.lock().await.clone();
 
         Ok((
