@@ -28,7 +28,7 @@ mod runtime;
 pub use runtime::{
     ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeHandle, RuntimeListing,
     RuntimeLossReason, RuntimeMode, RuntimeOptions, RuntimePermission, RuntimeSpec, SkillPackage,
-    TermSize, TerminalChannel, TerminalInput,
+    TermSize, TerminalChannel, TerminalInput, TerminalOutput,
 };
 
 use tokio::sync::mpsc;

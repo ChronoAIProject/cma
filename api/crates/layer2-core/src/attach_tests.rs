@@ -379,3 +379,92 @@ async fn a_stranger_may_not_ask_whether_somebody_elses_terminal_is_held() {
     let mallory = user("mallory");
     assert!(svc.terminal_is_held(&mallory, &id).await.is_err());
 }
+
+#[tokio::test]
+async fn process_exit_is_recorded_after_final_output_without_changing_lifecycle() {
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::new(FakeStore::default()), Arc::clone(&adapter));
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let mut held = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("attaches");
+
+    let runtime = adapter.senders.lock().await[0].clone();
+    runtime
+        .send(layer3_adapter::TerminalOutput::Bytes(
+            b"last paint".to_vec(),
+        ))
+        .await
+        .expect("output reaches the core");
+    runtime
+        .send(layer3_adapter::TerminalOutput::Exited { code: Some(23) })
+        .await
+        .expect("the ending reaches the core");
+
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), held.output.recv())
+            .await
+            .expect("output arrives in time")
+            .expect("the final output is readable"),
+        b"last paint"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), held.output.recv())
+            .await
+            .expect("the live lane closes in time")
+            .is_err(),
+        "the live lane closes after its final byte"
+    );
+    assert_eq!(
+        *held.ending.borrow(),
+        Some(crate::lease::Detached::ProcessExited { code: Some(23) })
+    );
+    assert_eq!(
+        svc.get_session(&alice, &created.id)
+            .await
+            .expect("the session remains readable")
+            .status,
+        crate::session::SessionStatus::Ready,
+        "reporting a process ending must not decide session lifecycle"
+    );
+}
+
+#[tokio::test]
+async fn a_terminal_channel_lost_without_a_report_closes_without_fabricating_exit() {
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::new(FakeStore::default()), Arc::clone(&adapter));
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let mut held = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("attaches");
+
+    adapter.senders.lock().await.clear();
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), held.output.recv())
+            .await
+            .expect("the lost lane is noticed")
+            .is_err()
+    );
+    assert_eq!(
+        *held.ending.borrow(),
+        None,
+        "a closed transport is not evidence that the process exited"
+    );
+}

@@ -373,11 +373,27 @@ pub struct ResourceSample {
     pub interval_ms: Option<u64>,
 }
 
+/// What arrived from a runtime's terminal.
+///
+/// The ending shares the byte stream's queue so its order is structural: every
+/// byte sent before `Exited` is consumed before the ending can be observed.
+/// A channel that closes without this variant reported no process status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalOutput {
+    /// Bytes produced by the runtime.
+    Bytes(Vec<u8>),
+    /// The supervised process ended after all of its terminal output was read.
+    Exited {
+        /// Its numeric exit status, or `None` when it was ended by a signal.
+        code: Option<i32>,
+    },
+}
+
 /// A bidirectional attachment to a runtime's terminal.
 #[derive(Debug)]
 pub struct TerminalChannel {
-    /// Output produced by the runtime.
-    pub output: mpsc::Receiver<Vec<u8>>,
+    /// Ordered output and ending reports produced by the runtime.
+    pub output: mpsc::Receiver<TerminalOutput>,
     /// Input destined for the runtime.
     pub input: mpsc::Sender<TerminalInput>,
 }

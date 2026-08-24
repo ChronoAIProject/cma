@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, RuntimeSpec, TermSize, TerminalInput};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, watch, Mutex};
 
 /// How many updates may queue between a kernel and the folder.
 ///
@@ -292,6 +292,7 @@ impl SessionService {
             .and_then(|c| c.conversation_id.clone());
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
+        let (terminal_ending, _) = watch::channel(None);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
         let (resources, _) = broadcast::channel(RESOURCE_BUFFER);
 
@@ -347,7 +348,8 @@ impl SessionService {
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
             input: terminal_input.clone(),
-            live: live.clone(),
+            live: Some(live.clone()),
+            terminal_ending: terminal_ending.clone(),
             live_frames: live_frames.clone(),
             resources,
             last_reading: None,
@@ -388,7 +390,14 @@ impl SessionService {
         // what its agent did, which is what makes the log a record rather than
         // a broadcast.
         if let Some(output) = terminal_output {
-            spawn_relay(id.clone(), output, screen, live);
+            spawn_relay(
+                Arc::clone(self),
+                id.clone(),
+                output,
+                screen,
+                live,
+                terminal_ending,
+            );
         }
         if conversation.is_some() {
             // Recorded before anything is said on it. What this is for is a

@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, watch, Mutex};
 
 /// How many output chunks may buffer for a subscriber before it is dropped.
 const OUTPUT_BUFFER: usize = 512;
@@ -24,10 +24,25 @@ pub struct PtySession {
     master: Arc<StdMutex<Box<dyn MasterPty + Send>>>,
     writer: Arc<StdMutex<Box<dyn Write + Send>>>,
     /// Fan-out of everything the process has written since it started.
-    pub output: broadcast::Sender<Vec<u8>>,
+    output: broadcast::Sender<Vec<u8>>,
+    /// The process ending, latched so a reattach to an ended process still
+    /// receives the real status rather than waiting on a channel that is done.
+    exit: watch::Receiver<Option<ProcessExit>>,
+}
+
+/// How the supervised process ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProcessExit {
+    /// Its numeric status, or `None` when a signal ended it.
+    pub(crate) code: Option<i32>,
 }
 
 impl PtySession {
+    /// Watch for the process to end.
+    pub(crate) fn subscribe_exit(&self) -> watch::Receiver<Option<ProcessExit>> {
+        self.exit.clone()
+    }
+
     /// Write bytes to the process as if they had been typed.
     pub fn write_input(&self, bytes: &[u8]) -> std::io::Result<()> {
         let mut w = self
@@ -88,17 +103,18 @@ impl PtyRegistry {
         cols: u16,
         rows: u16,
         placeholder_key: &str,
-    ) -> std::io::Result<Arc<PtySession>> {
+    ) -> std::io::Result<(Arc<PtySession>, broadcast::Receiver<Vec<u8>>)> {
         let mut sessions = self.inner.lock().await;
         if let Some(existing) = sessions.get(id) {
             tracing::info!(runtime = %id, "reattaching to existing runtime");
-            return Ok(Arc::clone(existing));
+            return Ok((Arc::clone(existing), existing.output.subscribe()));
         }
 
         tracing::info!(runtime = %id, %command, cols, rows, "starting runtime process");
-        let session = Arc::new(start_process(command, cols, rows, placeholder_key)?);
+        let (started, output) = start_process(command, cols, rows, placeholder_key)?;
+        let session = Arc::new(started);
         sessions.insert(id.to_string(), Arc::clone(&session));
-        Ok(session)
+        Ok((session, output))
     }
 
     /// Whether any agent has been started on this supervisor.
@@ -135,7 +151,7 @@ fn start_process(
     cols: u16,
     rows: u16,
     placeholder_key: &str,
-) -> std::io::Result<PtySession> {
+) -> std::io::Result<(PtySession, broadcast::Receiver<Vec<u8>>)> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -178,6 +194,10 @@ fn start_process(
     let writer = pair.master.take_writer().map_err(std::io::Error::other)?;
 
     let (output, _) = broadcast::channel(OUTPUT_BUFFER);
+    // The first receiver exists before the reader thread can publish. Without
+    // this, a short-lived program can print and exit between spawn and attach.
+    let first_output = output.subscribe();
+    let (exit_tx, exit) = watch::channel(None);
 
     // The pty reader is blocking, so it owns a dedicated thread rather than
     // occupying an async worker.
@@ -198,18 +218,31 @@ fn start_process(
             }
         }
         tracing::info!("pty output ended");
+        // Reap only after the pty has reached EOF. The status therefore cannot
+        // overtake bytes the process wrote immediately before it ended.
+        match child.wait() {
+            Ok(status) => {
+                let code = if status.signal().is_some() {
+                    None
+                } else {
+                    i32::try_from(status.exit_code()).ok()
+                };
+                tracing::info!(?status, "runtime process exited");
+                exit_tx.send_replace(Some(ProcessExit { code }));
+            }
+            Err(e) => tracing::warn!(error = %e, "waiting on runtime process failed"),
+        }
     });
 
-    std::thread::spawn(move || match child.wait() {
-        Ok(status) => tracing::info!(?status, "runtime process exited"),
-        Err(e) => tracing::warn!(error = %e, "waiting on runtime process failed"),
-    });
-
-    Ok(PtySession {
-        master: Arc::new(StdMutex::new(pair.master)),
-        writer: Arc::new(StdMutex::new(writer)),
-        output,
-    })
+    Ok((
+        PtySession {
+            master: Arc::new(StdMutex::new(pair.master)),
+            writer: Arc::new(StdMutex::new(writer)),
+            output,
+            exit,
+        },
+        first_output,
+    ))
 }
 
 #[cfg(test)]
@@ -221,11 +254,11 @@ mod tests {
         let reg = PtyRegistry::new();
         assert!(reg.is_empty().await);
 
-        let a = reg
+        let (a, _output) = reg
             .get_or_start("r1", "/bin/cat", 80, 24, "k")
             .await
             .expect("starts");
-        let b = reg
+        let (b, _output) = reg
             .get_or_start("r1", "/bin/cat", 80, 24, "k")
             .await
             .expect("reattaches");
@@ -239,11 +272,11 @@ mod tests {
     #[tokio::test]
     async fn distinct_ids_get_distinct_processes() {
         let reg = PtyRegistry::new();
-        let a = reg
+        let (a, _output) = reg
             .get_or_start("a", "/bin/cat", 80, 24, "k")
             .await
             .expect("a");
-        let b = reg
+        let (b, _output) = reg
             .get_or_start("b", "/bin/cat", 80, 24, "k")
             .await
             .expect("b");
@@ -254,11 +287,10 @@ mod tests {
     #[tokio::test]
     async fn input_is_echoed_back_through_the_pty() {
         let reg = PtyRegistry::new();
-        let s = reg
+        let (s, mut rx) = reg
             .get_or_start("echo", "/bin/cat", 80, 24, "k")
             .await
             .expect("starts");
-        let mut rx = s.output.subscribe();
         s.write_input(b"ping\n").expect("write succeeds");
 
         let got = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -277,9 +309,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_quick_process_exit_is_latched_for_reattach() {
+        let reg = PtyRegistry::new();
+        let (started, _output) = reg
+            .get_or_start("quick", "/bin/echo quick", 80, 24, "k")
+            .await
+            .expect("starts");
+        let mut first_exit = started.subscribe_exit();
+        tokio::time::timeout(std::time::Duration::from_secs(5), first_exit.changed())
+            .await
+            .expect("the process exits in time")
+            .expect("the exit watch remains open");
+        assert_eq!(*first_exit.borrow(), Some(ProcessExit { code: Some(0) }));
+
+        let (reattached, _output) = reg
+            .get_or_start("quick", "/bin/echo replacement", 80, 24, "k")
+            .await
+            .expect("reattaches");
+        assert!(Arc::ptr_eq(&started, &reattached));
+        let reattached_exit = reattached.subscribe_exit();
+        assert_eq!(
+            *reattached_exit.borrow(),
+            Some(ProcessExit { code: Some(0) }),
+            "reattach must see the original process's latched status"
+        );
+    }
+
+    #[tokio::test]
     async fn zero_geometry_is_refused() {
         let reg = PtyRegistry::new();
-        let s = reg
+        let (s, _output) = reg
             .get_or_start("z", "/bin/cat", 80, 24, "k")
             .await
             .expect("starts");
