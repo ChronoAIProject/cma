@@ -37,7 +37,7 @@ export interface PlaneState {
    * The wording of a refusal belongs to the reason it exists, not to the
    * state's name: a session waiting on an answer says it is waiting for its
    * owner, in the rail, the header and at the composer, rather than claiming
-   * to be stopped while an approval it can answer sits above.
+   * to be stopped while the corresponding action is still arriving.
    */
   readonly waiting: boolean;
 }
@@ -53,7 +53,7 @@ export function planeStateFor(session: Session, hasPendingApproval = false): Pla
      */
     return {
       interactive: false,
-      reason: 'The agent stopped here on purpose — it is waiting for your answer above.',
+      reason: 'The agent stopped here on purpose — it is waiting for your answer.',
       failed: false,
       waiting: true,
     };
@@ -98,5 +98,7 @@ export function planeStateFor(session: Session, hasPendingApproval = false): Pla
  * gets and the one case where an idle session has a control to offer.
  */
 export function isWaitingForAnswer(session: Session, hasPendingApproval: boolean): boolean {
-  return session.lifecycle === 'idle' && hasPendingApproval;
+  return (
+    session.lifecycle === 'idle' && (hasPendingApproval || session.stopReason === 'requires_action')
+  );
 }

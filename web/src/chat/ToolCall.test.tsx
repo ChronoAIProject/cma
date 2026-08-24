@@ -4,8 +4,9 @@ import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolCall, sectionsOf } from './ToolCall';
 import { MessageStream } from './MessageStream';
-import { fold } from './conversation';
-import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
+import { fold } from '@chronoai/cma-sdk';
+import { AguiConnection, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * Tool calls as structure — `Web_Style.md` §18.2.

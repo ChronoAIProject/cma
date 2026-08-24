@@ -8,7 +8,21 @@
  * with the model.
  */
 
-export * from '../sdk/types';
+export type {
+  CredentialMode,
+  Kernel,
+  KernelOffer,
+  PermissionMode,
+  ReasoningEffort,
+  Session,
+  SessionAgent,
+  SessionCreator,
+  SessionLifecycle,
+  SessionPlane,
+  SessionService,
+  SessionSkill,
+  StopReason,
+} from '@chronoai/cma-sdk';
 
 import type { StateDotState } from '../ui/StateDot';
 import type {
@@ -16,7 +30,7 @@ import type {
   PermissionMode,
   ReasoningEffort,
   SessionLifecycle,
-} from '../sdk/types';
+} from '@chronoai/cma-sdk';
 
 /** Which semantic token paints a lifecycle state. */
 export type StateTone = 'live' | 'wait' | 'fail' | 'ended';
@@ -60,6 +74,7 @@ export function toneFor(lifecycle: SessionLifecycle): StateTone {
     case 'provisioning':
     case 'rotating':
     case 'idle':
+    case 'unknown':
       return 'wait';
     case 'terminated':
       return 'ended';
@@ -73,7 +88,7 @@ export function toneFor(lifecycle: SessionLifecycle): StateTone {
 }
 
 /** Short label shown on the tab. Colour is never the only signal. */
-export function labelFor(lifecycle: SessionLifecycle): string {
+export function labelFor(lifecycle: SessionLifecycle, reportedStatus?: string): string {
   switch (lifecycle) {
     case 'provisioning':
       return 'starting';
@@ -87,6 +102,8 @@ export function labelFor(lifecycle: SessionLifecycle): string {
       return 'paused';
     case 'terminated':
       return 'ended';
+    case 'unknown':
+      return reportedStatus ?? 'unknown';
     default: {
       const exhaustive: never = lifecycle;
       return exhaustive;
