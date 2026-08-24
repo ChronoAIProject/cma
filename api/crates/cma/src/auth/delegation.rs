@@ -10,6 +10,17 @@ use layer2_core::{SessionId, SubjectId};
 
 use super::{AuthState, Issued};
 
+impl AuthState {
+    /// Whether an exact key already belongs to the explicit revoke retry path.
+    pub(super) async fn revoke_is_queued(&self, id: &str) -> bool {
+        self.superseded
+            .read()
+            .await
+            .iter()
+            .any(|(queued, _)| queued == id)
+    }
+}
+
 /// Supply the core with an owner's credential when the owner is absent.
 ///
 /// The core recovers sessions on its own — after a restart, or when a runtime
@@ -56,36 +67,57 @@ impl layer2_core::CredentialSource for AuthState {
     }
 
     async fn release(&self, session: &SessionId) {
+        /*
+         * The local ownership transfer belongs to a detached task. Dropping a
+         * release future while it waits for a contended queue lock must not
+         * cancel the only operation that can turn a terminal session's issued
+         * key into retry debt. The task holds every lock in the one global
+         * issued -> superseded -> reissues order, then mutates without awaiting.
+         */
+        let issued = std::sync::Arc::clone(&self.issued);
+        let superseded = std::sync::Arc::clone(&self.superseded);
+        let reissues = std::sync::Arc::clone(&self.reissues);
+        let released_session = session.clone();
+        let transfer = tokio::spawn(async move {
+            let mut issued = issued.write().await;
+            let mut superseded = superseded.write().await;
+            let mut progress = reissues.write().await;
+            let current = issued.remove(&released_session);
+            let replacement = progress.pending.remove(&released_session);
+            let minting = progress.minting.contains(&released_session);
+            if minting {
+                progress.retiring.insert(released_session.clone());
+            } else {
+                progress.retiring.remove(&released_session);
+            }
+            let tracked = minting || current.is_some() || replacement.is_some();
+            if let Some(held) = current {
+                superseded.push((held.id, held.owner));
+            }
+            if let Some(held) = replacement {
+                superseded.push((held.id, held.owner));
+            }
+            tracked
+        });
+        let tracked = match transfer.await {
+            Ok(tracked) => tracked,
+            Err(error) => {
+                tracing::error!(session_id = %session, %error, "credential release transfer failed");
+                return;
+            }
+        };
+        if tracked {
+            // The periodic sweep owns provider I/O for locally transferred
+            // credentials. Draining the global queue here would let ending one
+            // session revoke another live session's just-replaced credential
+            // before its full-sweep grace, and make termination wait for the
+            // whole retry backlog.
+            return;
+        }
+
         let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
             return;
         };
-
-        // Scope the read guard before either branch may take the write lock.
-        let held = { self.issued.read().await.get(session).cloned() };
-        if let Some(held) = held {
-            let Some(owner_token) = self.access_token(&held.owner).await else {
-                // This key has no expiry. Move it onto the retry queue rather
-                // than leaving it as the current key of a session that has
-                // ended, or forgetting a credential that remains valid.
-                let Some(held) = self.issued.write().await.remove(session) else {
-                    return;
-                };
-                self.superseded.write().await.push((held.id, held.owner));
-                tracing::warn!(
-                    session_id = %session,
-                    "no owner token to reclaim this session's credential with; queued it for retry"
-                );
-                return;
-            };
-            // The issuer and token are both in hand before the only in-memory
-            // record is removed. A concurrent release that got here first owns
-            // the revoke; this one has nothing further to forget.
-            let Some(held) = self.issued.write().await.remove(session) else {
-                return;
-            };
-            issuer.revoke(&held.id, &owner_token).await;
-            return;
-        }
 
         /*
          * A restarted process has no `issued` entry. The key's deployment- and
@@ -121,7 +153,24 @@ impl layer2_core::CredentialSource for AuthState {
                 }
             };
             for id in ids {
-                issuer.revoke(&id, &owner_token).await;
+                /*
+                 * An exact queue entry already owns this revoke. The read lock
+                 * is a suffix of the global issued -> superseded -> reissues
+                 * order and is dropped before provider I/O. If an entry races
+                 * in after this check, reconcile it only after a confirmed
+                 * successful DELETE; a non-2xx response must leave debt intact.
+                 */
+                if self.revoke_is_queued(&id).await {
+                    continue;
+                }
+                // The same complete listing is the retry record for a failed
+                // DELETE, so no separate in-memory queue is needed here.
+                if issuer.revoke(&id, &owner_token).await {
+                    self.superseded
+                        .write()
+                        .await
+                        .retain(|(queued, _)| queued != &id);
+                }
             }
         }
     }
