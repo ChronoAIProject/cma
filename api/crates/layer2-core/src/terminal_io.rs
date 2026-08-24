@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{TermSize, TerminalInput};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use layer3_adapter::{TermSize, TerminalInput, TerminalOutput};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
 use crate::authz::Caller;
 use crate::capabilities::Capability;
@@ -21,18 +21,53 @@ use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
 /// Pump runtime output into the screen model and out to any live subscriber.
 pub(crate) fn spawn_relay(
+    service: Arc<SessionService>,
     id: SessionId,
-    mut output: mpsc::Receiver<Vec<u8>>,
+    mut output: mpsc::Receiver<TerminalOutput>,
     screen: Arc<Mutex<Box<dyn ScreenModel>>>,
     live: broadcast::Sender<Vec<u8>>,
+    ending: watch::Sender<Option<crate::lease::Detached>>,
 ) {
     tokio::spawn(async move {
-        while let Some(chunk) = output.recv().await {
-            screen.lock().await.apply(&chunk);
-            // A send with no subscribers is not an error: the session is simply
-            // detached, and the screen model has already absorbed the bytes.
-            let _ = live.send(chunk);
+        let reported = loop {
+            match output.recv().await {
+                Some(TerminalOutput::Bytes(chunk)) => {
+                    screen.lock().await.apply(&chunk);
+                    // A send with no subscribers is not an error: the session is
+                    // simply detached, and the screen has absorbed the bytes.
+                    let _ = live.send(chunk);
+                }
+                Some(TerminalOutput::Exited { code }) => {
+                    break Some(crate::lease::Detached::ProcessExited { code });
+                }
+                // The link ended without a process report. Preserve that
+                // distinction instead of manufacturing a successful exit.
+                None => break None,
+            }
+        };
+
+        if let Some(reported) = reported {
+            // Recorded before closing the byte stream. A receiver observes all
+            // queued output, then Closed, then reads this exact ending.
+            ending.send_replace(Some(reported));
         }
+
+        // Close only the stream belonging to this relay. An older relay can end
+        // after a rotation has already installed its replacement under the same
+        // session id.
+        let mut entries = service.entries.write().await;
+        if let Some(entry) = entries.get_mut(&id) {
+            if entry
+                .live
+                .as_ref()
+                .is_some_and(|current| current.same_channel(&live))
+            {
+                entry.input = None;
+                entry.live = None;
+            }
+        }
+        drop(entries);
+        drop(live);
         tracing::info!(session_id = %id, "runtime output ended");
     });
 }

@@ -106,6 +106,14 @@ fn a_superseded_client_is_told_in_a_code_it_can_branch_on() {
     );
 }
 
+fn close_for(detached: Option<layer2_core::Detached>) -> (u16, String) {
+    let frames = ending(detached);
+    let Some(Message::Close(Some(close))) = frames.last() else {
+        panic!("an attachment ending must finish with a close frame: {frames:?}");
+    };
+    (close.code, close.reason.to_string())
+}
+
 #[test]
 fn each_kind_of_ending_has_its_own_code() {
     // The three ask different things of whoever is looking, so they cannot
@@ -113,9 +121,9 @@ fn each_kind_of_ending_has_its_own_code() {
     // is gone for good and the session is now a conversation, and one asks you
     // to come back in a moment.
     let codes = [
-        ending(Some(layer2_core::Detached::Superseded)).0,
-        ending(Some(layer2_core::Detached::PlaneChanged)).0,
-        ending(Some(layer2_core::Detached::RuntimeReplaced)).0,
+        close_for(Some(layer2_core::Detached::Superseded)).0,
+        close_for(Some(layer2_core::Detached::PlaneChanged)).0,
+        close_for(Some(layer2_core::Detached::RuntimeReplaced)).0,
     ];
     assert_eq!(
         codes
@@ -135,7 +143,7 @@ fn each_kind_of_ending_has_its_own_code() {
 
 #[test]
 fn a_session_that_left_the_terminal_plane_says_so_rather_than_going_quiet() {
-    let (code, reason) = ending(Some(layer2_core::Detached::PlaneChanged));
+    let (code, reason) = close_for(Some(layer2_core::Detached::PlaneChanged));
     assert_eq!(code, PLANE_CHANGED_CLOSE_CODE);
     assert!(
         reason.contains("conversation"),
@@ -148,9 +156,51 @@ fn an_attachment_lost_with_nothing_said_still_closes_with_a_reason() {
     // The channel can close without a word — an entry dropped for some other
     // cause. A terminal that ends silently is one whose owner reloads and
     // takes the attachment back, which is the fight this exists to prevent.
-    let (code, reason) = ending(None);
+    let (code, reason) = close_for(None);
     assert_eq!(code, SUPERSEDED_CLOSE_CODE);
     assert!(!reason.is_empty());
+}
+
+#[test]
+fn a_reported_process_exit_is_sent_before_a_normal_close() {
+    let frames = reported_ending(Some(layer2_core::Detached::ProcessExited {
+        code: Some(17),
+    }));
+    assert_eq!(frames.len(), 2, "got {frames:?}");
+
+    let Message::Text(text) = &frames[0] else {
+        panic!("the exit report must be a text control frame: {frames:?}");
+    };
+    let json: serde_json::Value = serde_json::from_str(text).expect("the exit frame is JSON");
+    assert_eq!(
+        json,
+        serde_json::json!({ "t": "exit", "code": 17, "reason": "exited" })
+    );
+
+    let Message::Close(Some(close)) = &frames[1] else {
+        panic!("the exit report must be followed by Close: {frames:?}");
+    };
+    assert_eq!(close.code, axum::extract::ws::close_code::NORMAL);
+    assert!(close.reason.is_empty());
+}
+
+#[test]
+fn a_signal_exit_carries_null_instead_of_fabricating_zero() {
+    let frames = reported_ending(Some(layer2_core::Detached::ProcessExited { code: None }));
+    let Message::Text(text) = &frames[0] else {
+        panic!("the exit report must be text: {frames:?}");
+    };
+    let json: serde_json::Value = serde_json::from_str(text).expect("the exit frame is JSON");
+    assert!(json["code"].is_null(), "got {json}");
+    assert_eq!(json["reason"], "exited");
+}
+
+#[test]
+fn an_unreported_runtime_channel_ending_emits_no_exit_or_clean_close() {
+    assert!(
+        reported_ending(None).is_empty(),
+        "transport loss is not evidence of process exit"
+    );
 }
 
 #[test]
