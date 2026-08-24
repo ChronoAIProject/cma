@@ -203,6 +203,12 @@ never mints a new session. When the owner is at or over their live-session
 limit, revive returns the same typed refusal as create and the session stays
 paused.
 
+The session returned by `revive` uses the same projection as create, list, and
+read. Its creator, granted reach, and recorded installed skills do not disappear
+because the route changed. Directory or catalogue outages cost human-readable
+names, not identifiers or the response itself. A newly created provisioning
+session can omit `agent.skills` until installation has actually been recorded.
+
 `DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
@@ -221,6 +227,10 @@ Content-Type: application/json
 **It is a rotation.** The session's conversation is captured, its sandbox is released, a replacement is started under the other front-end, and the agent resumes from the capture. The session keeps its identifier, its history, its configuration and its place in its owner's list; `rotations` and `rotated_at` move exactly as they do for a runtime upgrade, and `rotated_at` is the moment the conversation was taken — anything the agent did after it did not travel.
 
 **`200 OK`** returns the session mid-handover, `status: "rotating"`. That is the window in which a client must refuse input rather than accept and lose it; the session becomes usable again on its own, and the event stream says when.
+
+The response still carries the session's creator, granted `reach`, and recorded
+installed skills, with catalogue names whenever available. A handover changes
+its plane; it does not turn a populated session into a partial representation.
 
 The granted set is re-derived and re-reported: a session moved to `conversation` stops conforming to `…/conf/terminal` and starts conforming to `…/conf/conversation`. A client that cached the old set will be refused by name, which is the point of refusing by name.
 
