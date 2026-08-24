@@ -306,6 +306,50 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
         Ok(Page { items: out, next })
     }
 
+    async fn set_preferred(
+        &self,
+        owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        if let Some(id) = chosen {
+            let selected = self
+                .profiles
+                .find_one(doc! { "_id": &id.0, "owner": &owner.0 })
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("validate preferred profile: {e}")))?;
+            if selected.is_none() {
+                return Err(StoreError::Malformed(
+                    "selected environment profile is not owned by the subject".into(),
+                ));
+            }
+        }
+
+        self.profiles
+            .update_many(
+                doc! { "owner": &owner.0, "preferred": true },
+                doc! { "$set": { "preferred": false } },
+            )
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("clear preferred profile: {e}")))?;
+
+        if let Some(id) = chosen {
+            let result = self
+                .profiles
+                .update_one(
+                    doc! { "_id": &id.0, "owner": &owner.0 },
+                    doc! { "$set": { "preferred": true } },
+                )
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("set preferred profile: {e}")))?;
+            if result.matched_count != 1 {
+                return Err(StoreError::Unavailable(
+                    "selected environment profile disappeared while setting preference".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     async fn preferred_for(
         &self,
         owner: &SubjectId,

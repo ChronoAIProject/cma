@@ -726,6 +726,24 @@ mod reach {
                 next: None,
             })
         }
+        async fn set_preferred(
+            &self,
+            _owner: &layer2_core::SubjectId,
+            chosen: Option<&EnvironmentProfileId>,
+        ) -> Result<(), StoreError> {
+            if chosen.is_some() {
+                return Err(StoreError::Malformed(
+                    "an empty store has no selectable profile".into(),
+                ));
+            }
+            Ok(())
+        }
+        async fn preferred_for(
+            &self,
+            _owner: &layer2_core::SubjectId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
+        }
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
             Ok(())
         }
