@@ -289,6 +289,37 @@ async fn assert_normal_close(socket: &mut ClientSocket) {
     );
 }
 
+#[tokio::test]
+async fn a_pty_write_failure_waits_for_the_output_pump_to_finish() {
+    let (release_output, output_released) = tokio::sync::oneshot::channel();
+    let (output_finished, finished_output) = tokio::sync::oneshot::channel();
+    let (input_finished, finished_input) = tokio::sync::oneshot::channel();
+
+    let pump_out = tokio::spawn(async move {
+        let _ = output_released.await;
+        let _ = output_finished.send(());
+    });
+    let pump_in = tokio::spawn(async move {
+        let _ = input_finished.send(());
+        TerminalInputEnd::PtyWriteFailed
+    });
+    let finishing = tokio::spawn(finish_terminal_pumps(pump_out, pump_in));
+
+    finished_input
+        .await
+        .expect("the failed input pump completes first");
+    release_output
+        .send(())
+        .expect("the output pump is still being awaited");
+    tokio::time::timeout(Duration::from_secs(1), finishing)
+        .await
+        .expect("pump arbitration finishes")
+        .expect("pump arbitration does not panic");
+    finished_output
+        .await
+        .expect("a PTY write failure must not abort the ending reporter");
+}
+
 fn assert_telemetry_frame(message: tokio_tungstenite::tungstenite::Message) {
     let tokio_tungstenite::tungstenite::Message::Binary(bytes) = message else {
         panic!("a resource sample travels as binary");
@@ -319,6 +350,64 @@ async fn process_output_precedes_its_success_status_and_normal_close() {
         "the process's final output must arrive before its exit report"
     );
     assert_eq!(exit["code"], 0);
+    assert_normal_close(&mut socket).await;
+    server.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn input_after_process_exit_cannot_cancel_its_reported_ending() {
+    let state = AppState::for_test(&["/bin/sh"]);
+    let inspected = state.clone();
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_late_input").await;
+    assert!(matches!(
+        next_client_message(&mut socket).await,
+        tokio_tungstenite::tungstenite::Message::Text(_)
+    ));
+
+    let session = inspected
+        .registry
+        .session_for_test("sbx_late_input")
+        .await
+        .expect("the attached process is registered");
+    let mut exited = session.subscribe_exit();
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(
+                LANE_TERMINAL,
+                b"head -c 16777216 /dev/zero; printf late-final-output; exit 31\n",
+            ),
+        ))
+        .await
+        .expect("the process receives its ending command");
+
+    // Do not read the large output yet. This holds the socket's output pump in
+    // a send while the supervisor independently reaps and latches the child.
+    tokio::time::timeout(Duration::from_secs(10), exited.changed())
+        .await
+        .expect("the process exits while its socket output is backed up")
+        .expect("the exit watch remains open");
+    assert_eq!(exited.borrow().expect("an exit was latched").code, Some(31));
+    assert!(
+        session.write_input(b"late").is_err(),
+        "the retained PTY master rejects input after its slave exits"
+    );
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_TERMINAL, b"late"),
+        ))
+        .await
+        .expect("the in-flight keystroke reaches the runtime link");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let (output, exit) = terminal_output_until_exit(&mut socket).await;
+    assert!(
+        String::from_utf8_lossy(&output).contains("late-final-output"),
+        "final output must still precede the ending"
+    );
+    assert_eq!(exit["code"], 31);
     assert_normal_close(&mut socket).await;
     server.abort();
 }
