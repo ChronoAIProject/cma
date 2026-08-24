@@ -35,6 +35,7 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
+use crate::rest::pagination::SessionPageParams;
 use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
 
 mod settings;
@@ -419,20 +420,30 @@ async fn runtimes(
 async fn sessions(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-) -> Result<Json<Vec<AdminSessionView>>, AdminProblem> {
+    params: Result<Query<SessionPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<(axum::http::HeaderMap, Json<Vec<AdminSessionView>>), AdminRequestFailure> {
+    let Query(params) = params?;
     // Two core calls, each answering for its own capability. Reading everyone's
     // work and reading who those people are stay separate grants: the list is
     // opened by the first, and the second only decides whether the owners come
     // back named or as identifiers. Naming is scoped to the page, so a bounded
     // list stays bounded rather than dragging the whole directory behind it.
-    let sessions = state.sessions.list_all_sessions(&caller).await?;
-    let owners: Vec<SubjectId> = sessions.iter().map(|s| s.owner.clone()).collect();
+    let sessions = state
+        .sessions
+        .list_all_sessions(&caller, &params.store_query())
+        .await?;
+    let headers = params.next_headers("/api/v1/admin/sessions", sessions.next.as_ref());
+    let owners: Vec<SubjectId> = sessions.items.iter().map(|s| s.owner.clone()).collect();
     let names = state.users.names_known_to(&caller, &owners).await?;
-    Ok(Json(
-        sessions
-            .into_iter()
-            .map(|s| AdminSessionView::render(s, &names))
-            .collect(),
+    Ok((
+        headers,
+        Json(
+            sessions
+                .items
+                .into_iter()
+                .map(|s| AdminSessionView::render(s, &names))
+                .collect(),
+        ),
     ))
 }
 

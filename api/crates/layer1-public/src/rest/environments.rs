@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, put},
     Json, Router,
@@ -25,6 +25,7 @@ use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
     MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
 };
+use crate::rest::pagination::PageParams;
 use crate::rest::{Problem, RequestFailure};
 
 /// Routes this resource contributes.
@@ -70,13 +71,20 @@ async fn create(
 async fn list(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-) -> Result<Json<Vec<ProfileView>>, Problem> {
-    let profiles = service.list(&caller).await?;
-    Ok(Json(
-        profiles
-            .into_iter()
-            .map(|p| ProfileView::render(p, &service))
-            .collect(),
+    params: Result<Query<PageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<(axum::http::HeaderMap, Json<Vec<ProfileView>>), RequestFailure> {
+    let Query(params) = params?;
+    let profiles = service.list(&caller, &params.store_request()).await?;
+    let headers = params.next_headers("/api/v1/environment-profiles", profiles.next.as_ref());
+    Ok((
+        headers,
+        Json(
+            profiles
+                .items
+                .into_iter()
+                .map(|p| ProfileView::render(p, &service))
+                .collect(),
+        ),
     ))
 }
 
@@ -215,7 +223,9 @@ mod tests {
 
     use super::*;
     use axum::response::IntoResponse;
-    use layer2_core::{Baseline, CoreError, EnvironmentProfileStore, StoreError, SubjectId};
+    use layer2_core::{
+        Baseline, CoreError, EnvironmentProfileStore, Page, PageRequest, StoreError, SubjectId,
+    };
 
     /// A store that holds nothing, for the cases that never reach it.
     struct EmptyStore;
@@ -234,8 +244,12 @@ mod tests {
         async fn list_for(
             &self,
             _owner: &SubjectId,
-        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-            Ok(Vec::new())
+            _page: &PageRequest,
+        ) -> Result<Page<EnvironmentProfile>, StoreError> {
+            Ok(Page {
+                items: Vec::new(),
+                next: None,
+            })
         }
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
             Ok(())
@@ -390,8 +404,14 @@ mod tests {
             async fn list_for(
                 &self,
                 _owner: &SubjectId,
-            ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-                Ok(self.0.lock().unwrap().clone())
+                page: &PageRequest,
+            ) -> Result<Page<EnvironmentProfile>, StoreError> {
+                let mut profiles = self.0.lock().unwrap().clone();
+                profiles.truncate(page.limit() as usize);
+                Ok(Page {
+                    items: profiles,
+                    next: None,
+                })
             }
 
             async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {

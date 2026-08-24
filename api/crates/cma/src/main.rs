@@ -101,6 +101,7 @@ fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
                 Method::PATCH,
                 Method::DELETE,
             ])
+            .expose_headers([header::LINK])
             .max_age(CORS_PREFLIGHT_MAX_AGE),
     )
 }

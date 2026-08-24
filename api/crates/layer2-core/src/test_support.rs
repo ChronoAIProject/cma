@@ -17,7 +17,7 @@ use crate::event::{Event, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{ScreenFactory, SessionService};
 use crate::session::SessionSpec;
-use crate::store::{SessionRecord, SessionStore, StoreError};
+use crate::store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 use crate::Reserved;
 
@@ -207,23 +207,32 @@ impl SessionStore for FakeStore {
         Ok(self.sessions.lock().await.get(&id.0).cloned())
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
-        Ok(self
-            .sessions
-            .lock()
-            .await
-            .values()
-            .filter(|r| &r.session.owner == owner)
-            .cloned()
-            .collect())
+        Ok(page_sessions(
+            self.sessions
+                .lock()
+                .await
+                .values()
+                .filter(|r| &r.session.owner == owner)
+                .cloned()
+                .collect(),
+            query,
+        ))
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
-        Ok(self.sessions.lock().await.values().cloned().collect())
+        Ok(page_sessions(
+            self.sessions.lock().await.values().cloned().collect(),
+            query,
+        ))
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
@@ -325,6 +334,37 @@ impl SessionStore for FakeStore {
             .collect();
         out.sort_by_key(|e| e.seq);
         Ok(out)
+    }
+}
+
+fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> Page<SessionRecord> {
+    records.retain(|record| {
+        query
+            .status
+            .is_none_or(|status| record.session.status == status)
+            && query.page.cursor().is_none_or(|cursor| {
+                record.session.created_at < cursor.created_at
+                    || (record.session.created_at == cursor.created_at
+                        && record.session.id.0 < cursor.id)
+            })
+    });
+    records.sort_by(|a, b| {
+        b.session
+            .created_at
+            .cmp(&a.session.created_at)
+            .then_with(|| b.session.id.0.cmp(&a.session.id.0))
+    });
+    let has_more = records.len() > query.page.limit() as usize;
+    records.truncate(query.page.limit() as usize);
+    let next = has_more.then(|| {
+        let last = records
+            .last()
+            .expect("a non-empty bounded page has a last row");
+        PageCursor::new(&last.session.created_at, &last.session.id.0)
+    });
+    Page {
+        items: records,
+        next,
     }
 }
 
