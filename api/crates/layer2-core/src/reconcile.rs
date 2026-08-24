@@ -35,7 +35,7 @@ use crate::event::{Event, EventKind};
 use crate::ids::KernelId;
 use crate::service::SessionService;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionSpec, SessionStatus};
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, StoreError};
 
 /// What a sweep did, for logging and for tests.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -280,7 +280,16 @@ impl SessionService {
                     .and_then(|view| view.stopped_because.get(&runtime))
                     .copied()
                     .map(RuntimeLossCause::from);
-                self.record_runtime_lost(&mut record, &runtime, cause).await;
+                if let Err(error) = self.record_runtime_lost(&mut record, &runtime, cause).await {
+                    tracing::error!(
+                        session_id = %id,
+                        runtime = %runtime,
+                        %error,
+                        "cannot record that this session's runtime is gone; deferring replacement"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
                 reclaimed.lost_runtimes += 1;
             }
         }
@@ -419,7 +428,7 @@ impl SessionService {
         record: &mut SessionRecord,
         runtime: &str,
         cause: Option<RuntimeLossCause>,
-    ) {
+    ) -> Result<(), StoreError> {
         let id = record.session.id.clone();
         let previous = record.runtime_id.take();
         let previous_state = record.session.recovery_state;
@@ -445,10 +454,11 @@ impl SessionService {
             record.session.recovery_state = previous_state;
             tracing::error!(session_id = %id, runtime = %runtime, error = %e,
                 "cannot record that this session's runtime is gone");
-            return;
+            return Err(e);
         }
         tracing::warn!(session_id = %id, runtime = %runtime, ?cause,
             "this session's runtime is gone");
+        Ok(())
     }
 
     /// Start a new runtime for a session that should have one.
