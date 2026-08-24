@@ -30,14 +30,6 @@ impl SessionStore for MemorySessions {
         Ok(())
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.0
-            .lock()
-            .await
-            .insert(record.session.id.clone(), record.clone());
-        Ok(())
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         Ok(self.0.lock().await.get(id).cloned())
     }

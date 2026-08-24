@@ -774,7 +774,10 @@ async fn the_real_store_refuses_a_forward_gap_without_committing_it() {
     let mut seed = record_with(None);
     seed.session.id = id.clone();
     seed.session.last_seq = 0;
-    store.upsert(&seed).await.expect("live session is seeded");
+    store
+        .create_session_idempotent("seed-real-gap", &seed, &[])
+        .await
+        .expect("live session is seeded");
 
     let error = store
         .append_events(&[event(&id.0, 2)])
@@ -1019,10 +1022,6 @@ async fn a_real_tombstoned_session_cannot_be_recreated_or_appended_to() {
         .await
         .expect_err("tombstone blocks create");
     assert!(matches!(create, StoreError::SessionDeleted { .. }));
-    assert!(matches!(
-        store.upsert(&record).await,
-        Err(StoreError::SessionDeleted { .. })
-    ));
     assert!(matches!(
         store.append_events(&[event("sesn_tombstoned", 1)]).await,
         Err(StoreError::SessionDeleted { .. })
