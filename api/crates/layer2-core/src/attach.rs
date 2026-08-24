@@ -8,16 +8,70 @@
 use std::sync::Arc;
 
 use layer3_adapter::{TermSize, TerminalInput};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex, OwnedMutexGuard};
 
 use crate::authz::{Caller, Capability as AuthorizationCapability};
 use crate::capabilities::Capability;
 use crate::error::CoreError;
-use crate::event::EventKind;
+use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
-use crate::log::{append, append_with};
+use crate::log::{append, append_with, drop_undelivered};
 use crate::service::{store_failed, Attachment, AttachmentHandle, SessionService};
-use crate::terminal::TerminalGeometry;
+use crate::store::SessionRecord;
+use crate::terminal::{ScreenModel, TerminalGeometry};
+
+type EntryScreen = Arc<Mutex<Box<dyn ScreenModel>>>;
+
+struct RetainedAttachment {
+    handle: AttachmentHandle,
+    committed: SessionRecord,
+}
+
+/// Persist the compensating detach without exposing an outage receiver that can
+/// acknowledge and abandon it. The lifecycle guard moves into the detached
+/// continuation, so another attach or lifecycle decision cannot overtake it.
+fn retain_terminal_detach(
+    service: Arc<SessionService>,
+    id: SessionId,
+    record: SessionRecord,
+    screen: EntryScreen,
+    lifecycle: OwnedMutexGuard<()>,
+) {
+    let installed_service = Arc::clone(&service);
+    let installed_id = id.clone();
+    let installed_screen = Arc::clone(&screen);
+    let rejected_service = Arc::clone(&service);
+    let rejected_id = id.clone();
+    let rejected_screen = Arc::clone(&screen);
+    let detach = service.persist_durably_with(
+        record,
+        vec![Event {
+            session_id: id,
+            seq: 0,
+            kind: EventKind::TerminalDetached,
+            appended_at: String::new(),
+        }],
+        move |committed| async move {
+            let mut entries = installed_service.entries.write().await;
+            if let Some(entry) = entries
+                .get_mut(&installed_id)
+                .filter(|entry| Arc::ptr_eq(&entry.screen, &installed_screen))
+            {
+                entry.session.last_seq = committed.session.last_seq;
+                let event_log = Arc::clone(&entry.event_log);
+                event_log.synchronize_tail(&mut entry.session.last_seq);
+            }
+            ((), lifecycle)
+        },
+        move |_error| async move {
+            rejected_service
+                .synchronize_live_tail_for(&rejected_id, &rejected_screen)
+                .await;
+        },
+        drop_undelivered,
+    );
+    drop(detach);
+}
 
 /// How an attach should treat an attachment somebody already holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -70,7 +124,7 @@ impl SessionService {
             self.readopt(&record).await?;
         }
         let gate = self.lifecycle_gates.gate(id);
-        let _guard = gate.lock_owned().await;
+        let lifecycle = gate.lock_owned().await;
 
         // The session may have been recovered before its owner had signed back
         // in, when there was no credential to be had. This is the moment they
@@ -87,7 +141,7 @@ impl SessionService {
             self.supply_credential(id, &caller.subject).await;
         }
 
-        let (screen, live, ending, generation, supersede, superseded, replaced, commit) = {
+        let commit = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
             // Attaching is acting, not observing, so ownership is required
@@ -106,78 +160,172 @@ impl SessionService {
             };
             let generation = entry.attachments_issued.saturating_add(1);
             let (supersede, superseded) = broadcast::channel(1);
-            let commit = append_with(entry, EventKind::TerminalAttached, |record| {
-                record.session.geometry = geometry;
-            });
-            (
-                Arc::clone(&entry.screen),
-                entry.live.clone(),
-                entry.terminal_ending.subscribe(),
-                generation,
-                supersede,
-                superseded,
-                replaced,
-                commit,
+            let screen = Arc::clone(&entry.screen);
+            let input = entry.input.clone();
+            let live = entry.live.clone();
+            let ending = entry.terminal_ending.subscribe();
+            let service = Arc::clone(self);
+            let session_id = id.clone();
+            let rejected_service = Arc::clone(self);
+            let rejected_id = id.clone();
+            let rejected_screen = Arc::clone(&screen);
+            let cleanup_service = Arc::clone(self);
+            let cleanup_id = id.clone();
+            append_with(
+                entry,
+                EventKind::TerminalAttached,
+                |record| record.session.geometry = geometry,
+                move |committed| async move {
+                    let installed = {
+                        let mut entries = service.entries.write().await;
+                        if let Some(entry) = entries
+                            .get_mut(&session_id)
+                            .filter(|entry| Arc::ptr_eq(&entry.screen, &screen))
+                        {
+                            entry.session.geometry = committed.session.geometry;
+                            entry.session.last_seq = committed.session.last_seq;
+                            let event_log = Arc::clone(&entry.event_log);
+                            event_log.synchronize_tail(&mut entry.session.last_seq);
+                            entry.attachments_issued = generation;
+                            entry.attached = Some(Attachment {
+                                generation,
+                                supersede,
+                            });
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if !installed {
+                        retain_terminal_detach(
+                            Arc::clone(&service),
+                            session_id.clone(),
+                            committed,
+                            Arc::clone(&screen),
+                            lifecycle,
+                        );
+                        return (Err(CoreError::SessionNotFound), None);
+                    }
+                    if let Some(replaced) = replaced {
+                        // A send with no receiver means the holder has already
+                        // gone, which is the case takeover exists to rescue.
+                        let _ = replaced.send(crate::lease::Detached::Superseded);
+                        tracing::info!(session_id = %session_id, "the terminal attachment was taken over");
+                    }
+
+                    // The relay applies and broadcasts while holding this same
+                    // lock, keeping repaint and live output indivisible.
+                    let (repaint, output) = {
+                        let mut screen = screen.lock().await;
+                        let output = match live.as_ref() {
+                            Some(live) => live.subscribe(),
+                            None => {
+                                let (closed, output) = broadcast::channel(1);
+                                drop(closed);
+                                output
+                            }
+                        };
+                        screen.resize(geometry);
+                        (screen.repaint_bytes(), output)
+                    };
+
+                    if let Some(input) = input {
+                        if input
+                            .send(TerminalInput::Resize(TermSize {
+                                cols: geometry.columns(),
+                                rows: geometry.rows(),
+                            }))
+                            .await
+                            .is_err()
+                        {
+                            tracing::warn!(session_id = %session_id, "runtime input channel closed");
+                        }
+                    }
+
+                    let still_installed = service
+                        .entries
+                        .read()
+                        .await
+                        .get(&session_id)
+                        .is_some_and(|entry| {
+                            Arc::ptr_eq(&entry.screen, &screen)
+                                && entry
+                                    .attached
+                                    .as_ref()
+                                    .is_some_and(|attached| attached.generation == generation)
+                        });
+                    if !still_installed {
+                        retain_terminal_detach(
+                            Arc::clone(&service),
+                            session_id.clone(),
+                            committed,
+                            Arc::clone(&screen),
+                            lifecycle,
+                        );
+                        return (Err(CoreError::SessionNotFound), None);
+                    }
+
+                    tracing::info!(session_id = %session_id, cols = geometry.columns(), rows = geometry.rows(), "terminal attached");
+                    (
+                        Ok(RetainedAttachment {
+                            handle: AttachmentHandle {
+                                session_id,
+                                service,
+                                generation,
+                                entry_screen: Arc::clone(&screen),
+                                release_on_drop: true,
+                                output,
+                                superseded,
+                                ending,
+                                repaint,
+                                geometry,
+                            },
+                            committed,
+                        }),
+                        Some(lifecycle),
+                    )
+                },
+                move |_error| async move {
+                    rejected_service
+                        .synchronize_live_tail_for(&rejected_id, &rejected_screen)
+                        .await;
+                },
+                move |result: Result<RetainedAttachment, CoreError>, mut ownership| async move {
+                    if let Ok(mut retained) = result {
+                        let generation = retained.handle.generation;
+                        let screen = Arc::clone(&retained.handle.entry_screen);
+                        {
+                            let mut entries = cleanup_service.entries.write().await;
+                            if let Some(entry) = entries.get_mut(&cleanup_id).filter(|entry| {
+                                Arc::ptr_eq(&entry.screen, &screen)
+                                    && entry
+                                        .attached
+                                        .as_ref()
+                                        .is_some_and(|attached| attached.generation == generation)
+                            }) {
+                                entry.attached = None;
+                            }
+                        }
+                        retained.handle.release_on_drop = false;
+                        drop(retained.handle);
+                        if let Some(lifecycle) = ownership.take() {
+                            retain_terminal_detach(
+                                Arc::clone(&cleanup_service),
+                                cleanup_id,
+                                retained.committed,
+                                screen,
+                                lifecycle,
+                            );
+                        }
+                    }
+                },
             )
         };
-        let committed = commit.committed().await.map_err(store_failed)?;
-        {
-            let mut entries = self.entries.write().await;
-            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-            entry.session.geometry = committed.session.geometry;
-            entry.session.last_seq = committed.session.last_seq;
-            entry.attachments_issued = generation;
-            entry.attached = Some(Attachment {
-                generation,
-                supersede,
-            });
-        }
-        if let Some(replaced) = replaced {
-            // A send with no receiver means the holder has already gone, which
-            // is not a failure: it is the case takeover exists to rescue.
-            let _ = replaced.send(crate::lease::Detached::Superseded);
-            tracing::info!(session_id = %id, "the terminal attachment was taken over");
-        }
-
-        // The relay applies and broadcasts while holding this same lock. Taking
-        // it before subscribing makes the boundary atomic: a chunk is either in
-        // the repaint or queued as live output, never both and never neither.
-        let (repaint, output) = {
-            let mut s = screen.lock().await;
-            let output = match live.as_ref() {
-                Some(live) => live.subscribe(),
-                None => {
-                    // The runtime channel already ended. A closed receiver lets
-                    // the interface deliver the recorded ending after repaint.
-                    let (closed, output) = broadcast::channel(1);
-                    drop(closed);
-                    output
-                }
-            };
-            s.resize(geometry);
-            (s.repaint_bytes(), output)
-        };
-
-        self.forward_input(
-            id,
-            TerminalInput::Resize(TermSize {
-                cols: geometry.columns(),
-                rows: geometry.rows(),
-            }),
-        )
-        .await;
-
-        tracing::info!(session_id = %id, cols = geometry.columns(), rows = geometry.rows(), "terminal attached");
-        Ok(AttachmentHandle {
-            session_id: id.clone(),
-            service: Arc::clone(self),
-            generation,
-            output,
-            superseded,
-            ending,
-            repaint,
-            geometry,
-        })
+        commit
+            .committed()
+            .await
+            .map_err(store_failed)?
+            .map(|retained| retained.handle)
     }
 
     /// Release the exclusive attachment. Idempotent.
@@ -187,12 +335,32 @@ impl SessionService {
     /// release would detach the new holder on the old one's way out — and the
     /// person who just took their own session back would watch it go dead.
     pub async fn release_attachment(&self, id: &SessionId, generation: u64) {
+        self.release_attachment_matching(id, generation, None).await;
+    }
+
+    pub(crate) async fn release_attachment_from(
+        &self,
+        id: &SessionId,
+        generation: u64,
+        screen: &EntryScreen,
+    ) {
+        self.release_attachment_matching(id, generation, Some(screen))
+            .await;
+    }
+
+    async fn release_attachment_matching(
+        &self,
+        id: &SessionId,
+        generation: u64,
+        screen: Option<&EntryScreen>,
+    ) {
         let mut entries = self.entries.write().await;
         if let Some(entry) = entries.get_mut(id) {
-            if entry
-                .attached
-                .as_ref()
-                .is_some_and(|a| a.generation == generation)
+            if screen.is_none_or(|screen| Arc::ptr_eq(&entry.screen, screen))
+                && entry
+                    .attached
+                    .as_ref()
+                    .is_some_and(|a| a.generation == generation)
             {
                 entry.attached = None;
                 append(entry, EventKind::TerminalDetached);
