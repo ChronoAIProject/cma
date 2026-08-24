@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthenticatedCaller;
 
-use super::Problem;
+use super::{Problem, RequestFailure};
 
 /// What a caller sends to a session.
 #[derive(Debug, Deserialize)]
@@ -251,8 +251,9 @@ pub(super) async fn input(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Json(body): Json<InputRequest>,
-) -> Result<StatusCode, Problem> {
+    body: Result<Json<InputRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<StatusCode, RequestFailure> {
+    let Json(body) = body?;
     let id = SessionId(id);
     let session = service.get_session(&caller, &id).await?;
 
@@ -323,8 +324,9 @@ pub(super) async fn resize(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Json(body): Json<ResizeRequest>,
-) -> Result<StatusCode, Problem> {
+    body: Result<Json<ResizeRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<StatusCode, RequestFailure> {
+    let Json(body) = body?;
     let id = SessionId(id);
     let geometry = TerminalGeometry::new(body.cols, body.rows).map_err(CoreError::from)?;
     // The attached client declared the geometry it is drawing for, and
@@ -341,8 +343,9 @@ pub(super) async fn resolve_approval(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, request_id)): Path<(String, String)>,
-    Json(body): Json<ApprovalRequestBody>,
-) -> Result<StatusCode, Problem> {
+    body: Result<Json<ApprovalRequestBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<StatusCode, RequestFailure> {
+    let Json(body) = body?;
     service
         .resolve_approval(&caller, &SessionId(id), request_id, body.decision.into())
         .await?;
@@ -389,8 +392,9 @@ pub(super) async fn steer(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Json(body): Json<InputRequest>,
-) -> Result<StatusCode, Problem> {
+    body: Result<Json<InputRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<StatusCode, RequestFailure> {
+    let Json(body) = body?;
     let id = SessionId(id);
     let session = service.get_session(&caller, &id).await?;
     // Declared, not discovered. A session whose kernel does not steer refuses

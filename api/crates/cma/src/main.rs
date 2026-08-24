@@ -18,10 +18,17 @@ mod sweep;
 
 use std::sync::Arc;
 
-use axum::{routing::get, Json, Router};
+use axum::{
+    routing::{any, get},
+    Json, Router,
+};
 use layer1_public::{
-    a2a::A2aInterface, agui::AguiInterface, mcp::McpInterface, pty::PtyInterface,
-    rest::RestInterface, InterfaceProfile,
+    a2a::A2aInterface,
+    agui::AguiInterface,
+    mcp::McpInterface,
+    pty::PtyInterface,
+    rest::{HttpProblem, RestInterface},
+    InterfaceProfile,
 };
 use layer2_core::{
     ActivityService, Baseline, EnvironmentProfileService, PlatformSettingsService, ScreenModel,
@@ -42,6 +49,28 @@ fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
         Box::new(McpInterface),
         Box::new(A2aInterface),
     ]
+}
+
+/// Compose the REST surface before protocol-specific and browser routes join it.
+///
+/// The three Layer 1 routers have different state, so the binary is where they
+/// meet. Applying the method fallback after all three are merged covers every
+/// declared REST path without giving any child router a conflicting fallback.
+/// The wildcard is path-scoped so `/auth/*` keeps the browser flow's own
+/// vocabulary.
+fn rest_api_router(
+    state: layer1_public::rest::SessionsState,
+    admin: Arc<layer1_public::rest::admin::AdminState>,
+) -> Router {
+    let environments = Arc::clone(&state.environments);
+    Router::new()
+        .merge(layer1_public::rest::router(state))
+        .merge(layer1_public::rest::environments::router(environments))
+        .merge(layer1_public::rest::admin::router(admin))
+        .route("/api/v1", any(|| async { HttpProblem::NotFound }))
+        .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
+        .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
+        .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
 }
 
 #[tokio::main]
@@ -308,40 +337,30 @@ async fn main() {
     // so both surfaces are handed the same store.
     let tickets = layer1_public::tickets::TerminalTickets::new();
 
-    let operator =
-        layer1_public::rest::admin::router(Arc::new(layer1_public::rest::admin::AdminState {
+    let public_state = layer1_public::rest::SessionsState {
+        sessions: Arc::clone(&service),
+        users: Arc::clone(&users),
+        tickets: Arc::clone(&tickets),
+        environments: Arc::clone(&environments),
+    };
+    let rest = rest_api_router(
+        public_state.clone(),
+        Arc::new(layer1_public::rest::admin::AdminState {
             sessions: Arc::clone(&service),
             activity: Arc::clone(&activity),
             users: Arc::clone(&users),
             settings: Arc::clone(&settings),
-        }));
+        }),
+    );
 
     let app = Router::new()
         .route("/livez", get(|| async { "ok" }))
         .route("/ready", get(ready))
-        .merge(layer1_public::rest::router(
-            layer1_public::rest::SessionsState {
-                sessions: Arc::clone(&service),
-                users: Arc::clone(&users),
-                tickets: Arc::clone(&tickets),
-                environments: Arc::clone(&environments),
-            },
-        ))
-        .merge(layer1_public::rest::environments::router(Arc::clone(
-            &environments,
-        )))
+        .merge(rest)
         // The priority-1 interface, sharing the facade's state because it
         // projects the same sessions: a thread here is a session there, and
         // two states would be two answers to the same question.
-        .merge(layer1_public::agui::router(
-            layer1_public::rest::SessionsState {
-                sessions: Arc::clone(&service),
-                users: Arc::clone(&users),
-                tickets: Arc::clone(&tickets),
-                environments: Arc::clone(&environments),
-            },
-        ))
-        .merge(operator)
+        .merge(layer1_public::agui::router(public_state))
         .merge(layer1_public::pty::router(
             layer1_public::pty::TerminalState {
                 sessions: Arc::clone(&service),
@@ -407,6 +426,10 @@ async fn shutdown_signal() {
     }
     tracing::info!("shutdown signal received; draining");
 }
+
+#[cfg(test)]
+#[path = "rest_contract_tests.rs"]
+mod rest_contract_tests;
 
 #[cfg(test)]
 mod tests {
