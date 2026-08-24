@@ -296,6 +296,7 @@ async fn sequence_allocation_cannot_be_inverted_before_lane_insertion() {
             super::CommitMode::UpdateExact,
             base,
             vec![said(0, "allocated-first")],
+            None,
             move |last_seq| {
                 let _ = allocated_tx.send(last_seq);
                 let (released, wake) = &*first_release;

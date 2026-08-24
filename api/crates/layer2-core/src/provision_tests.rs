@@ -7,9 +7,25 @@
 
 use std::sync::Arc;
 
+use crate::commit_fault_support::CommitFaultStore;
+use crate::event::{Event, EventKind};
 use crate::session::{SessionStatus, StopReason};
 use crate::store::SessionStore;
-use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{
+    await_settled, service, service_over, spec, user, FakeAdapter, FakeStore,
+};
+
+fn is_ready_commit(_record: &crate::store::SessionRecord, events: &[Event]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event.kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                ..
+            }
+        )
+    })
+}
 
 #[tokio::test]
 async fn creating_a_session_returns_before_a_runtime_exists() {
@@ -52,6 +68,169 @@ async fn a_session_becomes_ready_once_its_runtime_is_up() {
 
     let settled = await_settled(&svc, &caller, &created.id).await;
     assert_eq!(settled.status, SessionStatus::Ready);
+}
+
+#[tokio::test]
+async fn a_conflicted_ready_commit_publishes_only_the_successful_runtime() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_ready_commit));
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let caller = user("ready-conflict-owner");
+
+    store.pause_next();
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    store.wait_until_held().await;
+    let mut rival = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("rival reads the provisioning record");
+    rival.context_ref = Some("rival-context-before-ready".into());
+    inner
+        .commit_session_idempotent("rival-before-ready", &rival, &[])
+        .await
+        .expect("the rival record commits first");
+    store.release();
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if svc.entries.read().await.contains_key(&created.id)
+                && adapter
+                    .resource_watch_calls
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    == 1
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the successful replacement runtime is published");
+
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "the conflicted runtime is discarded before one clean retry"
+    );
+    assert_eq!(adapter.terminated.lock().await.len(), 1);
+    assert_eq!(
+        adapter
+            .resource_watch_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "only the durably ready runtime receives a resource watcher"
+    );
+    let senders = adapter.senders.lock().await;
+    assert_eq!(senders.len(), 2);
+    assert!(
+        senders[0].is_closed(),
+        "the rejected runtime's output receiver is dropped without a relay"
+    );
+    assert!(
+        !senders[1].is_closed(),
+        "the successfully committed runtime owns the published relay"
+    );
+    drop(senders);
+    assert_eq!(
+        inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("record remains present")
+            .context_ref
+            .as_deref(),
+        Some("rival-context-before-ready")
+    );
+    let ready_events = svc
+        .events_since(&caller, &created.id, None)
+        .await
+        .expect("history is readable")
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        ready_events, 1,
+        "the rejected runtime never announces false readiness"
+    );
+}
+
+#[tokio::test]
+async fn repeated_ready_outages_publish_no_runtime_side_effects() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_ready_commit));
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    // Each start attempt reports its fourth unavailable write. Fail every
+    // attempt so the detached bring-up reaches its recorded terminal outcome.
+    store.fail_next(crate::provision::PROVISION_ATTEMPTS as usize * 4);
+    let caller = user("ready-outage-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Terminated);
+    assert_eq!(
+        store.matched_calls(),
+        crate::provision::PROVISION_ATTEMPTS as usize * 4
+    );
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        crate::provision::PROVISION_ATTEMPTS as usize
+    );
+    assert_eq!(
+        adapter
+            .resource_watch_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no rejected runtime receives a resource watcher"
+    );
+    assert!(adapter.credentials.lock().await.is_empty());
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    let senders = adapter.senders.lock().await;
+    assert_eq!(senders.len(), crate::provision::PROVISION_ATTEMPTS as usize);
+    assert!(
+        senders.iter().all(tokio::sync::mpsc::Sender::is_closed),
+        "no rejected runtime publishes an output relay"
+    );
+    drop(senders);
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert!(durable.runtime_id.is_none());
+    assert!(
+        svc.events_since(&caller, &created.id, None)
+            .await
+            .expect("history is readable")
+            .iter()
+            .all(|event| {
+                !matches!(
+                    event.kind,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Ready,
+                        ..
+                    }
+                )
+            }),
+        "no rejected runtime announces false readiness"
+    );
 }
 
 #[tokio::test]

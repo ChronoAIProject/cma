@@ -21,7 +21,7 @@ use tokio::sync::{broadcast, watch, Mutex};
 /// streaming; this is the slack that keeps a fast turn from blocking on it.
 pub(crate) const CONVERSATION_BUFFER: usize = 64;
 
-use crate::event::EventKind;
+use crate::event::{Event, EventKind};
 use crate::provision_failure::StartFailure;
 pub(crate) use crate::provision_support::{runtime_capacity, runtime_options};
 use crate::service::{SessionEntry, SessionService, LIVE_BUFFER, RESOURCE_BUFFER};
@@ -375,14 +375,47 @@ impl SessionService {
                 )));
             }
         };
-        let durable = current.clone();
-        let mut seeded = current.session;
-        seeded.geometry = geometry;
-        let context_ref = current.context_ref;
+        let mut ready = current;
+        ready.session.geometry = geometry;
+        ready.session.status = SessionStatus::Ready;
+        // Whatever brought the session here, it is running now. Without this,
+        // `recovering` would be a state a replacement session never leaves.
+        ready.session.recovery_state = RecoveryState::Normal;
+        ready.session.stop_reason = None;
+        let mut ready_events = vec![Event {
+            session_id: id.clone(),
+            seq: 0,
+            kind: EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                stop_reason: None,
+                detail: None,
+                capability: None,
+            },
+            appended_at: String::new(),
+        }];
+        if let Some(conversation_id) = named_conversation {
+            ready_events.push(Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::ConversationOpened { conversation_id },
+                appended_at: String::new(),
+            });
+        }
+        self.persist_durably(&mut ready, ready_events)
+            .await
+            .map_err(|error| {
+                StartFailure::transient(format!(
+                    "the runtime became usable but readiness could not be recorded: {error}"
+                ))
+            })?;
+
+        let durable = ready.clone();
+        let seeded = ready.session;
+        let context_ref = ready.context_ref;
         let event_log = self.event_logs.lane(&id);
         event_log.observe_tail(seeded.last_seq);
         event_log.observe_record(&durable);
-        let mut entry = SessionEntry {
+        let entry = SessionEntry {
             session: seeded,
             event_log,
             subject_credential: spec.runtime_credential.clone(),
@@ -406,19 +439,6 @@ impl SessionService {
             context_ref,
             captured_len,
         };
-        entry.session.status = SessionStatus::Ready;
-        // Whatever brought the session here, it is running now. Without this,
-        // `recovering` would be a state a replacement session never leaves.
-        entry.session.recovery_state = RecoveryState::Normal;
-        crate::log::append(
-            &mut entry,
-            EventKind::StatusChanged {
-                status: SessionStatus::Ready,
-                stop_reason: None,
-                detail: None,
-                capability: None,
-            },
-        );
         self.entries.write().await.insert(id.clone(), entry);
         drop(installation);
         crate::resources::spawn_resource_watch(
@@ -442,20 +462,6 @@ impl SessionService {
                 terminal_ending,
             );
         }
-        if conversation.is_some() {
-            // Recorded before anything is said on it. What this is for is a
-            // control plane that has not started yet: the one replacing this
-            // process reads the log to learn what the runtime calls the
-            // conversation already running in it, and without that it opens a
-            // second one beside it.
-            if let Some(conversation_id) = named_conversation {
-                let mut entries = self.entries.write().await;
-                if let Some(entry) = entries.get_mut(&id) {
-                    crate::log::append(entry, EventKind::ConversationOpened { conversation_id });
-                }
-            }
-        }
-
         // Handed over before the agent can need it, so the first turn is
         // already authenticated. Asked of the adapter rather than pushed down
         // the terminal channel: the credential's consumer is the supervisor's
@@ -483,7 +489,6 @@ impl SessionService {
                 .await;
         }
 
-        self.flush(&id).await;
         self.note_progress(&id, ProvisioningStage::Ready).await;
         tracing::info!(session_id = %id, "runtime ready");
         Ok(())
