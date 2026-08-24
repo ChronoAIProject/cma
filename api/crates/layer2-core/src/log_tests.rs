@@ -11,7 +11,7 @@ use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
 use crate::options::SessionMode;
 use crate::session::{RecoveryState, Session, SessionStatus, StopReason};
-use crate::store::{SessionRecord, SessionStore, StoreError};
+use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{await_settled, service_over, spec, user, FakeAdapter, FakeStore};
 use crate::{AgentOptions, KernelId, Reserved, TerminalGeometry};
 
@@ -118,16 +118,20 @@ impl SessionStore for FaultStore {
         self.inner.get(id).await
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_for(owner).await
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
+        self.inner.list_for(owner, query).await
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         self.inner.reserved_capacity().await
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_all().await
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
+        self.inner.list_all(query).await
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {

@@ -1,7 +1,8 @@
 use super::*;
 use layer2_core::{
-    AgentOptions, Event, EventKind, KernelId, Rate, RateCardId, RecoveryState, Session, SessionId,
-    SessionPricing, SessionRecord, SessionStatus, StopReason, SubjectId, TerminalGeometry,
+    AgentOptions, Event, EventKind, KernelId, PageCursor, PageRequest, Rate, RateCardId,
+    RecoveryState, Session, SessionId, SessionListQuery, SessionPricing, SessionRecord,
+    SessionStatus, StopReason, SubjectId, TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{
@@ -1174,12 +1175,17 @@ fn current_session_documents_carry_the_write_protocol() {
 
 #[test]
 fn read_aggregations_hide_tombstoned_sessions() {
-    let listed = visible_sessions_pipeline(doc! { "owner": "subject" });
+    let query = SessionListQuery::new(PageRequest::new(5, None), None);
+    let listed = session_page_pipeline(doc! { "owner": "subject" }, &query).unwrap();
+    assert_eq!(listed[0], doc! { "$match": { "owner": "subject" } });
     assert_eq!(listed[1], tombstone_lookup_stage());
     assert_eq!(
         listed[2],
         doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } }
     );
+    assert_eq!(listed[3], doc! { "$project": { "_cma_tombstones": 0 } });
+    assert_eq!(listed[4], doc! { "$sort": { "created_at": -1, "_id": -1 } });
+    assert_eq!(listed[5], doc! { "$limit": 6_i64 });
 
     let counted = visible_count_pipeline(doc! { "status": "ready" });
     assert_eq!(counted[1], tombstone_lookup_stage());
@@ -1551,6 +1557,69 @@ async fn a_timed_out_readiness_probe_stays_single_flight_until_its_driver_work_f
     .await
     .expect("readiness recovers after the detached work finishes");
     assert_eq!(invocations.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn session_pages_fetch_one_sentinel_row_and_never_exceed_the_store_bound() {
+    let five = SessionListQuery::new(PageRequest::new(5, None), None);
+    let oversized = SessionListQuery::new(PageRequest::new(u32::MAX, None), None);
+
+    assert_eq!(session_page_fetch_limit(&five), 6);
+    assert_eq!(oversized.page.limit(), 200);
+    assert_eq!(session_page_fetch_limit(&oversized), 201);
+}
+
+#[test]
+fn session_page_filter_pushes_status_and_both_cursor_keys_into_mongo() {
+    let query = SessionListQuery::new(
+        PageRequest::new(
+            50,
+            Some(PageCursor::new("2026-08-24T10:11:12Z", "sesn_tied")),
+        ),
+        Some(SessionStatus::Running),
+    );
+
+    assert_eq!(
+        session_page_filter(doc! { "owner": "subject-a" }, &query).unwrap(),
+        doc! {
+            "owner": "subject-a",
+            "status": "running",
+            "$or": [
+                { "created_at": { "$lt": "2026-08-24T10:11:12Z" } },
+                {
+                    "created_at": "2026-08-24T10:11:12Z",
+                    "_id": { "$lt": "sesn_tied" },
+                },
+            ],
+        }
+    );
+    assert_eq!(session_page_sort(), doc! { "created_at": -1, "_id": -1 });
+}
+
+#[test]
+fn session_page_indexes_cover_owned_and_admin_queries_with_status() {
+    for (name, keys) in [
+        (
+            "owner_1_created_at_-1__id_-1",
+            doc! { "owner": 1, "created_at": -1, "_id": -1 },
+        ),
+        (
+            "owner_1_status_1_created_at_-1__id_-1",
+            doc! { "owner": 1, "status": 1, "created_at": -1, "_id": -1 },
+        ),
+        ("created_at_-1__id_-1", doc! { "created_at": -1, "_id": -1 }),
+        (
+            "status_1_created_at_-1__id_-1",
+            doc! { "status": 1, "created_at": -1, "_id": -1 },
+        ),
+    ] {
+        let required = required_indexes()
+            .into_iter()
+            .find(|required| required.collection == SESSIONS && required.name == name)
+            .unwrap_or_else(|| panic!("missing required pagination index {name}"));
+        assert_eq!(required.keys, keys);
+        assert!(!required.unique);
+    }
 }
 
 #[test]

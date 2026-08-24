@@ -17,7 +17,7 @@
 import { toCapabilities } from './agui/index.js';
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError, ValidationError } from './errors.js';
-import { request, requestBytes, requestVoid, type OperationOptions } from './http.js';
+import { request, requestBytes, requestPages, requestVoid, type OperationOptions } from './http.js';
 import { PRICING_WIRE } from './wire.js';
 import type {
   CredentialMode,
@@ -325,12 +325,18 @@ export async function listSessions(
   config: ResolvedConfig,
   options: OperationOptions = {},
 ): Promise<readonly Session[]> {
-  const body = await request(config, '/api/v1/sessions', { ...options, expectedStatus: 200 });
-  const items = (body as { sessions?: unknown })?.sessions ?? body;
-  if (!Array.isArray(items)) {
-    throw new ProtocolError('session list was not a list');
-  }
-  return items.map(toSession);
+  return requestPages(
+    config,
+    '/api/v1/sessions',
+    (body) => {
+      const items = (body as { sessions?: unknown })?.sessions ?? body;
+      if (!Array.isArray(items)) {
+        throw new ProtocolError('session list was not a list');
+      }
+      return items.map(toSession);
+    },
+    options,
+  );
 }
 
 /** The authenticated subject's current live-session allowance. */

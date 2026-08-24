@@ -2,7 +2,7 @@
 
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError, ValidationError } from './errors.js';
-import { request, requestVoid, type OperationOptions } from './http.js';
+import { request, requestPages, requestVoid, type OperationOptions } from './http.js';
 import type { CredentialMode, PermissionMode, ReasoningEffort, SessionPlane } from './types.js';
 
 const BASE = '/api/v1/environment-profiles';
@@ -120,9 +120,11 @@ export async function listEnvironmentProfiles(
   config: ResolvedConfig,
   options: OperationOptions = {},
 ): Promise<readonly EnvironmentProfile[]> {
-  return profileList(
-    await request(config, BASE, { ...options, expectedStatus: 200 }),
-    'environment profile list',
+  return requestPages(
+    config,
+    BASE,
+    (body) => profileList(body, 'environment profile list'),
+    options,
   );
 }
 

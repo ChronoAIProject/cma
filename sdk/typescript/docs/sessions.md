@@ -30,6 +30,9 @@ const current = await cma.readSession(created.id);
 console.log(listed.length, current.lifecycle);
 ```
 
+`listSessions` follows the server's opaque `Link: rel="next"` continuations and
+resolves only after every visible page has been validated.
+
 Creation can return while the lifecycle is still `provisioning`. Use the durable
 event stream for progress and `readSession` for the latest full projection.
 

@@ -17,8 +17,21 @@ use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
-use crate::session::Session;
+use crate::session::{Session, SessionStatus};
 use crate::Reserved;
+
+/// Records one internal store read asks for while walking a complete set.
+///
+/// Full scans are legitimate for reconciliation and repair, but every query
+/// they issue remains bounded. Public interfaces choose their own smaller or
+/// equal page size before reaching this port.
+const INTERNAL_SCAN_PAGE_SIZE: u32 = MAX_PAGE_SIZE;
+
+/// Rows returned when a caller does not choose a page size.
+pub const DEFAULT_PAGE_SIZE: u32 = 50;
+
+/// No one store listing may ask persistence to materialize more than this many rows.
+pub const MAX_PAGE_SIZE: u32 = 200;
 
 /// A session as it is stored.
 #[derive(Debug, Clone)]
@@ -50,6 +63,105 @@ impl SessionRecord {
             runtime_id: None,
             context_ref: None,
             revision: 0,
+        }
+    }
+}
+
+/// The stable position after which a newest-first listing continues.
+///
+/// Creation timestamps are not unique, so the durable resource identifier is
+/// the tie-breaker. Stores sort both descending and return rows strictly older
+/// than this pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageCursor {
+    /// Creation time of the last row already returned.
+    pub created_at: String,
+    /// Durable identifier of that row.
+    pub id: String,
+}
+
+impl PageCursor {
+    /// Name one stable position in a listing.
+    pub fn new(created_at: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            created_at: created_at.into(),
+            id: id.into(),
+        }
+    }
+}
+
+/// One bounded request against a newest-first store listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageRequest {
+    /// Most rows the caller may receive.
+    limit: u32,
+    /// Last row already received, when this continues an earlier page.
+    cursor: Option<PageCursor>,
+}
+
+impl PageRequest {
+    /// Build a request, keeping every store query within the supported bounds.
+    pub fn new(limit: u32, cursor: Option<PageCursor>) -> Self {
+        Self {
+            limit: limit.clamp(1, MAX_PAGE_SIZE),
+            cursor,
+        }
+    }
+
+    /// The clamped number of rows the store may return.
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
+    /// The last row already returned, when this continues another page.
+    pub fn cursor(&self) -> Option<&PageCursor> {
+        self.cursor.as_ref()
+    }
+}
+
+impl Default for PageRequest {
+    fn default() -> Self {
+        Self::new(DEFAULT_PAGE_SIZE, None)
+    }
+}
+
+/// Filters attached to a bounded session listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionListQuery {
+    /// Bounds and continuation position.
+    pub page: PageRequest,
+    /// Exact lifecycle state to retain, or every state when absent.
+    pub status: Option<SessionStatus>,
+}
+
+impl SessionListQuery {
+    /// Build one bounded session listing request.
+    pub fn new(page: PageRequest, status: Option<SessionStatus>) -> Self {
+        Self { page, status }
+    }
+}
+
+impl Default for SessionListQuery {
+    fn default() -> Self {
+        Self::new(PageRequest::default(), None)
+    }
+}
+
+/// One bounded store answer and the position of the following page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page<T> {
+    /// Rows in stable newest-first order.
+    pub items: Vec<T>,
+    /// Last returned row when at least one further row exists.
+    pub next: Option<PageCursor>,
+}
+
+impl<T> Page<T> {
+    /// Transform rows without changing the continuation position.
+    pub fn map<U>(self, mut render: impl FnMut(T) -> U) -> Page<U> {
+        Page {
+            items: self.items.into_iter().map(&mut render).collect(),
+            next: self.next,
         }
     }
 }
@@ -129,8 +241,42 @@ pub trait SessionStore: Send + Sync {
     /// Read one session, whoever owns it. Ownership is decided above this.
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError>;
 
-    /// Every session owned by a subject, newest first.
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError>;
+    /// One bounded page of a subject's sessions, newest first.
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError>;
+
+    /// Walk all of one subject's records through bounded store reads.
+    ///
+    /// Used by internal accounting fallbacks, never by a public list handler.
+    async fn scan_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+        let mut records = Vec::new();
+        let mut cursor = None;
+        loop {
+            let requested = cursor.clone();
+            let page = self
+                .list_for(
+                    owner,
+                    &SessionListQuery::new(
+                        PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
+                        None,
+                    ),
+                )
+                .await?;
+            records.extend(page.items);
+            match page.next {
+                Some(next) if Some(&next) != requested.as_ref() => cursor = Some(next),
+                Some(_) => {
+                    return Err(StoreError::Malformed(
+                        "session listing repeated its continuation cursor".into(),
+                    ))
+                }
+                None => return Ok(records),
+            }
+        }
+    }
 
     /// How many of this subject's sessions are recorded as wanting a runtime.
     ///
@@ -142,7 +288,7 @@ pub trait SessionStore: Send + Sync {
     /// runtime and would then refuse a session its owner is entitled to start.
     async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
         Ok(self
-            .list_for(owner)
+            .scan_for(owner)
             .await?
             .into_iter()
             .filter(|record| record.session.status.wants_runtime())
@@ -156,8 +302,37 @@ pub trait SessionStore: Send + Sync {
     /// runs on every session creation.
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError>;
 
-    /// Every session, newest first. For the monitoring surface.
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError>;
+    /// One bounded page of every session, newest first.
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError>;
+
+    /// Walk every record through bounded store reads.
+    ///
+    /// Reconciliation and provider inventory need the complete authority. They
+    /// use this explicit scan so no public listing can acquire the same cost by
+    /// forgetting to pass a bound.
+    async fn scan_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
+        let mut records = Vec::new();
+        let mut cursor = None;
+        loop {
+            let requested = cursor.clone();
+            let page = self
+                .list_all(&SessionListQuery::new(
+                    PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
+                    None,
+                ))
+                .await?;
+            records.extend(page.items);
+            match page.next {
+                Some(next) if Some(&next) != requested.as_ref() => cursor = Some(next),
+                Some(_) => {
+                    return Err(StoreError::Malformed(
+                        "session listing repeated its continuation cursor".into(),
+                    ))
+                }
+                None => return Ok(records),
+            }
+        }
+    }
 
     /// Remove a session and its history permanently.
     ///
@@ -272,8 +447,58 @@ pub trait EnvironmentProfileStore: Send + Sync {
         id: &EnvironmentProfileId,
     ) -> Result<Option<EnvironmentProfile>, StoreError>;
 
-    /// Every profile owned by a subject, newest first.
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError>;
+    /// One bounded page of a subject's profiles, newest first.
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError>;
+
+    /// Walk every profile for an internal mutation through bounded reads.
+    async fn scan_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
+        let mut profiles = Vec::new();
+        let mut cursor = None;
+        loop {
+            let requested = cursor.clone();
+            let page = self
+                .list_for(
+                    owner,
+                    &PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
+                )
+                .await?;
+            profiles.extend(page.items);
+            match page.next {
+                Some(next) if Some(&next) != requested.as_ref() => cursor = Some(next),
+                Some(_) => {
+                    return Err(StoreError::Malformed(
+                        "environment profile listing repeated its continuation cursor".into(),
+                    ))
+                }
+                None => return Ok(profiles),
+            }
+        }
+    }
+
+    /// The winning preferred profile, where one or more records claim it.
+    ///
+    /// The default stays correct for simple stores by walking bounded pages.
+    /// Database adapters should override this with a one-row query so listing a
+    /// page never grows with the owner's history.
+    async fn preferred_for(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(self
+            .scan_for(owner)
+            .await?
+            .into_iter()
+            .filter(|profile| profile.preferred)
+            .max_by(|a, b| {
+                a.updated_at
+                    .cmp(&b.updated_at)
+                    .then_with(|| a.id.0.cmp(&b.id.0))
+            }))
+    }
 
     /// Remove a profile permanently.
     ///

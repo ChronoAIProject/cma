@@ -1,5 +1,6 @@
 //! HTTP client, authentication, and retry policy.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use base64::Engine;
 use futures_util::StreamExt;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, LINK, RETRY_AFTER};
 use reqwest::{Method, Response, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -291,10 +292,29 @@ impl Client {
 
     /// List every session visible to the current caller.
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
-        let sessions: Vec<Session> = self
-            .request_json(Method::GET, &["sessions"], None, StatusCode::OK)
-            .await?;
-        sessions.into_iter().map(Session::validate).collect()
+        let mut url = self.endpoint(&["sessions"])?;
+        let mut visited = HashSet::new();
+        let mut sessions = Vec::new();
+        loop {
+            if !visited.insert(url.to_string()) {
+                return Err(Error::protocol("pagination repeated a continuation link"));
+            }
+            let request = RequestSpec::new(Method::GET, url, None, false);
+            let (page, next): (Vec<Session>, Option<String>) = self
+                .execute(request, |response| async move {
+                    decode_json_page(response, StatusCode::OK).await
+                })
+                .await?;
+            sessions.extend(
+                page.into_iter()
+                    .map(Session::validate)
+                    .collect::<Result<Vec<_>>>()?,
+            );
+            let Some(next) = next else {
+                return Ok(sessions);
+            };
+            url = self.session_page_url(&next)?;
+        }
     }
 
     /// Read one session.
@@ -517,6 +537,24 @@ impl Client {
         Ok(url)
     }
 
+    fn session_page_url(&self, target: &str) -> Result<Url> {
+        if !target.starts_with('/') || target.starts_with("//") {
+            return Err(Error::protocol(
+                "pagination next link left the control plane",
+            ));
+        }
+        let parsed = Url::parse(&format!("http://pagination.invalid{target}"))
+            .map_err(|_| Error::protocol("pagination next link was not a valid URI"))?;
+        if parsed.path() != "/api/v1/sessions" || parsed.fragment().is_some() {
+            return Err(Error::protocol(
+                "pagination next link left the session collection",
+            ));
+        }
+        let mut url = self.endpoint(&["sessions"])?;
+        url.set_query(parsed.query());
+        Ok(url)
+    }
+
     async fn execute<T, F, Fut>(&self, request: RequestSpec, decode: F) -> Result<T>
     where
         F: Fn(Response) -> Fut,
@@ -652,6 +690,65 @@ async fn decode_json<T: DeserializeOwned>(response: Response, expected: StatusCo
             "success response does not match its JSON wire shape: {error}"
         ))
     })
+}
+
+async fn decode_json_page<T: DeserializeOwned>(
+    response: Response,
+    expected: StatusCode,
+) -> Result<(T, Option<String>)> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(decode_problem(response).await);
+    }
+    if status != expected {
+        return Err(Error::protocol(format!(
+            "operation expected status {} but received {}",
+            expected.as_u16(),
+            status.as_u16()
+        )));
+    }
+    let next = response_next_link(&response)?;
+    let bytes = read_bounded(response).await?;
+    let body = serde_json::from_slice(&bytes).map_err(|error| {
+        Error::protocol(format!(
+            "success response does not match its JSON wire shape: {error}"
+        ))
+    })?;
+    Ok((body, next))
+}
+
+fn response_next_link(response: &Response) -> Result<Option<String>> {
+    let Some(value) = response.headers().get(LINK) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| Error::protocol("pagination Link header was not visible ASCII"))?;
+    for entry in value.split(',') {
+        let Some(rest) = entry.trim().strip_prefix('<') else {
+            continue;
+        };
+        let Some((target, parameters)) = rest.split_once('>') else {
+            continue;
+        };
+        let is_next = parameters.split(';').any(|parameter| {
+            let Some((name, value)) = parameter.split_once('=') else {
+                return false;
+            };
+            name.trim().eq_ignore_ascii_case("rel")
+                && value
+                    .trim()
+                    .trim_matches('"')
+                    .split_ascii_whitespace()
+                    .any(|relation| relation.eq_ignore_ascii_case("next"))
+        });
+        if is_next {
+            return Ok(Some(target.to_string()));
+        }
+    }
+    Err(Error::protocol(
+        "pagination Link header carried no valid next relation",
+    ))
 }
 
 async fn decode_empty(response: Response, expected: StatusCode) -> Result<()> {

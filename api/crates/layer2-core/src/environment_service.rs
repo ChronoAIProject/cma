@@ -25,7 +25,7 @@ use crate::environment::{
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
 use crate::platform_service::PlatformSettingsService;
-use crate::store::{EnvironmentProfileStore, StoreError};
+use crate::store::{EnvironmentProfileStore, Page, PageRequest, StoreError};
 
 #[path = "environment_warnings.rs"]
 mod warnings;
@@ -320,17 +320,29 @@ impl EnvironmentProfileService {
         self.owned(caller, id).await
     }
 
-    /// Every profile the caller owns, newest first.
-    pub async fn list(&self, caller: &Caller) -> Result<Vec<EnvironmentProfile>, CoreError> {
+    /// One bounded page of profiles the caller owns, newest first.
+    pub async fn list(
+        &self,
+        caller: &Caller,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, CoreError> {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let preferred = self
+            .store
+            .preferred_for(&caller.subject)
+            .await
+            .map_err(store_failed)?
+            .map(|profile| profile.id);
         let mut profiles = self
             .store
-            .list_for(&caller.subject)
+            .list_for(&caller.subject, page)
             .await
             .map_err(store_failed)?;
-        settle_preferred(&mut profiles);
+        for profile in &mut profiles.items {
+            profile.preferred = preferred.as_ref() == Some(&profile.id);
+        }
         Ok(profiles)
     }
 
@@ -361,7 +373,7 @@ impl EnvironmentProfileService {
 
         let mut profiles = self
             .store
-            .list_for(&caller.subject)
+            .scan_for(&caller.subject)
             .await
             .map_err(store_failed)?;
         for profile in &mut profiles {
@@ -588,7 +600,11 @@ fn settle_preferred(profiles: &mut [EnvironmentProfile]) {
     let winner = profiles
         .iter()
         .filter(|profile| profile.preferred)
-        .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
+        .max_by(|a, b| {
+            a.updated_at
+                .cmp(&b.updated_at)
+                .then_with(|| a.id.0.cmp(&b.id.0))
+        })
         .map(|profile| profile.id.clone());
     let Some(winner) = winner else {
         return;

@@ -64,6 +64,32 @@ export async function request(
   });
 }
 
+/** Walk one array collection through the server's RFC 8288 next links. */
+export async function requestPages<T>(
+  config: ResolvedConfig,
+  path: string,
+  decodePage: (body: unknown) => readonly T[],
+  options: OperationOptions = {},
+): Promise<readonly T[]> {
+  const collectionPath = path.split('?', 1)[0];
+  if (collectionPath === undefined || !collectionPath.startsWith('/')) {
+    throw new ValidationError('paginated request paths must begin with a slash');
+  }
+  const visited = new Set<string>();
+  const items: T[] = [];
+  let next: string | undefined = path;
+  while (next !== undefined) {
+    if (visited.has(next)) {
+      throw new ProtocolError('pagination repeated a continuation link');
+    }
+    visited.add(next);
+    const response = await requestResponse(config, next, { ...options, expectedStatus: 200 });
+    items.push(...decodePage(await responseJson(response)));
+    next = nextPagePath(response.headers.get('link'), collectionPath);
+  }
+  return items;
+}
+
 /** Make one request whose successful response must not carry a body. */
 export async function requestVoid(
   config: ResolvedConfig,
@@ -163,6 +189,42 @@ async function send(
     body,
     signal,
   });
+}
+
+async function responseJson(response: Response): Promise<unknown> {
+  const text = await readText(response);
+  if (text.trim() === '') {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (cause) {
+    throw new ProtocolError('success response was not valid JSON', { cause });
+  }
+}
+
+function nextPagePath(link: string | null, collectionPath: string): string | undefined {
+  if (link === null) {
+    return undefined;
+  }
+  for (const entry of link.split(',')) {
+    const match = /^\s*<([^>]*)>(.*)$/.exec(entry);
+    if (match === null) {
+      continue;
+    }
+    const target = match[1];
+    const parameters = match[2] ?? '';
+    const relation = /(?:^|;)\s*rel\s*=\s*(?:"([^"]*)"|([^;\s]+))/i.exec(parameters);
+    const names = (relation?.[1] ?? relation?.[2] ?? '').split(/\s+/);
+    if (!names.some((name) => name.toLowerCase() === 'next')) {
+      continue;
+    }
+    if (target === undefined || !target.startsWith(`${collectionPath}?`) || target.includes('#')) {
+      throw new ProtocolError('pagination next link left its collection');
+    }
+    return target;
+  }
+  throw new ProtocolError('pagination Link header carried no valid next relation');
 }
 
 async function requireSuccess(

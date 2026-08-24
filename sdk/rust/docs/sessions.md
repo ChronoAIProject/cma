@@ -26,6 +26,9 @@ async fn inspect(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+`list_sessions` follows the server's opaque `Link: rel="next"` continuations and
+returns only after every visible page has been validated.
+
 `quoted_rate_card` accepts a sealed identifier obtained outside this crate. This
 version does not expose the quote endpoint, environment-profile CRUD, session stop,
 revive, terminate, delete, or plane-change operations. Their absence is explicit;

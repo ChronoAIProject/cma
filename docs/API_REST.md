@@ -196,6 +196,23 @@ successfully and the caller genuinely has no visible sessions. If the store
 cannot be read, it returns a `503 runtime_unavailable` problem document; an
 unavailable list is never represented as an empty one.
 
+The session list is newest first and remains a JSON array. It accepts exactly
+these query parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `status` | Exact lifecycle value to retain, such as `running`; omit it for every status |
+| `limit` | Page size, default `50`, clamped to `1..=200` (`0` becomes `1`) |
+| `cursor` | Opaque continuation copied from the previous response's next link |
+
+Rows are stably ordered by `created_at` descending and then session id
+descending. When another page exists the response carries
+`Link: </api/v1/sessions?...&cursor=...>; rel="next"`; the final page has no
+next link. Follow that link verbatim rather than decoding or constructing its
+cursor. A misspelled or unknown parameter, or a malformed cursor, is refused
+with `400 application/problem+json` and `code: "invalid_query"` rather than
+being silently ignored.
+
 `stop` releases the runtime and keeps the session: it goes `idle`, stays listed,
 stays readable, and nothing is being paid for. `revive` gives it a runtime
 again under the same id, with the same history and the same options — reviving
@@ -212,6 +229,18 @@ session can omit `agent.skills` until installation has actually been recorded.
 `DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
+
+### Environment profile list
+
+```http
+GET /api/v1/environment-profiles?limit=50&cursor=<opaque>
+```
+
+The owned-profile list uses the same stable newest-first array and pagination
+contract: `limit` defaults to `50` and is clamped to `1..=200`, `cursor` is
+opaque, and `Link: rel="next"` appears only when another page exists. Profiles
+do not accept the session-only `status` filter. Unknown parameters and malformed
+cursors return the same `400 invalid_query` problem document.
 
 ### Changing which plane a session is driven on
 
@@ -882,7 +911,15 @@ Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the 
 
 **Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `cma:admin:sessions`. A caller who also holds `cma:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
 
-**No read is unbounded.** `GET /api/v1/admin/users` and `GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default to 100.
+`GET /api/v1/admin/sessions` accepts the same exact `status`, clamped `limit`,
+and opaque `cursor` parameters as the caller-owned session list. It defaults to
+50 rows, never returns more than 200, remains a JSON array, and emits a next
+`Link` only when another page exists. Unknown parameters are refused with
+`400 invalid_query`.
+
+**No read is unbounded.** The admin session collection uses cursor pages as
+described above. `GET /api/v1/admin/users` and `GET /api/v1/admin/activity`
+both take `limit`, both clamp it, and both default to 100.
 
 **Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists. That `404` is byte-for-byte the one a session that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
 
