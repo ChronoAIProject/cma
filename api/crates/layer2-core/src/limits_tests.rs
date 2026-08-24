@@ -107,6 +107,28 @@ impl SessionStore for ObservedStore {
         self.inner.append_events(events).await
     }
 
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .create_session_idempotent(write_id, record, events)
+            .await
+    }
+
     async fn events_since(
         &self,
         id: &SessionId,

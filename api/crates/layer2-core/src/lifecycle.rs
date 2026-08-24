@@ -87,35 +87,39 @@ impl SessionService {
     }
 
     async fn end_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
+        let lifecycle_gate = self.lifecycle_gates.gate(id);
+        let _lifecycle = lifecycle_gate.lock().await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "terminate")?;
         let owner = record.session.owner.clone();
+        if record.session.status.is_terminal() {
+            return Ok(owner);
+        }
         let adapter = self.adapters.get(&record.session.kernel).cloned();
 
         // A live entry is the fast path; a record alone is the post-restart
         // path. Both must reach the same end state.
-        let live_runtime = {
-            let mut entries = self.entries.write().await;
-            match entries.get_mut(id) {
-                Some(entry) => {
-                    entry.session.status = SessionStatus::Terminated;
-                    entry.session.stop_reason = Some(StopReason::UserTerminated);
-                    entry.session.recovery_state = RecoveryState::Retired;
-                    append(
-                        entry,
-                        EventKind::StatusChanged {
-                            status: SessionStatus::Terminated,
-                            stop_reason: Some(StopReason::UserTerminated),
-                            detail: None,
-                            capability: None,
-                        },
-                    );
-                    entry.input = None;
-                    Some(entry.runtime.take())
-                }
-                None => None,
+        let mut entries = self.entries.write().await;
+        let live_runtime = match entries.get_mut(id) {
+            Some(entry) => {
+                entry.session.status = SessionStatus::Terminated;
+                entry.session.stop_reason = Some(StopReason::UserTerminated);
+                entry.session.recovery_state = RecoveryState::Retired;
+                append(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Terminated,
+                        stop_reason: Some(StopReason::UserTerminated),
+                        detail: None,
+                        capability: None,
+                    },
+                );
+                entry.input = None;
+                Some(entry.runtime.take())
             }
+            None => None,
         };
+        drop(entries);
 
         let runtime = match live_runtime {
             Some(taken) => {
@@ -124,7 +128,9 @@ impl SessionService {
             }
             None => {
                 // No live entry: write the terminal state straight through, and
-                // reconstruct the runtime handle from what was persisted.
+                // reconstruct the runtime handle from what was persisted. The
+                // per-session lifecycle gate keeps a provisioner out of this
+                // installation boundary without blocking unrelated entries.
                 self.retire_record(&record).await?;
                 record.runtime_id.clone().map(RuntimeHandle)
             }
@@ -148,25 +154,22 @@ impl SessionService {
 
     /// Write a session straight to its terminal state in the store.
     ///
-    /// The path for a session with no live entry, where there is no buffered
-    /// event list to append to and `flush` has nothing to read.
+    /// The path for a session with no live entry, where `flush` has no live
+    /// record to read.
     async fn retire_record(&self, record: &SessionRecord) -> Result<(), CoreError> {
         let mut retired = record.clone();
         retired.session.status = SessionStatus::Terminated;
         retired.session.stop_reason = Some(StopReason::UserTerminated);
         retired.session.recovery_state = RecoveryState::Retired;
-        retired.session.last_seq =
-            self.sequences
-                .take(&retired.session.id, retired.session.last_seq, 1);
         // The runtime is being torn down, so the record must stop pointing at
         // it or a later sweep would try to reclaim a sandbox that is gone.
         retired.runtime_id = None;
-        self.store.upsert(&retired).await.map_err(store_failed)?;
-        self.append_durably(
-            &retired.session.id,
+        let id = retired.session.id.clone();
+        self.persist_durably(
+            &mut retired,
             vec![Event {
-                session_id: retired.session.id.clone(),
-                seq: retired.session.last_seq,
+                session_id: id,
+                seq: 0,
                 kind: EventKind::StatusChanged {
                     status: SessionStatus::Terminated,
                     stop_reason: Some(StopReason::UserTerminated),
@@ -209,6 +212,8 @@ impl SessionService {
     }
 
     async fn rest_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
+        let lifecycle_gate = self.lifecycle_gates.gate(id);
+        let _lifecycle = lifecycle_gate.lock().await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "stop")?;
         if record.session.status.is_terminal() {
@@ -217,28 +222,27 @@ impl SessionService {
         let owner = record.session.owner.clone();
 
         let adapter = self.adapters.get(&record.session.kernel).cloned();
-        let runtime = {
-            let mut entries = self.entries.write().await;
-            match entries.get_mut(id) {
-                Some(entry) => {
-                    entry.session.status = SessionStatus::Idle;
-                    entry.session.stop_reason = Some(StopReason::UserTerminated);
-                    entry.input = None;
-                    let taken = entry.runtime.take();
-                    append(
-                        entry,
-                        EventKind::StatusChanged {
-                            status: SessionStatus::Idle,
-                            stop_reason: Some(StopReason::UserTerminated),
-                            detail: None,
-                            capability: None,
-                        },
-                    );
-                    Some(taken)
-                }
-                None => None,
+        let mut entries = self.entries.write().await;
+        let runtime = match entries.get_mut(id) {
+            Some(entry) => {
+                entry.session.status = SessionStatus::Idle;
+                entry.session.stop_reason = Some(StopReason::UserTerminated);
+                entry.input = None;
+                let taken = entry.runtime.take();
+                append(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Idle,
+                        stop_reason: Some(StopReason::UserTerminated),
+                        detail: None,
+                        capability: None,
+                    },
+                );
+                Some(taken)
             }
+            None => None,
         };
+        drop(entries);
 
         let handle = match runtime {
             Some(taken) => {
@@ -255,6 +259,9 @@ impl SessionService {
                 taken
             }
             None => {
+                // Match termination's installation boundary: an in-flight
+                // provisioner must observe the durable idle state before it can
+                // publish a live entry.
                 self.rest_record(&record).await?;
                 record.runtime_id.clone().map(RuntimeHandle)
             }
@@ -274,17 +281,14 @@ impl SessionService {
         let mut resting = record.clone();
         resting.session.status = SessionStatus::Idle;
         resting.session.stop_reason = Some(StopReason::UserTerminated);
-        resting.session.last_seq =
-            self.sequences
-                .take(&resting.session.id, resting.session.last_seq, 1);
         // Nothing is running for it any more, so nothing should claim to be.
         resting.runtime_id = None;
-        self.store.upsert(&resting).await.map_err(store_failed)?;
-        self.append_durably(
-            &resting.session.id,
+        let id = resting.session.id.clone();
+        self.persist_durably(
+            &mut resting,
             vec![Event {
-                session_id: resting.session.id.clone(),
-                seq: resting.session.last_seq,
+                session_id: id,
+                seq: 0,
                 kind: EventKind::StatusChanged {
                     status: SessionStatus::Idle,
                     stop_reason: Some(StopReason::UserTerminated),
@@ -329,7 +333,7 @@ impl SessionService {
             self.terminate_session(caller, id).await?;
         }
         self.entries.write().await.remove(id);
-        self.store.delete(id).await.map_err(store_failed)?;
+        self.delete_durably(id).await.map_err(store_failed)?;
         // The events go with the session, so the position kept for it is a
         // number held for something nothing can read. Only here: a session
         // that merely stopped keeps its position, because it can be revived
