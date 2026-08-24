@@ -209,23 +209,49 @@ async function sidebarCollapses(page) {
     page.evaluate(() =>
       Math.round(document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0),
     );
-  const toggle = () =>
-    page.evaluate(() => {
-      const button = [...document.querySelectorAll('.sidebar button')].find((candidate) =>
-        candidate.hasAttribute('aria-expanded'),
+  const toggle = async () => {
+    const button = await page.$('.sidebar__toggle');
+    if (button === null) {
+      return false;
+    }
+    await button.click();
+    return true;
+  };
+  const waitForWidth = async (expanded, expected, narrower) => {
+    try {
+      await page.waitForFunction(
+        (nextExpanded, previousWidth, shouldNarrow) => {
+          const sidebar = document.querySelector('.sidebar');
+          const button = document.querySelector('.sidebar__toggle');
+          if (!(sidebar instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) {
+            return false;
+          }
+          const actual = Math.round(sidebar.getBoundingClientRect().width);
+          return (
+            button.getAttribute('aria-expanded') === String(nextExpanded) &&
+            (shouldNarrow ? actual < previousWidth : actual === previousWidth)
+          );
+        },
+        { polling: 'raf', timeout: 5000 },
+        expanded,
+        expected,
+        narrower,
       );
-      button?.click();
-      return button !== undefined;
-    });
+    } catch {
+      // The measured assertion below reports the bounded failure precisely.
+    }
+  };
 
   const before = await width();
   if (!(await toggle())) {
     return ['no control to close the sidebar'];
   }
-  await settle();
+  await waitForWidth(false, before, true);
   const closed = await width();
-  await toggle();
-  await settle();
+  if (!(await toggle())) {
+    return ['no control to reopen the sidebar'];
+  }
+  await waitForWidth(true, before, false);
   const reopened = await width();
 
   const problems = [];
