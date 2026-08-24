@@ -528,6 +528,44 @@ fn any_other_failure_is_left_alone() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn the_real_store_refuses_a_forward_gap_without_committing_it() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_gap_refusal_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database)
+        .await
+        .expect("test store opens");
+    let id = SessionId("sesn_real_gap".into());
+
+    let error = store
+        .append_events(&[event(&id.0, 2)])
+        .await
+        .expect_err("sequence one is not durable");
+
+    assert!(matches!(
+        error,
+        StoreError::NonContiguousAppend {
+            expected: 1,
+            got: 2
+        }
+    ));
+    assert!(store.events_since(&id, 0).await.unwrap().is_empty());
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn a_real_legacy_document_passes_its_first_revision_zero_cas() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");

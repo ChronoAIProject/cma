@@ -375,12 +375,13 @@ impl SessionService {
                 )));
             }
         };
+        let durable = current.clone();
         let mut seeded = current.session;
         seeded.geometry = geometry;
         let context_ref = current.context_ref;
-        let revision = current.revision;
         let event_log = self.event_logs.lane(&id);
-        event_log.observe_revision(revision);
+        event_log.observe_tail(seeded.last_seq);
+        event_log.observe_record(&durable);
         let mut entry = SessionEntry {
             session: seeded,
             event_log,
