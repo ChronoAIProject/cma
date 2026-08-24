@@ -48,8 +48,9 @@ console.log(sessions.length);
 For cross-origin bearer use, configure `baseUrl`, `credential`, and
 `cookies: false`. The client supports that transport shape, but the deployment
 operator must add the browser application's exact origin to the comma-separated
-`CHRONO_SERVER_CORS_ORIGIN` allowlist. CMA then admits the `Authorization` header
-and supported methods, including `PUT`, through the browser preflight.
+`CHRONO_SERVER_CORS_ORIGIN` allowlist. CMA then admits the `Authorization` header,
+the `Last-Event-ID` cursor used for stream reconnection, and supported methods,
+including `PUT`, through the browser preflight.
 
 When the origin is missing, the browser reports a CORS or network failure and the
 failed `OPTIONS` response has no `Access-Control-Allow-Origin` header. The API
