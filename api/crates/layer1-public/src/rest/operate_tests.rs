@@ -8,6 +8,15 @@ use axum::response::IntoResponse;
 
 use super::*;
 
+const SDK_INPUT_TEXT_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/input_text_request.json");
+const SDK_INPUT_BYTES_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/input_bytes_request.json");
+const SDK_APPROVAL_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/approval_request.json");
+const SDK_RESIZE_FIXTURE: &str = include_str!("../../tests/fixtures/rest-sdk/resize_request.json");
+const SDK_USAGE_FIXTURE: &str = include_str!("../../tests/fixtures/rest-sdk/usage.json");
+
 /// A request body as a caller would send it.
 fn parse<T: for<'de> Deserialize<'de>>(body: serde_json::Value) -> Result<T, serde_json::Error> {
     serde_json::from_value(body)
@@ -22,6 +31,39 @@ fn a_line_of_input_is_submitted_unless_the_caller_says_otherwise() {
     let composing: InputRequest =
         parse(serde_json::json!({ "text": "ls", "newline": false })).expect("parses");
     assert!(!composing.newline);
+}
+
+#[test]
+fn sdk_operation_fixtures_are_read_and_written_by_server_types() {
+    let text: InputRequest =
+        serde_json::from_str(SDK_INPUT_TEXT_FIXTURE).expect("server reads text input");
+    assert_eq!(text.text.as_deref(), Some("Only inspect src/auth."));
+    assert!(!text.newline);
+
+    let bytes: InputRequest =
+        serde_json::from_str(SDK_INPUT_BYTES_FIXTURE).expect("server reads byte input");
+    assert_eq!(bytes.bytes_b64.as_deref(), Some("GwtC"));
+
+    let approval: ApprovalRequestBody =
+        serde_json::from_str(SDK_APPROVAL_FIXTURE).expect("server reads approval");
+    assert!(matches!(approval.decision, DecisionBody::Abort));
+
+    let resize: ResizeRequest =
+        serde_json::from_str(SDK_RESIZE_FIXTURE).expect("server reads resize");
+    assert_eq!((resize.cols, resize.rows), (132, 44));
+
+    let usage = UsageView::from(Usage {
+        input_tokens: 184_203,
+        output_tokens: 9_877,
+        context_used: 41_204,
+        context_window: Some(200_000),
+    });
+    let fixture: serde_json::Value =
+        serde_json::from_str(SDK_USAGE_FIXTURE).expect("usage fixture is JSON");
+    assert_eq!(
+        serde_json::to_value(usage).expect("usage serializes"),
+        fixture
+    );
 }
 
 #[test]

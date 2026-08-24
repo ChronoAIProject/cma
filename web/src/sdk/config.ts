@@ -1,5 +1,5 @@
 /**
- * How a client is pointed at a chrono-bot deployment.
+ * How a client is pointed at a CMA deployment.
  *
  * This is the whole reason the SDK exists as something separable from `web/`.
  * The code it was extracted from reaches the service one way and one way only:
@@ -15,7 +15,7 @@
  * nothing and behaves as it did; a third party configures both and needs no
  * fork.
  *
- * `CLAUDE.md` §1 puts it as the standard this client is held to: chrono-bot's
+ * `CLAUDE.md` §1 puts it as the standard this client is held to: CMA's
  * consumers are other products, the dashboard is the reference client, and the
  * exit criterion for the public interfaces is that somebody else can build on
  * them. A reference client that could only ever run in one place would prove
@@ -33,7 +33,7 @@
  */
 export type Credential = () => string | undefined | Promise<string | undefined>;
 
-/** Where a chrono-bot deployment is and how to be allowed in. */
+/** Where a CMA deployment is and how to be allowed in. */
 export interface ClientConfig {
   /**
    * The deployment's base address, with no trailing slash.

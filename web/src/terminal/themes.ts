@@ -32,7 +32,7 @@ export interface TerminalTheme {
 /** The product's own palette, resolved from section 6. */
 function own(appearance: ThemeName): TerminalTheme {
   return {
-    id: `chronobot-${appearance}`,
+    id: `cma-${appearance}`,
     label: 'CMA',
     appearance,
     theme: terminalTheme(appearance),
@@ -187,24 +187,58 @@ export function themesFor(appearance: ThemeName): readonly TerminalTheme[] {
   return allThemes().filter((t) => t.appearance === appearance);
 }
 
-const STORAGE_KEY = 'chrono-bot:terminal-theme';
+const STORAGE_KEY = 'cma:terminal-theme';
+const LEGACY_STORAGE_KEY = 'chrono-bot:terminal-theme';
 
-/** The palette this browser last chose, if it still exists. */
-export function storedThemeId(): string | null {
+function canonicalThemeId(value: string | null): string | null {
+  if (value === 'chronobot-dark') {
+    return 'cma-dark';
+  }
+  if (value === 'chronobot-light') {
+    return 'cma-light';
+  }
+  return value !== null && allThemes().some((theme) => theme.id === value) ? value : null;
+}
+
+function readThemeId(key: string): string | null {
   try {
-    return window.localStorage.getItem(STORAGE_KEY);
+    return window.localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-/** Remember a palette choice. */
-export function storeThemeId(id: string): void {
+function writeThemeId(id: string): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, id);
   } catch {
-    // Applies for this page but will not be remembered. Not worth surfacing.
+    // Applying the palette does not depend on remembering it.
   }
+}
+
+/** The palette this browser last chose, if it still exists. */
+export function storedThemeId(): string | null {
+  const rawCanonical = readThemeId(STORAGE_KEY);
+  const canonical = canonicalThemeId(rawCanonical);
+  if (canonical !== null) {
+    if (canonical !== rawCanonical) {
+      writeThemeId(canonical);
+    }
+    return canonical;
+  }
+
+  const historical = canonicalThemeId(readThemeId(LEGACY_STORAGE_KEY));
+  if (historical === null) {
+    return null;
+  }
+
+  writeThemeId(historical);
+  return historical;
+}
+
+/** Remember a palette choice. */
+export function storeThemeId(id: string): void {
+  writeThemeId(canonicalThemeId(id) ?? id);
 }
 
 /**
@@ -217,7 +251,8 @@ export function storeThemeId(id: string): void {
  */
 export function resolveTheme(appearance: ThemeName, storedId: string | null): TerminalTheme {
   const candidates = themesFor(appearance);
-  const chosen = candidates.find((t) => t.id === storedId);
+  const canonicalId = canonicalThemeId(storedId);
+  const chosen = candidates.find((t) => t.id === canonicalId);
   // The product's own palette is always first for an appearance, so it is the
   // fallback by construction rather than by a second lookup.
   return chosen ?? candidates[0] ?? own(appearance);

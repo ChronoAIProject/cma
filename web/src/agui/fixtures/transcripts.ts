@@ -91,7 +91,7 @@ export const TWO_TOOL_CALLS: Transcript = {
       runId: 'run_2',
       seq: 2,
       toolCallId: 't_1',
-      'chrono:toolKind': 'file_read',
+      'cma:toolKind': 'file_read',
       target: 'api/crates/layer2-core/src/session.rs',
     }),
     frame(260, {
@@ -99,7 +99,7 @@ export const TWO_TOOL_CALLS: Transcript = {
       runId: 'run_2',
       seq: 3,
       toolCallId: 't_1',
-      'chrono:status': 'ok',
+      'cma:status': 'ok',
       output: 'pub struct Session { … }',
     }),
     frame(80, {
@@ -110,7 +110,7 @@ export const TWO_TOOL_CALLS: Transcript = {
       // A kind no client has a mapping for, on purpose: §3 says the
       // vocabularies grow and a session must not fail because one invented a
       // category.
-      'chrono:toolKind': 'workspace_search',
+      'cma:toolKind': 'workspace_search',
       target: 'granted_services',
     }),
   ],
@@ -129,7 +129,7 @@ export const FAILED_TOOL_CALL: Transcript = {
       runId: 'run_3',
       seq: 2,
       toolCallId: 't_1',
-      'chrono:toolKind': 'shell',
+      'cma:toolKind': 'shell',
       target: 'cargo nextest run',
     }),
     frame(300, {
@@ -137,7 +137,7 @@ export const FAILED_TOOL_CALL: Transcript = {
       runId: 'run_3',
       seq: 3,
       toolCallId: 't_1',
-      'chrono:status': 'failed',
+      'cma:status': 'failed',
       output: 'error: no such command: `nextest`',
     }),
     frame(40, { type: 'RUN_FINISHED', runId: 'run_3', seq: 4, outcome: { type: 'end_turn' } }),
@@ -166,7 +166,7 @@ export const APPROVAL_GRANTED: Transcript = {
         interrupts: [
           {
             id: 'apr_7Q2',
-            reason: 'chrono:command_execution',
+            reason: 'cma:command_execution',
             message: 'Run `rm -rf build/`?',
             options: [
               { decision: 'allow', label: 'Allow', affirmative: true },
@@ -214,7 +214,7 @@ export const APPROVAL_DENIED: Transcript = {
         interrupts: [
           {
             id: 'apr_8R3',
-            reason: 'chrono:network_egress',
+            reason: 'cma:network_egress',
             message: 'Fetch https://example.invalid/spec.json?',
             options: [
               { decision: 'allow', label: 'Allow', affirmative: true },
@@ -257,7 +257,7 @@ export const INTERRUPTED_TURN: Transcript = {
       runId: 'run_8',
       seq: 2,
       toolCallId: 't_9',
-      'chrono:toolKind': 'shell',
+      'cma:toolKind': 'shell',
       target: 'cargo build --release',
     }),
     frame(600, {
@@ -615,7 +615,7 @@ export const FULL_CONVERSATION: Transcript = {
       runId: 'run_full_1',
       seq: 8,
       toolCallId: 'full_tool_ok',
-      'chrono:toolKind': 'file_read',
+      'cma:toolKind': 'file_read',
       toolCallName: 'web/src/chat/MessageStream.css',
       timestamp: '2026-08-23T10:00:03Z',
     }),
@@ -625,7 +625,7 @@ export const FULL_CONVERSATION: Transcript = {
       seq: 9,
       toolCallId: 'full_tool_ok',
       delta: '{"line_start":1,"line_end":120}',
-      'chrono:truncated': false,
+      'cma:truncated': false,
     }),
     frame(100, {
       type: 'TOOL_CALL_RESULT',
@@ -633,14 +633,14 @@ export const FULL_CONVERSATION: Transcript = {
       seq: 10,
       toolCallId: 'full_tool_ok',
       content: '.turn { display: flex; }',
-      'chrono:truncated': false,
+      'cma:truncated': false,
     }),
     frame(30, {
       type: 'TOOL_CALL_END',
       runId: 'run_full_1',
       seq: 11,
       toolCallId: 'full_tool_ok',
-      'chrono:status': 'ok',
+      'cma:status': 'ok',
       output: '120 lines read',
       timestamp: '2026-08-23T10:00:04Z',
     }),
@@ -649,7 +649,7 @@ export const FULL_CONVERSATION: Transcript = {
       runId: 'run_full_1',
       seq: 12,
       toolCallId: 'full_tool_failed',
-      'chrono:toolKind': 'shell',
+      'cma:toolKind': 'shell',
       toolCallName: 'npm run visual:proof',
       timestamp: '2026-08-23T10:00:05Z',
     }),
@@ -658,7 +658,7 @@ export const FULL_CONVERSATION: Transcript = {
       runId: 'run_full_1',
       seq: 13,
       toolCallId: 'full_tool_failed',
-      'chrono:status': 'failed',
+      'cma:status': 'failed',
       output: 'The first capture used the stale cascade.',
       timestamp: '2026-08-23T10:00:06Z',
     }),
@@ -730,7 +730,7 @@ export const FULL_CONVERSATION: Transcript = {
       seq: 19,
       messageId: 'full_reasoning_1',
       delta: 'Comparing the live stream with the replayed transcript.',
-      'chrono:live': true,
+      'cma:live': true,
     }),
     frame(1800, {
       type: 'TEXT_MESSAGE_START',
@@ -763,7 +763,7 @@ export const FULL_CONVERSATION: Transcript = {
         interrupts: [
           {
             id: 'full_approval_1',
-            reason: 'chrono:release_review',
+            reason: 'cma:release_review',
             message: 'Approve the restyled conversation surface?',
             options: [
               { decision: 'allow', label: 'Approve', affirmative: true },

@@ -4,7 +4,7 @@
 //! presents a credential in a header and middleware verifies it. A browser
 //! cannot do that for a WebSocket — the API has no way to set a header on the
 //! upgrade — so a product frontend holding a bearer token, which is what
-//! chrono-bot's actual consumers are, could not attach the one surface that
+//! CMA's actual consumers are, could not attach the one surface that
 //! offers full terminal parity. Cross-origin cookies are not a workable answer
 //! for clients on somebody else's origin.
 //!
@@ -17,7 +17,7 @@
 //!
 //! **A ticket is never recorded.** The activity middleware keeps only what its
 //! classifier names, and `ticket` is not a name it knows — see
-//! `chrono-bot/src/activity/classify.rs`, whose query allowlist has three keys
+//! `cma/src/activity/classify.rs`, whose query allowlist has three keys
 //! and this is not one of them. Nothing here logs a ticket's value either. The
 //! temptation will be to log one while debugging an attach that will not work;
 //! log the session and the subject instead, which is what identifies the

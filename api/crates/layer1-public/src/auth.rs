@@ -130,7 +130,7 @@ impl IntoResponse for NotAuthenticated {
         (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
-                "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/not-authenticated",
+                "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
                 "title": "Not authenticated",
                 "status": 401,
                 "detail": "This operation requires an authenticated subject.",

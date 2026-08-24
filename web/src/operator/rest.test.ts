@@ -5,6 +5,7 @@ import {
   toActivityEntry,
   toAdminSession,
   toCapacityBounds,
+  toDeploymentCapacity,
   toInventory,
   toPerson,
   toPlatformSettings,
@@ -24,6 +25,11 @@ const SETTINGS_WIRE = {
       reach_close: 'No others are available.',
       reach_none: 'No services are available.',
       after: ['Last block'],
+    },
+    deployment_capacity: {
+      cpu_millis: 20_000,
+      memory_mib: 40_960,
+      assumed_session_size: { cpu_millis: 1_000, memory_mib: 1_024 },
     },
     size_bounds: {
       min_cpu_millis: 250,
@@ -228,6 +234,11 @@ describe('reading platform settings off the wire', () => {
     expect(stored.revision).toBe(7);
     expect(stored.settings.briefing.before).toEqual(['First block', 'Second block']);
     expect(stored.settings.briefing.reachHeading).toBe('Granted services');
+    expect(stored.settings.deploymentCapacity).toEqual({
+      cpuMillis: 20_000,
+      memoryMib: 40_960,
+      assumedSessionSize: { cpuMillis: 1_000, memoryMib: 1_024 },
+    });
     expect(stored.settings.sizeBounds.maxMemoryMib).toBe(8192);
     expect(stored.settings.liveSessions).toBe(3);
     expect(stored.previous?.liveSessions).toBeNull();
@@ -257,12 +268,41 @@ describe('reading platform settings off the wire', () => {
 
     expect(briefing.reachHeading).toBe('');
     expect(settings.liveSessions).toBeNull();
+    expect(settings.deploymentCapacity).toEqual({
+      cpuMillis: null,
+      memoryMib: null,
+      assumedSessionSize: null,
+    });
+  });
+
+  it('keeps null distinct from an explicit zero deployment ceiling', () => {
+    expect(
+      toDeploymentCapacity({
+        cpu_millis: 0,
+        memory_mib: null,
+        assumed_session_size: null,
+      }),
+    ).toEqual({ cpuMillis: 0, memoryMib: null, assumedSessionSize: null });
   });
 
   it('refuses incomplete prose, non-positive bounds, and unreadable revisions', () => {
     expect(() => toSessionBriefing({ before: [], after: [] })).toThrow(/heading/i);
     expect(() =>
       toCapacityBounds({ ...SETTINGS_WIRE.settings.size_bounds, min_cpu_millis: 0 }),
+    ).toThrow(/positive integer/i);
+    expect(() =>
+      toDeploymentCapacity({
+        cpu_millis: -1,
+        memory_mib: null,
+        assumed_session_size: null,
+      }),
+    ).toThrow(/non-negative/i);
+    expect(() =>
+      toDeploymentCapacity({
+        cpu_millis: null,
+        memory_mib: null,
+        assumed_session_size: { cpu_millis: 0, memory_mib: 512 },
+      }),
     ).toThrow(/positive integer/i);
     expect(() => toStoredPlatformSettings({ ...SETTINGS_WIRE, revision: -1 })).toThrow(/revision/i);
   });
@@ -352,6 +392,7 @@ describe('talking to the control plane', () => {
     expect(JSON.parse(String(change.body))).toEqual({
       expected_revision: 7,
       briefing: SETTINGS_WIRE.settings.briefing,
+      deployment_capacity: SETTINGS_WIRE.settings.deployment_capacity,
       size_bounds: SETTINGS_WIRE.settings.size_bounds,
       live_sessions: 3,
     });

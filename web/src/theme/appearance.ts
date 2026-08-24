@@ -18,11 +18,29 @@
 
 export type Appearance = 'light' | 'dark' | 'system';
 
-const STORAGE_KEY = 'chrono-bot:appearance';
+const STORAGE_KEY = 'cma:appearance';
+const LEGACY_STORAGE_KEY = 'chrono-bot:appearance';
 
 /** Whether a stored value is one we understand. */
 function isAppearance(value: unknown): value is Appearance {
   return value === 'light' || value === 'dark' || value === 'system';
+}
+
+function readAppearance(key: string): Appearance | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return isAppearance(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeAppearance(appearance: Appearance): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, appearance);
+  } catch {
+    // Applying the preference does not depend on remembering it.
+  }
 }
 
 /**
@@ -32,12 +50,18 @@ function isAppearance(value: unknown): value is Appearance {
  * theme preference is never worth failing to render the page over.
  */
 export function storedAppearance(): Appearance {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return isAppearance(raw) ? raw : 'system';
-  } catch {
+  const canonical = readAppearance(STORAGE_KEY);
+  if (canonical !== null) {
+    return canonical;
+  }
+
+  const historical = readAppearance(LEGACY_STORAGE_KEY);
+  if (historical === null) {
     return 'system';
   }
+
+  writeAppearance(historical);
+  return historical;
 }
 
 /**
@@ -62,12 +86,7 @@ export function applyAppearance(appearance: Appearance): void {
 /** Record a preference, and apply it. */
 export function setAppearance(appearance: Appearance): void {
   applyAppearance(appearance);
-  try {
-    window.localStorage.setItem(STORAGE_KEY, appearance);
-  } catch {
-    // The preference still applies for this page; it simply will not be
-    // remembered. Not worth surfacing.
-  }
+  writeAppearance(appearance);
 }
 
 /** What the page is actually showing, resolving "system" against the browser. */

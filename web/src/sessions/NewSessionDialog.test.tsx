@@ -7,7 +7,7 @@ import type { EnvironmentProfile, EnvironmentProfileStore } from '../environment
 import { DEFAULT_AGENT } from '../environment/types';
 import type { KernelOffer } from './types';
 import { chooseOption, chosenOption, openedOptions } from '../test/select';
-import { ApiError, type PricingQuote } from '../sdk';
+import { ApiError, DeploymentAtCapacity, type PricingQuote } from '../sdk';
 
 /**
  * The dialog makes two decisions and both are fixed for the session's life:
@@ -225,6 +225,34 @@ describe('confirming the hourly rate in place', () => {
     expect(start).toBeDisabled();
     expect(start).toHaveAttribute('aria-describedby', reason.id);
     expect(screen.getByText('pricing service unavailable')).toBeInTheDocument();
+  });
+
+  it('states what an over-capacity session asked for and what is free in place', async () => {
+    const user = userEvent.setup();
+    renderDialog({
+      onStart: vi
+        .fn()
+        .mockRejectedValue(
+          new DeploymentAtCapacity(
+            503,
+            'this deployment has no room for that session',
+            2_000,
+            4_096,
+            750,
+            1_536,
+          ),
+        ),
+    });
+
+    await confirmAndStart(user);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('2,000 millicores');
+    expect(alert).toHaveTextContent('4,096 MiB');
+    expect(alert).toHaveTextContent('750 millicores');
+    expect(alert).toHaveTextContent('1,536 MiB');
+    expect(alert).toHaveTextContent(/a smaller session may fit/i);
+    expect(screen.getByRole('button', { name: /start session/i })).toBeEnabled();
   });
 
   it('returns from a changed price to the confirm step with the fresh server figure', async () => {
