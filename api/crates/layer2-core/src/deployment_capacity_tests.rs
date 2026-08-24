@@ -136,6 +136,10 @@ impl ObservedStore {
 
 #[async_trait::async_trait]
 impl SessionStore for ObservedStore {
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.inner.ping().await
+    }
+
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         if self.slow_writes {
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
