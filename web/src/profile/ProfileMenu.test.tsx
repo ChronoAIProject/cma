@@ -128,7 +128,7 @@ describe('the operator entry point', () => {
    * Operations lives here now. It was the app bar's view switch until §9
    * retired the bar, and then a row of its own in the sidebar foot — which
    * made the foot a two-item navigation strip beside an account control that
-   * omitted the one place an operator goes. It is still one of §1's two views
+   * omitted the one place an operator goes. It is still one of §1's three views
    * and still not navigation: one entry, which names where it goes.
    */
   it('is offered to a caller who may operate', async () => {
@@ -167,6 +167,37 @@ describe('the operator entry point', () => {
     await user.click(screen.getByRole('button', { name: /account menu/i }));
     await user.click(screen.getByRole('menuitem', { name: 'Operations' }));
     expect(onOperations).toHaveBeenCalledOnce();
+  });
+});
+
+describe('the Developer entry point', () => {
+  it('is present when the surface is wired and remains an action', async () => {
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onDeveloper={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.getByRole('menuitem', { name: 'Developer' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitemradio')).toBeNull();
+  });
+
+  it('names the return destination while Developer is active', async () => {
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onDeveloper={vi.fn()} developerActive />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.getByRole('menuitem', { name: 'Back to sessions' })).toBeInTheDocument();
+  });
+
+  it('opens the surface and closes the menu', async () => {
+    const user = userEvent.setup();
+    const onDeveloper = vi.fn();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onDeveloper={onDeveloper} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Developer' }));
+
+    expect(onDeveloper).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });
 

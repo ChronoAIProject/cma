@@ -19,7 +19,7 @@ import type { Capability, User } from '../auth/types';
  *
  * The join: one rail, one session header, one details sheet, and a column that
  * draws a terminal or a conversation from what the session was granted. Not a
- * third view, and no router.
+ * fourth view, and no router.
  */
 
 const CAPABILITIES: readonly Capability[] = ['create_session', 'use_own_sessions'];
@@ -36,18 +36,17 @@ function conversationSession(id: string): Session {
   };
 }
 
-describe('the frame does not grow a third view', () => {
-  it('still admits exactly two, and still carries no router', async () => {
-    // §1, and this issue's own line: "this is not a third view and must not
-    // become one." The frame is not navigation and the app has no router.
+describe('a plane does not grow another view', () => {
+  it('keeps the three declared surfaces in one frame with no router', async () => {
+    const person = userEvent.setup();
     const { container } = render(<Console user={user} onSignOut={() => {}} />);
     await waitFor(() => {
       expect(container.querySelector('.frame')).not.toBeNull();
     });
 
-    // Operations is the only other view there is, and this caller cannot
-    // reach it — so there is nowhere to go from here at all.
-    expect(screen.queryByRole('button', { name: 'Operations' })).toBeNull();
+    await person.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.getByRole('menuitem', { name: 'Developer' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Operations' })).toBeNull();
   });
 
   it('draws one sidebar, one rail and one session header whatever the plane', async () => {

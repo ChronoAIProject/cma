@@ -261,7 +261,10 @@ describe('agent-emitted content', () => {
 
 /** The stylesheet itself is the assertion: no rule may colour agent content. */
 function readCss(): string {
-  return readFileSync(resolve(process.cwd(), 'src/chat/MessageStream.css'), 'utf8');
+  return [
+    readFileSync(resolve(process.cwd(), 'src/chat/MessageStream.css'), 'utf8'),
+    readFileSync(resolve(process.cwd(), 'src/markdown/MarkdownContent.css'), 'utf8'),
+  ].join('\n');
 }
 
 describe('the stream stylesheet contract', () => {
