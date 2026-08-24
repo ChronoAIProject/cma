@@ -101,6 +101,10 @@ impl PairingStore {
 
 #[async_trait::async_trait]
 impl SessionStore for PairingStore {
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.inner.ping().await
+    }
+
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         self.inner.upsert(record).await
     }
@@ -171,6 +175,116 @@ impl SessionStore for PairingStore {
     ) -> Result<Vec<StoredEvent>, StoreError> {
         self.inner.events_since(id, after).await
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_cursor_waits_for_a_lower_runtime_event_racing_send_prompt() {
+    let store = Arc::new(PairingStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: crate::conversation_support::conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    let service = crate::test_support::service_over_with_environments(
+        store.clone(),
+        adapter.clone(),
+        profiles,
+    );
+    let owner = user("subject-public-cursor");
+    let created = service
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("conversation session is created");
+    crate::test_support::await_settled(&service, &owner, &created.id).await;
+    let lane = service.event_logs.lane(&created.id);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("provisioning writes settle");
+    let cursor = service
+        .events_since(&owner, &created.id, None)
+        .await
+        .expect("initial history is public")
+        .last()
+        .expect("creation has history")
+        .seq;
+
+    store.arm();
+    let updates = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("conversation is open")
+        .updates
+        .clone();
+    updates
+        .send(layer3_adapter::ConversationUpdate::Said(
+            layer3_adapter::SessionUpdate::AvailableCommandsUpdate(
+                crate::conversation_support::offering(&[("inspect", "Inspect the workspace")]),
+            ),
+        ))
+        .await
+        .expect("runtime update reaches its folder");
+    store.wait_until_held().await;
+
+    let prompt_service = Arc::clone(&service);
+    let prompt_owner = owner.clone();
+    let prompt_id = created.id.clone();
+    let prompt = tokio::spawn(async move {
+        prompt_service
+            .send_prompt(&prompt_owner, &prompt_id, "what changed?".into())
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        // One running folder event, its record barrier, three prompt events,
+        // and the prompt's barrier must all be present before the read. A lower
+        // threshold could pass before `send_prompt` had enqueued any history.
+        while lane.queued() < 6 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("prompt commits queue behind the held runtime update");
+
+    assert!(
+        service
+            .events_since(&owner, &created.id, Some(cursor))
+            .await
+            .expect("public cursor remains readable")
+            .is_empty(),
+        "the public reader cannot observe a higher prompt cursor while the lower runtime event is held"
+    );
+
+    store.release.notify_one();
+    prompt
+        .await
+        .expect("prompt task completes")
+        .expect("prompt is recorded after the runtime update");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let replay = service
+                .events_since(&owner, &created.id, Some(cursor))
+                .await
+                .expect("public replay remains readable");
+            if replay.len() >= 4 {
+                break replay;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("both public workflows become durable")
+    .windows(2)
+    .for_each(|pair| assert_eq!(pair[1].seq, pair[0].seq + 1));
 }
 
 #[tokio::test]
