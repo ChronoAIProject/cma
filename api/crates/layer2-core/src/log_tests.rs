@@ -1193,6 +1193,92 @@ async fn an_empty_barrier_cannot_replay_a_rejected_status_snapshot() {
 }
 
 #[tokio::test]
+async fn a_post_rejection_flush_owns_no_stale_semantic_fields() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("post-rejection-flush-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    };
+    wait_for_lane_idle(&lane).await;
+    let before = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    assert!(
+        before.runtime_id.is_some(),
+        "the settled session has a runtime"
+    );
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    {
+        let mut entries = service.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("live entry");
+        entry.session.owner = SubjectId("stale-owner".into());
+        entry.session.kernel = KernelId::new("stale-kernel");
+        entry.session.status = SessionStatus::Running;
+        entry.session.stop_reason = None;
+        entry.session.geometry = TerminalGeometry::new(117, 39).expect("valid geometry");
+        entry.session.options.mode = SessionMode::Conversation;
+        entry.runtime = None;
+        entry.context_ref = Some("stale-context".into());
+        super::append(
+            entry,
+            EventKind::StatusChanged {
+                status: SessionStatus::Running,
+                stop_reason: None,
+                detail: None,
+                capability: None,
+            },
+        );
+    }
+    store.write_started.notified().await;
+
+    let mut rival = before.clone();
+    rival.session.status = SessionStatus::Idle;
+    rival.session.stop_reason = Some(StopReason::UserTerminated);
+    rival.session.recovery_state = RecoveryState::Idle;
+    store
+        .inner
+        .commit_session_idempotent("rival-before-post-rejection-flush", &rival, &[])
+        .await
+        .expect("the rival lifecycle state commits first");
+    store.release_write.notify_one();
+    wait_for_lane_idle(&lane).await;
+
+    // This barrier is deliberately enqueued only after the event-bearing commit
+    // has been rejected and its dropped receiver has allowed the lane to settle.
+    service.flush(&created.id).await;
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.owner, rival.session.owner);
+    assert_eq!(durable.session.kernel, rival.session.kernel);
+    assert_eq!(durable.session.status, rival.session.status);
+    assert_eq!(durable.session.recovery_state, rival.session.recovery_state);
+    assert_eq!(durable.session.stop_reason, rival.session.stop_reason);
+    assert_eq!(durable.session.geometry, rival.session.geometry);
+    assert_eq!(durable.session.options, rival.session.options);
+    assert_eq!(durable.runtime_id, rival.runtime_id);
+    assert_eq!(durable.context_ref, rival.context_ref);
+    assert_eq!(durable.session.last_seq, before.session.last_seq);
+    assert!(store
+        .inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
 async fn stale_plane_change_cannot_erase_a_newer_runtime_decision() {
     let mut base = record();
     base.session.options.mode = SessionMode::Terminal;
