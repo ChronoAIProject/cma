@@ -19,7 +19,7 @@ mod sweep;
 use std::{sync::Arc, time::Duration};
 
 use axum::{
-    http::{header, HeaderValue, Method},
+    http::{header, HeaderName, HeaderValue, Method},
     routing::{any, get},
     Json, Router,
 };
@@ -85,7 +85,11 @@ fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
             .allow_credentials(true)
-            .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+            .allow_headers([
+                header::CONTENT_TYPE,
+                header::AUTHORIZATION,
+                HeaderName::from_static("last-event-id"),
+            ])
             .allow_methods([
                 Method::GET,
                 Method::POST,
