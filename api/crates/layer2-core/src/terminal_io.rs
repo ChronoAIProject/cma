@@ -15,8 +15,9 @@ use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::log::append;
-use crate::service::SessionService;
+use crate::log::append_with;
+use crate::service::{store_failed, SessionService};
+use crate::store::StoreError;
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
 /// Pump runtime output into the screen model and out to any live subscriber.
@@ -120,24 +121,36 @@ impl SessionService {
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
+        let gate = self.lifecycle_gates.gate(id);
+        let _guard = gate.lock_owned().await;
         self.may_drive_terminal(caller, id).await?;
-        let screen = {
+        let (screen, commit) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
             if !entry.session.is_owned_by(&caller.subject) {
                 return Err(CoreError::Forbidden);
             }
-            entry.session.geometry = geometry;
-            append(
+            let commit = append_with(
                 entry,
                 EventKind::TerminalResized {
                     columns: geometry.columns(),
                     rows: geometry.rows(),
                 },
+                |record| record.session.geometry = geometry,
             );
-            Arc::clone(&entry.screen)
+            (Arc::clone(&entry.screen), commit)
         };
-        self.flush(id).await;
+        let committed = commit
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))
+            .and_then(|result| result)
+            .map_err(store_failed)?;
+        {
+            let mut entries = self.entries.write().await;
+            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+            entry.session.geometry = committed.session.geometry;
+            entry.session.last_seq = committed.session.last_seq;
+        }
         screen.lock().await.resize(geometry);
         self.forward_input(
             id,
