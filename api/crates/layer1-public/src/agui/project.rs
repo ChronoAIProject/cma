@@ -45,6 +45,23 @@ impl Projected {
             ending: None,
         }
     }
+
+    /// Make completion of this projection the durable resume point.
+    ///
+    /// Applied after the exhaustive event-kind match, so every current and
+    /// future projection arm inherits the invariant without remembering to
+    /// stamp its own frames. Clearing the leading frames here also protects the
+    /// rule if an arm constructs an `AguiEvent` without using `make`.
+    fn with_final_cursor(mut self, seq: u64) -> Self {
+        let Some((last, leading)) = self.events.split_last_mut() else {
+            return self;
+        };
+        for frame in leading {
+            frame.seq = None;
+        }
+        last.seq = Some(seq);
+        self
+    }
 }
 
 /// Project one durable event.
@@ -59,10 +76,11 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
         thread_id: thread_id.to_string(),
         body,
         timestamp: timestamp.clone(),
-        seq: Some(event.seq),
+        seq: None,
+        live: false,
     };
 
-    match &event.kind {
+    let projected = match &event.kind {
         EventKind::TurnStarted => Projected {
             events: vec![make("RUN_STARTED", serde_json::json!({}))],
             ending: None,
@@ -470,7 +488,8 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
         // honest AG-UI shape exists for a resize or an attachment, and an
         // approval's resolution is already known to whoever sent it.
         _ => Projected::nothing(),
-    }
+    };
+    projected.with_final_cursor(event.seq)
 }
 
 /// A message identifier derived from the sequence that carried it.
