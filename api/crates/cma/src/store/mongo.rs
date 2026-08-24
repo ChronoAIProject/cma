@@ -334,6 +334,7 @@ struct NamespacePair {
     authoritative_marked: bool,
     legacy_fenced: bool,
     authoritative_fenced: bool,
+    legacy_uuid: Option<Binary>,
     authoritative_uuid: Option<Binary>,
 }
 
@@ -361,6 +362,13 @@ enum NamespaceAction {
     FenceLateLegacy,
     MergeLateLegacy,
     Ready,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CutoverOwnerLookup {
+    Retry,
+    Present,
+    Absent,
 }
 
 impl MongoSessionStore {
@@ -413,14 +421,14 @@ impl MongoSessionStore {
         store
             .ensure_versioned_namespace(&qualification, &cutover, LEGACY_EVENTS, EVENTS)
             .await?;
-        store.reconcile_cutover_deletes(LEGACY_SESSIONS).await?;
+        store.reconcile_cutover_deletes().await?;
         store
             .ensure_versioned_namespace(&qualification, &cutover, LEGACY_SESSIONS, SESSIONS)
             .await?;
         // A legacy delete can remove its session after the first reconciliation
         // and before the session rename. Once the view exists no further old
         // delete can cross that boundary, so this closes the last such race.
-        store.reconcile_cutover_deletes(SESSIONS).await?;
+        store.reconcile_cutover_deletes().await?;
         let cutover_collection_ids = store.finalize_namespace_cutover_marker().await?;
         store.ensure_indexes().await?;
         store.install_protocol_validators().await?;
@@ -862,31 +870,15 @@ impl MongoSessionStore {
         validate_legacy_pre_cutover_owners(&sessions, &events, &tombstones)
     }
 
-    async fn reconcile_cutover_deletes(&self, owner_collection: &str) -> Result<(), StoreError> {
-        if owner_collection == LEGACY_SESSIONS {
-            let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
-            if matches!(pair.legacy, Some(NamespaceKind::Collection))
-                && matches!(pair.authoritative, Some(NamespaceKind::Collection))
-            {
-                return Err(StoreError::Unavailable(
-                    "legacy MongoDB session collection reappeared during cutover; refusing delete reconciliation against an ambiguous owner namespace"
-                        .into(),
-                ));
-            }
-        }
+    async fn reconcile_cutover_deletes(&self) -> Result<(), StoreError> {
         let event_tails = self.validated_event_tails().await?;
         let tombstones = self.validated_tombstone_ids().await?;
-        let owners = self.database.collection::<Document>(owner_collection);
         for id in event_tails.keys() {
             if tombstones.contains(id) {
                 continue;
             }
-            let owner = owners.find_one(doc! { "_id": id }).await.map_err(|error| {
-                StoreError::Unavailable(format!(
-                    "recheck legacy-delete owner {id} in {owner_collection}: {error}"
-                ))
-            })?;
-            if cutover_delete_requires_reconciliation(tombstones.contains(id), owner.is_some()) {
+            let owner_exists = self.cutover_session_owner_exists(id).await?;
+            if cutover_delete_requires_reconciliation(tombstones.contains(id), owner_exists) {
                 // The pre-cutover audit proved that every history had an owner
                 // before the session mutation fence. The only legacy operation
                 // still able to remove one after that fence is delete, so finish
@@ -895,6 +887,49 @@ impl MongoSessionStore {
             }
         }
         Ok(())
+    }
+
+    async fn cutover_session_owner_exists(&self, id: &str) -> Result<bool, StoreError> {
+        for _ in 0..12 {
+            let before = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            let owner_collection = cutover_session_owner_namespace(&before)?;
+            let owner = match owner_collection {
+                Some(collection) => Some((
+                    collection,
+                    self.database
+                        .collection::<Document>(collection)
+                        .find_one(doc! { "_id": id })
+                        .await,
+                )),
+                None => None,
+            };
+            // A concurrent opener can atomically rename the selected collection
+            // or recreate the compatibility view while the find is in flight.
+            // Never turn a miss (or a namespace error) into a tombstone until
+            // the namespace identity and shape are unchanged across the read.
+            let after = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            let owner_found = owner
+                .as_ref()
+                .is_some_and(|(_, result)| matches!(result, Ok(Some(_))));
+            match resolve_cutover_session_owner_lookup(&before, &after, owner_found)? {
+                CutoverOwnerLookup::Retry => continue,
+                CutoverOwnerLookup::Present | CutoverOwnerLookup::Absent => {}
+            }
+
+            let Some((collection, owner)) = owner else {
+                return Err(StoreError::Unavailable(format!(
+                    "MongoDB event history for session {id} has no fenced session owner namespace during cutover; refusing to infer a delete"
+                )));
+            };
+            return owner.map(|owner| owner.is_some()).map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "recheck legacy-delete owner {id} in {collection}: {error}"
+                ))
+            });
+        }
+        Err(StoreError::Unavailable(format!(
+            "MongoDB session owner namespace did not stabilize while reconciling legacy delete {id}"
+        )))
     }
 
     async fn verify_versioned_namespaces(&self) -> Result<(), StoreError> {
@@ -972,6 +1007,7 @@ impl MongoSessionStore {
                 pair.legacy = Some(kind);
                 pair.legacy_marked = marked;
                 pair.legacy_fenced = fenced;
+                pair.legacy_uuid = specification.info.uuid.clone();
             } else if specification.name == authoritative {
                 pair.authoritative = Some(kind);
                 pair.authoritative_marked = marked;
@@ -2349,6 +2385,56 @@ fn next_namespace_action(
             "MongoDB namespace cutover is ambiguous for {legacy} -> {authoritative}: {pair:?}; refusing to merge, replace, or drop data"
         ))),
     }
+}
+
+fn cutover_session_owner_namespace(
+    pair: &NamespacePair,
+) -> Result<Option<&'static str>, StoreError> {
+    match (&pair.legacy, &pair.authoritative) {
+        (None, None) => Ok(None),
+        (Some(NamespaceKind::Collection), None) if pair.legacy_fenced => {
+            Ok(Some(LEGACY_SESSIONS))
+        }
+        (None, Some(NamespaceKind::Collection)) if pair.authoritative_fenced => {
+            Ok(Some(SESSIONS))
+        }
+        (
+            Some(NamespaceKind::View {
+                source: Some(source),
+                pipeline_is_empty: true,
+            }),
+            Some(NamespaceKind::Collection),
+        ) if source == SESSIONS && pair.authoritative_fenced => Ok(Some(SESSIONS)),
+        _ => Err(StoreError::Unavailable(format!(
+            "MongoDB session owner namespace is ambiguous during cutover: {pair:?}; refusing delete reconciliation"
+        ))),
+    }
+}
+
+fn resolve_cutover_session_owner_lookup(
+    before: &NamespacePair,
+    after: &NamespacePair,
+    owner_found: bool,
+) -> Result<CutoverOwnerLookup, StoreError> {
+    let before_collection = cutover_session_owner_namespace(before)?;
+    // Validate the second snapshot even when it changed. In particular, a
+    // legacy collection appearing beside the authoritative collection must
+    // fail closed before an apparent owner miss can create a tombstone.
+    let after_collection = cutover_session_owner_namespace(after)?;
+    if before != after || before_collection != after_collection {
+        return Ok(CutoverOwnerLookup::Retry);
+    }
+    if before_collection.is_none() {
+        return Err(StoreError::Unavailable(
+            "MongoDB cutover has protected event history but no fenced session owner namespace; refusing to infer a delete"
+                .into(),
+        ));
+    }
+    Ok(if owner_found {
+        CutoverOwnerLookup::Present
+    } else {
+        CutoverOwnerLookup::Absent
+    })
 }
 
 fn normalize_cutover_event_document(mut document: Document) -> Result<CutoverEvent, StoreError> {

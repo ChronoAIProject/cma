@@ -553,6 +553,125 @@ fn namespace_cutover_fences_before_rename_and_recovers_only_a_proven_late_spill(
 }
 
 #[test]
+fn cutover_delete_owner_lookup_uses_only_the_current_fenced_session_collection() {
+    let fenced_legacy = NamespacePair {
+        legacy: Some(NamespaceKind::Collection),
+        legacy_fenced: true,
+        ..NamespacePair::default()
+    };
+    assert_eq!(
+        cutover_session_owner_namespace(&fenced_legacy).unwrap(),
+        Some(LEGACY_SESSIONS)
+    );
+
+    let fenced_authoritative = NamespacePair {
+        authoritative: Some(NamespaceKind::Collection),
+        authoritative_fenced: true,
+        ..NamespacePair::default()
+    };
+    assert_eq!(
+        cutover_session_owner_namespace(&fenced_authoritative).unwrap(),
+        Some(SESSIONS)
+    );
+
+    let ready = NamespacePair {
+        legacy: Some(NamespaceKind::View {
+            source: Some(SESSIONS.into()),
+            pipeline_is_empty: true,
+        }),
+        authoritative: Some(NamespaceKind::Collection),
+        authoritative_fenced: true,
+        ..NamespacePair::default()
+    };
+    assert_eq!(
+        cutover_session_owner_namespace(&ready).unwrap(),
+        Some(SESSIONS)
+    );
+    assert_eq!(
+        cutover_session_owner_namespace(&NamespacePair::default()).unwrap(),
+        None
+    );
+
+    let unfenced = NamespacePair {
+        authoritative: Some(NamespaceKind::Collection),
+        ..NamespacePair::default()
+    };
+    assert!(cutover_session_owner_namespace(&unfenced).is_err());
+}
+
+#[test]
+fn cutover_delete_owner_lookup_retries_a_rename_between_selection_and_read() {
+    let uuid = test_collection_uuid(41);
+    let before = NamespacePair {
+        legacy: Some(NamespaceKind::Collection),
+        legacy_fenced: true,
+        legacy_uuid: Some(uuid.clone()),
+        ..NamespacePair::default()
+    };
+    let after = NamespacePair {
+        authoritative: Some(NamespaceKind::Collection),
+        authoritative_fenced: true,
+        authoritative_uuid: Some(uuid),
+        ..NamespacePair::default()
+    };
+
+    assert_eq!(
+        resolve_cutover_session_owner_lookup(&before, &after, false).unwrap(),
+        CutoverOwnerLookup::Retry
+    );
+    assert_eq!(
+        resolve_cutover_session_owner_lookup(&after, &after, true).unwrap(),
+        CutoverOwnerLookup::Present
+    );
+    assert_eq!(
+        resolve_cutover_session_owner_lookup(&after, &after, false).unwrap(),
+        CutoverOwnerLookup::Absent
+    );
+}
+
+#[test]
+fn cutover_delete_owner_lookup_rejects_ambiguity_appearing_during_read() {
+    let before = NamespacePair {
+        authoritative: Some(NamespaceKind::Collection),
+        authoritative_fenced: true,
+        authoritative_uuid: Some(test_collection_uuid(42)),
+        ..NamespacePair::default()
+    };
+    let ambiguous_after = NamespacePair {
+        legacy: Some(NamespaceKind::Collection),
+        authoritative: Some(NamespaceKind::Collection),
+        authoritative_fenced: true,
+        legacy_uuid: Some(test_collection_uuid(43)),
+        authoritative_uuid: Some(test_collection_uuid(42)),
+        ..NamespacePair::default()
+    };
+
+    let error = resolve_cutover_session_owner_lookup(&before, &ambiguous_after, false)
+        .expect_err("a recreated legacy collection must block tombstone reconciliation");
+    assert!(error.to_string().contains("ambiguous"));
+
+    let replaced_after = NamespacePair {
+        legacy_uuid: Some(test_collection_uuid(44)),
+        ..NamespacePair {
+            legacy: Some(NamespaceKind::Collection),
+            legacy_fenced: true,
+            legacy_uuid: Some(test_collection_uuid(43)),
+            ..NamespacePair::default()
+        }
+    };
+    let replaced_before = NamespacePair {
+        legacy: Some(NamespaceKind::Collection),
+        legacy_fenced: true,
+        legacy_uuid: Some(test_collection_uuid(43)),
+        ..NamespacePair::default()
+    };
+    assert_eq!(
+        resolve_cutover_session_owner_lookup(&replaced_before, &replaced_after, false).unwrap(),
+        CutoverOwnerLookup::Retry
+    );
+}
+
+#[test]
 fn namespace_cutover_requires_an_exact_operator_gate_until_both_views_are_complete() {
     assert_eq!(
         namespace_cutover_authorization(
@@ -1679,6 +1798,113 @@ async fn real_marker_backed_partial_new_database_bootstrap_resumes_without_an_op
         store.namespace_cutover_marker().await.unwrap(),
         Some(NamespaceCutoverMarker::Complete { .. })
     ));
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_cutover_resume_after_session_rename_preserves_owner_and_history() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!(
+        "chrono_session_rename_resume_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let database = client.database(&database_name);
+    let id = SessionId("sesn_session_rename_resume".into());
+
+    database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .insert_one(doc! {
+            "_id": NAMESPACE_CUTOVER_ID,
+            "protocol": NAMESPACE_CUTOVER_PROTOCOL,
+            "origin": "operator-drained",
+            "phase": "in-progress",
+        })
+        .await
+        .unwrap();
+
+    let mut record = record_with(None);
+    record.session.id = id.clone();
+    record.session.last_seq = 1;
+    let mut legacy_session =
+        mongodb::bson::serialize_to_document(&to_doc(&record).unwrap()).unwrap();
+    legacy_session.remove("revision");
+    legacy_session.remove(WRITE_PROTOCOL_FIELD);
+    database
+        .collection::<Document>(SESSIONS)
+        .insert_one(legacy_session)
+        .await
+        .unwrap();
+
+    let mut legacy_event = event_doc::to_document(&event(&id.0, 1)).unwrap();
+    legacy_event.remove(WRITE_PROTOCOL_FIELD);
+    database
+        .collection::<Document>(EVENTS)
+        .insert_one(legacy_event)
+        .await
+        .unwrap();
+    for authoritative in [SESSIONS, EVENTS] {
+        database
+            .run_command(doc! {
+                "collMod": authoritative,
+                "validator": expected_validator(authoritative).unwrap(),
+                "validationLevel": "strict",
+                "validationAction": "error",
+            })
+            .await
+            .unwrap();
+    }
+    database
+        .create_collection(LEGACY_EVENTS)
+        .view_on(EVENTS)
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
+
+    let store = MongoSessionStore::open(&client, &database_name, false)
+        .await
+        .expect("cutover resumes after the session rename without inferring a delete");
+    assert!(store.get(&id).await.unwrap().is_some());
+    assert_eq!(store.event_tail(&id).await.unwrap(), 1);
+    assert!(!store.is_tombstoned(&id).await.unwrap());
+    assert_eq!(
+        next_namespace_action(
+            &store
+                .namespace_pair(LEGACY_SESSIONS, SESSIONS)
+                .await
+                .unwrap(),
+            LEGACY_SESSIONS,
+            SESSIONS,
+        )
+        .unwrap(),
+        NamespaceAction::Ready
+    );
+    assert_eq!(
+        database
+            .collection::<Document>(SESSIONS)
+            .count_documents(doc! { "_id": &id.0 })
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        database
+            .collection::<Document>(EVENTS)
+            .count_documents(doc! { "session_id": &id.0 })
+            .await
+            .unwrap(),
+        1
+    );
 
     database.drop().await.unwrap();
 }
