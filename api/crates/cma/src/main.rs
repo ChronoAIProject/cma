@@ -23,7 +23,10 @@ mod pty_integration_tests;
 use std::{sync::Arc, time::Duration};
 
 use axum::{
+    extract::Request,
     http::{header, HeaderName, HeaderValue, Method},
+    middleware::Next,
+    response::Response,
     routing::any,
     Router,
 };
@@ -39,7 +42,12 @@ use layer2_core::{
     ActivityService, Baseline, EnvironmentProfileService, PlatformSettingsService, ScreenModel,
     SessionService, SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
 };
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+};
+use tracing::Level;
 
 use crate::activity::ActivityRecorder;
 use crate::auth::{AuthState, SignInRecords};
@@ -47,6 +55,10 @@ use crate::config::Config;
 use crate::screen::VtScreen;
 
 const CORS_PREFLIGHT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+const REST_LINKS: HeaderValue = HeaderValue::from_static(
+    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+);
 
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
@@ -69,15 +81,20 @@ fn rest_api_router(
     state: layer1_public::rest::SessionsState,
     admin: Arc<layer1_public::rest::admin::AdminState>,
 ) -> Router {
-    let environments = Arc::clone(&state.environments);
     Router::new()
-        .merge(layer1_public::rest::router(state))
-        .merge(layer1_public::rest::environments::router(environments))
-        .merge(layer1_public::rest::admin::router(admin))
+        .merge(layer1_public::rest::complete_router(state, admin))
         .route("/api/v1", any(|| async { HttpProblem::NotFound }))
         .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
         .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
         .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
+        .layer(axum::middleware::from_fn(rest_links))
+}
+
+/// Advertise the REST profile and its machine-readable service description.
+async fn rest_links(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().append(header::LINK, REST_LINKS);
+    response
 }
 
 /// Apply the browser boundary shared by every public interface.
@@ -93,6 +110,7 @@ fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
                 header::CONTENT_TYPE,
                 header::AUTHORIZATION,
                 HeaderName::from_static("last-event-id"),
+                X_REQUEST_ID,
             ])
             .allow_methods([
                 Method::GET,
@@ -101,8 +119,37 @@ fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
                 Method::PATCH,
                 Method::DELETE,
             ])
-            .expose_headers([header::LINK])
+            .expose_headers([header::LINK, X_REQUEST_ID])
             .max_age(CORS_PREFLIGHT_MAX_AGE),
+    )
+}
+
+/// Mint or accept a correlation id, put it on the request span, and echo it.
+fn with_request_context(router: Router) -> Router {
+    router
+        // Added in reverse wrapping order: the setter must run before tracing,
+        // while propagation must see the response produced by every handler.
+        .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(request_span)
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(SetRequestIdLayer::new(X_REQUEST_ID, MakeRequestUuid))
+}
+
+fn request_span(request: &Request) -> tracing::Span {
+    let request_id = request
+        .headers()
+        .get(&X_REQUEST_ID)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("<non-text request id>");
+    tracing::info_span!(
+        "http.request",
+        request_id = %request_id,
+        method = %request.method(),
+        uri = %request.uri(),
     )
 }
 
@@ -375,7 +422,7 @@ async fn main() {
         }),
     );
 
-    let app = with_cors(
+    let app = with_request_context(with_cors(
         Router::new()
             .merge(health::router(store))
             .merge(rest)
@@ -403,7 +450,7 @@ async fn main() {
                 auth::attach_subject,
             )),
         config.cors_origins.clone(),
-    );
+    ));
 
     let listener = match tokio::net::TcpListener::bind(&config.bind).await {
         Ok(l) => l,
@@ -453,6 +500,57 @@ mod rest_contract_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_span_records_the_correlation_id() {
+        use tracing::{field::Visit, span::Attributes, Subscriber};
+        use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer};
+
+        #[derive(Clone)]
+        struct Capture(Arc<std::sync::Mutex<Vec<(String, String)>>>);
+
+        struct Fields<'a>(&'a std::sync::Mutex<Vec<(String, String)>>);
+
+        impl Visit for Fields<'_> {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0
+                    .lock()
+                    .expect("capture lock is usable")
+                    .push((field.name().to_string(), format!("{value:?}")));
+            }
+        }
+
+        impl<S> Layer<S> for Capture
+        where
+            S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+        {
+            fn on_new_span(
+                &self,
+                attributes: &Attributes<'_>,
+                _id: &tracing::span::Id,
+                _context: Context<'_, S>,
+            ) {
+                attributes.record(&mut Fields(&self.0));
+            }
+        }
+
+        let fields = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(Capture(Arc::clone(&fields)));
+        tracing::subscriber::with_default(subscriber, || {
+            let request = Request::get("/api/v1/conformance")
+                .header("x-request-id", "support-case-488")
+                .body(axum::body::Body::empty())
+                .expect("request builds");
+            let _span = request_span(&request);
+        });
+        let fields = fields.lock().expect("capture lock is usable");
+        assert!(
+            fields
+                .iter()
+                .any(|(name, value)| name == "request_id" && value.contains("support-case-488")),
+            "request span must carry the support correlation id: {fields:?}"
+        );
+    }
 
     #[test]
     fn every_interface_has_a_unique_id() {

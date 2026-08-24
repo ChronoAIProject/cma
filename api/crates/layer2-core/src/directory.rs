@@ -27,7 +27,7 @@ use crate::store::{StoreError, UserDirectoryStore};
 ///
 /// Display material and nothing else: absent fields mean the provider released
 /// nothing worth drawing, and no decision is ever made on the strength of one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PublicIdentity {
     /// The name to show, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
