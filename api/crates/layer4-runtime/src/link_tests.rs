@@ -167,6 +167,41 @@ fn a_switch_names_the_program_to_restart() {
     ));
 }
 
+async fn captured_signal_input(signals: &[&str]) -> Vec<u8> {
+    let state = AppState::for_test(&["/bin/echo"]);
+    let (session, _output) = state
+        .registry
+        .get_or_start("signal-map", "/bin/echo", 80, 24, "k")
+        .await
+        .expect("the test terminal starts");
+    let captured = session.capture_input_writes_for_test();
+    let (replies, _answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    for signal in signals {
+        let frame = serde_json::json!({ "t": "signal", "sig": signal }).to_string();
+        control(&frame, "signal-map", &state, Some(&session), &replies).await;
+    }
+
+    let bytes = captured
+        .lock()
+        .expect("the captured input is healthy")
+        .clone();
+    bytes
+}
+
+#[tokio::test]
+async fn every_documented_signal_writes_its_exact_control_byte() {
+    assert_eq!(
+        captured_signal_input(&["INT", "TERM", "QUIT", "HUP"]).await,
+        vec![0x03, 0x04, 0x1c, 0x04]
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_signal_writes_nothing() {
+    assert!(captured_signal_input(&["XYZ"]).await.is_empty());
+}
+
 #[tokio::test]
 async fn a_switch_is_answered_either_way() {
     // #289: the frame reaching the socket says nothing about the program
@@ -441,6 +476,7 @@ async fn signal_termination_reports_no_numeric_status_before_normal_close() {
 #[tokio::test]
 async fn saturated_terminal_output_does_not_starve_a_control_reply() {
     let state = AppState::for_test(&["/bin/sh", "codex-acp"]);
+    let registry = state.registry.clone();
     let (address, server) = serve(state).await;
     let mut socket = terminal_link(address, "sbx_fair_control").await;
     assert!(matches!(
@@ -448,18 +484,33 @@ async fn saturated_terminal_output_does_not_starve_a_control_reply() {
         tokio_tungstenite::tungstenite::Message::Text(_)
     ));
 
-    socket
-        .send(tokio_tungstenite::tungstenite::Message::Binary(
-            lanes::frame(LANE_TERMINAL, b"yes saturated-output\n"),
-        ))
+    let session = registry
+        .session_for_test("sbx_fair_control")
         .await
-        .expect("the output producer starts");
+        .expect("the test terminal is registered");
+    let flooding = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let producer = tokio::spawn({
+        let flooding = std::sync::Arc::clone(&flooding);
+        async move {
+            while flooding.load(std::sync::atomic::Ordering::Acquire) {
+                // Refill beyond the lossy ring's capacity before yielding, so
+                // the output receive remains ready at every select point.
+                for _ in 0..1_024 {
+                    session.publish_output_for_test(b"saturated-output\n");
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+    });
     loop {
-        if matches!(
-            next_client_message(&mut socket).await,
-            tokio_tungstenite::tungstenite::Message::Binary(_)
-        ) {
-            break;
+        if let tokio_tungstenite::tungstenite::Message::Binary(bytes) =
+            next_client_message(&mut socket).await
+        {
+            if lanes::unframe(&bytes).is_some_and(|(lane, payload)| {
+                lane == LANE_TERMINAL && payload == b"saturated-output\n"
+            }) {
+                break;
+            }
         }
     }
 
@@ -491,19 +542,35 @@ async fn saturated_terminal_output_does_not_starve_a_control_reply() {
     let reply = match reply {
         Ok(reply) => reply,
         Err(_) => {
+            flooding.store(false, std::sync::atomic::Ordering::Release);
+            producer.abort();
             server.abort();
             panic!("continuous terminal output starved control traffic");
         }
     };
     assert_eq!(reply["accepted"], true);
 
-    socket
-        .send(tokio_tungstenite::tungstenite::Message::Text(
-            serde_json::json!({ "t": "signal", "sig": "INT" }).to_string(),
-        ))
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) =
+                next_client_message(&mut socket).await
+            {
+                if lanes::unframe(&bytes).is_some_and(|(lane, payload)| {
+                    lane == LANE_TERMINAL && payload == b"saturated-output\n"
+                }) {
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .expect("terminal output remains pending after the control reply");
+    flooding.store(false, std::sync::atomic::Ordering::Release);
+    tokio::time::timeout(Duration::from_secs(1), producer)
         .await
-        .expect("the output producer is interrupted");
-    tokio::time::sleep(Duration::from_millis(50)).await;
+        .expect("the bounded output producer stops")
+        .expect("the bounded output producer remains healthy");
+
     socket
         .send(tokio_tungstenite::tungstenite::Message::Binary(
             lanes::frame(LANE_TERMINAL, b"exit\n"),
@@ -524,7 +591,7 @@ async fn saturated_terminal_output_does_not_starve_a_control_reply() {
         }
     })
     .await
-    .expect("the test shell exits after its output producer is interrupted");
+    .expect("the test shell exits after its test output is drained");
     server.abort();
 }
 
