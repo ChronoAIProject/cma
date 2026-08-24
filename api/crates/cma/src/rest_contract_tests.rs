@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -13,17 +13,19 @@ use axum::{
     http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
     Extension, Router,
 };
-use layer1_public::{tickets::TerminalTickets, AuthenticatedSubject};
+use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, AuthenticatedSubject};
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, Authorization, Baseline,
-    Caller, Capability, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-    EnvironmentProfileStore, Event, KernelId, PlatformSettingsService, RegisteredUser, Reserved,
-    ScreenFactory, ScreenModel, ScreenSnapshot, SessionId, SessionPorts, SessionRecord,
-    SessionService, SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId,
-    TerminalGeometry, UserDirectory, UserDirectoryStore,
+    Caller, Capability, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
+    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore, Event, KernelId,
+    PlatformSettingsService, RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
+    ServiceCatalog, ServiceId, SessionId, SessionPorts, SessionRecord, SessionService,
+    SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource, StoreError,
+    StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
 };
 use layer3_adapter::{
-    AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeSpec, TerminalChannel,
+    AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
+    TerminalChannel,
 };
 use tokio::sync::{mpsc, Mutex};
 use tower::ServiceExt;
@@ -34,6 +36,9 @@ use crate::activity::{self, ActivityRecorder};
 const OVERSIZED_BODY_LEN: usize = 2 * 1024 * 1024 + 1;
 const LISTED_ORIGIN: &str = "https://integrator.example";
 const UNLISTED_ORIGIN: &str = "https://unlisted.example";
+const TEST_SERVICE_ID: &str = "api-github";
+const TEST_SKILL_NAME: &str = "repository-review";
+const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
 
 #[derive(Default)]
 struct MemorySessions {
@@ -144,10 +149,13 @@ impl EnvironmentProfileStore for NoProfiles {
     }
 }
 
-struct NoDirectory;
+#[derive(Default)]
+struct TestDirectory {
+    unavailable: AtomicBool,
+}
 
 #[async_trait::async_trait]
-impl UserDirectoryStore for NoDirectory {
+impl UserDirectoryStore for TestDirectory {
     async fn record_sign_in(&self, _user: &RegisteredUser) -> Result<(), StoreError> {
         Ok(())
     }
@@ -159,11 +167,98 @@ impl UserDirectoryStore for NoDirectory {
         Ok(Vec::new())
     }
 
-    async fn by_subjects(
+    async fn by_subjects(&self, subjects: &[SubjectId]) -> Result<Vec<RegisteredUser>, StoreError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(StoreError::Unavailable("test directory is down".into()));
+        }
+        Ok(subjects
+            .iter()
+            .cloned()
+            .map(|subject| RegisteredUser {
+                subject,
+                display_name: Some("Contract User".into()),
+                email: None,
+                avatar_url: Some("https://images.example.test/contract-user.png".into()),
+                first_seen: "2026-08-24T00:00:00Z".into(),
+                last_seen: "2026-08-24T00:00:00Z".into(),
+            })
+            .collect())
+    }
+}
+
+#[derive(Default)]
+struct TestCatalogue {
+    unavailable: AtomicBool,
+    service_reads: AtomicUsize,
+    skill_reads: AtomicUsize,
+    service_credentials: Mutex<Vec<Option<String>>>,
+    skill_credentials: Mutex<Vec<Option<String>>>,
+}
+
+#[async_trait::async_trait]
+impl ServiceCatalog for TestCatalogue {
+    async fn available(
         &self,
-        _subjects: &[SubjectId],
-    ) -> Result<Vec<RegisteredUser>, StoreError> {
-        Ok(Vec::new())
+        _subject: &SubjectId,
+        credential: Option<&str>,
+    ) -> Result<Vec<CatalogService>, CatalogError> {
+        self.service_reads.fetch_add(1, Ordering::SeqCst);
+        self.service_credentials
+            .lock()
+            .await
+            .push(credential.map(str::to_owned));
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(CatalogError::Unavailable("test catalogue is down".into()));
+        }
+        Ok(vec![CatalogService {
+            id: ServiceId::new(TEST_SERVICE_ID),
+            name: "GitHub".into(),
+            description: Some("Repositories and pull requests".into()),
+        }])
+    }
+}
+
+#[async_trait::async_trait]
+impl SkillCatalog for TestCatalogue {
+    async fn available(
+        &self,
+        _subject: &SubjectId,
+        credential: Option<&str>,
+    ) -> Result<Vec<CatalogSkill>, CatalogError> {
+        self.skill_reads.fetch_add(1, Ordering::SeqCst);
+        self.skill_credentials
+            .lock()
+            .await
+            .push(credential.map(str::to_owned));
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(CatalogError::Unavailable("test catalogue is down".into()));
+        }
+        Ok(vec![CatalogSkill {
+            id: SkillId::new("skl_repository_review"),
+            name: TEST_SKILL_NAME.into(),
+            description: "Review a repository without changing it".into(),
+            access: Some("private".into()),
+        }])
+    }
+}
+
+struct TestSkills;
+
+#[async_trait::async_trait]
+impl SkillSource for TestSkills {
+    async fn packs_for(
+        &self,
+        _caller_credential: Option<&str>,
+        skills: &[SkillId],
+    ) -> Result<Vec<SkillPack>, String> {
+        Ok(skills
+            .iter()
+            .map(|skill| SkillPack {
+                name: skill.0.clone(),
+                version: Some("1.2.3".into()),
+                files: vec![("SKILL.md".into(), b"contract fixture".to_vec())],
+            })
+            .collect())
     }
 }
 
@@ -212,6 +307,7 @@ impl KernelAdapter for TestKernel {
     fn capabilities(&self) -> KernelCapabilities {
         KernelCapabilities {
             terminal: true,
+            conversation: true,
             ..Default::default()
         }
     }
@@ -244,6 +340,14 @@ impl KernelAdapter for TestKernel {
         Ok(())
     }
 
+    async fn switch_plane(
+        &self,
+        _handle: &RuntimeHandle,
+        _mode: RuntimeMode,
+    ) -> Result<(), AdapterError> {
+        Ok(())
+    }
+
     async fn terminate(&self, _handle: &RuntimeHandle) -> Result<(), AdapterError> {
         Ok(())
     }
@@ -253,16 +357,23 @@ struct TestSurface {
     app: Router,
     sessions: Arc<SessionService>,
     store: Arc<MemorySessions>,
+    catalogue: Arc<TestCatalogue>,
+    directory: Arc<TestDirectory>,
     caller: Caller,
 }
 
 fn test_surface(authenticated: bool) -> TestSurface {
     let settings = Arc::new(PlatformSettingsService::unconfigured());
+    let catalogue = Arc::new(TestCatalogue::default());
     let environments = EnvironmentProfileService::new(
         Arc::new(NoProfiles),
-        Baseline::default(),
-        None,
-        None,
+        Baseline::new(
+            [],
+            [SkillId::new(TEST_SKILL_NAME)],
+            [ServiceId::new(TEST_SERVICE_ID)],
+        ),
+        Some(Arc::clone(&catalogue) as Arc<dyn SkillCatalog>),
+        Some(Arc::clone(&catalogue) as Arc<dyn ServiceCatalog>),
         AgentConfiguration {
             kernel: KernelId::new("test"),
             ..Default::default()
@@ -278,13 +389,15 @@ fn test_surface(authenticated: bool) -> TestSurface {
         factory,
         Arc::clone(&store) as Arc<dyn SessionStore>,
         SessionPorts {
+            skills: Some(Arc::new(TestSkills)),
             settings: Some(Arc::clone(&settings)),
             ..Default::default()
         },
         Arc::clone(&environments),
         Default::default(),
     );
-    let users = UserDirectory::new(Arc::new(NoDirectory));
+    let directory = Arc::new(TestDirectory::default());
+    let users = UserDirectory::new(Arc::clone(&directory) as Arc<dyn UserDirectoryStore>);
     let activity = ActivityService::new(Arc::new(NoActivity));
     let caller = Caller::new(
         SubjectId("subject-contract".into()),
@@ -319,6 +432,9 @@ fn test_surface(authenticated: bool) -> TestSurface {
     let app = if authenticated {
         app.layer(Extension(caller.authorization.clone()))
             .layer(Extension(AuthenticatedSubject(caller.subject.clone())))
+            .layer(Extension(DelegatedCredential(
+                TEST_DELEGATED_CREDENTIAL.into(),
+            )))
     } else {
         app
     };
@@ -326,6 +442,8 @@ fn test_surface(authenticated: bool) -> TestSurface {
         app,
         sessions,
         store,
+        catalogue,
+        directory,
         caller,
     }
 }
@@ -375,6 +493,20 @@ fn assert_header_list_contains(headers: &HeaderMap, name: HeaderName, expected: 
     );
 }
 
+async fn assert_json(response: Response<Body>, status: StatusCode) -> serde_json::Value {
+    assert_eq!(response.status(), status);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&header::HeaderValue::from_static("application/json"))
+    );
+    serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("JSON responses are bounded"),
+    )
+    .expect("the response is JSON")
+}
+
 async fn assert_problem(response: Response<Body>, status: StatusCode) -> serde_json::Value {
     assert_eq!(response.status(), status);
     assert_eq!(
@@ -406,36 +538,137 @@ async fn assert_request_too_large(response: Response<Body>) {
     );
 }
 
-async fn create_ready_session(
-    app: &Router,
-    sessions: &SessionService,
-    caller: &Caller,
-) -> SessionId {
+async fn create_session(app: &Router) -> (SessionId, serde_json::Value) {
     let response = app
         .clone()
         .oneshot(json_request(Method::POST, "/api/v1/sessions", "{}"))
         .await
         .expect("router answers");
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let body: serde_json::Value = serde_json::from_slice(
-        &to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("session responses are bounded"),
-    )
-    .expect("the session response is json");
+    let body = assert_json(response, StatusCode::CREATED).await;
     let id = SessionId(body["id"].as_str().expect("session id").to_string());
+    (id, body)
+}
 
+async fn wait_until_ready(sessions: &SessionService, caller: &Caller, id: &SessionId) {
     for _ in 0..200 {
         let session = sessions
-            .get_session(caller, &id)
+            .get_session(caller, id)
             .await
             .expect("the created session is readable");
         if session.status == SessionStatus::Ready {
-            return id;
+            return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     panic!("the in-memory runtime did not become ready");
+}
+
+async fn create_ready_session(
+    app: &Router,
+    sessions: &SessionService,
+    caller: &Caller,
+) -> SessionId {
+    let (id, _) = create_session(app).await;
+    wait_until_ready(sessions, caller, &id).await;
+    id
+}
+
+fn assert_creator(view: &serde_json::Value) {
+    assert_eq!(
+        view["creator"],
+        serde_json::json!({
+            "display_name": "Contract User",
+            "avatar_url": "https://images.example.test/contract-user.png"
+        })
+    );
+}
+
+fn assert_creator_absent(view: &serde_json::Value) {
+    assert!(
+        view.get("creator").is_none(),
+        "an unavailable directory omits the creator: {view}"
+    );
+}
+
+async fn assert_catalogue_received_credential(
+    catalogue: &TestCatalogue,
+    route: &str,
+    expect_skills: bool,
+) {
+    let services = std::mem::take(&mut *catalogue.service_credentials.lock().await);
+    assert!(
+        !services.is_empty(),
+        "{route} must project the service catalogue"
+    );
+    assert!(
+        services
+            .iter()
+            .all(|credential| credential.as_deref() == Some(TEST_DELEGATED_CREDENTIAL)),
+        "{route} must pass the delegated credential to service projection: {services:?}"
+    );
+
+    let skills = std::mem::take(&mut *catalogue.skill_credentials.lock().await);
+    if expect_skills {
+        assert!(
+            !skills.is_empty(),
+            "{route} must project the skill catalogue"
+        );
+        assert!(
+            skills
+                .iter()
+                .all(|credential| credential.as_deref() == Some(TEST_DELEGATED_CREDENTIAL)),
+            "{route} must pass the delegated credential to skill projection: {skills:?}"
+        );
+    } else {
+        assert!(
+            skills.is_empty(),
+            "{route} has no recorded skills to project: {skills:?}"
+        );
+    }
+}
+
+fn assert_named_reach(view: &serde_json::Value) {
+    assert_eq!(
+        view["reach"],
+        serde_json::json!([{
+            "id": TEST_SERVICE_ID,
+            "name": "GitHub",
+            "description": "Repositories and pull requests",
+            "mandated": true
+        }])
+    );
+}
+
+fn assert_unnamed_reach(view: &serde_json::Value) {
+    assert_eq!(
+        view["reach"],
+        serde_json::json!([{
+            "id": TEST_SERVICE_ID,
+            "mandated": true
+        }])
+    );
+}
+
+fn assert_named_skills(view: &serde_json::Value) {
+    assert_eq!(
+        view["agent"]["skills"],
+        serde_json::json!([{
+            "id": TEST_SKILL_NAME,
+            "version": "1.2.3",
+            "name": TEST_SKILL_NAME,
+            "description": "Review a repository without changing it"
+        }])
+    );
+}
+
+fn assert_unnamed_skills(view: &serde_json::Value) {
+    assert_eq!(
+        view["agent"]["skills"],
+        serde_json::json!([{
+            "id": TEST_SKILL_NAME,
+            "version": "1.2.3"
+        }])
+    );
 }
 
 #[tokio::test]
@@ -802,6 +1035,7 @@ async fn session_list_distinguishes_empty_success_from_a_store_outage() {
         sessions,
         store,
         caller,
+        ..
     } = test_surface(true);
 
     let response = app
@@ -856,6 +1090,311 @@ async fn session_list_distinguishes_empty_success_from_a_store_outage() {
     assert!(body["type"]
         .as_str()
         .is_some_and(|problem_type| problem_type.ends_with("/runtime-unavailable")));
+}
+
+#[tokio::test]
+async fn every_session_response_uses_the_complete_projection() {
+    let TestSurface {
+        app,
+        sessions,
+        catalogue,
+        caller,
+        ..
+    } = test_surface(true);
+
+    let (id, created) = create_session(&app).await;
+    assert_creator(&created);
+    assert_named_reach(&created);
+    assert!(
+        created["agent"].get("skills").is_none(),
+        "creation must not claim skills before provisioning records them: {created}"
+    );
+    assert_catalogue_received_credential(&catalogue, "create", false).await;
+    wait_until_ready(&sessions, &caller, &id).await;
+
+    let listed = assert_json(
+        app.clone()
+            .oneshot(
+                Request::get("/api/v1/sessions")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(listed.as_array().map(Vec::len), Some(1));
+    assert_eq!(listed[0]["id"], id.0);
+    assert_catalogue_received_credential(&catalogue, "list", true).await;
+
+    let read = assert_json(
+        app.clone()
+            .oneshot(
+                Request::get(format!("/api/v1/sessions/{}", id.0))
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_catalogue_received_credential(&catalogue, "read", true).await;
+
+    let changed_plane = assert_json(
+        app.clone()
+            .oneshot(json_request(
+                Method::POST,
+                &format!("/api/v1/sessions/{}/plane", id.0),
+                r#"{"plane":"conversation"}"#,
+            ))
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_catalogue_received_credential(&catalogue, "plane", true).await;
+
+    let stopped = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/sessions/{}/stop", id.0))
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(stopped.status(), StatusCode::NO_CONTENT);
+    let revived = assert_json(
+        app.clone()
+            .oneshot(
+                Request::post(format!("/api/v1/sessions/{}/revive", id.0))
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_catalogue_received_credential(&catalogue, "revive", true).await;
+
+    for view in [&listed[0], &read, &changed_plane, &revived] {
+        assert_eq!(view["id"], id.0);
+        assert_creator(view);
+        assert_named_reach(view);
+        assert_named_skills(view);
+    }
+}
+
+#[tokio::test]
+async fn directory_outages_cost_creator_names_not_session_responses() {
+    let TestSurface {
+        app,
+        sessions,
+        directory,
+        caller,
+        ..
+    } = test_surface(true);
+    directory.unavailable.store(true, Ordering::SeqCst);
+
+    let (id, created) = create_session(&app).await;
+    assert_creator_absent(&created);
+    assert_named_reach(&created);
+    assert!(created["agent"].get("skills").is_none());
+    wait_until_ready(&sessions, &caller, &id).await;
+
+    let listed = assert_json(
+        app.clone()
+            .oneshot(
+                Request::get("/api/v1/sessions")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(listed.as_array().map(Vec::len), Some(1));
+
+    let read = assert_json(
+        app.clone()
+            .oneshot(
+                Request::get(format!("/api/v1/sessions/{}", id.0))
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    let changed_plane = assert_json(
+        app.clone()
+            .oneshot(json_request(
+                Method::POST,
+                &format!("/api/v1/sessions/{}/plane", id.0),
+                r#"{"plane":"conversation"}"#,
+            ))
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+
+    let stopped = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/sessions/{}/stop", id.0))
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(stopped.status(), StatusCode::NO_CONTENT);
+    let revived = assert_json(
+        app.clone()
+            .oneshot(
+                Request::post(format!("/api/v1/sessions/{}/revive", id.0))
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+
+    for view in [&listed[0], &read, &changed_plane, &revived] {
+        assert_eq!(view["id"], id.0);
+        assert_creator_absent(view);
+        assert_named_reach(view);
+        assert_named_skills(view);
+    }
+}
+
+#[tokio::test]
+async fn session_list_projects_catalogues_once_per_page() {
+    let TestSurface {
+        app,
+        sessions,
+        catalogue,
+        caller,
+        ..
+    } = test_surface(true);
+    create_ready_session(&app, &sessions, &caller).await;
+    create_ready_session(&app, &sessions, &caller).await;
+    catalogue.service_reads.store(0, Ordering::SeqCst);
+    catalogue.skill_reads.store(0, Ordering::SeqCst);
+
+    let listed = assert_json(
+        app.clone()
+            .oneshot(
+                Request::get("/api/v1/sessions")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(listed.as_array().map(Vec::len), Some(2));
+    for view in listed.as_array().expect("the response is a list") {
+        assert_named_reach(view);
+        assert_named_skills(view);
+    }
+    assert_eq!(catalogue.service_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(catalogue.skill_reads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn catalogue_outages_cost_names_not_session_responses() {
+    let TestSurface {
+        app,
+        sessions,
+        catalogue,
+        caller,
+        ..
+    } = test_surface(true);
+    catalogue.unavailable.store(true, Ordering::SeqCst);
+
+    let (id, created) = create_session(&app).await;
+    assert_creator(&created);
+    assert_unnamed_reach(&created);
+    assert!(created["agent"].get("skills").is_none());
+    wait_until_ready(&sessions, &caller, &id).await;
+
+    let listed = assert_json(
+        app.clone()
+            .oneshot(
+                Request::get("/api/v1/sessions")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(listed.as_array().map(Vec::len), Some(1));
+
+    let read = assert_json(
+        app.clone()
+            .oneshot(
+                Request::get(format!("/api/v1/sessions/{}", id.0))
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    let changed_plane = assert_json(
+        app.clone()
+            .oneshot(json_request(
+                Method::POST,
+                &format!("/api/v1/sessions/{}/plane", id.0),
+                r#"{"plane":"conversation"}"#,
+            ))
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+
+    let stopped = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/sessions/{}/stop", id.0))
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(stopped.status(), StatusCode::NO_CONTENT);
+    let revived = assert_json(
+        app.clone()
+            .oneshot(
+                Request::post(format!("/api/v1/sessions/{}/revive", id.0))
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+
+    for view in [&listed[0], &read, &changed_plane, &revived] {
+        assert_eq!(view["id"], id.0);
+        assert_creator(view);
+        assert_unnamed_reach(view);
+        assert_unnamed_skills(view);
+    }
 }
 
 #[tokio::test]
