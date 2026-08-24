@@ -1,12 +1,15 @@
 //! Durable authentication state and the protocol-neutral port that keeps it.
 
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use layer2_core::store::StoreError;
 use layer2_core::{Authorization, SessionId, SubjectId};
 use sha2::{Digest, Sha256};
+#[cfg(test)]
 use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
@@ -114,6 +117,15 @@ pub struct DurableSubjectTokens {
     pub expires_at: SystemTime,
 }
 
+/// Durable ownership of one provider refresh exchange.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectRefreshLease {
+    /// Unique replica operation holding the exchange right.
+    pub holder: String,
+    /// When another worker may take over after process loss.
+    pub expires_at: SystemTime,
+}
+
 /// Identity, grants, display material, and tokens stored as one subject fact.
 #[derive(Debug, Clone)]
 pub struct SubjectAuthState {
@@ -123,6 +135,8 @@ pub struct SubjectAuthState {
     pub revision: u64,
     /// Provider tokens, absent after delegation is withdrawn.
     pub tokens: Option<DurableSubjectTokens>,
+    /// Fences rotating refresh-token exchanges across replicas.
+    pub refresh_lease: Option<SubjectRefreshLease>,
     /// Capabilities resolved from provider permissions.
     pub authorization: Authorization,
     /// Non-authoritative display material.
@@ -252,6 +266,7 @@ pub trait AuthStore: Send + Sync {
 }
 
 /// Process-local implementation used by unit tests.
+#[cfg(test)]
 #[derive(Default)]
 pub struct MemoryAuthStore {
     browser_sessions: Mutex<HashMap<SecretDigest, BrowserSession>>,
@@ -261,6 +276,7 @@ pub struct MemoryAuthStore {
     unavailable: AtomicBool,
 }
 
+#[cfg(test)]
 impl MemoryAuthStore {
     /// Inject or clear a store outage in failure-path tests.
     pub fn set_unavailable(&self, unavailable: bool) {
@@ -275,6 +291,7 @@ impl MemoryAuthStore {
     }
 }
 
+#[cfg(test)]
 fn next_revision(current: u64, next: u64, record: &str) -> Result<(), StoreError> {
     if current.checked_add(1) != Some(next) {
         return Err(StoreError::Malformed(format!(
@@ -284,6 +301,7 @@ fn next_revision(current: u64, next: u64, record: &str) -> Result<(), StoreError
     Ok(())
 }
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl AuthStore for MemoryAuthStore {
     async fn put_browser_session(&self, session: BrowserSession) -> Result<(), StoreError> {

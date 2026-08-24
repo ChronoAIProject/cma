@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::persistence::{
     AuthStore, BrowserSession, CredentialLease, DurableCredential, DurableSubjectTokens,
     LoginAttempt, RevokeDebt, SecretDigest, SecretValue, SessionCredentialState, SubjectAuthState,
+    SubjectRefreshLease,
 };
 use crate::auth::profile::Profile;
 
@@ -73,8 +74,16 @@ struct SubjectAuthDoc {
     id: String,
     revision: i64,
     tokens: Option<SubjectTokensDoc>,
+    #[serde(default)]
+    refresh_lease: Option<SubjectRefreshLeaseDoc>,
     capabilities: Vec<String>,
     profile: ProfileDoc,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SubjectRefreshLeaseDoc {
+    holder: String,
+    expires_at: DateTime,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -455,6 +464,7 @@ fn subject_to_doc(
         subject,
         revision,
         tokens,
+        refresh_lease,
         authorization,
         profile,
     } = state;
@@ -488,6 +498,10 @@ fn subject_to_doc(
         id,
         revision: stored_counter(revision, "subject auth revision")?,
         tokens,
+        refresh_lease: refresh_lease.map(|lease| SubjectRefreshLeaseDoc {
+            holder: lease.holder,
+            expires_at: DateTime::from_system_time(lease.expires_at),
+        }),
         capabilities: authorization
             .capabilities()
             .map(capability_name)
@@ -537,6 +551,10 @@ fn subject_from_doc(
         subject: SubjectId(id),
         revision: read_counter(stored.revision, "subject auth revision")?,
         tokens,
+        refresh_lease: stored.refresh_lease.map(|lease| SubjectRefreshLease {
+            holder: lease.holder,
+            expires_at: lease.expires_at.to_system_time(),
+        }),
         authorization: Authorization::from_capabilities(capabilities),
         profile: Profile {
             display_name: stored.profile.display_name,

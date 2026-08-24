@@ -586,12 +586,15 @@ pub trait CredentialSource: Send + Sync {
     /// `services` is the profile's selection, carried verbatim and never read
     /// here. The core does not know what a service is; it knows only that the
     /// answer depends on which ones were chosen.
+    ///
+    /// Store failures are returned explicitly. `Ok(None)` means no credential
+    /// is available; it must never stand in for unknown durable custody.
     async fn credential_for(
         &self,
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
-    ) -> Option<String>;
+    ) -> Result<Option<String>, StoreError>;
 
     /// Give up whatever was issued for a session that has ended.
     ///
@@ -599,7 +602,10 @@ pub trait CredentialSource: Send + Sync {
     /// the second must happen even when nobody is asking for a credential. A
     /// credential nothing will ever present again is one nobody is watching,
     /// which is the kind worth taking back.
-    async fn release(&self, session: &SessionId);
+    ///
+    /// A store failure leaves the recorded credential discoverable for a later
+    /// reconciliation pass and is returned to the caller.
+    async fn release(&self, session: &SessionId) -> Result<(), StoreError>;
 }
 
 /// The agent's accumulated context, stored whole.

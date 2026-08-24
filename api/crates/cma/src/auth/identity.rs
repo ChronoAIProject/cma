@@ -9,9 +9,12 @@
 //! somebody else's assertion, verified against their keys, and adopted only on
 //! terms this service sets.
 
-use layer2_core::{Authorization, SubjectId};
+use std::time::{Duration, SystemTime};
 
-use super::{AuthState, SubjectTokens};
+use layer2_core::{store::StoreError, Authorization, SubjectId};
+
+use super::persistence::{DurableSubjectTokens, SecretValue};
+use super::AuthState;
 
 impl AuthState {
     /// Who a bearer token belongs to, asking the provider when necessary.
@@ -19,13 +22,18 @@ impl AuthState {
     /// The provider is the only thing that can answer this. Decoding the token
     /// here would accept anything shaped like one, and would keep accepting it
     /// after it had been revoked.
-    pub(super) async fn subject_for_bearer(&self, token: &str) -> Option<SubjectId> {
+    pub(super) async fn subject_for_bearer(
+        &self,
+        token: &str,
+    ) -> Result<Option<SubjectId>, StoreError> {
         if let Some((subject, authorization, profile)) = self.bearer.get(token).await {
             self.adopt_bearer(&subject, authorization, profile, token)
-                .await;
-            return Some(subject);
+                .await?;
+            return Ok(Some(subject));
         }
-        let meta = self.metadata().await.ok()?;
+        let Ok(meta) = self.metadata().await else {
+            return Ok(None);
+        };
         match crate::auth::flow::resolve_subject(self, &meta, token).await {
             Ok((subject, permissions, profile)) => {
                 let authorization = crate::permissions::capabilities_from_permissions(&permissions);
@@ -38,14 +46,14 @@ impl AuthState {
                     )
                     .await;
                 self.adopt_bearer(&subject, authorization, profile, token)
-                    .await;
-                Some(subject)
+                    .await?;
+                Ok(Some(subject))
             }
             Err(e) => {
                 // Not an error worth a stack trace: an expired or withdrawn
                 // token is an ordinary thing for a client to present.
                 tracing::debug!(error = %e, "a bearer token was not accepted");
-                None
+                Ok(None)
             }
         }
     }
@@ -63,27 +71,27 @@ impl AuthState {
         authorization: Authorization,
         profile: crate::auth::profile::Profile,
         token: &str,
-    ) {
-        self.authorizations
-            .write()
-            .await
-            .insert(subject.clone(), authorization);
-        self.profiles.write().await.insert(subject.clone(), profile);
-        let mut tokens = self.tokens.write().await;
-        let entry = tokens
-            .entry(subject.clone())
-            .or_insert_with(|| SubjectTokens {
-                access_token: token.to_string(),
-                refresh_token: None,
-                // Held for as long as this service will reuse the answer about it.
-                // The provider decides when the token really expires; this only
-                // says when to stop assuming it has not been withdrawn.
-                expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
-            });
-        // Only when this service is not already holding a better one: a token
-        // it minted itself can be renewed, and a client's cannot.
-        if entry.refresh_token.is_none() {
-            entry.access_token = token.to_string();
-        }
+    ) -> Result<(), StoreError> {
+        self.replace_subject_fact(subject, |state| {
+            state.authorization = authorization.clone();
+            state.profile = profile.clone();
+            // Only when this service is not already holding a better one: a
+            // token it minted itself can be renewed, and a client's cannot.
+            if state
+                .tokens
+                .as_ref()
+                .is_none_or(|tokens| tokens.refresh_token.is_none())
+            {
+                state.tokens = Some(DurableSubjectTokens {
+                    access_token: SecretValue::new(token.to_string()),
+                    refresh_token: None,
+                    // The provider decides when the token really expires; this
+                    // is the period for which the bearer cache may reuse it.
+                    expires_at: SystemTime::now() + Duration::from_secs(60),
+                });
+                state.refresh_lease = None;
+            }
+        })
+        .await
     }
 }

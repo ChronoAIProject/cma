@@ -1,355 +1,546 @@
-//! Handing a session's runtime a credential, and taking it back.
-//!
-//! Split from the state so that file is about who is signed in and this one
-//! about what an agent is allowed to spend on their behalf. They are different
-//! questions with different lifetimes: a person stays signed in across many
-//! sessions, and a credential is delegated to one runtime and reclaimed when
-//! that runtime stops.
+//! Durable custody for the credential one session presents.
 
-use layer2_core::{SessionId, SubjectId};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
-use super::{AuthState, Issued};
+use layer2_core::store::StoreError;
+use layer2_core::{ServiceId, SessionId, SubjectId};
+use sha2::{Digest, Sha256};
 
-impl AuthState {
-    /// Whether an exact key already belongs to the explicit revoke retry path.
-    pub(super) async fn revoke_is_queued(&self, id: &str) -> bool {
-        self.superseded
-            .read()
-            .await
-            .iter()
-            .any(|(queued, _)| queued == id)
+use super::persistence::{
+    AuthStore, CredentialLease, DurableCredential, RevokeDebt, SecretValue, SessionCredentialState,
+};
+use super::{random_token, AuthState};
+
+/// Longer than the issuer's HTTP deadline, so an ordinary slow response never
+/// allows a second worker to overlap the first provider mint.
+const MINT_LEASE_LIFETIME: Duration = Duration::from_secs(45);
+const LEASE_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+fn empty_state(session: &SessionId) -> SessionCredentialState {
+    SessionCredentialState {
+        session: session.clone(),
+        generation: 0,
+        current: None,
+        pending: None,
+        revoke_debt: Vec::new(),
+        lease: None,
+        retired: false,
     }
 }
 
-/// Supply the core with an owner's credential when the owner is absent.
-///
-/// The core recovers sessions on its own — after a restart, or when a runtime
-/// has to be replaced — and a recovered session that presents no credential is
-/// a session whose every model call fails. So the credential is fetched from
-/// wherever it is currently held rather than being carried along from the
-/// request that happened to create the session.
+fn next_generation(generation: u64) -> Result<u64, StoreError> {
+    generation
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed("credential generation exhausted".into()))
+}
+
+fn scope_fingerprint(services: &[ServiceId]) -> String {
+    let mut names: Vec<&str> = services.iter().map(|service| service.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut digest = Sha256::new();
+    digest.update(b"cma-session-credential-scope\0");
+    for name in names {
+        digest.update((name.len() as u64).to_be_bytes());
+        digest.update(name.as_bytes());
+    }
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn lease_matches(state: &SessionCredentialState, holder: &str, fence: u64) -> bool {
+    state
+        .lease
+        .as_ref()
+        .is_some_and(|lease| lease.holder == holder && lease.fence == fence)
+}
+
+fn queue_debt(state: &mut SessionCredentialState, credential: &DurableCredential) {
+    if state
+        .revoke_debt
+        .iter()
+        .any(|debt| debt.id == credential.id)
+    {
+        return;
+    }
+    state.revoke_debt.push(RevokeDebt {
+        id: credential.id.clone(),
+        owner: credential.owner.clone(),
+        queued_at: SystemTime::now(),
+    });
+}
+
+async fn ensure_state(
+    store: &Arc<dyn AuthStore>,
+    session: &SessionId,
+) -> Result<SessionCredentialState, StoreError> {
+    loop {
+        if let Some(state) = store.credential(session).await? {
+            return Ok(state);
+        }
+        let state = empty_state(session);
+        if store.insert_credential(state.clone()).await? {
+            return Ok(state);
+        }
+    }
+}
+
+async fn replace_state(
+    store: &Arc<dyn AuthStore>,
+    current: &SessionCredentialState,
+    mut next: SessionCredentialState,
+) -> Result<bool, StoreError> {
+    next.generation = next_generation(current.generation)?;
+    store.replace_credential(current.generation, next).await
+}
+
+async fn clear_owned_lease(
+    store: &Arc<dyn AuthStore>,
+    session: &SessionId,
+    holder: &str,
+    fence: u64,
+) -> Result<(), StoreError> {
+    loop {
+        let Some(current) = store.credential(session).await? else {
+            return Ok(());
+        };
+        if !lease_matches(&current, holder, fence) {
+            return Ok(());
+        }
+        let mut next = current.clone();
+        next.lease = None;
+        if replace_state(store, &current, next).await? {
+            return Ok(());
+        }
+    }
+}
+
+async fn queue_uncommitted(
+    store: &Arc<dyn AuthStore>,
+    session: &SessionId,
+    credential: &DurableCredential,
+) -> Result<(), StoreError> {
+    loop {
+        let mut current = ensure_state(store, session).await?;
+        if current
+            .current
+            .as_ref()
+            .is_some_and(|held| held.id == credential.id)
+            || current
+                .pending
+                .as_ref()
+                .is_some_and(|held| held.id == credential.id)
+            || current
+                .revoke_debt
+                .iter()
+                .any(|debt| debt.id == credential.id)
+        {
+            return Ok(());
+        }
+        let before = current.clone();
+        queue_debt(&mut current, credential);
+        if replace_state(store, &before, current).await? {
+            return Ok(());
+        }
+    }
+}
+
+async fn commit_mint(
+    store: &Arc<dyn AuthStore>,
+    session: &SessionId,
+    holder: &str,
+    fence: u64,
+    credential: DurableCredential,
+    replacement: bool,
+) -> Result<Option<String>, StoreError> {
+    loop {
+        let mut current = ensure_state(store, session).await?;
+        if current.retired || !lease_matches(&current, holder, fence) {
+            queue_uncommitted(store, session, &credential).await?;
+            return Ok(None);
+        }
+
+        let value = credential.value.expose().to_string();
+        let before = current.clone();
+        current.lease = None;
+        if replacement {
+            if let Some(displaced) = current.pending.take() {
+                queue_debt(&mut current, &displaced);
+            }
+            current.pending = Some(credential.clone());
+        } else if current.current.is_none() {
+            current.current = Some(credential.clone());
+        } else {
+            queue_debt(&mut current, &credential);
+            if replace_state(store, &before, current).await? {
+                return Ok(None);
+            }
+            continue;
+        }
+
+        if replace_state(store, &before, current).await? {
+            return Ok(Some(value));
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn finish_mint(
+    store: Arc<dyn AuthStore>,
+    issuer: Arc<super::keys::KeyIssuer>,
+    session: SessionId,
+    subject: SubjectId,
+    owner_token: String,
+    services: Vec<ServiceId>,
+    fingerprint: String,
+    holder: String,
+    fence: u64,
+    replacement: bool,
+) -> Result<Option<String>, StoreError> {
+    let Some(minted) = issuer
+        .mint(&session, &subject, &owner_token, &services)
+        .await
+    else {
+        clear_owned_lease(&store, &session, &holder, fence).await?;
+        return Ok(None);
+    };
+    let credential = DurableCredential {
+        id: minted.id,
+        value: SecretValue::new(minted.full_key),
+        owner: subject.clone(),
+        issued_at: SystemTime::now(),
+        expires_at: None,
+        scope_fingerprint: fingerprint,
+    };
+
+    match commit_mint(
+        &store,
+        &session,
+        &holder,
+        fence,
+        credential.clone(),
+        replacement,
+    )
+    .await
+    {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            // A store failure after provider success is the response-loss case
+            // tracked by #528. Best-effort revoke narrows it; neither the key
+            // value nor provider identifier is emitted at this boundary.
+            if !issuer.revoke(&credential.id, &owner_token).await {
+                tracing::error!(
+                    session_id = %session,
+                    %subject,
+                    "a minted credential could neither be persisted nor revoked"
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn retire_state(store: Arc<dyn AuthStore>, session: SessionId) -> Result<(), StoreError> {
+    loop {
+        let mut current = ensure_state(&store, &session).await?;
+        if current.retired
+            && current.current.is_none()
+            && current.pending.is_none()
+            && current.lease.is_none()
+        {
+            return Ok(());
+        }
+        let before = current.clone();
+        if let Some(held) = current.current.take() {
+            queue_debt(&mut current, &held);
+        }
+        if let Some(held) = current.pending.take() {
+            queue_debt(&mut current, &held);
+        }
+        current.lease = None;
+        current.retired = true;
+        if replace_state(&store, &before, current).await? {
+            return Ok(());
+        }
+    }
+}
+
+impl AuthState {
+    pub(super) async fn mint_session_credential(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        replacement: bool,
+    ) -> Result<Option<String>, StoreError> {
+        let Some(issuer) = self.issuer.read().await.clone() else {
+            return self.access_token(subject).await;
+        };
+        let fingerprint = scope_fingerprint(services);
+        let mut owner_token = None;
+
+        let (holder, fence) = loop {
+            let current = ensure_state(&self.store, session).await?;
+            if current.retired {
+                return Ok(None);
+            }
+            if replacement {
+                if let Some(pending) = current.pending {
+                    return Ok(Some(pending.value.into_inner()));
+                }
+                let Some(held) = current.current.as_ref() else {
+                    return Ok(None);
+                };
+                if held.scope_fingerprint != fingerprint {
+                    return Err(StoreError::Malformed(
+                        "recorded credential does not match the session grant".into(),
+                    ));
+                }
+            } else if let Some(held) = current.current {
+                if held.scope_fingerprint != fingerprint {
+                    return Err(StoreError::Malformed(
+                        "recorded credential does not match the session grant".into(),
+                    ));
+                }
+                return Ok(Some(held.value.into_inner()));
+            }
+
+            if current
+                .lease
+                .as_ref()
+                .is_some_and(|lease| lease.expires_at > SystemTime::now())
+            {
+                tokio::time::sleep(LEASE_POLL_INTERVAL).await;
+                continue;
+            }
+
+            if owner_token.is_none() {
+                owner_token = self.access_token(subject).await?;
+                if owner_token.is_none() {
+                    return Ok(None);
+                }
+            }
+
+            let holder = random_token();
+            let fence = next_generation(current.generation)?;
+            let now = SystemTime::now();
+            let mut next = current.clone();
+            next.lease = Some(CredentialLease {
+                holder: holder.clone(),
+                fence,
+                acquired_at: now,
+                expires_at: now + MINT_LEASE_LIFETIME,
+                scope_fingerprint: fingerprint.clone(),
+            });
+            if replace_state(&self.store, &current, next).await? {
+                break (holder, fence);
+            }
+        };
+
+        let task = tokio::spawn(finish_mint(
+            Arc::clone(&self.store),
+            issuer,
+            session.clone(),
+            subject.clone(),
+            owner_token.expect("a mint lease is acquired only with an owner token"),
+            services.to_vec(),
+            fingerprint,
+            holder,
+            fence,
+            replacement,
+        ));
+        task.await.map_err(|error| {
+            StoreError::Unavailable(format!("credential mint task failed: {error}"))
+        })?
+    }
+
+    pub(super) async fn promote_pending_credential(
+        &self,
+        session: &SessionId,
+    ) -> Result<bool, StoreError> {
+        loop {
+            let Some(mut current) = self.store.credential(session).await? else {
+                return Ok(false);
+            };
+            let Some(replacement) = current.pending.take() else {
+                return Ok(false);
+            };
+            let before = current.clone();
+            if current.retired {
+                queue_debt(&mut current, &replacement);
+                if replace_state(&self.store, &before, current).await? {
+                    return Ok(false);
+                }
+                continue;
+            }
+            if let Some(displaced) = current.current.replace(replacement) {
+                queue_debt(&mut current, &displaced);
+            }
+            if replace_state(&self.store, &before, current).await? {
+                return Ok(true);
+            }
+        }
+    }
+
+    pub(super) async fn revoke_credential_debt(&self) -> Result<usize, StoreError> {
+        let _sweep = self.credential_sweep.lock().await;
+        let Some(issuer) = self.issuer.read().await.clone() else {
+            return Ok(0);
+        };
+        let states = self.store.credentials().await?;
+        let mut taken = 0;
+        let mut owner_tokens: HashMap<SubjectId, Option<String>> = HashMap::new();
+        for state in states {
+            for debt in state.revoke_debt {
+                let token = if let Some(cached) = owner_tokens.get(&debt.owner) {
+                    cached.clone()
+                } else {
+                    let loaded = self.access_token(&debt.owner).await?;
+                    owner_tokens.insert(debt.owner.clone(), loaded.clone());
+                    loaded
+                };
+                let Some(token) = token else {
+                    continue;
+                };
+                if !issuer.revoke(&debt.id, &token).await {
+                    continue;
+                }
+
+                loop {
+                    let Some(mut current) = self.store.credential(&state.session).await? else {
+                        break;
+                    };
+                    let before = current.clone();
+                    let old_len = current.revoke_debt.len();
+                    current.revoke_debt.retain(|queued| queued.id != debt.id);
+                    if current.revoke_debt.len() == old_len {
+                        break;
+                    }
+                    if replace_state(&self.store, &before, current).await? {
+                        taken += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(taken)
+    }
+
+    pub(super) async fn reclaim_unrecorded_credentials(
+        &self,
+        service: &Arc<layer2_core::SessionService>,
+    ) -> Result<usize, StoreError> {
+        let Some(issuer) = self.issuer.read().await.clone() else {
+            return Ok(0);
+        };
+        let states = self.store.credentials().await?;
+
+        // Read every claim before mutating custody or calling DELETE. If even
+        // one session record cannot be read, this pass knows nothing is safe to
+        // revoke and leaves all current values and debt untouched for retry.
+        let mut unclaimed = Vec::new();
+        for state in states.iter().filter(|state| !state.retired) {
+            if !service.session_claims_credential(&state.session).await? {
+                unclaimed.push(state.session.clone());
+            }
+        }
+        for session in unclaimed {
+            retire_state(Arc::clone(&self.store), session).await?;
+        }
+
+        // Refresh after retirement so the keys just moved to debt are treated
+        // as accounted for by the provider-listing orphan pass below.
+        let states = self.store.credentials().await?;
+        let mut accounted_ids = HashSet::new();
+        let mut tracked_sessions = HashSet::new();
+        for state in &states {
+            if state.current.is_some() || state.pending.is_some() || state.lease.is_some() {
+                tracked_sessions.insert(state.session.clone());
+            }
+            if let Some(current) = &state.current {
+                accounted_ids.insert(current.id.clone());
+            }
+            if let Some(pending) = &state.pending {
+                accounted_ids.insert(pending.id.clone());
+            }
+            accounted_ids.extend(state.revoke_debt.iter().map(|debt| debt.id.clone()));
+        }
+
+        let owners = self.store.subjects().await?;
+        let mut revocations = Vec::new();
+        for owner in owners {
+            let Some(tokens) = owner.tokens else {
+                continue;
+            };
+            let token = tokens.access_token.into_inner();
+            let minted = match issuer.minted_here(&token).await {
+                Ok(minted) => minted,
+                Err(error) => {
+                    tracing::warn!(
+                        subject = %owner.subject,
+                        error = %error,
+                        "could not inspect an owner's credentials for orphan reclaim"
+                    );
+                    continue;
+                }
+            };
+
+            // Determine the whole owner listing before any DELETE. A session
+            // store outage therefore defers every revocation from this read,
+            // instead of turning an unreadable session into an unclaimed one.
+            let mut candidates = Vec::new();
+            for (id, session) in minted {
+                if accounted_ids.contains(&id) || tracked_sessions.contains(&session) {
+                    continue;
+                }
+                match service.session_claims_credential(&session).await {
+                    Ok(true) => {}
+                    Ok(false) => candidates.push(id),
+                    Err(error) => return Err(error),
+                }
+            }
+            revocations.extend(candidates.into_iter().map(|id| (id, token.clone())));
+        }
+
+        let mut reclaimed = 0;
+        for (id, token) in revocations {
+            if issuer.revoke(&id, &token).await {
+                reclaimed += 1;
+            }
+        }
+        Ok(reclaimed)
+    }
+}
+
 #[async_trait::async_trait]
 impl layer2_core::CredentialSource for AuthState {
     async fn credential_for(
         &self,
         session: &SessionId,
         subject: &SubjectId,
-        services: &[layer2_core::ServiceId],
-    ) -> Option<String> {
-        let issuer = { self.issuer.read().await.clone() };
-        let Some(issuer) = issuer else {
-            // No platform configured. The session gets its owner's own token,
-            // which is what it got before any of this existed.
-            return self.access_token(subject).await;
-        };
-
-        // One value per session. Asking again — for a replaced runtime, or
-        // because a restart lost the entry — must not leave two credentials
-        // alive for one session.
-        if let Some(held) = self.issued.read().await.get(session) {
-            return Some(held.value.clone());
-        }
-
-        let owner_token = self.access_token(subject).await?;
-        let minted = issuer
-            .mint(session, subject, &owner_token, services)
-            .await?;
-        self.issued.write().await.insert(
-            session.clone(),
-            Issued {
-                id: minted.id,
-                value: minted.full_key.clone(),
-                owner: subject.clone(),
-                minted_at: std::time::Instant::now(),
-            },
-        );
-        Some(minted.full_key)
+        services: &[ServiceId],
+    ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential(session, subject, services, false)
+            .await
     }
 
-    async fn release(&self, session: &SessionId) {
-        /*
-         * The local ownership transfer belongs to a detached task. Dropping a
-         * release future while it waits for a contended queue lock must not
-         * cancel the only operation that can turn a terminal session's issued
-         * key into retry debt. The task holds every lock in the one global
-         * issued -> superseded -> reissues order, then mutates without awaiting.
-         */
-        let issued = std::sync::Arc::clone(&self.issued);
-        let superseded = std::sync::Arc::clone(&self.superseded);
-        let reissues = std::sync::Arc::clone(&self.reissues);
-        let released_session = session.clone();
-        let transfer = tokio::spawn(async move {
-            let mut issued = issued.write().await;
-            let mut superseded = superseded.write().await;
-            let mut progress = reissues.write().await;
-            let current = issued.remove(&released_session);
-            let replacement = progress.pending.remove(&released_session);
-            let minting = progress.minting.contains(&released_session);
-            if minting {
-                progress.retiring.insert(released_session.clone());
-            } else {
-                progress.retiring.remove(&released_session);
-            }
-            let tracked = minting || current.is_some() || replacement.is_some();
-            if let Some(held) = current {
-                superseded.push((held.id, held.owner));
-            }
-            if let Some(held) = replacement {
-                superseded.push((held.id, held.owner));
-            }
-            tracked
-        });
-        let tracked = match transfer.await {
-            Ok(tracked) => tracked,
-            Err(error) => {
-                tracing::error!(session_id = %session, %error, "credential release transfer failed");
-                return;
-            }
-        };
-        if tracked {
-            // The periodic sweep owns provider I/O for locally transferred
-            // credentials. Draining the global queue here would let ending one
-            // session revoke another live session's just-replaced credential
-            // before its full-sweep grace, and make termination wait for the
-            // whole retry backlog.
-            return;
-        }
-
-        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
-            return;
-        };
-
-        /*
-         * A restarted process has no `issued` entry. The key's deployment- and
-         * session-scoped name is the durable ownership record, so ask every
-         * owner whose token this process currently holds and take back every
-         * match. More than one is possible after an older restart duplicated a
-         * key, and release means none of them should survive.
-         */
-        let owner_tokens: Vec<String> = self
-            .tokens
-            .read()
-            .await
-            .values()
-            .map(|tokens| tokens.access_token.clone())
-            .collect();
-        if owner_tokens.is_empty() {
-            tracing::warn!(
-                session_id = %session,
-                "no owner token is held to find this ended session's credential; it remains valid"
-            );
-            return;
-        }
-        for owner_token in owner_tokens {
-            let ids = match issuer.minted_for(session, &owner_token).await {
-                Ok(ids) => ids,
-                Err(error) => {
-                    tracing::warn!(
-                        session_id = %session,
-                        error = %error,
-                        "could not inspect an owner's keys for this ended session"
-                    );
-                    continue;
-                }
-            };
-            for id in ids {
-                /*
-                 * An exact queue entry already owns this revoke. The read lock
-                 * is a suffix of the global issued -> superseded -> reissues
-                 * order and is dropped before provider I/O. If an entry races
-                 * in after this check, reconcile it only after a confirmed
-                 * successful DELETE; a non-2xx response must leave debt intact.
-                 */
-                if self.revoke_is_queued(&id).await {
-                    continue;
-                }
-                // The same complete listing is the retry record for a failed
-                // DELETE, so no separate in-memory queue is needed here.
-                if issuer.revoke(&id, &owner_token).await {
-                    self.superseded
-                        .write()
-                        .await
-                        .retain(|(queued, _)| queued != &id);
-                }
-            }
-        }
+    async fn release(&self, session: &SessionId) -> Result<(), StoreError> {
+        let task = tokio::spawn(retire_state(Arc::clone(&self.store), session.clone()));
+        task.await.map_err(|error| {
+            StoreError::Unavailable(format!("credential retirement task failed: {error}"))
+        })?
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
+#[path = "delegation_tests.rs"]
+mod tests;
 
-    use axum::{
-        extract::{Path, State},
-        http::{header::AUTHORIZATION, HeaderMap, StatusCode},
-        routing::{delete, get},
-        Json, Router,
-    };
-    use layer2_core::CredentialSource as _;
-    use tokio::sync::Mutex;
-
-    use super::*;
-    use crate::auth::{
-        keys::{key_name, KeyIssuer},
-        AuthMode, SubjectTokens,
-    };
-
-    #[derive(Clone)]
-    struct Platform {
-        keys: Vec<(String, String)>,
-        deleted: Arc<Mutex<Vec<String>>>,
-    }
-
-    async fn list_keys(
-        State(platform): State<Platform>,
-        headers: HeaderMap,
-    ) -> Json<serde_json::Value> {
-        assert_eq!(
-            headers
-                .get(AUTHORIZATION)
-                .and_then(|value| value.to_str().ok()),
-            Some("Bearer owner-access")
-        );
-        Json(serde_json::json!({
-            "keys": platform
-                .keys
-                .iter()
-                .map(|(id, name)| serde_json::json!({ "id": id, "name": name }))
-                .collect::<Vec<_>>()
-        }))
-    }
-
-    async fn delete_key(
-        State(platform): State<Platform>,
-        Path(id): Path<String>,
-        headers: HeaderMap,
-    ) -> StatusCode {
-        assert_eq!(
-            headers
-                .get(AUTHORIZATION)
-                .and_then(|value| value.to_str().ok()),
-            Some("Bearer owner-access")
-        );
-        platform.deleted.lock().await.push(id);
-        StatusCode::NO_CONTENT
-    }
-
-    async fn platform(
-        keys: Vec<(String, String)>,
-    ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
-        let deleted = Arc::new(Mutex::new(Vec::new()));
-        let state = Platform {
-            keys,
-            deleted: Arc::clone(&deleted),
-        };
-        let app = Router::new()
-            .route("/api/v1/api-keys", get(list_keys))
-            .route("/api/v1/api-keys/{id}", delete(delete_key))
-            .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock identity platform");
-        let base = format!("http://{}", listener.local_addr().expect("mock address"));
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .await
-                .expect("serve mock identity platform");
-        });
-        (base, deleted, server)
-    }
-
-    fn tokens() -> SubjectTokens {
-        SubjectTokens {
-            access_token: "owner-access".into(),
-            refresh_token: None,
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(600),
-        }
-    }
-
-    async fn auth(base: &str) -> Arc<AuthState> {
-        let auth = AuthState::new(
-            AuthMode::Trusted {
-                subject: "local".into(),
-            },
-            None,
-        );
-        auth.use_issuer(Arc::new(KeyIssuer::new(
-            reqwest::Client::new(),
-            base,
-            "production",
-        )))
-        .await;
-        auth
-    }
-
-    #[tokio::test]
-    async fn a_restarted_process_finds_and_revokes_the_ended_sessions_key() {
-        let session = SessionId("sesn_restarted".into());
-        let keys = vec![
-            ("key-for-session".into(), key_name("production", &session)),
-            (
-                "legacy-key-for-session".into(),
-                "chrono-bot:production:sesn_restarted".into(),
-            ),
-            (
-                "key-for-another-session".into(),
-                key_name("production", &SessionId("sesn_other".into())),
-            ),
-            (
-                "key-from-another-deployment".into(),
-                key_name("staging", &session),
-            ),
-        ];
-        let (base, deleted, server) = platform(keys).await;
-        let auth = auth(&base).await;
-        let owner = SubjectId("owner".into());
-        auth.store_tokens(&owner, tokens()).await;
-        assert!(
-            auth.issued.read().await.is_empty(),
-            "this process must never have minted the key it is releasing"
-        );
-
-        auth.release(&session).await;
-
-        assert_eq!(
-            deleted.lock().await.as_slice(),
-            ["key-for-session", "legacy-key-for-session"]
-        );
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn a_release_without_its_owners_token_stays_queued_until_the_token_returns() {
-        let (base, deleted, server) = platform(Vec::new()).await;
-        let auth = auth(&base).await;
-        let session = SessionId("sesn_queued".into());
-        let owner = SubjectId("owner".into());
-        auth.issued.write().await.insert(
-            session.clone(),
-            Issued {
-                id: "queued-key".into(),
-                value: "session-value".into(),
-                owner: owner.clone(),
-                minted_at: std::time::Instant::now(),
-            },
-        );
-
-        auth.release(&session).await;
-
-        assert!(!auth.issued.read().await.contains_key(&session));
-        assert_eq!(auth.superseded.read().await.len(), 1);
-        assert_eq!(auth.take_back_superseded().await, 0);
-        assert_eq!(
-            auth.superseded.read().await.len(),
-            1,
-            "a sweep without the owner token must not forget the queued key"
-        );
-
-        auth.store_tokens(&owner, tokens()).await;
-        assert_eq!(auth.take_back_superseded().await, 1);
-        assert!(auth.superseded.read().await.is_empty());
-        assert_eq!(deleted.lock().await.as_slice(), ["queued-key"]);
-        server.abort();
-    }
-}
+#[cfg(test)]
+#[path = "reclaim_tests.rs"]
+mod reclaim_tests;
