@@ -42,7 +42,14 @@ export async function open({ port, viewport = { width: 1440, height: 900 } }) {
   const browser = await puppeteer.launch({
     executablePath: chrome(),
     headless: 'new',
-    args: ['--no-sandbox', '--disable-gpu'],
+    // The landing character is a real WebGL surface. CI has no hardware GPU,
+    // so Chrome's explicit software backend is the deterministic renderer.
+    args: [
+      '--no-sandbox',
+      '--enable-webgl',
+      '--use-angle=swiftshader',
+      '--enable-unsafe-swiftshader',
+    ],
   });
   const page = await browser.newPage();
   await page.setViewport(viewport);
