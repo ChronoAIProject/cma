@@ -209,23 +209,49 @@ async function sidebarCollapses(page) {
     page.evaluate(() =>
       Math.round(document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0),
     );
-  const toggle = () =>
-    page.evaluate(() => {
-      const button = [...document.querySelectorAll('.sidebar button')].find((candidate) =>
-        candidate.hasAttribute('aria-expanded'),
+  const toggle = async () => {
+    const button = await page.$('.sidebar__toggle');
+    if (button === null) {
+      return false;
+    }
+    await button.click();
+    return true;
+  };
+  const waitForWidth = async (expanded, expected, narrower) => {
+    try {
+      await page.waitForFunction(
+        (nextExpanded, previousWidth, shouldNarrow) => {
+          const sidebar = document.querySelector('.sidebar');
+          const button = document.querySelector('.sidebar__toggle');
+          if (!(sidebar instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) {
+            return false;
+          }
+          const actual = Math.round(sidebar.getBoundingClientRect().width);
+          return (
+            button.getAttribute('aria-expanded') === String(nextExpanded) &&
+            (shouldNarrow ? actual < previousWidth : actual === previousWidth)
+          );
+        },
+        { polling: 'raf', timeout: 5000 },
+        expanded,
+        expected,
+        narrower,
       );
-      button?.click();
-      return button !== undefined;
-    });
+    } catch {
+      // The measured assertion below reports the bounded failure precisely.
+    }
+  };
 
   const before = await width();
   if (!(await toggle())) {
     return ['no control to close the sidebar'];
   }
-  await settle();
+  await waitForWidth(false, before, true);
   const closed = await width();
-  await toggle();
-  await settle();
+  if (!(await toggle())) {
+    return ['no control to reopen the sidebar'];
+  }
+  await waitForWidth(true, before, false);
   const reopened = await width();
 
   const problems = [];
@@ -279,6 +305,148 @@ async function selectingLeavesOperations(page) {
   await settle();
   const stuck = await page.evaluate(() => document.querySelector('[class*="operator"]') !== null);
   return stuck ? ['operations: choosing a session left the operator panel on screen'] : [];
+}
+
+/** The bundled Developer view remains readable and leaves no trap at either layout. */
+async function developerSurface(page) {
+  const problems = [];
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
+  const opened = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('[role^="menuitem"]')].find(
+      (candidate) => candidate.textContent?.trim() === 'Developer',
+    );
+    row?.click();
+    return row !== undefined;
+  });
+  if (!opened) {
+    return ['developer: the account menu offers no Developer action'];
+  }
+  await ready(page, '.developer__article h1', { label: 'the bundled Developer guide' });
+  await settle(250);
+
+  const desktop = await page.evaluate(() => {
+    const surface = document.querySelector('.developer');
+    const nav = document.querySelector('.developer__nav');
+    const reading = document.querySelector('.developer__reading');
+    const preface = document.querySelector('.developer__preface');
+    const article = document.querySelector('.developer__article');
+    if (
+      !(surface instanceof HTMLElement) ||
+      !(nav instanceof HTMLElement) ||
+      !(reading instanceof HTMLElement) ||
+      !(preface instanceof HTMLElement) ||
+      !(article instanceof HTMLElement)
+    ) {
+      return { missing: true };
+    }
+    const navBox = nav.getBoundingClientRect();
+    const readingBox = reading.getBoundingClientRect();
+    const prefaceBox = preface.getBoundingClientRect();
+    const articleBox = article.getBoundingClientRect();
+    return {
+      missing: false,
+      guides: document.querySelectorAll('.developer__document').length,
+      heading: article.querySelector('h1')?.textContent?.trim(),
+      base: preface.querySelector('code')?.textContent?.trim(),
+      origin: window.location.origin,
+      readingWidth: readingBox.width,
+      overlapsAcross: navBox.right > readingBox.left + 1,
+      overlapsDown: prefaceBox.bottom > articleBox.top + 1,
+      horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+    };
+  });
+  if (desktop.missing) {
+    return ['developer: the surface is incomplete'];
+  }
+  if (desktop.guides !== 8) {
+    problems.push(`developer: TypeScript draws ${String(desktop.guides)} guides, expected 8`);
+  }
+  if (desktop.heading !== 'CMA TypeScript SDK') {
+    problems.push(`developer: the first bundled heading is ${String(desktop.heading)}`);
+  }
+  if (desktop.base !== desktop.origin) {
+    problems.push(
+      `developer: API base ${String(desktop.base)} disagrees with ${String(desktop.origin)}`,
+    );
+  }
+  if (Math.abs(desktop.readingWidth - 748) > 1) {
+    problems.push(
+      `developer: the desktop reading axis is ${desktop.readingWidth.toFixed(1)}px, expected 748px`,
+    );
+  }
+  if (desktop.overlapsAcross || desktop.overlapsDown) {
+    problems.push('developer: navigation, preface and article overlap at desktop width');
+  }
+  if (desktop.horizontal) {
+    problems.push('developer: the desktop surface widens the viewport');
+  }
+
+  if (!(await press(page, 'Rust'))) {
+    problems.push('developer: the Rust SDK control is absent');
+  } else {
+    await settle(250);
+    const rustHeading = await page.evaluate(
+      () => document.querySelector('.developer__article h1')?.textContent?.trim() ?? '',
+    );
+    if (rustHeading !== 'CMA Rust SDK') {
+      problems.push(`developer: switching to Rust showed "${rustHeading}"`);
+    }
+  }
+
+  await page.setViewport({ width: 390, height: 844 });
+  await settle(400);
+  const phone = await page.evaluate(() => {
+    const layout = document.querySelector('.developer__layout');
+    const rail = document.querySelector('.developer__rail');
+    const picker = document.querySelector('.developer__picker');
+    if (
+      !(layout instanceof HTMLElement) ||
+      !(rail instanceof HTMLElement) ||
+      !(picker instanceof HTMLElement)
+    ) {
+      return { missing: true };
+    }
+    const box = layout.getBoundingClientRect();
+    return {
+      missing: false,
+      rail: getComputedStyle(rail).display,
+      picker: getComputedStyle(picker).display,
+      offscreen: box.left < -1 || box.right > window.innerWidth + 1,
+      horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+    };
+  });
+  if (phone.missing) {
+    problems.push('developer: the phone document controls are incomplete');
+  } else {
+    if (phone.rail !== 'none' || phone.picker === 'none') {
+      problems.push('developer: the phone layout does not replace the rail with its selector');
+    }
+    if (phone.offscreen || phone.horizontal) {
+      problems.push('developer: the phone surface widens or leaves the viewport');
+    }
+  }
+
+  await page.setViewport({ width: 1440, height: 900 });
+  await settle(400);
+  const picked = await page.evaluate(() => {
+    const row = document.querySelector('.row-item');
+    row?.click();
+    return row !== null;
+  });
+  if (!picked) {
+    problems.push('developer: no session row remains available beside the surface');
+  } else {
+    await settle(250);
+    const stuck = await page.evaluate(() => document.querySelector('.developer') !== null);
+    if (stuck) {
+      problems.push('developer: choosing a session left Developer on screen');
+    }
+  }
+  return problems;
 }
 
 /**
@@ -418,6 +586,7 @@ async function main() {
       ...(await pickerReachable(page)),
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
+      ...(await developerSurface(page)),
       ...(await everyMenuLands(page)),
       ...(await accountMenuReads(page)),
     ];
@@ -431,8 +600,8 @@ async function main() {
       return;
     }
     console.log(
-      'signed-in surfaces: the picker, the sidebar toggle and the view switch all act, ' +
-        'and every menu lands inside the window',
+      'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
+        'Developer fits both layouts, and every menu lands inside the window',
     );
   } finally {
     await close();
