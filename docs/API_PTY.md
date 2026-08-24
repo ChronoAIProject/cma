@@ -240,7 +240,7 @@ On every other interface, CMA intercepts a permission request and applies policy
 
 That is inherent to relaying a real terminal, not an oversight. Two consequences:
 
-- A session whose policy requires server-side approval should not be attachable over PTY. Enforce it at attach time, not in documentation.
+- Server-side approvals exist only on the conversation plane. The two planes are exclusive by construction, so a session whose policy is enforced by control-plane approval never holds the `terminal` capability. The terminal-capability gate refuses its PTY attachment by name as `capability_unsupported`, both at ticket issuance and when either attach path reaches the core. On the terminal plane, the session's permission mode is delivered into the kernel's own configuration and the owner answers the kernel's prompt in-TUI; ownership is required for every attachment, so nobody else can answer it.
 - A client holding a PTY attachment can type anything the kernel accepts, including shell escapes. The sandbox boundary is the only boundary. Treat PTY attachment as equivalent to shell access to that session's sandbox.
 
 ---
