@@ -10,7 +10,9 @@ use std::sync::Arc;
 use crate::attach::AttachmentClaim;
 use crate::error::CoreError;
 use crate::terminal::TerminalGeometry;
-use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{
+    await_settled, service, service_on_version, spec, user, write_screen, FakeAdapter, FakeStore,
+};
 
 /// A service with one running session, and its owner.
 async fn attached_session() -> (
@@ -26,6 +28,126 @@ async fn attached_session() -> (
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
     (svc, alice, created.id)
+}
+
+#[tokio::test]
+async fn a_session_without_a_terminal_is_refused_before_readoption_or_logging() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    });
+    let svc = service(Arc::clone(&store), adapter);
+    let alice = user("alice");
+    let created = svc
+        .create_session(
+            &alice,
+            crate::session::SessionSpec {
+                requested_mode: Some(crate::options::SessionMode::Conversation),
+                ..spec()
+            },
+        )
+        .await
+        .expect("conversation session created");
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert!(!settled.capabilities.terminal);
+
+    // Model a fresh control-plane process: the durable session and its runtime
+    // survive, but this process has not adopted an in-memory entry for it.
+    svc.entries.write().await.remove(&created.id);
+    let events_before = svc
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("history readable")
+        .len();
+
+    assert_eq!(
+        svc.attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err(),
+        Some(CoreError::CapabilityUnsupported("terminal".into()))
+    );
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "a refused attachment must not readopt a runtime entry"
+    );
+
+    let events = svc
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("history readable");
+    assert_eq!(
+        events.len(),
+        events_before,
+        "refusing an attachment must not change the durable log"
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event.kind, crate::event::EventKind::TerminalAttached)),
+        "a refused attachment must never be recorded as attached"
+    );
+}
+
+#[tokio::test]
+async fn the_live_grant_is_rechecked_before_the_attachment_is_mutated() {
+    let (svc, alice, id) = attached_session().await;
+    {
+        // This is the state attach can meet when it read the durable terminal
+        // grant just before a concurrent plane change replaced the live entry.
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&id).expect("session is live");
+        entry.session.capabilities.terminal = false;
+        entry.session.capabilities.conversation = true;
+    }
+    let requested = TerminalGeometry::new(101, 37).expect("valid geometry");
+
+    assert_eq!(
+        svc.attach_terminal(&alice, &id, requested, AttachmentClaim::Exclusive)
+            .await
+            .err(),
+        Some(CoreError::CapabilityUnsupported("terminal".into()))
+    );
+
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&id).expect("session remains live");
+    assert_eq!(entry.session.geometry, TerminalGeometry::default());
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    assert!(
+        entry
+            .events
+            .iter()
+            .all(|event| !matches!(event.kind, crate::event::EventKind::TerminalAttached)),
+        "the repeated gate must run before attachment state or events change"
+    );
+}
+
+#[tokio::test]
+async fn a_terminal_attachment_carries_its_repaint_and_requested_geometry() {
+    let store = Arc::new(FakeStore::default());
+    let svc = service_on_version(store, Arc::new(FakeAdapter::default()), "runtime:test");
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    write_screen(&svc, &created.id, b"work already on screen\r\n").await;
+    let geometry = TerminalGeometry::new(132, 43).expect("valid geometry");
+
+    let attachment = svc
+        .attach_terminal(&alice, &created.id, geometry, AttachmentClaim::Exclusive)
+        .await
+        .expect("terminal session attaches");
+
+    assert_eq!(attachment.geometry, geometry);
+    assert_eq!(attachment.repaint, b"work already on screen\r\n");
 }
 
 #[tokio::test]
