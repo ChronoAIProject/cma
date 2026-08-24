@@ -42,9 +42,133 @@ const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
 
 #[derive(Default)]
 struct MemorySessions {
-    records: Mutex<HashMap<String, SessionRecord>>,
-    events: Mutex<Vec<Event>>,
+    state: Mutex<MemorySessionState>,
     fail_lists: AtomicBool,
+}
+
+#[derive(Default)]
+struct MemorySessionState {
+    records: HashMap<String, SessionRecord>,
+    events: Vec<Event>,
+    receipts: HashMap<String, (SessionId, u64)>,
+}
+
+impl MemorySessionState {
+    fn event_tail(&self, id: &SessionId) -> u64 {
+        self.events
+            .iter()
+            .filter(|event| &event.session_id == id)
+            .map(|event| event.seq)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn validate_append(
+        &self,
+        id: &SessionId,
+        events: &[Event],
+        recorded_tail: u64,
+    ) -> Result<u64, StoreError> {
+        let mut expected = self.event_tail(id).max(recorded_tail);
+        for event in events {
+            if &event.session_id != id {
+                return Err(StoreError::Malformed(
+                    "one event append batch named more than one session".into(),
+                ));
+            }
+            expected = expected.checked_add(1).ok_or_else(|| {
+                StoreError::Malformed(format!("event sequence overflow for {id}"))
+            })?;
+            if event.seq < expected {
+                return Err(StoreError::SequenceTaken {
+                    expected,
+                    got: event.seq,
+                });
+            }
+            if event.seq > expected {
+                return Err(StoreError::NonContiguousAppend {
+                    expected,
+                    got: event.seq,
+                });
+            }
+        }
+        Ok(expected)
+    }
+
+    fn commit(
+        &mut self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+        create: bool,
+    ) -> Result<u64, StoreError> {
+        if let Some((held_by, revision)) = self.receipts.get(write_id) {
+            if held_by != &record.session.id {
+                return Err(StoreError::Malformed(format!(
+                    "session write ID {write_id} belongs to another session"
+                )));
+            }
+            return Ok(*revision);
+        }
+
+        let existing = self.records.get(&record.session.id.0);
+        let exists = existing.is_some();
+        let actual = existing.map_or(0, |stored| stored.revision);
+        let recorded_tail = existing.map_or(0, |stored| stored.session.last_seq);
+        let revives_terminal = existing.is_some_and(|stored| {
+            stored.session.status.is_terminal() && !record.session.status.is_terminal()
+        });
+        if create {
+            if record.revision != 0 || exists {
+                return Err(StoreError::RevisionConflict {
+                    expected: 0,
+                    actual,
+                });
+            }
+        } else {
+            if !exists {
+                return Err(StoreError::SessionDeleted {
+                    id: record.session.id.clone(),
+                });
+            }
+            if record.revision != actual {
+                return Err(StoreError::RevisionConflict {
+                    expected: record.revision,
+                    actual,
+                });
+            }
+            if revives_terminal {
+                return Err(StoreError::SessionTerminated {
+                    id: record.session.id.clone(),
+                });
+            }
+        }
+
+        let durable_tail = self.validate_append(&record.session.id, events, recorded_tail)?;
+        let tail_matches = if events.is_empty() {
+            record.session.last_seq <= durable_tail
+        } else {
+            record.session.last_seq == durable_tail
+        };
+        if !tail_matches {
+            return Err(StoreError::Malformed(format!(
+                "session {} record tail {} does not match durable tail {}",
+                record.session.id, record.session.last_seq, durable_tail
+            )));
+        }
+
+        let revision = actual
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        let mut durable = record.clone();
+        durable.revision = revision;
+        durable.session.last_seq = durable_tail;
+        self.events.extend_from_slice(events);
+        self.records.insert(record.session.id.0.clone(), durable);
+        self.receipts
+            .insert(write_id.to_string(), (record.session.id.clone(), revision));
+        Ok(revision)
+    }
 }
 
 #[async_trait::async_trait]
@@ -54,15 +178,16 @@ impl SessionStore for MemorySessions {
     }
 
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.records
+        self.state
             .lock()
             .await
+            .records
             .insert(record.session.id.0.clone(), record.clone());
         Ok(())
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        Ok(self.records.lock().await.get(&id.0).cloned())
+        Ok(self.state.lock().await.records.get(&id.0).cloned())
     }
 
     async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
@@ -70,9 +195,10 @@ impl SessionStore for MemorySessions {
             return Err(StoreError::Unavailable("test store is down".into()));
         }
         Ok(self
-            .records
+            .state
             .lock()
             .await
+            .records
             .values()
             .filter(|record| &record.session.owner == owner)
             .cloned()
@@ -81,7 +207,7 @@ impl SessionStore for MemorySessions {
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         let mut reserved = Reserved::default();
-        for record in self.records.lock().await.values() {
+        for record in self.state.lock().await.records.values() {
             if record.session.status.wants_runtime() {
                 reserved.include(record.session.options.size);
             }
@@ -93,21 +219,57 @@ impl SessionStore for MemorySessions {
         if self.fail_lists.load(Ordering::SeqCst) {
             return Err(StoreError::Unavailable("test store is down".into()));
         }
-        Ok(self.records.lock().await.values().cloned().collect())
+        Ok(self.state.lock().await.records.values().cloned().collect())
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
-        self.records.lock().await.remove(&id.0);
-        self.events
-            .lock()
-            .await
-            .retain(|event| &event.session_id != id);
+        let mut state = self.state.lock().await;
+        state.records.remove(&id.0);
+        state.events.retain(|event| &event.session_id != id);
+        state.receipts.retain(|_, (session_id, _)| session_id != id);
         Ok(())
     }
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
-        self.events.lock().await.extend_from_slice(events);
+        let Some(first) = events.first() else {
+            return Ok(());
+        };
+        let mut state = self.state.lock().await;
+        let recorded_tail = state
+            .records
+            .get(&first.session_id.0)
+            .map_or(0, |record| record.session.last_seq);
+        state.validate_append(&first.session_id, events, recorded_tail)?;
+        state.events.extend_from_slice(events);
         Ok(())
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.state
+            .lock()
+            .await
+            .commit(write_id, record, events, false)
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.state
+            .lock()
+            .await
+            .commit(write_id, record, events, true)
+    }
+
+    async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {
+        Ok(self.state.lock().await.event_tail(id))
     }
 
     async fn events_since(
@@ -116,9 +278,10 @@ impl SessionStore for MemorySessions {
         after: u64,
     ) -> Result<Vec<StoredEvent>, StoreError> {
         let mut events: Vec<_> = self
-            .events
+            .state
             .lock()
             .await
+            .events
             .iter()
             .filter(|event| &event.session_id == id && event.seq > after)
             .cloned()

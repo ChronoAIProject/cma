@@ -302,11 +302,10 @@ impl SessionService {
         // appended against it, and a session being carried between runtimes
         // has had its version and rotation count written. Anything not read
         // back here is silently reverted by the next flush.
-        let (mut seeded, context_ref) = match self.store.get(&id).await {
-            Ok(Some(record)) => (record.session, record.context_ref),
-            _ => (session.clone(), None),
+        let restore_context_ref = match self.store.get(&id).await {
+            Ok(Some(record)) => record.context_ref,
+            _ => None,
         };
-        seeded.geometry = geometry;
 
         // Built for either plane, and fed only by the terminal. A conversation
         // session never writes to it — the honest shape would be one entry per
@@ -322,7 +321,7 @@ impl SessionService {
          * way; not reading it here was the whole of the difference.
          */
         let restored = self
-            .stored_transcript(context_ref.as_deref())
+            .stored_transcript(restore_context_ref.as_deref())
             .await
             .unwrap_or_default();
         if !restored.is_empty() {
@@ -339,12 +338,54 @@ impl SessionService {
             None => (None, None),
         };
 
+        // Preparing a runtime takes long enough for its owner to stop, end, or
+        // delete the session meanwhile. The store is the authority at the
+        // installation boundary: publishing a live entry from the snapshot
+        // passed to this task would otherwise revive a session after the
+        // lifecycle operation had completed.
+        let installation_gate = self.lifecycle_gates.gate(&id);
+        let installation = installation_gate.lock().await;
+        let current = match self.store.get(&id).await {
+            Ok(Some(record))
+                if record.session.status.wants_runtime()
+                    && record.session.kernel == session.kernel
+                    && record.runtime_id.as_deref() == Some(handle.0.as_str()) =>
+            {
+                record
+            }
+            Ok(current) => {
+                drop(installation);
+                if let Err(error) = adapter.terminate(&handle).await {
+                    tracing::warn!(session_id = %id, %error, "could not tear down a superseded runtime");
+                }
+                if let Some(mut record) = current {
+                    if record.runtime_id.as_deref() == Some(handle.0.as_str()) {
+                        record.runtime_id = None;
+                        if let Err(error) = self.persist_durably(&mut record, Vec::new()).await {
+                            tracing::warn!(session_id = %id, %error, "could not clear a superseded runtime reference");
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                drop(installation);
+                return Err(StartFailure::transient(format!(
+                    "the session could not be checked before its runtime was installed: {error}"
+                )));
+            }
+        };
+        let mut seeded = current.session;
+        seeded.geometry = geometry;
+        let context_ref = current.context_ref;
+        let revision = current.revision;
+        let event_log = self.event_logs.lane(&id);
+        event_log.observe_revision(revision);
         let mut entry = SessionEntry {
             session: seeded,
-            sequences: Arc::clone(&self.sequences),
+            event_log,
             subject_credential: spec.runtime_credential.clone(),
             environment_values,
-            events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
             input: terminal_input.clone(),
@@ -378,6 +419,7 @@ impl SessionService {
             },
         );
         self.entries.write().await.insert(id.clone(), entry);
+        drop(installation);
         crate::resources::spawn_resource_watch(
             Arc::clone(self),
             id.clone(),

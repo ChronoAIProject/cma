@@ -32,6 +32,14 @@ pub struct SessionRecord {
     pub runtime_id: Option<String>,
     /// Where this session's accumulated agent context is stored, if any.
     pub context_ref: Option<String>,
+    /// Store-owned optimistic revision.
+    ///
+    /// Zero means the record has not been created yet. Stores increment this
+    /// after every atomic record/event commit. It is deliberately absent from
+    /// the public `Session`: callers do not choose or observe persistence
+    /// concurrency tokens.
+    #[doc(hidden)]
+    pub revision: u64,
 }
 
 impl SessionRecord {
@@ -41,12 +49,13 @@ impl SessionRecord {
             session,
             runtime_id: None,
             context_ref: None,
+            revision: 0,
         }
     }
 }
 
 /// Failures a store may report.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum StoreError {
     /// The store could not be reached.
     #[error("store unavailable: {0}")]
@@ -54,7 +63,7 @@ pub enum StoreError {
     /// The stored data did not match what the core expects.
     #[error("stored data not usable: {0}")]
     Malformed(String),
-    /// A batch claimed a sequence the session already has.
+    /// A batch begins at or below the session's durable tail.
     ///
     /// Named rather than folded into `Unavailable` because the two call for
     /// opposite responses: a store that is down is retried unchanged, and a
@@ -62,15 +71,48 @@ pub enum StoreError {
     /// A caller that cannot tell them apart does neither, which is how a turn's
     /// events came to be dropped with nothing but a log line to say so.
     ///
-    /// `written` is how many of the batch the store accepted before the
-    /// collision. A caller re-numbering the remainder must skip those, or it
-    /// writes them a second time under a sequence nothing rejects.
-    #[error("sequence already taken: {written} of {total} events written")]
+    /// Event appends are atomic, so this error never means a prefix was
+    /// accepted. `expected` is the next durable position and `got` is the
+    /// already-held position at the start of the refused batch.
+    #[error("sequence already taken: expected {expected}, got {got}")]
     SequenceTaken {
-        /// Events accepted before the collision.
-        written: usize,
-        /// Events in the batch.
-        total: usize,
+        /// The next sequence the durable log can accept.
+        expected: u64,
+        /// The first sequence claimed by the refused batch.
+        got: u64,
+    },
+    /// A batch would leave an unreadable hole in a session's event sequence.
+    ///
+    /// Separate from a sequence already taken: nothing in this batch was
+    /// accepted, and the missing lower sequence may still be in flight from
+    /// another control-plane process. The caller may retry the batch unchanged;
+    /// moving it higher would preserve the hole this error exists to expose.
+    #[error("non-contiguous append: expected sequence {expected}, got {got}")]
+    NonContiguousAppend {
+        /// The next sequence the durable log can accept.
+        expected: u64,
+        /// The first sequence that would skip it.
+        got: u64,
+    },
+    /// An update named a session which no longer exists durably.
+    #[error("session {id} no longer exists")]
+    SessionDeleted {
+        /// The deleted session.
+        id: SessionId,
+    },
+    /// An ordinary update attempted to return a terminated session to service.
+    #[error("session {id} is terminated")]
+    SessionTerminated {
+        /// The terminated session.
+        id: SessionId,
+    },
+    /// Another durable writer changed the record after this writer read it.
+    #[error("session revision changed: expected {expected}, found {actual}")]
+    RevisionConflict {
+        /// Revision carried by the refused writer.
+        expected: u64,
+        /// Revision currently durable.
+        actual: u64,
     },
 }
 
@@ -129,7 +171,10 @@ pub trait SessionStore: Send + Sync {
     /// Append durable events.
     ///
     /// Sequence numbers are allocated by the caller and are monotonic per
-    /// session, so a store must preserve them rather than assign its own.
+    /// session, so a store must preserve them rather than assign its own. A
+    /// batch may become readable only when its first sequence follows the
+    /// session's durable tail and every sequence inside it is contiguous.
+    /// The append is atomic: a refusal commits no prefix of the batch.
     ///
     /// **A sequence a session already has must be refused**, and refused as
     /// `SequenceTaken` rather than as a general failure. The core allocates,
@@ -137,7 +182,69 @@ pub trait SessionStore: Send + Sync {
     /// the store is the only place the clash is visible. A store that accepts
     /// a duplicate leaves two events answering to one cursor, and the client
     /// reading history sees one of them.
+    ///
+    /// **A batch that skips the next durable sequence must be refused** as
+    /// `NonContiguousAppend`. A reader advances its cursor to every event it
+    /// sees, so accepting a higher sequence while a lower batch is in flight
+    /// makes that lower event permanently invisible to that reader.
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError>;
+
+    /// Atomically replace a session record and append its state-change events.
+    ///
+    /// The record and batch must either both become durable or neither may.
+    /// In particular, `record.session.last_seq` must never become visible ahead
+    /// of the events that establish that position. The same collision and
+    /// contiguity contract as `append_events` applies.
+    ///
+    /// `write_id` identifies the whole atomic unit, including an empty event
+    /// batch. Retrying a committed ID must return its resulting revision
+    /// without applying the record again. That distinction matters when a
+    /// later record-only writer has already committed.
+    ///
+    /// A store upgrading data written by the former two-step contract must
+    /// treat the greater of the physical event tail and the record's advertised
+    /// `last_seq` as the durable sequence floor. Already-advertised missing
+    /// positions cannot safely be reused, because a client may already hold
+    /// that cursor. A record-only update may preserve a higher physical tail,
+    /// but may not introduce a higher tail of its own.
+    ///
+    /// Termination is irreversible. An update may keep a terminated record
+    /// terminated while clearing durable references, but must refuse any
+    /// transition from a durable terminal status back to a live status as
+    /// [`StoreError::SessionTerminated`].
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError>;
+
+    /// Atomically create a session and its initial events.
+    ///
+    /// Separate from update so a stale writer can never recreate a session
+    /// another replica deleted. A create requires revision zero; an update
+    /// requires the named durable revision and must never upsert.
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError>;
+
+    /// The highest sequence currently durable for a session, or zero.
+    ///
+    /// Implementations may override this with an indexed tail query. The
+    /// default is intentionally based on events, never on `Session.last_seq`:
+    /// a whole-record write may legitimately lag the event log.
+    async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {
+        Ok(self
+            .events_since(id, 0)
+            .await?
+            .into_iter()
+            .map(|event| event.seq)
+            .max()
+            .unwrap_or(0))
+    }
 
     /// Events after a cursor, in sequence order.
     async fn events_since(
