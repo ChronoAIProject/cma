@@ -109,6 +109,7 @@ pub(super) fn project_reading(
         // A gauge is liveness, not a position in the durable log. Giving it a
         // sequence would make a reconnect resume from a cursor the log lacks.
         seq: None,
+        live: true,
     }
 }
 

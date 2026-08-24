@@ -53,7 +53,7 @@ A run is one request. The response is an SSE stream of AG-UI events that ends wh
 
 `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>` is the same events, read rather than driven: a session's whole history and then everything after it, projected identically and never ending on its own. It is what §7 means by recovering a dropped stream, and it exists because §7 used to send clients to `/api/v1/sessions/{id}/events` — a REST route, which answers in the core's vocabulary and not this one. A client that followed that advice received frames it could not read.
 
-**The sequence rides as the SSE `id`, not in the body.** A client resumes by handing back the last id it saw, and deduplicates on it. It is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
+**The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
 ### Running a turn
 
@@ -139,7 +139,7 @@ Liveness attaches when the session is running. A stream opened before that — w
 
 ### The run stream has two lanes, and one of them is not history
 
-Everything above is the **durable** lane: projected from the log, carrying an SSE `id`, and what a client resumes from.
+Everything above is the **durable** lane: projected from the log, with each projection's final frame carrying the SSE `id` a client resumes from. A leading frame without an id remains durable and does not carry `cma:live`.
 
 The run stream also carries a **live** lane — what is happening right now. Those frames are marked and carry **no `id` at all**:
 
@@ -388,7 +388,8 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Tolerate unknown events.** The emitted set grows additively; a client that throws on an unrecognised type will break on a routine release.
 - **Do not treat `RUN_FINISHED` as "session over."** Check `outcome`. An interrupt outcome means the session is alive and waiting for you.
 - **A dropped stream is not a cancellation.** The turn keeps running. Recover by reading the log, not by re-posting the run — and if you meant to stop it, say so with the interrupt route (§5).
-- **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the SSE `id`; it is not in the body.
+- **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the last SSE `id`; it is not in the body.
+- **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Leading `TEXT_MESSAGE_*` or `TOOL_CALL_*` frames may therefore repeat after resume; deduplicate and upsert them by `messageId` or `toolCallId`. Do not advance the stored cursor for an unnumbered frame, and do not mistake one for `cma:live` — that marker is reserved for the non-durable lane described in §3.
 - **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
 
 ---
