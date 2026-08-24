@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ProtocolError, TransportError } from '@chronoai/cma-sdk';
 import { ApiError, followSession, listKernels, toSession } from './client';
 
 /**
@@ -54,10 +55,11 @@ describe('toSession', () => {
     }
   });
 
-  it('rejects a status the frontend does not model', () => {
-    // Coercing this would render a session in a state the control plane never
-    // reported, which is worse than refusing to render it.
-    expect(() => toSession({ ...valid, status: 'exploded' })).toThrow(ApiError);
+  it('preserves a status the frontend does not model', () => {
+    const session = toSession({ ...valid, status: 'exploded' });
+
+    expect(session.lifecycle).toBe('unknown');
+    expect(session.reportedStatus).toBe('exploded');
   });
 
   it('keeps a session on a runtime this build has never heard of', () => {
@@ -73,13 +75,13 @@ describe('toSession', () => {
 
   it('still refuses a session that names no runtime at all', () => {
     // Absent is not unfamiliar: nothing can be drawn for it.
-    expect(() => toSession({ ...valid, kernel: '' })).toThrow(ApiError);
-    expect(() => toSession({ ...valid, kernel: undefined })).toThrow(ApiError);
+    expect(() => toSession({ ...valid, kernel: '' })).toThrow(ProtocolError);
+    expect(() => toSession({ ...valid, kernel: undefined })).toThrow(ProtocolError);
   });
 
   it('rejects a payload with no id', () => {
-    expect(() => toSession({ ...valid, id: '' })).toThrow(ApiError);
-    expect(() => toSession({ ...valid, id: undefined })).toThrow(ApiError);
+    expect(() => toSession({ ...valid, id: '' })).toThrow(ProtocolError);
+    expect(() => toSession({ ...valid, id: undefined })).toThrow(ProtocolError);
   });
 
   it('falls back to now when the timestamp is unusable', () => {
@@ -96,7 +98,7 @@ describe('ApiError', () => {
     // the other is something to report.
     expect(new ApiError(401, 'nope').isUnauthenticated).toBe(true);
     expect(new ApiError(500, 'boom').isUnauthenticated).toBe(false);
-    expect(new ApiError(0, 'offline').isUnauthenticated).toBe(false);
+    expect(new TransportError('offline')).toBeInstanceOf(TransportError);
   });
 });
 
@@ -168,11 +170,12 @@ describe('listKernels', () => {
   function answer(body: unknown): void {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve(body),
-      } as unknown as Response),
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
     );
   }
 
@@ -209,13 +212,13 @@ describe('listKernels', () => {
   it('fails visibly on a runtime with no identifier', async () => {
     answer({ kernels: [{ modes: ['terminal'] }] });
 
-    await expect(listKernels()).rejects.toBeInstanceOf(ApiError);
+    await expect(listKernels()).rejects.toBeInstanceOf(ProtocolError);
   });
 
   it('fails visibly when the answer is not a list', async () => {
     answer({ kernels: 'codex' });
 
-    await expect(listKernels()).rejects.toBeInstanceOf(ApiError);
+    await expect(listKernels()).rejects.toBeInstanceOf(ProtocolError);
   });
 });
 
@@ -233,45 +236,73 @@ describe('listKernels', () => {
  */
 describe('followSession and the sign-in frame', () => {
   class Stream {
-    static readonly CLOSED = 2;
-    static last: Stream | null = null;
-    readyState = 1;
-    onmessage: ((e: MessageEvent) => void) | null = null;
-    onerror: (() => void) | null = null;
-    constructor(readonly url: string) {
-      Stream.last = this;
+    readonly #encoder = new TextEncoder();
+    readonly #controller: ReadableStreamDefaultController<Uint8Array>;
+    readonly response: Response;
+    #sequence = 0;
+
+    constructor() {
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      });
+      if (controller === undefined) {
+        throw new Error('the response stream was not initialised');
+      }
+      this.#controller = controller;
+      this.response = new Response(body, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
     }
+
     deliver(event: unknown): void {
-      this.onmessage?.({ data: JSON.stringify({ seq: 7, event }) } as MessageEvent);
+      this.#sequence += 1;
+      const data = JSON.stringify({ seq: this.#sequence, session_id: 'sesn_abc', event });
+      this.#controller.enqueue(
+        this.#encoder.encode(`id: ${String(this.#sequence)}\ndata: ${data}\n\n`),
+      );
     }
-    close(): void {
-      this.readyState = Stream.CLOSED;
+
+    abort(): void {
+      try {
+        this.#controller.error(new DOMException('aborted', 'AbortError'));
+      } catch {
+        // The stream was already closed by the parser or an earlier abort.
+      }
     }
   }
 
   function following() {
-    vi.stubGlobal('EventSource', Stream);
+    const stream = new Stream();
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+        init?.signal?.addEventListener('abort', () => stream.abort(), { once: true });
+        return Promise.resolve(stream.response);
+      });
+    vi.stubGlobal('fetch', fetchMock);
     const signIns: unknown[] = [];
+    const statuses: unknown[] = [];
+    const stages: unknown[] = [];
+    const errors: string[] = [];
     const stop = followSession(
       'sesn_abc',
-      () => {},
-      () => {},
-      undefined,
+      (status, detail) => statuses.push({ status, detail }),
+      (message) => errors.push(message),
+      (stage) => stages.push(stage),
       (signIn) => signIns.push(signIn),
     );
-    const stream = Stream.last;
-    if (stream === null) {
-      throw new Error('the stream was never opened');
-    }
-    return { stream, signIns, stop };
+    return { errors, fetchMock, signIns, stages, statuses, stop, stream };
   }
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    Stream.last = null;
   });
 
-  it('reports the address and the code its owner has to enter', () => {
+  it('reports the address and the code its owner has to enter', async () => {
     const { stream, signIns, stop } = following();
 
     stream.deliver({
@@ -280,6 +311,7 @@ describe('followSession and the sign-in frame', () => {
       code: 'WDJB-MJHT',
       message: 'Sign in to continue',
     });
+    await vi.waitFor(() => expect(signIns).toHaveLength(1));
     stop();
 
     expect(signIns).toEqual([
@@ -291,12 +323,13 @@ describe('followSession and the sign-in frame', () => {
     ]);
   });
 
-  it('reports a request that carries no code, since the address is the whole of it', () => {
+  it('reports a request that carries no code, since the address is the whole of it', async () => {
     // Not every device flow shows a code on the asking end, and refusing the
     // request for want of one would leave the session waiting on nothing.
     const { stream, signIns, stop } = following();
 
     stream.deliver({ type: 'sign_in_required', url: 'https://auth.example.test/device' });
+    await vi.waitFor(() => expect(signIns).toHaveLength(1));
     stop();
 
     expect(signIns).toEqual([
@@ -304,17 +337,18 @@ describe('followSession and the sign-in frame', () => {
     ]);
   });
 
-  it('ignores a request with no address, which nobody could act on', () => {
-    const { stream, signIns, stop } = following();
+  it('reports a malformed request with no address', async () => {
+    const { errors, stream, signIns, stop } = following();
 
     stream.deliver({ type: 'sign_in_required', code: 'WDJB-MJHT' });
-    stream.deliver({ type: 'sign_in_required', url: '', code: 'WDJB-MJHT' });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
     stop();
 
     expect(signIns).toEqual([]);
+    expect(errors[0]).toMatch(/sign_in_required url/i);
   });
 
-  it('reports the frame production actually sends, with a null code', () => {
+  it('reports the frame production actually sends, with a null code', async () => {
     /*
      * Copied from a production session's durable log. Codex declares no
      * separate code and puts it inside the sentence, so the field arrives as
@@ -329,6 +363,7 @@ describe('followSession and the sign-in frame', () => {
       code: null,
       message: 'Sign in to ChatGPT and enter this code: 1YF1-RUC10',
     });
+    await vi.waitFor(() => expect(signIns).toHaveLength(1));
     stop();
 
     expect(signIns).toEqual([
@@ -340,23 +375,37 @@ describe('followSession and the sign-in frame', () => {
     ]);
   });
 
-  it('treats an empty code as no code rather than as a code', () => {
+  it('treats an empty code as no code rather than as a code', async () => {
     // An empty string draws the same empty block a null did.
     const { stream, signIns, stop } = following();
 
     stream.deliver({ type: 'sign_in_required', url: 'https://auth.example.test/device', code: '' });
+    await vi.waitFor(() => expect(signIns).toHaveLength(1));
     stop();
 
     expect(signIns[0]).toMatchObject({ code: undefined });
   });
 
-  it('leaves every other frame alone', () => {
-    const { stream, signIns, stop } = following();
+  it('projects progress and lifecycle frames without inventing a sign-in', async () => {
+    const { stream, signIns, stages, statuses, stop } = following();
 
     stream.deliver({ type: 'progress', stage: 'attaching' });
     stream.deliver({ type: 'status_changed', status: 'ready' });
+    await vi.waitFor(() => expect(statuses).toHaveLength(1));
     stop();
 
     expect(signIns).toEqual([]);
+    expect(stages).toEqual(['attaching']);
+    expect(statuses).toEqual([{ status: 'ready', detail: undefined }]);
+  });
+
+  it('aborts the SDK stream without reporting cancellation as a failure', async () => {
+    const { errors, fetchMock, stop } = following();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    stop();
+    await Promise.resolve();
+
+    expect(errors).toEqual([]);
   });
 });

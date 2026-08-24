@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
+import { AguiConnection, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 import { Context } from './Context';
 import { MessageStream } from './MessageStream';
-import { fold } from './conversation';
+import { fold } from '@chronoai/cma-sdk';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 

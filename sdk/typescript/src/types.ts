@@ -8,7 +8,7 @@
  * is drawn with stay in `sessions/` where the drawing is.
  */
 
-import type { SessionCapabilities } from '../agui';
+import type { SessionCapabilities } from './agui/index.js';
 
 /**
  * Lifecycle: provisioning -> ready -> running <-> idle -> terminated.
@@ -19,16 +19,43 @@ import type { SessionCapabilities } from '../agui';
  * the owner acts on.
  */
 export type SessionLifecycle =
-  'provisioning' | 'ready' | 'running' | 'rotating' | 'idle' | 'terminated';
+  'provisioning' | 'ready' | 'running' | 'rotating' | 'idle' | 'terminated' | 'unknown';
 
 /**
  * Why a session stopped, where the control plane says.
  *
- * Only `error` is distinguished here, because it is the only one that changes
- * what the interface should do: a session that failed stays visible so its
- * owner can find out why.
+ * `requires_action` is explicitly non-terminal: the runtime is waiting for an
+ * approval or tool result. Known reasons remain distinct because revoked
+ * access, a budget ceiling, and ordinary completion require different caller
+ * behavior. A future word becomes `other` rather than breaking the read.
  */
-export type StopReason = 'error' | 'other';
+export type StopReason =
+  | 'end_turn'
+  | 'user_terminated'
+  | 'idle_timeout'
+  | 'lifetime_cap'
+  | 'requires_action'
+  | 'revoked'
+  | 'budget_reached'
+  | 'error'
+  | 'other';
+
+/**
+ * Operational health beside lifecycle state.
+ *
+ * `recovering`, `degraded`, and the server's own `unknown` are not session
+ * failures. Future values cross intact: coercing one to `unknown` would invent
+ * the server's specific meaning, "the runtime cannot currently be observed."
+ */
+export type RecoveryState =
+  | 'normal'
+  | 'idle'
+  | 'recovering'
+  | 'degraded'
+  | 'unknown'
+  | 'retired'
+  | 'invalid'
+  | (string & Record<never, never>);
 
 /**
  * The two planes a session can be reached on.
@@ -94,10 +121,19 @@ export interface Session {
   readonly id: string;
   readonly kernel: Kernel;
   readonly lifecycle: SessionLifecycle;
+  /** Raw status from a newer server when `lifecycle` is `unknown`. */
+  readonly reportedStatus?: string;
+  /** Operational health, kept separate from lifecycle and failure. */
+  readonly recoveryState?: RecoveryState;
   /** Epoch ms the session was created, for the tab's age readout. */
   readonly createdAt: number;
   /** Why it stopped, when it has. */
   readonly stopReason?: StopReason;
+  /** Highest durable sequence and the starting point for a resumed stream. */
+  readonly lastSeq?: number;
+  /** Terminal geometry when the service reports it. */
+  readonly cols?: number;
+  readonly rows?: number;
   /** Which runtime version is serving it. */
   readonly runtimeVersion?: string;
   /** How many times it has been moved onto a newer runtime. */
@@ -179,6 +215,12 @@ export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'x_high';
  */
 export type CredentialMode = 'delegated' | 'own';
 
+/** Runtime reservation fixed for a session's life. */
+export interface SessionSize {
+  readonly cpuMillis: number;
+  readonly memoryMib: number;
+}
+
 /**
  * What a session's agent was configured with, settled when it was created.
  *
@@ -192,6 +234,8 @@ export interface SessionAgent {
   readonly permission?: PermissionMode;
   readonly reasoningEffort?: ReasoningEffort;
   readonly credential?: CredentialMode;
+  /** Runtime reservation, when the session record carries one. */
+  readonly size?: SessionSize;
   /**
    * The skills this session was given.
    *

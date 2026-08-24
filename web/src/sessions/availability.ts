@@ -154,6 +154,16 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
             ? 'This session ended because it failed.'
             : 'This session has ended.',
       };
+    case 'unknown':
+      return {
+        interactive: false,
+        canReconnect: false,
+        canStop: false,
+        canRevive: false,
+        canDelete: false,
+        listed: true,
+        reason: 'This session is in an unrecognised state.',
+      };
     default: {
       // Exhaustiveness: a new state must be given abilities deliberately
       // rather than inheriting whatever the last case happened to be.

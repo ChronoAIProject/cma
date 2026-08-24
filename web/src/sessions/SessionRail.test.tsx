@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionRail } from './SessionRail';
 import { lastActivity } from './lastActivity';
 import type { Session, SessionLifecycle } from './types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 const COLLAPSED_KEY = 'cma:rail-collapsed';
 const LEGACY_COLLAPSED_KEY = 'chrono-bot:rail-collapsed';

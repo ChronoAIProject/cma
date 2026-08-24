@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { CommandBar } from './CommandBar';
 import type { Session } from '../sessions/types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 /**
  * The command bar — docs/Web_Style.md §6 and §12.

@@ -36,25 +36,92 @@
  * The dashboard's own configuration is the empty one — same-origin paths and
  * the cookie the browser attaches — which is why every default is that.
  *
- * ## What is not here yet
- *
- * The AG-UI event stream and the conversation fold still live in `web/src/agui`
- * and `web/src/chat`, and are re-exported below rather than re-homed. They are
- * already framework-free and protocol-only, so the move is mechanical; until
- * it happens this directory is not copyable on its own, and saying so is
- * cheaper than letting somebody discover it.
  */
 
-export { Cma, createClient } from './client';
-export { resolveConfig, type ClientConfig, type Credential, type ResolvedConfig } from './config';
-export { ApiError, CapabilityRefused, DeploymentAtCapacity, SessionLimitReached } from './errors';
-export { request, type RequestOptions } from './http';
+export { Cma, createClient } from './client.js';
+export {
+  resolveConfig,
+  type ClientConfig,
+  type Credential,
+  type ResolvedConfig,
+} from './config.js';
+export {
+  ApiError,
+  CapabilityRefused,
+  CmaError,
+  CredentialError,
+  DeploymentAtCapacity,
+  ProtocolError,
+  RequestAborted,
+  SessionLimitReached,
+  TimeoutError,
+  TransportError,
+  ValidationError,
+} from './errors.js';
+export {
+  errorFromResponse,
+  request,
+  requestBytes,
+  requestResponse,
+  requestVoid,
+  type OperationOptions,
+  type RequestOptions,
+} from './http.js';
+export {
+  createEnvironmentProfile,
+  deleteEnvironmentProfile,
+  listEnvironmentProfiles,
+  preferEnvironmentProfile,
+  readEnvironmentProfile,
+  readServiceCatalogue,
+  readSkillCatalogue,
+  toEnvironmentProfile,
+  updateEnvironmentProfile,
+  type CatalogSkill,
+  type EnvironmentAgent,
+  type EnvironmentAgentDraft,
+  type EnvironmentProfile,
+  type EnvironmentProfileDraft,
+  type MandatoryEntries,
+  type NyxIdAccess,
+  type NyxIdAccessDraft,
+  type PlatformService,
+  type ProfilePackage,
+  type ProfileSessionSize,
+  type ProfileVariable,
+  type ServiceCatalogue,
+  type SkillCatalogue,
+} from './environment.js';
+export {
+  KNOWN_SESSION_EVENT_TYPES,
+  eventFromMessage,
+  streamEvents,
+  type KnownSessionEventType,
+  type SessionEvent,
+  type SessionEventKind,
+  type StreamEventsOptions,
+  type UnknownSessionEventKind,
+} from './events.js';
+export {
+  getUsage,
+  interrupt,
+  resizeTerminal,
+  resolveApproval,
+  screenSnapshot,
+  sendInput,
+  steer,
+  type ApprovalDecision,
+  type ScreenSnapshot,
+  type SessionInput,
+  type SessionUsage,
+  type TerminalGeometry,
+} from './operations.js';
 export {
   readResources,
   toResourceStatus,
   type ResourceStatusReason,
   type SessionResourceStatus,
-} from './resources';
+} from './resources.js';
 export {
   changePlane,
   createSession,
@@ -70,6 +137,7 @@ export {
   stopSession,
   terminateSession,
   toSession,
+  STOP_REASONS,
   type CreateSession,
   type PricedQuote,
   type PricedSpend,
@@ -78,17 +146,24 @@ export {
   type SessionSpend,
   type UnpricedQuote,
   type UnpricedSpend,
-} from './sessions';
+} from './sessions.js';
 export type {
+  CredentialMode,
   Kernel,
   KernelOffer,
+  PermissionMode,
+  ReasoningEffort,
   Session,
+  SessionAgent,
   SessionCreator,
   SessionLifecycle,
   SessionPlane,
+  SessionSize,
   SessionService,
+  SessionSkill,
+  RecoveryState,
   StopReason,
-} from './types';
+} from './types.js';
 export {
   KNOWN_EVENTS,
   LIVE_MARKER,
@@ -96,36 +171,54 @@ export {
   PRICING_WIRE,
   STATE_DELTA_PATCHES,
   frameKey,
-} from './wire';
+} from './wire.js';
 
 /*
- * The conversation half, re-exported from where it still lives. Listed
- * explicitly rather than star-exported so this file states the SDK's surface
+ * The conversation half, listed explicitly rather than star-exported so this file states the SDK's surface
  * in one place — a consumer reading it should not have to open two more files
  * to learn what they may call.
  */
 export {
   AguiConnection,
   AguiOperations,
-  AguiRefusal,
+  NO_CAPABILITIES,
+  createAguiTransport,
+  createOperationTransport,
+  fetchTransport,
+  parseEventStream,
   toCapabilities,
   toEvent,
+  wireTransport,
   type AguiEvent,
   type AguiTransport,
+  type ConcurrentInput,
   type ConnectionOptions,
   type Interrupt,
+  type InterruptOption,
   type LinkStatus,
+  type OperationTransport,
   type SessionCapabilities,
-} from '../agui';
+} from './agui/index.js';
 export {
   EMPTY,
   fold,
   reduce,
   type Conversation,
+  type AvailableCommand,
+  type ConfigOption,
+  type ContextCompactionEntry,
   type Entry,
+  type FailureEntry,
+  type GapEntry,
   type MessageEntry,
   type MemoryPressure,
+  type PendingApproval,
+  type PlanStep,
   type Resources,
+  type RuntimeLoss,
+  type SignIn,
+  type ToolBody,
   type ToolCallEntry,
+  type UnknownEntry,
   type Usage,
-} from '../chat/conversation';
+} from './conversation/index.js';

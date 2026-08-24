@@ -8,7 +8,7 @@ import {
 } from './drivers';
 import type { Session, SessionLifecycle } from './types';
 import type { TerminalDriver } from '../terminal/types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 function session(id: string, lifecycle: SessionLifecycle, stopReason?: 'error' | 'other'): Session {
   return {

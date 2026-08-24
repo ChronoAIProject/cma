@@ -6,10 +6,10 @@
  * arrived yet or this runtime image will never report one.
  */
 
-import type { Resources } from '../chat/conversationModel';
-import type { ResolvedConfig } from './config';
-import { ApiError } from './errors';
-import { request } from './http';
+import type { Resources } from './conversation/model.js';
+import type { ResolvedConfig } from './config.js';
+import { ProtocolError } from './errors.js';
+import { request, type OperationOptions } from './http.js';
 
 /** Why a granted session has no reading at this moment. */
 export type ResourceStatusReason = 'no_reading_yet' | 'runtime_does_not_report';
@@ -25,10 +25,11 @@ export interface SessionResourceStatus {
 export async function readResources(
   config: ResolvedConfig,
   id: string,
-  signal?: AbortSignal,
+  options: OperationOptions = {},
 ): Promise<SessionResourceStatus> {
   const raw = await request(config, `/api/v1/sessions/${encodeURIComponent(id)}/resources`, {
-    signal,
+    ...options,
+    expectedStatus: 200,
   });
   return toResourceStatus(raw);
 }
@@ -38,19 +39,19 @@ export function toResourceStatus(raw: unknown): SessionResourceStatus {
   const body = objectOf(raw, 'resource status');
   if (body.reading === null) {
     if (body.observed_at !== null) {
-      throw new ApiError(0, 'resource status without a reading carried an observation time');
+      throw new ProtocolError('resource status without a reading carried an observation time');
     }
     if (body.reason === 'no_reading_yet' || body.reason === 'runtime_does_not_report') {
       return { reason: body.reason };
     }
-    throw new ApiError(0, 'resource status without a reading carried no recognised reason');
+    throw new ProtocolError('resource status without a reading carried no recognised reason');
   }
 
   if (body.reason !== null) {
-    throw new ApiError(0, 'resource status with a reading also carried an absence reason');
+    throw new ProtocolError('resource status with a reading also carried an absence reason');
   }
   if (typeof body.observed_at !== 'string' || Number.isNaN(Date.parse(body.observed_at))) {
-    throw new ApiError(0, 'resource status with a reading carried no observation time');
+    throw new ProtocolError('resource status with a reading carried no observation time');
   }
   const reading = objectOf(body.reading, 'resource reading');
   return {
@@ -76,7 +77,7 @@ export function toResourceStatus(raw: unknown): SessionResourceStatus {
 
 function objectOf(raw: unknown, name: string): Record<string, unknown> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new ApiError(0, `${name} was not an object`);
+    throw new ProtocolError(`${name} was not an object`);
   }
   return raw as Record<string, unknown>;
 }
@@ -84,14 +85,14 @@ function objectOf(raw: unknown, name: string): Record<string, unknown> {
 /** `null` is absence. Missing, negative, fractional, or unsafe numbers violate the contract. */
 function figureOf(body: Record<string, unknown>, field: string): number | undefined {
   if (!(field in body)) {
-    throw new ApiError(0, `resource reading omitted ${field}`);
+    throw new ProtocolError(`resource reading omitted ${field}`);
   }
   const value = body[field];
   if (value === null) {
     return undefined;
   }
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new ApiError(0, `resource reading carried an invalid ${field}`);
+    throw new ProtocolError(`resource reading carried an invalid ${field}`);
   }
   return value;
 }
