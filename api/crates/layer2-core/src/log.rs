@@ -50,6 +50,9 @@ enum PendingOperation {
     Delete {
         complete: oneshot::Sender<Result<(), StoreError>>,
     },
+    Fence {
+        complete: oneshot::Sender<()>,
+    },
     ObserveRecord(Box<SessionRecord>),
     #[cfg(test)]
     ObserveRevision(u64),
@@ -70,11 +73,13 @@ struct RecordChange {
 
 #[derive(Clone, Copy, Default)]
 struct RecordFields {
-    all: bool,
+    configuration: bool,
     status: bool,
     geometry: bool,
     plane: bool,
     runtime_loss: bool,
+    runtime: bool,
+    context: bool,
 }
 
 struct EnqueuedCommit {
@@ -100,6 +105,13 @@ impl Future for CommitReceiver {
             }
         }
         result
+    }
+}
+
+impl CommitReceiver {
+    pub(crate) async fn committed(self) -> Result<SessionRecord, StoreError> {
+        self.await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))?
     }
 }
 
@@ -199,7 +211,7 @@ impl SessionLog {
 
     /// Bring a live entry's cached tail into line while excluding a concurrent
     /// reservation rebase.
-    fn synchronize_tail(&self, tail: &mut u64) {
+    pub(crate) fn synchronize_tail(&self, tail: &mut u64) {
         let _state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(current) = self.sequences.current(&self.id) {
             *tail = current;
@@ -298,10 +310,8 @@ impl SessionLog {
                     .clone()
                     .or_else(|| state.durable.clone())
                     .map(|before| {
-                        let change = Box::new(RecordChange {
-                            before,
-                            fields: RecordFields::for_events(&events),
-                        });
+                        let fields = RecordFields::for_commit(&before, &record, &events);
+                        let change = Box::new(RecordChange { before, fields });
                         state.local_tail = Some(Box::new(change.next_local_tail(&record)));
                         change
                     })
@@ -345,6 +355,13 @@ impl SessionLog {
         let (complete, receiver) = oneshot::channel();
         self.enqueue(PendingOperation::Delete { complete });
         receiver
+    }
+
+    /// Wait behind the operation currently owned by this lane without writing.
+    pub(crate) async fn fence(self: &Arc<Self>) {
+        let (complete, receiver) = oneshot::channel();
+        self.enqueue(PendingOperation::Fence { complete });
+        let _ = receiver.await;
     }
 
     fn enqueue(self: &Arc<Self>, operation: PendingOperation) {
@@ -424,6 +441,9 @@ impl SessionLog {
                 PendingOperation::Delete { complete } => {
                     let result = self.delete().await;
                     let _ = complete.send(result);
+                }
+                PendingOperation::Fence { complete } => {
+                    let _ = complete.send(());
                 }
                 PendingOperation::ObserveRecord(record) => {
                     self.remember_durable(*record);
@@ -596,7 +616,9 @@ impl SessionLog {
             let count = match operation {
                 PendingOperation::Commit { events, .. } => u64::try_from(events.len())
                     .map_err(|_| StoreError::Malformed("event batch is too large".into()))?,
-                PendingOperation::Delete { .. } | PendingOperation::ObserveRecord(_) => 0,
+                PendingOperation::Delete { .. }
+                | PendingOperation::Fence { .. }
+                | PendingOperation::ObserveRecord(_) => 0,
                 #[cfg(test)]
                 PendingOperation::ObserveRevision(_) => 0,
             };
@@ -694,9 +716,10 @@ impl SessionLog {
                         local_tail = Some(record.clone());
                         continue;
                     };
-                    let fields = change
-                        .as_deref()
-                        .map_or_else(|| RecordFields::for_events(events), |change| change.fields);
+                    let fields = change.as_deref().map_or_else(
+                        || RecordFields::for_commit(&before, record, events),
+                        |change| change.fields,
+                    );
                     let rebuilt = Box::new(RecordChange { before, fields });
                     local_tail = Some(Box::new(rebuilt.next_local_tail(record)));
                     *change = Some(rebuilt);
@@ -704,7 +727,9 @@ impl SessionLog {
                 PendingOperation::ObserveRecord(record) => {
                     local_tail = Some(record.clone());
                 }
-                PendingOperation::Commit { .. } | PendingOperation::Delete { .. } => {}
+                PendingOperation::Commit { .. }
+                | PendingOperation::Delete { .. }
+                | PendingOperation::Fence { .. } => {}
                 #[cfg(test)]
                 PendingOperation::ObserveRevision(_) => {}
             }
@@ -961,18 +986,48 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
 }
 
 impl RecordFields {
-    fn for_events(events: &[Event]) -> Self {
-        if events.is_empty() {
-            return Self {
-                all: true,
-                ..Self::default()
-            };
+    fn for_commit(before: &SessionRecord, intended: &SessionRecord, events: &[Event]) -> Self {
+        let mut fields = Self::for_events(events);
+
+        fields.configuration = before.session.owner != intended.session.owner
+            || before.session.kernel != intended.session.kernel
+            || before.session.environment_profile != intended.session.environment_profile
+            || before.session.granted_services != intended.session.granted_services
+            || before.session.granted_skills != intended.session.granted_skills
+            || before.session.pricing != intended.session.pricing
+            || before.session.created_at != intended.session.created_at;
+        fields.runtime = before.runtime_id != intended.runtime_id;
+        fields.context = before.context_ref != intended.context_ref;
+
+        if !events.is_empty() {
+            return fields;
         }
+
+        // A record-only barrier owns only the delta it observed. In particular,
+        // it must not inherit the intended snapshot of a semantic event queued
+        // immediately before it: if that event is rejected during rebase, the
+        // barrier must remain a barrier rather than replaying the rejected state
+        // without its event.
+        fields.status = before.session.status != intended.session.status
+            || before.session.recovery_state != intended.session.recovery_state
+            || before.session.stop_reason != intended.session.stop_reason;
+        fields.geometry = before.session.geometry != intended.session.geometry;
+        fields.plane = before.session.options != intended.session.options
+            || before.session.runtime_version != intended.session.runtime_version
+            || before.session.rotations != intended.session.rotations
+            || before.session.rotated_at != intended.session.rotated_at
+            || before.session.capabilities != intended.session.capabilities;
+        fields
+    }
+
+    fn for_events(events: &[Event]) -> Self {
         let mut fields = Self::default();
         for event in events {
             match event.kind {
                 EventKind::StatusChanged { .. } => fields.status = true,
-                EventKind::TerminalResized { .. } => fields.geometry = true,
+                EventKind::TerminalResized { .. } | EventKind::TerminalAttached => {
+                    fields.geometry = true
+                }
                 EventKind::PlaneChanged { .. } => fields.plane = true,
                 EventKind::RuntimeLost { .. } => fields.runtime_loss = true,
                 _ => {}
@@ -1011,12 +1066,12 @@ impl RecordChange {
 
         let expected = before.revision;
         let actual = durable.revision;
-        let all = self.fields.all;
-        let status = all || self.fields.status;
-        let geometry = all || self.fields.geometry;
-        let plane = all || self.fields.plane;
-        let recovery = all || self.fields.status || self.fields.runtime_loss;
-        let runtime = all
+        let configuration = self.fields.configuration;
+        let status = self.fields.status;
+        let geometry = self.fields.geometry;
+        let plane = self.fields.plane;
+        let recovery = self.fields.status || self.fields.runtime_loss;
+        let runtime = self.fields.runtime
             || self.fields.plane
             || self.fields.runtime_loss
             || (self.fields.status && !intended.session.status.wants_runtime());
@@ -1029,13 +1084,13 @@ impl RecordChange {
             &intended.session.options,
         );
         compatible &= rebase_selected(
-            all,
+            configuration,
             &mut durable.session.owner,
             &before.session.owner,
             &intended.session.owner,
         );
         compatible &= rebase_selected(
-            all,
+            configuration,
             &mut durable.session.kernel,
             &before.session.kernel,
             &intended.session.kernel,
@@ -1065,7 +1120,7 @@ impl RecordChange {
             &intended.session.geometry,
         );
         compatible &= rebase_selected(
-            all,
+            configuration,
             &mut durable.session.environment_profile,
             &before.session.environment_profile,
             &intended.session.environment_profile,
@@ -1095,25 +1150,25 @@ impl RecordChange {
             &intended.session.capabilities,
         );
         compatible &= rebase_selected(
-            all,
+            configuration,
             &mut durable.session.granted_services,
             &before.session.granted_services,
             &intended.session.granted_services,
         );
         compatible &= rebase_selected(
-            all,
+            configuration,
             &mut durable.session.granted_skills,
             &before.session.granted_skills,
             &intended.session.granted_skills,
         );
         compatible &= rebase_selected(
-            all,
+            configuration,
             &mut durable.session.pricing,
             &before.session.pricing,
             &intended.session.pricing,
         );
         compatible &= rebase_selected(
-            all,
+            configuration,
             &mut durable.session.created_at,
             &before.session.created_at,
             &intended.session.created_at,
@@ -1125,7 +1180,7 @@ impl RecordChange {
             &intended.runtime_id,
         );
         compatible &= rebase_selected(
-            all,
+            self.fields.context,
             &mut durable.context_ref,
             &before.context_ref,
             &intended.context_ref,
@@ -1141,12 +1196,12 @@ impl RecordChange {
     }
 
     fn copy_selected(&self, intended: &SessionRecord, target: &mut SessionRecord) {
-        let all = self.fields.all;
-        let status = all || self.fields.status;
-        let geometry = all || self.fields.geometry;
-        let plane = all || self.fields.plane;
-        let recovery = all || self.fields.status || self.fields.runtime_loss;
-        let runtime = all
+        let configuration = self.fields.configuration;
+        let status = self.fields.status;
+        let geometry = self.fields.geometry;
+        let plane = self.fields.plane;
+        let recovery = self.fields.status || self.fields.runtime_loss;
+        let runtime = self.fields.runtime
             || self.fields.plane
             || self.fields.runtime_loss
             || (self.fields.status && !intended.session.status.wants_runtime());
@@ -1156,8 +1211,16 @@ impl RecordChange {
             &mut target.session.options,
             &intended.session.options,
         );
-        copy_selected(all, &mut target.session.owner, &intended.session.owner);
-        copy_selected(all, &mut target.session.kernel, &intended.session.kernel);
+        copy_selected(
+            configuration,
+            &mut target.session.owner,
+            &intended.session.owner,
+        );
+        copy_selected(
+            configuration,
+            &mut target.session.kernel,
+            &intended.session.kernel,
+        );
         copy_selected(status, &mut target.session.status, &intended.session.status);
         copy_selected(
             recovery,
@@ -1175,7 +1238,7 @@ impl RecordChange {
             &intended.session.geometry,
         );
         copy_selected(
-            all,
+            configuration,
             &mut target.session.environment_profile,
             &intended.session.environment_profile,
         );
@@ -1200,23 +1263,31 @@ impl RecordChange {
             &intended.session.capabilities,
         );
         copy_selected(
-            all,
+            configuration,
             &mut target.session.granted_services,
             &intended.session.granted_services,
         );
         copy_selected(
-            all,
+            configuration,
             &mut target.session.granted_skills,
             &intended.session.granted_skills,
         );
-        copy_selected(all, &mut target.session.pricing, &intended.session.pricing);
         copy_selected(
-            all,
+            configuration,
+            &mut target.session.pricing,
+            &intended.session.pricing,
+        );
+        copy_selected(
+            configuration,
             &mut target.session.created_at,
             &intended.session.created_at,
         );
         copy_selected(runtime, &mut target.runtime_id, &intended.runtime_id);
-        copy_selected(all, &mut target.context_ref, &intended.context_ref);
+        copy_selected(
+            self.fields.context,
+            &mut target.context_ref,
+            &intended.context_ref,
+        );
     }
 }
 

@@ -11,7 +11,7 @@ use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
 use crate::session::{RecoveryState, Session, SessionStatus};
 use crate::store::{SessionRecord, SessionStore, StoreError};
-use crate::test_support::{service_over, user, FakeAdapter, FakeStore};
+use crate::test_support::{await_settled, service_over, user, FakeAdapter, FakeStore};
 use crate::{AgentOptions, KernelId, Reserved, TerminalGeometry};
 
 fn id() -> SessionId {
@@ -175,6 +175,229 @@ impl SessionStore for PairingStore {
     ) -> Result<Vec<StoredEvent>, StoreError> {
         self.inner.events_since(id, after).await
     }
+}
+
+async fn settled_live_session(
+    store: Arc<PairingStore>,
+    adapter: Arc<FakeAdapter>,
+) -> (
+    Arc<crate::service::SessionService>,
+    crate::authz::Caller,
+    SessionId,
+    String,
+    SessionRecord,
+) {
+    let service = service_over(store.clone(), adapter);
+    let owner = user("subject-live-lifecycle");
+    let created = service
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = service.event_logs.lane(&created.id);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("provisioning writes settle");
+    let before = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let runtime = before.runtime_id.clone().expect("runtime is durable");
+    store.calls.store(0, Ordering::SeqCst);
+    (service, owner, created.id, runtime, before)
+}
+
+async fn assert_live_lifecycle_conflict(terminate: bool) {
+    let store = Arc::new(PairingStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let (service, owner, id, runtime, before) =
+        settled_live_session(store.clone(), adapter.clone()).await;
+    let lane = service.event_logs.lane(&id);
+
+    store.arm();
+    let operation_service = Arc::clone(&service);
+    let operation_owner = owner.clone();
+    let operation_id = id.clone();
+    let operation = tokio::spawn(async move {
+        if terminate {
+            operation_service
+                .terminate_session(&operation_owner, &operation_id)
+                .await
+        } else {
+            operation_service
+                .stop_session(&operation_owner, &operation_id)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+
+    {
+        let entries = service.entries.read().await;
+        let entry = entries.get(&id).expect("live entry remains installed");
+        assert_eq!(entry.session.status, SessionStatus::Ready);
+        assert_eq!(
+            entry.runtime.as_ref().map(|handle| &handle.0),
+            Some(&runtime)
+        );
+        assert!(entry.input.is_some());
+    }
+
+    let mut rival = store.inner.get(&id).await.unwrap().unwrap();
+    rival.session.status = SessionStatus::Running;
+    rival.session.stop_reason = None;
+    rival.session.recovery_state = RecoveryState::Normal;
+    let rival_seq = rival.session.last_seq + 1;
+    rival.session.last_seq = rival_seq;
+    store
+        .inner
+        .commit_session_idempotent(
+            if terminate {
+                "rival-during-live-terminate"
+            } else {
+                "rival-during-live-stop"
+            },
+            &rival,
+            &[Event {
+                session_id: id.clone(),
+                seq: rival_seq,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Running,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .expect("the rival lifecycle decision commits first");
+    store.release.notify_one();
+
+    assert!(matches!(
+        operation.await.expect("lifecycle task completes"),
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the rejected lifecycle proposal leaves the lane");
+
+    let durable = store.inner.get(&id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Running);
+    assert_eq!(durable.session.last_seq, rival_seq);
+    assert_eq!(durable.runtime_id.as_deref(), Some(runtime.as_str()));
+    let replay = store
+        .inner
+        .events_since(&id, before.session.last_seq)
+        .await
+        .unwrap();
+    assert_eq!(replay.len(), 1);
+    assert!(matches!(
+        &replay[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::StatusChanged {
+            status: SessionStatus::Running,
+            ..
+        })
+    ));
+    let entries = service.entries.read().await;
+    let entry = entries.get(&id).expect("live entry survives rejection");
+    assert_eq!(entry.session.status, SessionStatus::Ready);
+    assert_eq!(entry.session.last_seq, before.session.last_seq);
+    assert_eq!(
+        entry.runtime.as_ref().map(|handle| &handle.0),
+        Some(&runtime)
+    );
+    assert!(entry.input.is_some());
+    drop(entries);
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(adapter.running.lock().await.contains_key(&runtime));
+}
+
+async fn assert_live_lifecycle_unavailable_stops(terminate: bool) {
+    let store = Arc::new(PairingStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let (service, owner, id, runtime, before) =
+        settled_live_session(store.clone(), adapter.clone()).await;
+    let lane = service.event_logs.lane(&id);
+    store.fail_next(4);
+
+    let result = if terminate {
+        service.terminate_session(&owner, &id).await
+    } else {
+        service.stop_session(&owner, &id).await
+    };
+    assert!(matches!(result, Err(CoreError::RuntimeUnavailable(_))));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the reported lifecycle failure leaves the lane");
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        store.calls.load(Ordering::SeqCst),
+        4,
+        "no detached retry continues after the fourth observed failure"
+    );
+
+    let durable = store.inner.get(&id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(
+        durable.session.recovery_state,
+        before.session.recovery_state
+    );
+    assert_eq!(durable.session.stop_reason, before.session.stop_reason);
+    assert_eq!(durable.session.last_seq, before.session.last_seq);
+    assert_eq!(durable.runtime_id.as_deref(), Some(runtime.as_str()));
+    assert!(store
+        .inner
+        .events_since(&id, before.session.last_seq)
+        .await
+        .unwrap()
+        .is_empty());
+    let entries = service.entries.read().await;
+    let entry = entries.get(&id).expect("live entry survives store failure");
+    assert_eq!(entry.session.status, SessionStatus::Ready);
+    assert_eq!(entry.session.last_seq, before.session.last_seq);
+    assert_eq!(
+        entry.runtime.as_ref().map(|handle| &handle.0),
+        Some(&runtime)
+    );
+    assert!(entry.input.is_some());
+    drop(entries);
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(adapter.running.lock().await.contains_key(&runtime));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_live_stop_conflict_preserves_the_rival_state_and_runtime() {
+    assert_live_lifecycle_conflict(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_live_terminate_conflict_preserves_the_rival_state_and_runtime() {
+    assert_live_lifecycle_conflict(true).await;
+}
+
+#[tokio::test]
+async fn a_live_stop_ends_after_four_observed_store_failures() {
+    assert_live_lifecycle_unavailable_stops(false).await;
+}
+
+#[tokio::test]
+async fn a_live_terminate_ends_after_four_observed_store_failures() {
+    assert_live_lifecycle_unavailable_stops(true).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
