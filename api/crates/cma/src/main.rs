@@ -245,6 +245,7 @@ async fn main() {
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
     let ticket_store =
         Arc::new(stores.tickets) as Arc<dyn layer1_public::tickets::TerminalTicketStore>;
+    let auth_store = Arc::new(stores.auth) as Arc<dyn auth::persistence::AuthStore>;
     // The account of what this service is asked to do, and of who asks. Both
     // are opened with everything else rather than lazily: a control plane that
     // served traffic it could not account for would be discovered by somebody
@@ -300,12 +301,13 @@ async fn main() {
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
     // nobody is currently watching.
-    let auth_state = AuthState::new(
+    let auth_state = AuthState::with_store(
         config.auth_mode.clone(),
         Some(SignInRecords {
             users: Arc::clone(&users),
             activity: Arc::clone(&activity),
         }),
+        auth_store,
     );
     if !auth_state.requires_credential() {
         tracing::warn!(

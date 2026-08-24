@@ -8,6 +8,7 @@ fn subject_state(revision: u64) -> SubjectAuthState {
         subject: SubjectId("subject-a".into()),
         revision,
         tokens: None,
+        refresh_lease: None,
         authorization: Authorization::none(),
         profile: Profile::default(),
     }

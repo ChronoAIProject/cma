@@ -1,143 +1,257 @@
-//! Interaction between explicit revoke debt and provider-discovered orphans.
+//! Durable revoke debt and reconciliation failure boundaries.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, SystemTime};
 
 use axum::{
     extract::{Path, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
-    routing::{delete, get},
-    Json, Router,
+    routing::delete,
+    Router,
 };
 use layer2_core::{
-    AgentConfiguration, Baseline, Deployment, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, Page,
-    PageRequest, PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
-    SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionStore,
-    StoreError, StoredEvent, SubjectId, TerminalGeometry,
-};
-use tokio::sync::{Mutex, Semaphore};
-
-use super::{queue_key, retry_tokens};
-use crate::auth::{
-    keys::{key_name, KeyIssuer},
-    AuthMode, AuthState, Issued,
+    AgentConfiguration, Baseline, CredentialSource as _, Deployment, EnvironmentProfile,
+    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
+    EnvironmentProfileStore, Event, Page, PageRequest, PlatformSettingsService, Reserved,
+    ScreenFactory, ScreenModel, ScreenSnapshot, SessionId, SessionListQuery, SessionPorts,
+    SessionRecord, SessionService, SessionStore, StoreError, StoredEvent, SubjectId,
+    TerminalGeometry,
 };
 
-#[derive(Clone)]
-struct Platform {
-    key_id: String,
-    key_name: String,
-    delete_statuses: Arc<Mutex<VecDeque<StatusCode>>>,
-    delete_attempts: Arc<Mutex<Vec<String>>>,
-    listings: Arc<AtomicUsize>,
+use super::*;
+use crate::auth::keys::KeyIssuer;
+use crate::auth::persistence::MemoryAuthStore;
+use crate::auth::{AuthMode, SubjectTokens};
+
+fn auth(store: Arc<MemoryAuthStore>) -> Arc<AuthState> {
+    AuthState::with_store(
+        AuthMode::Trusted {
+            subject: "local".into(),
+        },
+        None,
+        store,
+    )
 }
 
-fn assert_owner(headers: &HeaderMap) {
+async fn store_owner_token(auth: &AuthState, owner: &SubjectId) {
+    auth.store_tokens(
+        owner,
+        SubjectTokens {
+            access_token: "owner-access".into(),
+            refresh_token: None,
+            expires_at: std::time::Instant::now() + Duration::from_secs(60),
+        },
+    )
+    .await
+    .expect("owner token persists");
+}
+
+fn current_state(session: &SessionId, owner: &SubjectId) -> SessionCredentialState {
+    SessionCredentialState {
+        session: session.clone(),
+        generation: 0,
+        current: Some(DurableCredential {
+            id: "provider-key".into(),
+            value: SecretValue::new("session-key".into()),
+            owner: owner.clone(),
+            issued_at: SystemTime::now(),
+            expires_at: None,
+            scope_fingerprint: "scope".into(),
+        }),
+        pending: None,
+        revoke_debt: Vec::new(),
+        lease: None,
+        retired: false,
+    }
+}
+
+#[derive(Clone)]
+struct RevokePlatform {
+    status: StatusCode,
+    deleted: Arc<StdMutex<Vec<String>>>,
+}
+
+async fn delete_key(
+    State(platform): State<RevokePlatform>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> StatusCode {
     assert_eq!(
         headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok()),
-        Some("Bearer retry-owner-token")
+        Some("Bearer owner-access")
     );
+    platform.deleted.lock().expect("delete log lock").push(id);
+    platform.status
 }
 
-async fn list_keys(
-    State(platform): State<Platform>,
-    headers: HeaderMap,
-) -> Json<serde_json::Value> {
-    assert_owner(&headers);
-    platform.listings.fetch_add(1, Ordering::SeqCst);
-    Json(serde_json::json!({
-        "keys": [{ "id": platform.key_id, "name": platform.key_name }]
-    }))
-}
-
-async fn delete_key(
-    State(platform): State<Platform>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> StatusCode {
-    assert_owner(&headers);
-    platform.delete_attempts.lock().await.push(id);
-    platform
-        .delete_statuses
-        .lock()
-        .await
-        .pop_front()
-        .expect("only the two expected DELETE attempts occur")
-}
-
-async fn platform(session: &SessionId) -> (String, Platform, tokio::task::JoinHandle<()>) {
-    let platform = Platform {
-        key_id: "owed-key".into(),
-        key_name: key_name("production", session),
-        delete_statuses: Arc::new(Mutex::new(
-            [StatusCode::SERVICE_UNAVAILABLE, StatusCode::NO_CONTENT].into(),
-        )),
-        delete_attempts: Arc::new(Mutex::new(Vec::new())),
-        listings: Arc::new(AtomicUsize::new(0)),
+async fn revocation_platform(
+    status: StatusCode,
+) -> (String, RevokePlatform, tokio::task::JoinHandle<()>) {
+    let platform = RevokePlatform {
+        status,
+        deleted: Arc::new(StdMutex::new(Vec::new())),
     };
     let app = Router::new()
-        .route("/api/v1/api-keys", get(list_keys))
         .route("/api/v1/api-keys/{id}", delete(delete_key))
         .with_state(platform.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("bind mock identity platform");
-    let base = format!("http://{}", listener.local_addr().expect("mock address"));
+        .expect("bind revoke platform");
+    let base = format!("http://{}", listener.local_addr().expect("local address"));
     let server = tokio::spawn(async move {
         axum::serve(listener, app)
             .await
-            .expect("serve mock identity platform");
+            .expect("serve revoke platform");
     });
     (base, platform, server)
 }
 
-#[derive(Clone)]
-struct ClaimGate {
-    started: Arc<Semaphore>,
-    finish: Arc<Semaphore>,
+async fn configure_issuer(auth: &AuthState, base: String) {
+    auth.use_issuer(Arc::new(KeyIssuer::new(
+        reqwest::Client::new(),
+        base,
+        "test",
+    )))
+    .await;
 }
 
-impl ClaimGate {
-    fn new() -> Self {
-        Self {
-            started: Arc::new(Semaphore::new(0)),
-            finish: Arc::new(Semaphore::new(0)),
-        }
-    }
+#[tokio::test]
+async fn retired_debt_survives_restart_and_another_instance_settles_it() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = auth(Arc::clone(&store));
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_restart_debt".into());
+    store_owner_token(&first, &owner).await;
+    store
+        .insert_credential(current_state(&session, &owner))
+        .await
+        .expect("credential state persists");
+
+    first.release(&session).await.expect("retirement persists");
+    drop(first);
+
+    let persisted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("retired state remains");
+    assert!(persisted.retired);
+    assert_eq!(persisted.revoke_debt.len(), 1);
+    assert_eq!(persisted.revoke_debt[0].id, "provider-key");
+
+    let (base, platform, server) = revocation_platform(StatusCode::NO_CONTENT).await;
+    let second = auth(Arc::clone(&store));
+    configure_issuer(&second, base).await;
+    assert_eq!(
+        second
+            .revoke_retired_credentials()
+            .await
+            .expect("debt sweep succeeds"),
+        1
+    );
+    assert!(store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state remains")
+        .revoke_debt
+        .is_empty());
+    assert_eq!(
+        platform.deleted.lock().expect("delete log lock").as_slice(),
+        ["provider-key"]
+    );
+    server.abort();
 }
 
-#[derive(Default)]
-struct NoSessions {
-    claim_gate: Option<ClaimGate>,
+#[tokio::test]
+async fn a_failed_provider_delete_leaves_durable_debt() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(Arc::clone(&store));
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_failed_delete".into());
+    store_owner_token(&auth, &owner).await;
+    store
+        .insert_credential(current_state(&session, &owner))
+        .await
+        .expect("credential state persists");
+    auth.release(&session).await.expect("retirement persists");
+    let (base, platform, server) = revocation_platform(StatusCode::SERVICE_UNAVAILABLE).await;
+    configure_issuer(&auth, base).await;
+
+    assert_eq!(
+        auth.revoke_retired_credentials()
+            .await
+            .expect("failed provider response is retryable debt"),
+        0
+    );
+    assert_eq!(
+        store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("state remains")
+            .revoke_debt
+            .len(),
+        1
+    );
+    assert_eq!(
+        platform.deleted.lock().expect("delete log lock").as_slice(),
+        ["provider-key"]
+    );
+    server.abort();
 }
+
+#[tokio::test]
+async fn a_store_outage_during_debt_enumeration_leaves_debt_untouched() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(Arc::clone(&store));
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_debt_store_outage".into());
+    store_owner_token(&auth, &owner).await;
+    store
+        .insert_credential(current_state(&session, &owner))
+        .await
+        .expect("credential state persists");
+    auth.release(&session).await.expect("retirement persists");
+    let (base, platform, server) = revocation_platform(StatusCode::NO_CONTENT).await;
+    configure_issuer(&auth, base).await;
+
+    store.set_unavailable(true);
+    assert!(matches!(
+        auth.revoke_retired_credentials().await,
+        Err(StoreError::Unavailable(_))
+    ));
+    store.set_unavailable(false);
+
+    assert_eq!(
+        store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("state remains")
+            .revoke_debt
+            .len(),
+        1
+    );
+    assert!(platform.deleted.lock().expect("delete log lock").is_empty());
+    server.abort();
+}
+
+struct UnavailableSessions;
 
 #[async_trait::async_trait]
-impl SessionStore for NoSessions {
+impl SessionStore for UnavailableSessions {
     async fn ping(&self) -> Result<(), StoreError> {
         Ok(())
     }
 
     async fn get(&self, _id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        if let Some(gate) = self.claim_gate.as_ref() {
-            // Reclamation reaches the store only after it has fetched and
-            // decoded the provider listing, which is the boundary this test
-            // needs to hold while release transfers ownership of the key.
-            gate.started.add_permits(1);
-            gate.finish
-                .acquire()
-                .await
-                .expect("the test still owns the claim gate")
-                .forget();
-        }
-        Ok(None)
+        Err(StoreError::Unavailable(
+            "injected session store outage".into(),
+        ))
     }
 
     async fn list_for(
@@ -278,7 +392,7 @@ impl ScreenModel for EmptyScreen {
     }
 }
 
-fn session_service(store: Arc<dyn SessionStore>) -> Arc<SessionService> {
+fn unavailable_session_service() -> Arc<SessionService> {
     let screens: ScreenFactory =
         Arc::new(|geometry| Box::new(EmptyScreen(geometry)) as Box<dyn ScreenModel>);
     let environments = EnvironmentProfileService::new(
@@ -292,245 +406,39 @@ fn session_service(store: Arc<dyn SessionStore>) -> Arc<SessionService> {
     SessionService::new(
         HashMap::new(),
         screens,
-        store,
+        Arc::new(UnavailableSessions),
         SessionPorts::default(),
         environments,
         Deployment::default(),
     )
 }
 
-pub(super) fn empty_session_service() -> Arc<SessionService> {
-    session_service(Arc::new(NoSessions::default()))
-}
-
-async fn auth(base: String) -> Arc<AuthState> {
-    let auth = AuthState::new(
-        AuthMode::Trusted {
-            subject: "local".into(),
-        },
-        None,
-    );
-    auth.use_issuer(Arc::new(KeyIssuer::new(
-        reqwest::Client::new(),
-        base,
-        "production",
-    )))
-    .await;
-    auth
-}
-
 #[tokio::test]
-async fn a_failed_orphan_revoke_is_not_counted_as_reclaimed() {
-    let session = SessionId("sesn_orphaned".into());
-    let (base, platform, server) = platform(&session).await;
-    let auth = auth(base).await;
-    let owner = SubjectId("retry-owner".into());
-    auth.store_tokens(&owner, retry_tokens()).await;
-
-    assert_eq!(
-        auth.reclaim_orphaned_credentials(&empty_session_service())
-            .await,
-        0
-    );
-    assert_eq!(platform.listings.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        platform.delete_attempts.lock().await.as_slice(),
-        ["owed-key"]
-    );
-    server.abort();
-}
-
-#[tokio::test]
-async fn orphan_reclaim_does_not_steal_a_failed_superseded_retry() {
-    let session = SessionId("sesn_ended".into());
-    let (base, platform, server) = platform(&session).await;
-    let auth = auth(base).await;
-    let owner = SubjectId("retry-owner".into());
-    auth.store_tokens(&owner, retry_tokens()).await;
-    queue_key(&auth, &platform.key_id, &owner).await;
-
-    assert_eq!(auth.take_back_superseded().await, 0);
-    assert_eq!(auth.superseded.read().await.len(), 1);
-    assert_eq!(platform.delete_attempts.lock().await.len(), 1);
-
-    assert_eq!(
-        auth.reclaim_orphaned_credentials(&empty_session_service())
-            .await,
-        0
-    );
-    assert_eq!(platform.listings.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        platform.delete_attempts.lock().await.len(),
-        1,
-        "the orphan sweep must leave explicit revoke debt to its owner"
-    );
-    assert_eq!(auth.superseded.read().await.len(), 1);
-
-    assert_eq!(auth.take_back_superseded().await, 1);
-    assert!(auth.superseded.read().await.is_empty());
-    assert_eq!(
-        platform.delete_attempts.lock().await.as_slice(),
-        ["owed-key", "owed-key"]
-    );
-    server.abort();
-}
-
-#[tokio::test]
-async fn repeated_release_does_not_bypass_or_strand_queued_retry_debt() {
-    let session = SessionId("sesn_repeated_release".into());
-    let (base, platform, server) = platform(&session).await;
-    let auth = auth(base).await;
-    let owner = SubjectId("retry-owner".into());
-    auth.issued.write().await.insert(
-        session.clone(),
-        Issued {
-            id: platform.key_id.clone(),
-            value: "session-key-value".into(),
-            owner: owner.clone(),
-            minted_at: std::time::Instant::now(),
-        },
-    );
-
-    layer2_core::CredentialSource::release(&*auth, &session).await;
-    assert_eq!(
-        auth.superseded.read().await.as_slice(),
-        [(platform.key_id.clone(), owner.clone())]
-    );
-    assert!(platform.delete_attempts.lock().await.is_empty());
-
-    auth.store_tokens(&owner, retry_tokens()).await;
-    layer2_core::CredentialSource::release(&*auth, &session).await;
-    assert_eq!(platform.listings.load(Ordering::SeqCst), 1);
-    assert!(
-        platform.delete_attempts.lock().await.is_empty(),
-        "fallback release must not DELETE a key the retry queue owns"
-    );
-    assert_eq!(
-        auth.superseded.read().await.as_slice(),
-        [(platform.key_id.clone(), owner)]
-    );
-
-    assert_eq!(auth.take_back_superseded().await, 0);
-    assert_eq!(auth.superseded.read().await.len(), 1);
-    assert_eq!(auth.take_back_superseded().await, 1);
-    assert!(auth.superseded.read().await.is_empty());
-    assert_eq!(
-        platform.delete_attempts.lock().await.as_slice(),
-        ["owed-key", "owed-key"]
-    );
-    server.abort();
-}
-
-#[tokio::test]
-async fn cancelling_tokenless_release_still_completes_and_discharges_retry_debt() {
-    let session = SessionId("sesn_release_gap".into());
-    let (base, platform, server) = platform(&session).await;
-    let auth = auth(base).await;
-    let owner = SubjectId("retry-owner".into());
-    auth.store_tokens(&owner, retry_tokens()).await;
-    auth.issued.write().await.insert(
-        session.clone(),
-        Issued {
-            id: platform.key_id.clone(),
-            value: "session-key-value".into(),
-            owner: owner.clone(),
-            minted_at: std::time::Instant::now(),
-        },
-    );
-
-    let claims = ClaimGate::new();
-    let service = session_service(Arc::new(NoSessions {
-        claim_gate: Some(claims.clone()),
-    }));
-    let mut orphan = tokio::spawn({
-        let auth = Arc::clone(&auth);
-        async move { auth.reclaim_orphaned_credentials(&service).await }
-    });
-    claims
-        .started
-        .acquire()
+async fn an_unreadable_session_claim_causes_zero_provider_deletes() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(Arc::clone(&store));
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_unreadable_claim".into());
+    store
+        .insert_credential(current_state(&session, &owner))
         .await
-        .expect("the orphan sweep reaches the already-fetched listing")
-        .forget();
+        .expect("credential state persists");
+    let (base, platform, server) = revocation_platform(StatusCode::NO_CONTENT).await;
+    configure_issuer(&auth, base).await;
 
-    // Release can no longer revoke immediately, while the orphan sweep retains
-    // the token it cloned before asking the provider for this listing.
-    auth.tokens.write().await.remove(&owner);
-    let queue_gate = auth.superseded.write().await;
-    let release = tokio::spawn({
-        let auth = Arc::clone(&auth);
-        let session = session.clone();
-        async move { layer2_core::CredentialSource::release(&*auth, &session).await }
-    });
-
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        loop {
-            if auth.issued.try_read().is_err() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("release holds issued while it waits to enqueue the key");
-    release.abort();
-    assert!(release
+    assert!(matches!(
+        auth.reclaim_unrecorded_credentials(&unavailable_session_service())
+            .await,
+        Err(StoreError::Unavailable(_))
+    ));
+    assert!(platform.deleted.lock().expect("delete log lock").is_empty());
+    let unchanged = store
+        .credential(&session)
         .await
-        .expect_err("the release caller was cancelled")
-        .is_cancelled());
-
-    claims.finish.add_permits(1);
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), &mut orphan)
-            .await
-            .is_err(),
-        "the orphan sweep must wait until the ownership transfer is complete"
-    );
-    assert!(
-        auth.issued.try_read().is_err(),
-        "the key must remain protected by issued while queue insertion is blocked"
-    );
-    assert!(platform.delete_attempts.lock().await.is_empty());
-
-    drop(queue_gate);
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        loop {
-            if !auth.issued.read().await.contains_key(&session)
-                && auth.superseded.read().await.as_slice()
-                    == [(platform.key_id.clone(), owner.clone())]
-            {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the detached transfer finishes after its caller is cancelled");
-
-    assert_eq!(orphan.await.expect("the orphan sweep completes"), 0);
-    assert_eq!(
-        auth.superseded.read().await.as_slice(),
-        [(platform.key_id.clone(), owner.clone())]
-    );
-    assert!(platform.delete_attempts.lock().await.is_empty());
-
-    let progress = auth.reissues.read().await;
-    assert!(progress.pending.is_empty());
-    assert!(progress.minting.is_empty());
-    assert!(progress.retiring.is_empty());
-    drop(progress);
-
-    auth.store_tokens(&owner, retry_tokens()).await;
-    assert_eq!(auth.take_back_superseded().await, 0);
-    assert_eq!(
-        auth.superseded.read().await.as_slice(),
-        [(platform.key_id.clone(), owner)]
-    );
-    assert_eq!(auth.take_back_superseded().await, 1);
-    assert!(auth.superseded.read().await.is_empty());
-    assert_eq!(
-        platform.delete_attempts.lock().await.as_slice(),
-        ["owed-key", "owed-key"]
-    );
+        .expect("store works")
+        .expect("state remains");
+    assert!(unchanged.current.is_some());
+    assert!(!unchanged.retired);
+    assert!(unchanged.revoke_debt.is_empty());
     server.abort();
 }
