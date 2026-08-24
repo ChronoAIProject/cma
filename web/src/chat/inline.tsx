@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import type { PhrasingContent } from 'mdast';
 
 /**
@@ -13,8 +13,21 @@ import type { PhrasingContent } from 'mdast';
  * that exception arriving by habit.
  */
 
-/** Where a link may point. */
-function safeHref(url: string): string | undefined {
+export interface InlineLink {
+  readonly href: string;
+  readonly external?: boolean;
+  readonly onFollow?: () => void;
+}
+
+export interface InlineOptions {
+  readonly classPrefix?: 'agent' | 'developer';
+  readonly resolveLink?: (url: string) => InlineLink | undefined;
+  readonly renderImages?: boolean;
+  readonly preserveUnknownText?: boolean;
+}
+
+/** Where an untrusted external link may point. */
+export function safeHttpHref(url: string): string | undefined {
   /*
    * Only the two schemes a reader can act on, and the agent's own text
    * otherwise. `javascript:` and `data:` are the ones that turn a link into
@@ -25,7 +38,34 @@ function safeHref(url: string): string | undefined {
   return /^https?:\/\//i.test(trimmed) ? trimmed : undefined;
 }
 
-export function renderInline(nodes: readonly PhrasingContent[]): ReactNode[] {
+function defaultLink(url: string): InlineLink | undefined {
+  const href = safeHttpHref(url);
+  return href === undefined ? undefined : { href, external: true };
+}
+
+/** Plain words from an inline run, used for document titles and heading slugs. */
+export function inlineText(nodes: readonly PhrasingContent[]): string {
+  return nodes
+    .map((node) => {
+      if ('value' in node && typeof node.value === 'string') {
+        return node.value;
+      }
+      if ('children' in node) {
+        return inlineText(node.children as readonly PhrasingContent[]);
+      }
+      return node.type === 'image' ? (node.alt ?? '') : '';
+    })
+    .join('');
+}
+
+export function renderInline(
+  nodes: readonly PhrasingContent[],
+  options: InlineOptions = {},
+): ReactNode[] {
+  const prefix = options.classPrefix ?? 'agent';
+  const resolveLink = options.resolveLink ?? defaultLink;
+  const preserveUnknownText = options.preserveUnknownText ?? true;
+
   return nodes.map((node, index) => {
     const key = `${node.type}-${String(index)}`;
     switch (node.type) {
@@ -34,51 +74,59 @@ export function renderInline(nodes: readonly PhrasingContent[]): ReactNode[] {
 
       case 'inlineCode':
         return (
-          <code className="agent__code" key={key}>
+          <code className={`${prefix}__code`} key={key}>
             {node.value}
           </code>
         );
 
       case 'strong':
-        return <strong key={key}>{renderInline(node.children)}</strong>;
+        return <strong key={key}>{renderInline(node.children, options)}</strong>;
 
       case 'emphasis':
-        return <em key={key}>{renderInline(node.children)}</em>;
+        return <em key={key}>{renderInline(node.children, options)}</em>;
 
       case 'delete':
-        return <del key={key}>{renderInline(node.children)}</del>;
+        return <del key={key}>{renderInline(node.children, options)}</del>;
 
       case 'break':
         return <br key={key} />;
 
       case 'link': {
-        const href = safeHref(node.url);
-        if (href === undefined) {
+        const link = resolveLink(node.url);
+        if (link === undefined) {
           // Not a link this surface will open. The words survive; only the
           // navigation is withheld.
-          return <span key={key}>{renderInline(node.children)}</span>;
+          return <span key={key}>{renderInline(node.children, options)}</span>;
         }
         return (
           <a
-            className="agent__link"
+            className={`${prefix}__link`}
             key={key}
-            href={href}
-            target="_blank"
+            href={link.href}
+            target={link.external === true ? '_blank' : undefined}
             /*
              * Untrusted by construction: this came from an agent running the
              * owner's own code. `noopener` denies the opened page a handle on
              * this one; `noreferrer` denies it the address it came from.
              */
-            rel="noopener noreferrer"
+            rel={link.external === true ? 'noopener noreferrer' : undefined}
+            onClick={
+              link.onFollow === undefined
+                ? undefined
+                : (event: MouseEvent<HTMLAnchorElement>) => {
+                    event.preventDefault();
+                    link.onFollow?.();
+                  }
+            }
           >
-            {renderInline(node.children)}
+            {renderInline(node.children, options)}
           </a>
         );
       }
 
       case 'image': {
-        const src = safeHref(node.url);
-        if (src === undefined) {
+        const src = safeHttpHref(node.url);
+        if (options.renderImages === false || src === undefined) {
           return <span key={key}>{node.alt ?? ''}</span>;
         }
         /*
@@ -86,7 +134,7 @@ export function renderInline(nodes: readonly PhrasingContent[]): ReactNode[] {
          * linking a 4000px screenshot should not decide how wide the
          * conversation is.
          */
-        return <img className="agent__image" key={key} src={src} alt={node.alt ?? ''} />;
+        return <img className={`${prefix}__image`} key={key} src={src} alt={node.alt ?? ''} />;
       }
 
       default:
@@ -96,7 +144,9 @@ export function renderInline(nodes: readonly PhrasingContent[]): ReactNode[] {
          * §18.1's rule: an agent that wrote something is owed having written
          * it, whether or not this surface has a shape for it.
          */
-        return 'value' in node && typeof node.value === 'string' ? node.value : null;
+        return preserveUnknownText && 'value' in node && typeof node.value === 'string'
+          ? node.value
+          : null;
     }
   });
 }
