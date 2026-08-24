@@ -1055,7 +1055,11 @@ async fn a_sign_in_for_a_session_nobody_holds_any_more_is_dropped_quietly() {
     // answering: a panic in that task would take the log with it.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
-        !svc.list_sessions(&alice).await.iter().any(|s| s.id == id),
+        !svc.list_sessions(&alice)
+            .await
+            .expect("session list is readable")
+            .iter()
+            .any(|s| s.id == id),
         "the core must survive a sign-in for a session that no longer exists"
     );
 }
