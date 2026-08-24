@@ -10,9 +10,10 @@ use axum::{
     extract::{FromRequestParts, OptionalFromRequestParts},
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
 use layer2_core::{Authorization, Caller, SubjectId};
+
+use crate::rest::{problem_document, problem_response};
 
 /// The authenticated principal for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,16 +128,15 @@ pub struct NotAuthenticated;
 
 impl IntoResponse for NotAuthenticated {
     fn into_response(self) -> Response {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
-                "title": "Not authenticated",
-                "status": 401,
-                "detail": "This operation requires an authenticated subject.",
-            })),
-        )
-            .into_response()
+        let status = StatusCode::UNAUTHORIZED;
+        let mut body = problem_document(
+            status,
+            "not-authenticated",
+            "This operation requires an authenticated subject.",
+            "not_authenticated",
+        );
+        body["title"] = "Not authenticated".into();
+        problem_response(status, body)
     }
 }
 
@@ -158,7 +158,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use axum::{
+        body::{to_bytes, Body},
+        http::{header, Request},
+        routing::get,
+        Router,
+    };
+    use tower::ServiceExt;
 
     #[tokio::test]
     async fn a_subject_placed_by_middleware_is_extracted() {
@@ -181,9 +187,33 @@ mod tests {
         assert!(result.is_err(), "unauthenticated requests must be rejected");
     }
 
-    #[test]
-    fn rejection_renders_as_problem_json_with_401() {
-        let response = NotAuthenticated.into_response();
+    #[tokio::test]
+    async fn rejection_renders_as_a_coded_problem_document_with_401() {
+        async fn protected(_subject: AuthenticatedSubject) {}
+
+        let response = Router::new()
+            .route("/protected", get(protected))
+            .oneshot(
+                Request::get("/protected")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                "application/problem+json"
+            ))
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("problem documents are small"),
+        )
+        .expect("the problem document is json");
+        assert_eq!(body["code"], "not_authenticated");
     }
 }
