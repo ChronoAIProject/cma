@@ -55,7 +55,8 @@ mod tests {
         http::Request,
     };
     use layer2_core::{
-        Event, Reserved, SessionId, SessionRecord, StoreError, StoredEvent, SubjectId,
+        Event, Page, Reserved, SessionId, SessionListQuery, SessionRecord, StoreError, StoredEvent,
+        SubjectId,
     };
     use tower::ServiceExt;
 
@@ -82,7 +83,11 @@ mod tests {
             unreachable!("readiness must only ping the store")
         }
 
-        async fn list_for(&self, _owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+        async fn list_for(
+            &self,
+            _owner: &SubjectId,
+            _query: &SessionListQuery,
+        ) -> Result<Page<SessionRecord>, StoreError> {
             unreachable!("readiness must only ping the store")
         }
 
@@ -90,7 +95,10 @@ mod tests {
             unreachable!("readiness must only ping the store")
         }
 
-        async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
+        async fn list_all(
+            &self,
+            _query: &SessionListQuery,
+        ) -> Result<Page<SessionRecord>, StoreError> {
             unreachable!("readiness must only ping the store")
         }
 
