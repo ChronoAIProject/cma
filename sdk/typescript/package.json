@@ -1,6 +1,7 @@
 {
   "name": "@chronoai/cma-sdk",
   "version": "0.0.0-dev",
+  "private": true,
   "description": "TypeScript client SDK for CMA",
   "type": "module",
   "sideEffects": false,
@@ -18,9 +19,6 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
     }
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
