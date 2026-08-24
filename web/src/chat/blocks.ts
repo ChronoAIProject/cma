@@ -71,7 +71,12 @@ function cellsOf(row: TableRow): readonly (readonly PhrasingContent[])[] {
   return row.children.map((cell) => cell.children);
 }
 
-function blockOf(node: RootContent): Block | undefined {
+export interface BlockOptions {
+  /** What to do with a raw HTML block. React never receives it as markup. */
+  readonly rawHtml?: 'text' | 'omit';
+}
+
+function blockOf(node: RootContent, options: BlockOptions): Block | undefined {
   switch (node.type) {
     case 'code':
       return { kind: 'code', language: node.lang ?? '', body: node.value };
@@ -80,7 +85,12 @@ function blockOf(node: RootContent): Block | undefined {
     case 'list':
       return { kind: 'list', items: itemsOf(node, 0), ordered: node.ordered === true };
     case 'blockquote':
-      return { kind: 'quote', blocks: node.children.map(blockOf).filter((b) => b !== undefined) };
+      return {
+        kind: 'quote',
+        blocks: node.children
+          .map((child) => blockOf(child, options))
+          .filter((block) => block !== undefined),
+      };
     case 'table':
       return {
         kind: 'table',
@@ -92,6 +102,9 @@ function blockOf(node: RootContent): Block | undefined {
     case 'thematicBreak':
       return { kind: 'rule' };
     case 'html':
+      if (options.rawHtml === 'omit') {
+        return undefined;
+      }
       /*
        * Raw HTML is shown as the text it was, never as markup — §18.1 and §9.
        * This came from an agent executing somebody's own code, so it is the
@@ -115,7 +128,7 @@ function blockOf(node: RootContent): Block | undefined {
   }
 }
 
-export function blocksOf(text: string): Block[] {
+export function blocksOf(text: string, options: BlockOptions = {}): Block[] {
   const tree: Root = parse(text);
-  return tree.children.map(blockOf).filter((block) => block !== undefined);
+  return tree.children.map((node) => blockOf(node, options)).filter((block) => block !== undefined);
 }

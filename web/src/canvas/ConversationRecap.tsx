@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { EMPTY, reduce, type Conversation } from '../chat/conversation';
-import { AguiConnection, wireTransport, type AguiTransport } from '../agui';
+import { EMPTY, reduce, type Conversation } from '@chronoai/cma-sdk';
+import { AguiConnection, wireTransport, type AguiTransport } from '@chronoai/cma-sdk';
 import type { Session } from '../sessions/types';
 import './ConversationRecap.css';
 

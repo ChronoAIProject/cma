@@ -5,6 +5,7 @@ import { migrationShimOffences } from '../test/migrationShim';
 
 const CHAT = resolve(process.cwd(), 'src', 'chat');
 const sheet = (name: string) => resolve(CHAT, name);
+const markdownSheet = resolve(process.cwd(), 'src', 'markdown', 'MarkdownContent.css');
 
 describe('the migrated conversation sheets', () => {
   it('use no migration shim beyond the shared and responsive exemptions', () => {
@@ -20,6 +21,7 @@ describe('the migrated conversation sheets', () => {
       sheet('CommandMenu.css'),
       sheet('CopyKey.css'),
       sheet('Usage.css'),
+      markdownSheet,
     ];
     expect(
       migrationShimOffences(sheets, ['--focus-ring', '--read-column', '--page-gutter']),

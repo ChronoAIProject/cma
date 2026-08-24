@@ -8,7 +8,8 @@ import type { LiveSession } from '../sessions/live';
 import type { Session, SessionLifecycle } from '../sessions/types';
 import type { TerminalDriver } from '../terminal/types';
 import { unattachedNote } from './layout';
-import { MockSession, NO_CAPABILITIES, transcriptNamed } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * Recording drivers rather than a real one: what these tests assert is where

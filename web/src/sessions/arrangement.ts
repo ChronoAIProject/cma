@@ -2,7 +2,7 @@
  * Which way the console arranges sessions: one at a time, or all at once.
  *
  * An arrangement, not a view (docs/Web_Style.md §1): it changes how the middle
- * column is drawn and nothing else, and the app carries exactly two views.
+ * column is drawn and nothing else, and the app carries exactly three views.
  *
  * **It is not a browser-only preference.** A terminal declares its own
  * measurements to the runtime drawing into it, so choosing the canvas asks

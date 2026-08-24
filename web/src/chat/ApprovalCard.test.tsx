@@ -5,14 +5,9 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCard } from './ApprovalCard';
 import { MessageStream } from './MessageStream';
-import { fold } from './conversation';
-import {
-  AguiConnection,
-  AguiOperations,
-  MockSession,
-  transcriptNamed,
-  type AguiEvent,
-} from '../agui';
+import { fold } from '@chronoai/cma-sdk';
+import { AguiConnection, AguiOperations, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * The approval card — `Web_Style.md` §18.3.
