@@ -94,12 +94,12 @@ impl SessionService {
         self.forward_input(id, TerminalInput::Bytes(bytes)).await;
         Ok(())
     }
-    /// Send an out-of-band signal to the session's runtime.
+    /// Send a named, bounded terminal control request to the runtime.
     ///
-    /// Allowed while somebody is attached, unlike input. A signal is not a
-    /// keystroke: it does not land in the byte stream and cannot corrupt what
-    /// is being drawn, and stopping a runaway command is exactly the thing an
-    /// owner may need to do from elsewhere while a screen is held open.
+    /// Allowed while somebody is attached, unlike free-form input. The runtime
+    /// translates a documented name into one control byte, which is the bounded
+    /// action an owner may need from elsewhere to stop a runaway command while
+    /// a screen is held open.
     pub async fn send_signal(
         &self,
         caller: &Caller,

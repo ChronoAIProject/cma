@@ -313,7 +313,7 @@ pub enum TerminalInput {
     Bytes(Vec<u8>),
     /// The terminal was resized.
     Resize(TermSize),
-    /// An out-of-band signal, named in the conventional short form.
+    /// A named request the supervisor translates into one terminal control byte.
     Signal(String),
     /// Replace the credential the runtime presents when calling out.
     ///

@@ -71,7 +71,7 @@ Binary frames are terminal bytes. Text frames are JSON control messages. There i
 |---|---|---|
 | C → S | binary | raw keystroke bytes written to the PTY master |
 | C → S | `{"t":"resize","cols":120,"rows":40}` | propagate to `TIOCSWINSZ` |
-| C → S | `{"t":"signal","sig":"INT"}` | out-of-band signal; `INT`, `TERM`, `QUIT`, `HUP` |
+| C → S | `{"t":"signal","sig":"INT"}` | named in-band control byte: `INT` -> `0x03` (Ctrl-C), `QUIT` -> `0x1c` (`Ctrl-\`), and `TERM`/`HUP` -> `0x04` (Ctrl-D/EOF). `TERM` and `HUP` are aliases; no OS signal is delivered. Any other name is rejected. |
 | C → S | `{"t":"ping"}` | keepalive |
 | S → C | binary | raw PTY output |
 | S → C | `{"t":"ready","cols":120,"rows":40,"snapshot":true,"resources":true}` | attached; a screen snapshot follows, then resource frames where declared |

@@ -167,6 +167,41 @@ fn a_switch_names_the_program_to_restart() {
     ));
 }
 
+async fn captured_signal_input(signals: &[&str]) -> Vec<u8> {
+    let state = AppState::for_test(&["/bin/echo"]);
+    let (session, _output) = state
+        .registry
+        .get_or_start("signal-map", "/bin/echo", 80, 24, "k")
+        .await
+        .expect("the test terminal starts");
+    let captured = session.capture_input_writes_for_test();
+    let (replies, _answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    for signal in signals {
+        let frame = serde_json::json!({ "t": "signal", "sig": signal }).to_string();
+        control(&frame, "signal-map", &state, Some(&session), &replies).await;
+    }
+
+    let bytes = captured
+        .lock()
+        .expect("the captured input is healthy")
+        .clone();
+    bytes
+}
+
+#[tokio::test]
+async fn every_documented_signal_writes_its_exact_control_byte() {
+    assert_eq!(
+        captured_signal_input(&["INT", "TERM", "QUIT", "HUP"]).await,
+        vec![0x03, 0x04, 0x1c, 0x04]
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_signal_writes_nothing() {
+    assert!(captured_signal_input(&["XYZ"]).await.is_empty());
+}
+
 #[tokio::test]
 async fn a_switch_is_answered_either_way() {
     // #289: the frame reaching the socket says nothing about the program
