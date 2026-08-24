@@ -848,7 +848,7 @@ impl SessionLog {
     }
 
     #[cfg(test)]
-    fn queued(&self) -> usize {
+    pub(crate) fn queued(&self) -> usize {
         let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.queued.len() + usize::from(state.running)
     }
