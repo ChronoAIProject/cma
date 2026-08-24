@@ -84,7 +84,7 @@ struct EnqueuedCommit {
 
 /// Reports that an explicit failure was actually observed in the caller's
 /// poll, rather than merely placed in a channel it canceled without reading.
-struct CommitReceiver {
+pub(crate) struct CommitReceiver {
     complete: oneshot::Receiver<Result<SessionRecord, StoreError>>,
     acknowledge_error: Option<oneshot::Sender<()>>,
 }
@@ -1256,19 +1256,34 @@ async fn retry_delay(attempt: usize) {
 
 /// Record an event and immediately hand its exact state snapshot to the lane.
 pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
+    drop(append_with(entry, kind, |_| {}));
+}
+
+/// Queue a semantic event whose intended record is not live state until commit.
+///
+/// Public operations that act on a runtime use this form so a cross-replica
+/// conflict can be reported before the runtime is changed. The ordinary
+/// [`append`] path has already observed its state change and therefore leaves
+/// the detached lane responsible for persistence after the caller moves on.
+pub(crate) fn append_with(
+    entry: &mut SessionEntry,
+    kind: EventKind,
+    change: impl FnOnce(&mut SessionRecord),
+) -> CommitReceiver {
     let event = Event {
         session_id: entry.session.id.clone(),
         seq: 0,
         kind,
         appended_at: String::new(),
     };
-    let record = record_from_entry(entry);
+    let mut record = record_from_entry(entry);
+    change(&mut record);
     let enqueued =
         entry
             .event_log
             .enqueue_commit(CommitMode::UpdateInheriting, record, vec![event]);
     entry.session.last_seq = enqueued.last_seq;
-    drop(enqueued.complete);
+    enqueued.complete
 }
 
 #[cfg(test)]

@@ -844,7 +844,7 @@ async fn a_public_resize_and_its_queued_flush_preserve_a_rival_record_field() {
 }
 
 #[tokio::test]
-async fn a_rejected_resize_cannot_leak_through_its_queued_record_barrier() {
+async fn a_rejected_resize_returns_failure_without_changing_the_runtime() {
     let store = Arc::new(FaultStore::default());
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let owner = user("resize-conflict-owner");
@@ -867,13 +867,26 @@ async fn a_rejected_resize_cannot_leak_through_its_queued_record_barrier() {
     let before_tail = before.session.last_seq;
     let local_geometry = TerminalGeometry::new(118, 40).expect("valid geometry");
     let rival_geometry = TerminalGeometry::new(119, 41).expect("valid geometry");
+    let before_screen = service
+        .screen_snapshot(&owner, &created.id)
+        .await
+        .expect("screen is readable");
+    let (input, mut runtime_input) = tokio::sync::mpsc::channel(1);
+    service
+        .entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("live entry")
+        .input = Some(input);
 
     store.pause_next_write.store(true, Ordering::SeqCst);
     let resize_service = Arc::clone(&service);
     let resize_id = created.id.clone();
+    let resize_owner = owner.clone();
     let resize = tokio::spawn(async move {
         resize_service
-            .resize_terminal(&owner, &resize_id, local_geometry)
+            .resize_terminal(&resize_owner, &resize_id, local_geometry)
             .await
     });
     store.write_started.notified().await;
@@ -892,10 +905,11 @@ async fn a_rejected_resize_cannot_leak_through_its_queued_record_barrier() {
         .expect("the rival geometry commits first");
     store.release_write.notify_one();
 
-    resize
+    let error = resize
         .await
         .expect("resize task completes")
-        .expect("the public operation reaches its record barrier");
+        .expect_err("the rejected typed resize is reported");
+    assert!(matches!(error, crate::CoreError::RuntimeUnavailable(_)));
     wait_for_lane_idle(&lane).await;
 
     let durable = store.inner.get(&created.id).await.unwrap().unwrap();
@@ -907,6 +921,34 @@ async fn a_rejected_resize_cannot_leak_through_its_queued_record_barrier() {
         .await
         .unwrap()
         .is_empty());
+    assert_eq!(
+        service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("live entry")
+            .session
+            .geometry,
+        before.session.geometry,
+        "a rejected proposal never becomes live state"
+    );
+    assert_eq!(
+        service
+            .screen_snapshot(&owner, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry,
+        "a rejected proposal never resizes the local screen"
+    );
+    assert!(
+        matches!(
+            runtime_input.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ),
+        "a rejected proposal is never forwarded to the runtime"
+    );
 }
 
 #[tokio::test]
