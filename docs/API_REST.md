@@ -309,7 +309,7 @@ POST /api/v1/sessions/{id}/input
 POST /api/v1/sessions/{id}/interrupt
 ```
 
-Stops what the session is doing without ending it. On a conversation this cancels the turn in flight; on a terminal it delivers `SIGINT`.
+Stops what the session is doing without ending it. On a conversation this cancels the turn in flight; on a terminal it injects the in-band `0x03` control byte (Ctrl-C), not an OS signal.
 
 Interrupting requires the `interrupt` capability on a conversation session. Not every kernel has one — a wire can offer a prompt and no way to withdraw it — and a session whose kernel cannot is refused by name rather than left waiting for something that will not happen.
 
@@ -332,7 +332,7 @@ A live PTY attachment holds the terminal exclusively, and that changes what thes
 |---|---|---|
 | `input` | `409` `/already-attached` | keystrokes injected into a live attachment land inside an escape sequence that client is drawing; afterwards neither side can tell which characters were whose |
 | `resize` | `409` `/already-attached` | the attached client declared the geometry it is drawing for, and resizing reflows a screen it is halfway through painting |
-| `interrupt` | **allowed** | a signal is not a keystroke — it does not enter the byte stream and cannot corrupt what is being drawn, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
+| `interrupt` | **allowed** | it injects only the bounded, named `INT` control byte (`0x03`, Ctrl-C), rather than free-form input, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
 
 The rule is about *this* route, not about the terminal. The client holding the attachment drives it through its own connection and is unaffected: refusing writes at the operation itself would refuse that client its own keystrokes.
 
