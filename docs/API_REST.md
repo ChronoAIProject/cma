@@ -44,7 +44,10 @@ on that code and the status, never on its prose.
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
-Every response carries `X-Request-Id`. Include it in any support report.
+Every response carries `X-Request-Id`, including authentication failures and
+unmatched routes. A supplied value is echoed; otherwise CMA mints a UUID. The
+same value is attached to the request's tracing span. Include it in any support
+report.
 
 ---
 
@@ -1164,7 +1167,8 @@ GET /api/v1/conformance
 ```
 
 ```json
-{ "conformsTo": [
+{
+  "conformsTo": [
   "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
   "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
   "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
@@ -1172,8 +1176,16 @@ GET /api/v1/conformance
   "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
   "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
   "https://spec.chrono-ai.fun/cma/1.0/conf/usage"
-] }
+  ],
+  "version": "0.1.0",
+  "build_sha": "8d74d0e55c39d9170d35f92b7818a5eb923bd201"
+}
 ```
+
+`version` is the service package version. `build_sha` is the full source commit
+baked into the API image, or `development` for a local build that supplied no
+commit. Clients use these fields to establish which additive `/v1` contract a
+deployment is running; neither field is an authorization or capability grant.
 
 Representations carry `Link: <…/conf/rest-core>; rel="profile"`, and the service advertises `Link: </openapi.json>; rel="service-desc"`.
 
@@ -1198,7 +1210,10 @@ Kernel discovery requires authentication because it reports deployment-specific 
 
 A runtime that serves neither plane is listed with an empty `modes`. It is still a runtime this deployment knows about, and reporting it as absent would be a different claim.
 
-The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated from code so it cannot drift.
+The machine-readable contract is anonymous `GET /openapi.json` (OpenAPI 3.1).
+It is generated from the annotated handlers through the same registrations
+that build the router, so adding a documented operation also adds its route.
+The document includes the RFC 9457 problem schema used by every refusal.
 
 ---
 

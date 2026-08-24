@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Identifier of a session. Stable across an idle to revive cycle.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SessionId(pub String);
 
 impl SessionId {
@@ -29,7 +29,7 @@ impl std::fmt::Display for SessionId {
 
 /// The authenticated principal that owns a session. The core never models a
 /// user directory of its own; this is whatever the identity provider asserts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SubjectId(pub String);
 
 impl SubjectId {
@@ -50,7 +50,7 @@ impl std::fmt::Display for SubjectId {
 /// Minted here rather than by the store so a caller never has to write a
 /// record before it can be referred to, and so two stores cannot disagree on
 /// what an identifier looks like.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EnvironmentProfileId(pub String);
 
 impl EnvironmentProfileId {
@@ -76,7 +76,7 @@ impl std::fmt::Display for EnvironmentProfileId {
 /// Minted before storage for the same reason as an environment profile id: a
 /// mis-routed identifier is obvious in a log rather than becoming a lookup in
 /// the wrong collection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RateCardId(pub String);
 
 impl RateCardId {
