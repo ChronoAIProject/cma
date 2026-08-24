@@ -28,3 +28,4 @@ uuid = { workspace = true }
 [dev-dependencies]
 # Drives the composed REST router in public error-contract tests.
 tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = { workspace = true }
