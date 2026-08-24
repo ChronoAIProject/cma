@@ -14,6 +14,7 @@ use std::time::Duration;
 use layer3_adapter::ConversationInput;
 use tokio::sync::Notify;
 
+use crate::commit_fault_support::CommitFaultStore;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
 use crate::session::SessionStatus;
@@ -128,6 +129,12 @@ impl SessionStore for RotationStore {
     ) -> Result<Vec<StoredEvent>, StoreError> {
         self.inner.events_since(id, after).await
     }
+}
+
+fn is_plane_changed(_record: &SessionRecord, events: &[Event]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event.kind, EventKind::PlaneChanged { .. }))
 }
 
 /// Wait for a session to leave the states that mean "in progress".
@@ -652,6 +659,34 @@ async fn started_adversarial(
     (svc, alice, created, before)
 }
 
+async fn started_with_commit_fault(
+    store: Arc<CommitFaultStore>,
+    adapter: Arc<FakeAdapter>,
+) -> (
+    Arc<crate::service::SessionService>,
+    crate::authz::Caller,
+    crate::session::Session,
+    SessionRecord,
+) {
+    let svc = crate::test_support::service_over(store.clone(), adapter);
+    let alice = user("plane-final-commit-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let lane = svc.event_logs.lane(&created.id);
+            if svc.entries.read().await.contains_key(&created.id) && lane.queued() == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the original runtime and its writes settle");
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    (svc, alice, created, before)
+}
+
 async fn wait_for_rotation_lane(svc: &Arc<crate::service::SessionService>, id: &SessionId) {
     let lane = svc.event_logs.lane(id);
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -919,6 +954,160 @@ async fn a_plane_change_ends_after_four_store_failures_without_runtime_side_effe
     assert!(adapter.plane_switches.lock().await.is_empty());
     assert!(adapter.terminated.lock().await.is_empty());
     assert!(adapter.running.lock().await.contains_key(&old_runtime));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_final_plane_change_conflict_restores_the_old_runtime_and_channels() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
+    let adapter = switch_capable();
+    let (svc, alice, created, before) =
+        started_with_commit_fault(store.clone(), adapter.clone()).await;
+    let old_runtime = before.runtime_id.clone().expect("old runtime is durable");
+
+    store.pause_next();
+    let moving = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.change_plane(&alice, &id, crate::options::SessionMode::Conversation)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    assert_eq!(
+        inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "the selected fault is the second durable stage"
+    );
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("old entry remains")
+            .session
+            .status,
+        SessionStatus::Rotating
+    );
+    assert!(adapter.running.lock().await.contains_key(&old_runtime));
+    assert!(adapter.terminated.lock().await.is_empty());
+
+    let mut rival = inner.get(&created.id).await.unwrap().unwrap();
+    rival.context_ref = Some("rival-between-rotation-stages".into());
+    inner
+        .commit_session_idempotent("rival-between-rotation-stages", &rival, &[])
+        .await
+        .expect("the rival record commits before PlaneChanged");
+    store.release();
+
+    assert!(matches!(
+        moving.await.expect("plane change task completes"),
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+    assert_eq!(store.matched_calls(), 1);
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(durable.session.options, before.session.options);
+    assert_eq!(durable.session.capabilities, before.session.capabilities);
+    assert_eq!(durable.session.rotations, before.session.rotations);
+    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some("rival-between-rotation-stages")
+    );
+    assert!(inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap()
+        .iter()
+        .all(|event| !matches!(
+            event.kind,
+            crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
+        )));
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("old entry remains usable");
+        assert_eq!(entry.session.status, before.session.status);
+        assert_eq!(entry.session.options, before.session.options);
+        assert_eq!(
+            entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+            Some(old_runtime.as_str())
+        );
+        assert!(entry.input.is_some());
+        assert!(entry.conversation.is_none());
+    }
+    assert!(adapter.running.lock().await.contains_key(&old_runtime));
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(
+        adapter
+            .senders
+            .lock()
+            .await
+            .last()
+            .is_some_and(|sender| !sender.is_closed()),
+        "the old output relay remains connected"
+    );
+}
+
+#[tokio::test]
+async fn four_final_plane_change_outages_restore_without_a_false_change() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
+    let adapter = switch_capable();
+    let (svc, alice, created, before) =
+        started_with_commit_fault(store.clone(), adapter.clone()).await;
+    let old_runtime = before.runtime_id.clone().expect("old runtime is durable");
+
+    store.fail_next(4);
+    assert!(matches!(
+        svc.change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await,
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+    assert_eq!(store.matched_calls(), 4);
+
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(durable.session.options, before.session.options);
+    assert_eq!(durable.session.capabilities, before.session.capabilities);
+    assert_eq!(durable.session.rotations, before.session.rotations);
+    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert!(inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap()
+        .iter()
+        .all(|event| !matches!(
+            event.kind,
+            crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
+        )));
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&created.id).expect("old entry remains usable");
+    assert_eq!(entry.session.status, before.session.status);
+    assert_eq!(entry.session.options, before.session.options);
+    assert_eq!(
+        entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+        Some(old_runtime.as_str())
+    );
+    assert!(entry.input.is_some());
+    assert!(entry.conversation.is_none());
+    drop(entries);
+    assert!(adapter.running.lock().await.contains_key(&old_runtime));
+    assert!(adapter.terminated.lock().await.is_empty());
 }
 
 #[tokio::test]
