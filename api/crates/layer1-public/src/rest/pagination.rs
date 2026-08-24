@@ -263,6 +263,55 @@ mod tests {
     }
 
     #[test]
+    fn an_unsupported_cursor_version_is_refused() {
+        let encoded = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&WireCursor {
+                version: 2,
+                collection: CursorCollection::Sessions,
+                created_at: "2026-08-24T10:11:12Z".into(),
+                id: "sesn_1".into(),
+            })
+            .expect("test cursor serializes"),
+        );
+        assert!(
+            serde_urlencoded::from_str::<SessionPageParams>(&format!("cursor={encoded}")).is_err()
+        );
+    }
+
+    #[test]
+    fn an_empty_cursor_identifier_is_refused() {
+        let encoded = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&WireCursor {
+                version: 1,
+                collection: CursorCollection::Sessions,
+                created_at: "2026-08-24T10:11:12Z".into(),
+                id: String::new(),
+            })
+            .expect("test cursor serializes"),
+        );
+        assert!(
+            serde_urlencoded::from_str::<SessionPageParams>(&format!("cursor={encoded}")).is_err()
+        );
+    }
+
+    #[test]
+    fn an_unknown_cursor_payload_field_is_refused() {
+        let encoded = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "collection": "sessions",
+                "created_at": "2026-08-24T10:11:12Z",
+                "id": "sesn_1",
+                "offset": 1,
+            }))
+            .expect("test cursor serializes"),
+        );
+        assert!(
+            serde_urlencoded::from_str::<SessionPageParams>(&format!("cursor={encoded}")).is_err()
+        );
+    }
+
+    #[test]
     fn a_truncated_cursor_is_refused() {
         let cursor = PageCursor::new("2026-08-24T10:11:12Z", "sesn_1");
         let mut encoded = encode_cursor(CursorCollection::Sessions, &cursor);
