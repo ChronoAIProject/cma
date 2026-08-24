@@ -779,6 +779,32 @@ in [Services](./Services.md).
 
 **Never a credential.** `reach` carries identifiers and display names. What a session may reach is a fact about its configuration; what it holds is not, and no token, no expiry and nothing that could be used to fingerprint one appears here.
 
+### Environment profiles and skill catalogue
+
+```http
+GET /api/v1/environment-profiles
+GET /api/v1/environment-profiles/skills
+```
+
+The skill route returns every registry entry the authenticated caller may put
+in a profile, plus the deployment's mandatory packages and skills. CMA follows
+the registry's opaque cursor with pages of 100, to an explicit ceiling of 50
+pages / 5,000 distinct skills. A terminal fiftieth page succeeds. If the
+registry advertises another page, omits pagination metadata or a required next
+cursor, repeats a cursor, or repeats a skill identity, the route returns a
+coded `503 skill_catalogue_unavailable` problem and no catalogue body. Its
+detail is fixed and never reflects an upstream URL, cursor, or transport error.
+The route never presents the pages collected so far as a complete picker.
+
+Session reads do not repeat that full walk. Each distinct skill recorded across
+the rendered session page is read by id or slug, with at most eight registry
+requests in flight. This supplies `agent.skills[].name` and `description` even
+when the skill would have appeared after the picker's first registry page,
+while retaining the recorded id and version if the registry cannot be asked.
+If one recorded skill has since been removed or is no longer visible, that
+entry retains its raw recorded metadata while descriptions for the other
+visible grants are still returned.
+
 ---
 
 ## 4. Input, interrupt, steer
