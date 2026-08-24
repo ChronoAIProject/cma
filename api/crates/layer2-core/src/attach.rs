@@ -10,7 +10,8 @@ use std::sync::Arc;
 use layer3_adapter::{TermSize, TerminalInput};
 use tokio::sync::broadcast;
 
-use crate::authz::{Caller, Capability};
+use crate::authz::{Caller, Capability as AuthorizationCapability};
+use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
@@ -46,7 +47,9 @@ impl SessionService {
         geometry: TerminalGeometry,
         claim: AttachmentClaim,
     ) -> Result<AttachmentHandle, CoreError> {
-        caller.authorization.require(Capability::UseOwnSessions)?;
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
         // A session whose process is gone still exists. Reviving it is the
         // caller's next step; refusing here would make a persisted session
         // unusable after the restart that persistence exists to survive.
@@ -57,6 +60,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        record.session.capabilities.require(Capability::Terminal)?;
         if !self.entries.read().await.contains_key(id) {
             // The sandbox outlives this process, so a restart loses the
             // attachment and not the runtime. Re-adopting it here is what makes
@@ -92,6 +96,7 @@ impl SessionService {
             if entry.session.status.is_terminal() {
                 return Err(CoreError::SessionTerminated);
             }
+            entry.session.capabilities.require(Capability::Terminal)?;
             match (&entry.attached, claim) {
                 (Some(_), AttachmentClaim::Exclusive) => return Err(CoreError::AlreadyAttached),
                 (Some(held), AttachmentClaim::Takeover) => {
