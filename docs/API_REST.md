@@ -29,6 +29,8 @@ The token is checked with the provider rather than decoded here, which is what m
 Capabilities are the same either way: they come from the subject's roles as the provider reports them, so a client is never more privileged for having arrived over one route than the other.
 
 A request with neither credential is `401`. A request whose credential is valid but insufficient is `403`.
+The unauthenticated response carries `code: "not_authenticated"`; clients branch
+on that code and the status, never on its prose.
 
 
 | Concern | Rule |
@@ -86,7 +88,7 @@ the answer is frozen for the life of the session, including across a rotation.
 
 **A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
 
-**A field this endpoint does not know is refused, not ignored.** Sending `"kernel"` is the obvious thing to try, because `GET /api/v1/kernels` enumerates them — so it answers `422` with `invalid_request`, naming the field and listing what it would have accepted. It used to be discarded, and the session came back `201` on whichever kernel the profile actually resolved to, which is a request answered differently from how it was asked. To choose a kernel, name an environment profile whose `agent.kernel` is the one you want; `GET /api/v1/environment-profiles` shows each profile's.
+**A field this endpoint does not know is refused, not ignored.** Sending `"kernel"` is the obvious thing to try, because `GET /api/v1/kernels` enumerates them — so it answers `422` with `invalid_request`. Rejection details are fixed by error class rather than copied from Serde because other request bodies can carry credentials. It used to be discarded, and the session came back `201` on whichever kernel the profile actually resolved to, which is a request answered differently from how it was asked. To choose a kernel, name an environment profile whose `agent.kernel` is the one you want; `GET /api/v1/environment-profiles` shows each profile's.
 
 A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
 
@@ -683,6 +685,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
   "title": "A turn is already in progress",
   "status": 409,
   "detail": "Session sesn_01JD8Z3K7 has an active turn and its concurrent_input policy is 'reject'.",
+  "code": "turn_in_progress",
   "instance": "/api/v1/sessions/sesn_01JD8Z3K7/input",
   "request_id": "req_01JD8Z4M2"
 }
@@ -690,17 +693,23 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 
 | Status | When |
 |---|---|
-| `400` | Malformed request |
-| `401` | Missing or invalid NyxID credential |
+| `400` | Malformed JSON (`code: "malformed_json"`) or query parameters that do not match the route (`code: "invalid_query"`) |
+| `401` | Missing or invalid NyxID credential (`code: "not_authenticated"`) |
 | `403` | Authenticated, but the session belongs to another subject |
-| `404` | No such session, or not visible to this subject |
+| `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
+| `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
 | `409` | Conflicts with current state — turn in progress, session terminated, live-session limit reached, or the quoted rate card is no longer in force |
+| `413` | The request body exceeds the service's accepted limit (`code: "request_too_large"`) |
+| `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
 | `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |
 | `429` | Rate limited; observe `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
 | `503` | Control plane recovering or failing over; retry |
 
-`501` responses name the missing capability in `detail`, so a client learns what is unavailable rather than guessing.
+Every error response includes a non-empty `code` and uses
+`Content-Type: application/problem+json`. Clients tell failures apart by that
+code and by status, never by prose. `501` responses name the missing capability
+in `detail`, so a client learns what is unavailable rather than guessing.
 
 ### The three service refusals
 
