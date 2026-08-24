@@ -212,9 +212,11 @@ next link. Follow that link verbatim rather than decoding or constructing its
 cursor. Cursors are versioned and bound to the exact collection that issued
 them: owner, operator, and environment-profile cursors are not interchangeable.
 They also carry a canonical RFC 3339 store position. A misspelled or unknown
-parameter, a malformed or mutated cursor, a nonsemantic timestamp, or a cursor
-reused on another collection is refused with `400 application/problem+json` and
-`code: "invalid_query"` rather than being silently ignored.
+parameter; malformed cursor encoding or payload; an unsupported cursor version;
+a noncanonical or nonsemantic cursor timestamp; an empty cursor identifier; or a
+cursor reused on another collection is refused with `400
+application/problem+json` and `code: "invalid_query"` rather than being silently
+ignored.
 
 `stop` releases the runtime and keeps the session: it goes `idle`, stays listed,
 stays readable, and nothing is being paid for. `revive` gives it a runtime
