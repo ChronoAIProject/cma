@@ -282,7 +282,7 @@ pub struct HostedKernel {
     /// already open. Opening a second attachment to deliver it is not an
     /// option: attaching declares a geometry, and a connection made without
     /// one would resize the pty under whoever is looking at it.
-    links: tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>,
+    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>>,
     /// Who is waiting to hear whether a plane switch was performed.
     ///
     /// A switch is only recorded once the runtime says it happened (#289):
@@ -308,7 +308,7 @@ impl HostedKernel {
             kernel,
             skills_root: skills_root.into(),
             agent_notes: agent_notes.into(),
-            links: tokio::sync::Mutex::new(BTreeMap::new()),
+            links: std::sync::Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             switch_waiters: SwitchWaiters::default(),
         }
     }
