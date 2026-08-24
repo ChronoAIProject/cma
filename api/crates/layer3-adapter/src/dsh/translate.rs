@@ -92,6 +92,7 @@ impl Harness {
         cwd: String,
         spec: &DshSandboxSpec,
         rejoin: Option<String>,
+        link: crate::hosted::LinkLifecycle,
         // Supplied by the caller and already being drained. This harness has
         // no sign-in of its own, but the contract is one contract: a kernel
         // that reported nothing during its open would be indistinguishable
@@ -124,6 +125,8 @@ impl Harness {
             session: rejoin.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             folder: Arc::new(Mutex::new(Folder::default())),
         });
+        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
+        link.register(control.clone()).await;
 
         let writer = Arc::clone(&harness);
         let (input, input_task) =
@@ -131,12 +134,15 @@ impl Harness {
                 let writer = Arc::clone(&writer);
                 async move { writer.drive(input).await }
             });
+        let input_task_for_reader = input_task.clone();
 
         // Read before anything is sent: the handshake's own answer arrives on
         // this loop, so it has to be running to receive it.
         let reader = Arc::clone(&harness);
         let updates = updates_tx.clone();
-        tokio::spawn(async move {
+        let control_for_reader = control.clone();
+        let link_for_reader = link.clone();
+        let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
                     Ok(Message::Binary(bytes)) => match supervisor::unframe(&bytes) {
@@ -161,14 +167,25 @@ impl Harness {
                 }
             }
             reader.pending.lock().await.clear();
-            input_task.abort();
+            link_for_reader.forget(&control_for_reader).await;
+            input_task_for_reader.abort();
             tracing::info!("conversation link ended");
         });
 
-        harness.handshake(cwd, spec).await?;
+        if let Err(error) = harness.handshake(cwd, spec).await {
+            // A failed handshake does not imply the runtime closed its socket.
+            // Stop all detached work and close both halves before returning.
+            reader_task.abort();
+            let _ = reader_task.await;
+            input_task.abort();
+            link.forget(&control).await;
+            drop(input);
+            drop(control);
+            let _ = harness.sink.lock().await.close().await;
+            return Err(error);
+        }
 
         let conversation_id = harness.session.clone();
-        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
 
         Ok((
             ConversationChannel {

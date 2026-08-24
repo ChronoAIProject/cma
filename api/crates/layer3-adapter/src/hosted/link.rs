@@ -18,7 +18,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::{HostedKernel, SUPERVISOR_PORT};
 use crate::supervisor;
-use crate::{AdapterError, RuntimeHandle, TerminalChannel, TerminalInput};
+use crate::{AdapterError, RuntimeHandle, TerminalChannel, TerminalInput, TerminalOutput};
 
 /// How many output chunks may queue before the relay applies backpressure.
 ///
@@ -49,6 +49,24 @@ const SWITCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 /// The tag a supervisor answers a plane switch with, matching the runtime's
 /// own constant. One word, agreed at both ends.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
+
+/// Decode a process ending reported by the supervisor.
+///
+/// The `code` field is required even when its value is null. Treating a missing
+/// field as a signal ending would fabricate a report from a malformed or newer
+/// control frame.
+pub(crate) fn exit_report(text: &str) -> Option<TerminalOutput> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("t")?.as_str()? != "exit" {
+        return None;
+    }
+    let code = match value.get("code")? {
+        serde_json::Value::Null => None,
+        serde_json::Value::Number(number) => Some(i32::try_from(number.as_i64()?).ok()?),
+        _ => return None,
+    };
+    Some(TerminalOutput::Exited { code })
+}
 
 /// Read a runtime's answer to a plane switch, if that is what this frame is.
 ///
@@ -156,16 +174,23 @@ impl HostedKernel {
         // a binary frame is read for the whole life of the link.
         let (framed, early) = Self::negotiate(&mut source).await;
 
-        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(OUTPUT_BUFFER);
+        let (out_tx, out_rx) = mpsc::channel::<TerminalOutput>(OUTPUT_BUFFER);
         let (in_tx, mut in_rx) = mpsc::channel::<TerminalInput>(INPUT_BUFFER);
 
+        // Registered before either half can finish, so cleanup cannot race a
+        // dead sender into the map after it has already removed this link.
+        let lifecycle = self.link_lifecycle(&handle.0);
+        lifecycle.register(in_tx.clone()).await;
+
         let sandbox = handle.0.clone();
-        let answers = self.switch_waiters();
+        let link_for_cleanup = in_tx.clone();
+        let lifecycle_for_reader = lifecycle.clone();
         tokio::spawn(async move {
             // Output that arrived while the wire was being settled. Sent
             // first, because it is the top of somebody's screen.
             if let Some(bytes) = early {
-                if out_tx.send(bytes).await.is_err() {
+                if out_tx.send(TerminalOutput::Bytes(bytes)).await.is_err() {
+                    lifecycle_for_reader.forget(&link_for_cleanup).await;
                     return;
                 }
             }
@@ -187,16 +212,21 @@ impl HostedKernel {
                             },
                             false => bytes.to_vec(),
                         };
-                        if out_tx.send(payload).await.is_err() {
+                        if out_tx.send(TerminalOutput::Bytes(payload)).await.is_err() {
                             break; // consumer went away
                         }
                     }
                     Ok(Message::Text(text)) => {
-                        // The only control frame a runtime sends back after
-                        // its declaration. Anything else is ignored, as it
-                        // always was.
                         if let Some(accepted) = switch_answer(&text) {
-                            answers.settle(&sandbox, accepted).await;
+                            lifecycle_for_reader
+                                .settle(&link_for_cleanup, accepted)
+                                .await;
+                        } else if let Some(ending) = exit_report(&text) {
+                            // The supervisor sends this only after it has
+                            // stopped forwarding pty bytes. Sharing the output
+                            // queue preserves that order into the session core.
+                            let _ = out_tx.send(ending).await;
+                            break;
                         }
                     }
                     Ok(Message::Close(_)) => break,
@@ -207,6 +237,9 @@ impl HostedKernel {
                     }
                 }
             }
+            // Remove only this link. A reconnect can install its successor
+            // before the old reader notices that its socket ended.
+            lifecycle_for_reader.forget(&link_for_cleanup).await;
             tracing::info!(%sandbox, "sandbox output relay ended");
         });
 
@@ -221,10 +254,6 @@ impl HostedKernel {
             }
             tracing::info!(%sandbox, "sandbox input relay ended");
         });
-
-        // Remembered so a credential renewed later can be delivered without
-        // opening a second attachment.
-        self.remember_link(&handle.0, in_tx.clone()).await;
 
         Ok(TerminalChannel {
             output: out_rx,
@@ -259,7 +288,7 @@ impl HostedKernel {
             // The link died since it was recorded. Forgotten rather than
             // retried: the next attachment records a live one, and keeping a
             // dead sender would make every renewal fail the same way forever.
-            self.forget_link(&handle.0).await;
+            self.link_lifecycle(&handle.0).forget(&link).await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the credential reached it",
                 handle.0
@@ -278,16 +307,27 @@ impl HostedKernel {
         handle: &RuntimeHandle,
         command: &str,
     ) -> Result<(), AdapterError> {
-        let link = self.link_to(&handle.0).await;
-        let Some(link) = link else {
+        // Select the current generation and install its waiter while holding
+        // the link registry lock. A replacement therefore happens wholly
+        // before or after registration; an obsolete operation cannot pause
+        // between the two and overwrite its successor's waiter.
+        let link_and_answer = {
+            let links = self.links.lock().await;
+            match links.get(&handle.0) {
+                Some(link) => {
+                    let link = link.clone();
+                    let answer = self.switch_waiters.expect(&handle.0, &link).await;
+                    Some((link, answer))
+                }
+                None => None,
+            }
+        };
+        let Some((link, answer)) = link_and_answer else {
             return Err(AdapterError::Unavailable(format!(
                 "runtime {} has no open link to switch plane",
                 handle.0
             )));
         };
-        // Registered before the frame goes out, so an answer that arrives
-        // immediately has somebody to reach.
-        let answer = self.switch_waiters().expect(&handle.0).await;
         if link
             .send(TerminalInput::SwitchPlane {
                 command: command.to_string(),
@@ -295,7 +335,7 @@ impl HostedKernel {
             .await
             .is_err()
         {
-            self.forget_link(&handle.0).await;
+            self.link_lifecycle(&handle.0).forget(&link).await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the switch reached it",
                 handle.0
@@ -321,7 +361,7 @@ impl HostedKernel {
                 handle.0
             ))),
             Err(_) => {
-                self.switch_waiters().forget(&handle.0).await;
+                self.switch_waiters().forget(&handle.0, &link).await;
                 Err(AdapterError::Unavailable(format!(
                     "runtime {} did not answer the switch",
                     handle.0

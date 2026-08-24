@@ -33,6 +33,11 @@ pub enum Detached {
     PlaneChanged,
     /// The session is being carried onto a newer runtime and will come back.
     RuntimeReplaced,
+    /// The process serving the live stream ended.
+    ///
+    /// The code is absent when a signal ended it. This reports the moment to an
+    /// attachment only; it does not decide the session's durable lifecycle.
+    ProcessExited { code: Option<i32> },
 }
 
 /// An exclusive terminal attachment.
@@ -58,6 +63,11 @@ pub struct AttachmentHandle {
     /// one, and the person looking at it will reload and take the attachment
     /// back — which is a fight nobody wins.
     pub superseded: broadcast::Receiver<Detached>,
+    /// The ending recorded before the live output sender closes.
+    ///
+    /// Separate from `superseded`: losing a lease and reaching the end of the
+    /// process are different facts and can become ready at the same moment.
+    pub ending: tokio::sync::watch::Receiver<Option<Detached>>,
     /// Bytes that repaint the current screen, delivered before live output.
     pub repaint: Vec<u8>,
     /// Geometry the repaint was rendered at.
