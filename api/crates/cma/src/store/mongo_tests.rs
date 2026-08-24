@@ -2126,7 +2126,7 @@ async fn real_cutover_rejects_an_advertised_hole_but_allows_physical_history_ahe
         Ok(_) => panic!("an advertised second event cannot survive with only event one"),
         Err(error) => error,
     };
-    assert!(matches!(error, StoreError::Malformed(_)));
+    assert!(matches!(error, StoreError::Unavailable(_)));
     assert!(error.to_string().contains("advertises event 2"));
     ahead.drop().await.unwrap();
 
