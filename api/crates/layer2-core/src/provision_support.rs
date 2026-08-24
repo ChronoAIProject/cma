@@ -89,18 +89,34 @@ impl SessionService {
         .await
         {
             Ok(Ok(())) => {}
-            Ok(Err(failure)) => self.abandon(&id, &adapter, &failure, outcome).await,
+            Ok(Err(failure)) => {
+                if let Err(error) = self.abandon(&id, &adapter, &failure, outcome).await {
+                    tracing::error!(
+                        session_id = %id,
+                        %error,
+                        "cannot record the runtime abandonment; leaving it intact"
+                    );
+                }
+            }
             Err(_) => {
-                self.abandon(
-                    &id,
-                    &adapter,
-                    &crate::provision_failure::StartFailure::transient(format!(
-                        "the runtime did not become usable within {}s",
-                        PROVISION_DEADLINE.as_secs()
-                    )),
-                    outcome,
-                )
-                .await
+                if let Err(error) = self
+                    .abandon(
+                        &id,
+                        &adapter,
+                        &crate::provision_failure::StartFailure::transient(format!(
+                            "the runtime did not become usable within {}s",
+                            PROVISION_DEADLINE.as_secs()
+                        )),
+                        outcome,
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        session_id = %id,
+                        %error,
+                        "cannot record the timed-out runtime abandonment; leaving it intact"
+                    );
+                }
             }
         }
         // Released last, and on every path: while the claim is held the
