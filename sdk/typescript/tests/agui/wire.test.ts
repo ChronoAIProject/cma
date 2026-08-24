@@ -22,18 +22,20 @@ import type { OperationOptions } from '../../src/http.js';
  */
 
 /** An SSE body exactly as the replay route writes it. */
-function sse(records: readonly { id: number; event: string; data: unknown }[]): string {
+function sse(records: readonly { id?: number; event: string; data: unknown }[]): string {
   return records
-    .map((r) => `id: ${String(r.id)}\nevent: ${r.event}\ndata: ${JSON.stringify(r.data)}\n\n`)
+    .map(
+      (r) =>
+        `${r.id === undefined ? '' : `id: ${String(r.id)}\n`}event: ${r.event}\ndata: ${JSON.stringify(r.data)}\n\n`,
+    )
     .join('');
 }
 
 describe('what the interface serves is what this client reads', () => {
-  it('reads a projected turn without falling through to unknown', () => {
+  it('reads a projected turn and advances only after a projection is complete', () => {
     const body = sse([
       { id: 1, event: 'RUN_STARTED', data: { type: 'RUN_STARTED', runId: 'r', threadId: 's' } },
       {
-        id: 2,
         event: 'TEXT_MESSAGE_START',
         data: {
           type: 'TEXT_MESSAGE_START',
@@ -44,7 +46,6 @@ describe('what the interface serves is what this client reads', () => {
         },
       },
       {
-        id: 3,
         event: 'TEXT_MESSAGE_CONTENT',
         data: {
           type: 'TEXT_MESSAGE_CONTENT',
@@ -55,7 +56,17 @@ describe('what the interface serves is what this client reads', () => {
         },
       },
       {
-        id: 4,
+        id: 2,
+        event: 'TEXT_MESSAGE_END',
+        data: {
+          type: 'TEXT_MESSAGE_END',
+          runId: 'r',
+          threadId: 's',
+          messageId: 'msg_2',
+        },
+      },
+      {
+        id: 3,
         event: 'RUN_FINISHED',
         data: { type: 'RUN_FINISHED', runId: 'r', threadId: 's', outcome: { type: 'end_turn' } },
       },
@@ -67,8 +78,14 @@ describe('what the interface serves is what this client reads', () => {
       'RUN_STARTED',
       'TEXT_MESSAGE_START',
       'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
       'RUN_FINISHED',
     ]);
+    expect(events.map((e) => e.seq)).toEqual([1, 0, 0, 2, 3]);
+    expect(events.slice(1, 3).every((event) => event.ephemeral !== true)).toBe(true);
+    expect(parseEventStream(body).slice(1, 3)).not.toContainEqual(
+      expect.objectContaining({ 'cma:live': true }),
+    );
     expect(events.some((e) => e.type === 'UNKNOWN')).toBe(false);
   });
 

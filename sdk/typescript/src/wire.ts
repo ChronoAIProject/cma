@@ -151,14 +151,12 @@ export const KNOWN_EVENTS = [
 export const LIVE_MARKER = 'cma:live';
 
 /**
- * How a client tells one delivered frame from another.
+ * How a client tells one stamped frame from another.
  *
- * The durable sequence alone is not enough, and assuming it was is what made
- * every agent message render empty: one durable event legitimately projects
- * to several frames — a committed message becomes START, then CONTENT, then
- * END — and all of them carry the sequence of the event they came from,
- * because that sequence is the cursor a reconnect resumes on. No projection
- * emits the same kind twice for one event, so the pair is exact.
+ * Current projections stamp only their final frame. The kind remains part of
+ * this key for compatibility with control planes that predate final-frame
+ * acknowledgement and stamp every sibling with the same sequence. No
+ * projection emits the same kind twice for one event, so the pair is exact.
  */
 export function frameKey(seq: number, type: string): string {
   return `${String(seq)}:${type}`;

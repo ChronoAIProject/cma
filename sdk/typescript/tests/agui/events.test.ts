@@ -38,6 +38,17 @@ describe('reading a frame', () => {
     expect(toEvent(validFrame(type)).type).toBe(type);
   });
 
+  it('accepts an unnumbered leading durable projection frame', () => {
+    const event = toEvent({ ...validFrame('TEXT_MESSAGE_START'), seq: 0 });
+
+    expect(event).toMatchObject({
+      type: 'TEXT_MESSAGE_START',
+      messageId: 'msg_1',
+      seq: 0,
+    });
+    expect(event.ephemeral).not.toBe(true);
+  });
+
   it('keeps an unknown kind whole rather than dropping it', () => {
     // §3: "the set grows additively" and "a client must tolerate unknown event
     // types rather than failing on them". A client that discarded one would

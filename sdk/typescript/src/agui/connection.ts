@@ -88,19 +88,15 @@ export interface LinkFailure {
 export class AguiConnection {
   #cursor = 0;
   /*
-   * Frames already delivered at the current cursor, keyed by the durable event
-   * they came from AND the kind of frame it projected to. Advancing the cursor
-   * clears older keys, keeping this set bounded for a connection that lives as
-   * long as its session.
+   * Stamped frames already delivered at the current cursor, keyed by the
+   * durable event they came from AND the kind of frame it projected to.
+   * Advancing the cursor clears older keys, keeping this set bounded for a
+   * connection that lives as long as its session.
    *
-   * Not by sequence alone. One durable event legitimately projects to several
-   * frames — a committed message becomes TEXT_MESSAGE_START, then CONTENT,
-   * then END — and every one of them carries the sequence of the event it was
-   * projected from, because that sequence is the cursor a reconnect resumes
-   * on. Keyed by sequence alone, the first frame was delivered and its
-   * siblings were dropped as duplicates: every agent message opened and then
-   * received none of its own text. No projection emits the same kind twice
-   * for one event, so this pair is exact.
+   * The kind remains part of the key for compatibility with control planes
+   * that predate final-frame acknowledgement and stamp every frame of a
+   * projection with the same sequence. No projection emits the same kind
+   * twice for one event, so this pair is exact.
    *
    * The kind is the one that arrived on the wire, not the one this build
    * normalised it to: everything unfamiliar normalises to UNKNOWN, so two
@@ -108,6 +104,10 @@ export class AguiConnection {
    * a client can least afford to drop something it does not understand.
    */
   #seen = new Set<string>();
+  /** Identity keys from the last completed multi-frame projection. */
+  #completedProjectionFrames = new Set<string>();
+  /** Identity keys seen before the next projection's final stamped frame. */
+  #openProjectionFrames = new Set<string>();
   #closed = false;
   /** The one terminal notification this one-shot connection has emitted. */
   #terminal: 'failed' | 'closed' | undefined;
@@ -428,6 +428,28 @@ export class AguiConnection {
       return;
     }
     const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    /*
+     * A leading durable projection frame deliberately has no SSE id. It can
+     * repeat after a drop, while the cursor still names the preceding durable
+     * event, so deduplicate it by the message or tool-call identity carried in
+     * the protocol. Two bounded sets retain only the open projection and the
+     * last completed one, which is enough for live/history overlap without
+     * growing for the session's lifetime.
+     */
+    if (event.seq === 0) {
+      const key = projectionFrameKey(event);
+      if (
+        key !== undefined &&
+        (this.#completedProjectionFrames.has(key) || this.#openProjectionFrames.has(key))
+      ) {
+        return;
+      }
+      if (key !== undefined) {
+        this.#openProjectionFrames.add(key);
+      }
+      onEvent(event);
+      return;
+    }
     if (event.seq < this.#cursor) {
       return;
     }
@@ -437,6 +459,8 @@ export class AguiConnection {
       // at the current sequence can overlap now, so older keys retain no value
       // and would otherwise grow for the session's entire lifetime.
       this.#seen.clear();
+      this.#completedProjectionFrames = this.#openProjectionFrames;
+      this.#openProjectionFrames = new Set<string>();
     }
     const delivered = frameKey(event.seq, wireKind);
     if (this.#seen.has(delivered)) {
@@ -444,6 +468,27 @@ export class AguiConnection {
     }
     this.#seen.add(delivered);
     onEvent(event);
+  }
+}
+
+/** A stable identity for every currently multi-frame durable projection. */
+function projectionFrameKey(event: AguiEvent): string | undefined {
+  const scope = `${event.runId}\u0000${event.type}\u0000`;
+  switch (event.type) {
+    case 'TEXT_MESSAGE_START':
+    case 'TEXT_MESSAGE_CONTENT':
+    case 'TEXT_MESSAGE_END':
+      return `${scope}${event.messageId}`;
+    case 'TOOL_CALL_START':
+      return `${scope}${event.toolCallId}`;
+    case 'TOOL_CALL_ARGS':
+      return `${scope}${event.toolCallId}\u0000${event.delta}\u0000${String(event.truncated)}`;
+    case 'TOOL_CALL_END':
+      return `${scope}${event.toolCallId}\u0000${event.status}`;
+    case 'TOOL_CALL_RESULT':
+      return `${scope}${event.toolCallId}\u0000${event.content}\u0000${String(event.truncated)}`;
+    default:
+      return undefined;
   }
 }
 

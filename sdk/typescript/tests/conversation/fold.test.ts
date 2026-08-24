@@ -326,6 +326,76 @@ describe('a message being typed', () => {
     expect(state.entries[0]).toMatchObject({ kind: 'message', text: 'Hello there' });
   });
 
+  it('commits an unnumbered durable prefix at the final frame sequence', () => {
+    const projection: readonly AguiEvent[] = [
+      {
+        type: 'TEXT_MESSAGE_START',
+        seq: 0,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_7',
+        role: 'assistant',
+      },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        seq: 0,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_7',
+        delta: 'the whole answer',
+      },
+      {
+        type: 'TEXT_MESSAGE_END',
+        seq: 7,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        messageId: 'msg_7',
+      },
+    ];
+
+    const state = stream(projection);
+
+    expect(state.entries).toEqual([
+      expect.objectContaining({
+        kind: 'message',
+        id: 'msg_7',
+        text: 'the whole answer',
+        committed: true,
+        seq: 7,
+      }),
+    ]);
+    expect(stream([...projection, ...projection])).toEqual(state);
+  });
+
+  it('assigns a tool start its sequence when the final arguments frame arrives', () => {
+    const state = stream([
+      {
+        type: 'TOOL_CALL_START',
+        seq: 0,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        toolCallId: 'call-7',
+        toolKind: 'read',
+      },
+      {
+        type: 'TOOL_CALL_ARGS',
+        seq: 7,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        toolCallId: 'call-7',
+        delta: '{"path":"notes.md"}',
+        truncated: false,
+      },
+    ]);
+
+    expect(state.entries[0]).toMatchObject({
+      kind: 'tool',
+      id: 'call-7',
+      seq: 7,
+      arguments: { text: '{"path":"notes.md"}', truncated: false },
+    });
+  });
+
   it('folds to the same conversation watched and replayed', () => {
     // The equivalence rule, stated as a test rather than as a promise. The
     // live frames are exactly what a reload would not receive, and dropping
