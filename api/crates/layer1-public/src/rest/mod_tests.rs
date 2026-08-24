@@ -5,6 +5,118 @@
 
 use super::*;
 
+const SDK_CREATE_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/create_session_request.json");
+const SDK_SESSION_FIXTURE: &str = include_str!("../../tests/fixtures/rest-sdk/session.json");
+const SDK_SESSIONS_FIXTURE: &str = include_str!("../../tests/fixtures/rest-sdk/sessions.json");
+const SDK_PROBLEM_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/capability_refused.json");
+const SDK_SCREEN_FIXTURE: &str = include_str!("../../tests/fixtures/rest-sdk/screen.json");
+
+fn sdk_fixture(source: &str) -> serde_json::Value {
+    serde_json::from_str(source).expect("the checked-in SDK fixture is JSON")
+}
+
+fn sdk_session_view() -> SessionView {
+    SessionView {
+        id: "sesn_fixture".into(),
+        status: layer2_core::SessionStatus::Ready,
+        recovery_state: layer2_core::RecoveryState::Normal,
+        stop_reason: None,
+        kernel: "codex".into(),
+        agent: AgentView {
+            model: Some("gpt-5".into()),
+            permission: layer2_core::PermissionMode::Guarded,
+            reasoning_effort: layer2_core::ReasoningEffort::High,
+            credential: layer2_core::CredentialMode::Delegated,
+            size: Some(
+                layer2_core::SessionSize::new(1_000, 2_048).expect("the fixture size is non-zero"),
+            ),
+            skills: Some(vec![SkillView {
+                id: "review".into(),
+                version: Some("1.2.3".into()),
+                name: Some("Repository review".into()),
+                description: Some("Review a repository without changing it".into()),
+            }]),
+        },
+        cols: 120,
+        rows: 40,
+        last_seq: 7,
+        created_at: "2026-08-24T08:00:00Z".into(),
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        creator: Some(layer2_core::PublicIdentity {
+            display_name: Some("Fixture User".into()),
+            avatar_url: Some("https://images.example.test/fixture.png".into()),
+        }),
+        conforms_to: vec![
+            format!("{CONF_BASE}/core"),
+            format!("{CONF_BASE}/conversation"),
+            format!("{CONF_BASE}/interrupt"),
+            format!("{CONF_BASE}/usage"),
+        ],
+        reach: vec![ReachView {
+            id: "github".into(),
+            name: Some("GitHub".into()),
+            description: Some("Source repositories".into()),
+            mandated: false,
+        }],
+        pricing: Some(SessionPricingView {
+            rate_card: "rate_fixture".into(),
+            currency: "USD",
+            micros_per_hour: "45000".into(),
+            display: "$0.045".into(),
+            quoted_at: "2026-08-24T07:59:00Z".into(),
+        }),
+    }
+}
+
+#[test]
+fn sdk_create_fixture_is_parsed_by_the_server_request_type() {
+    let request: CreateSessionRequest =
+        serde_json::from_str(SDK_CREATE_FIXTURE).expect("server reads the fixture");
+    let parts = request
+        .into_parts()
+        .expect("the fixture is a valid request");
+    let geometry = parts.geometry.expect("the fixture names geometry");
+    assert_eq!((geometry.columns(), geometry.rows()), (120, 40));
+    assert_eq!(parts.environment_profile.as_deref(), Some("envp_fixture"));
+    assert_eq!(parts.quoted_rate_card.as_deref(), Some("rate_fixture"));
+}
+
+#[test]
+fn sdk_session_fixtures_are_produced_by_the_server_response_type() {
+    let view = sdk_session_view();
+    assert_eq!(
+        serde_json::to_value(&view).expect("session view serializes"),
+        sdk_fixture(SDK_SESSION_FIXTURE)
+    );
+    assert_eq!(
+        serde_json::to_value([&view]).expect("session list serializes"),
+        sdk_fixture(SDK_SESSIONS_FIXTURE)
+    );
+}
+
+#[test]
+fn sdk_screen_fixture_is_produced_by_the_server_response_type() {
+    let screen = ScreenView {
+        cols: 8,
+        rows: 3,
+        lines: vec!["hello   ".into(), "CMA     ".into(), "        ".into()],
+    };
+    assert_eq!(
+        serde_json::to_value(screen).expect("screen serializes"),
+        sdk_fixture(SDK_SCREEN_FIXTURE)
+    );
+}
+
+#[tokio::test]
+async fn sdk_capability_fixture_is_produced_by_the_problem_serializer() {
+    let (_, body) = rendered(CoreError::CapabilityUnsupported("steer".into())).await;
+    assert_eq!(body, sdk_fixture(SDK_PROBLEM_FIXTURE));
+}
+
 #[test]
 fn rest_projects_every_core_operation() {
     // REST has no structural constraint, so a missing operation here means
