@@ -1,3 +1,60 @@
-//! Client SDK for CMA.
+//! Async Rust client for the CMA REST interface.
 //!
-//! The public client implementation is introduced by issue #473.
+//! The crate is deliberately independent from CMA's service workspace. Its
+//! types describe the public wire contract and are pinned to server-owned JSON
+//! fixtures, so using the SDK never links a service implementation crate into a
+//! consumer.
+//!
+//! # Quick start
+//!
+//! ```no_run
+//! use cma_sdk::{Client, CreateSessionRequest, EventKind, SessionInput};
+//!
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = Client::builder("https://cma.example.com")?
+//!     .credential_provider(|| std::env::var("CMA_ACCESS_TOKEN"))
+//!     .build()?;
+//!
+//! let session = client
+//!     .create_session(CreateSessionRequest::default())
+//!     .await?;
+//! client
+//!     .send_input(&session.id, SessionInput::text("Summarise this repository"))
+//!     .await?;
+//!
+//! let mut events = client.stream_events(&session.id, None).await?;
+//! while let Some(event) = events.next().await {
+//!     let event = event?;
+//!     if matches!(event.kind, EventKind::TurnCompleted) {
+//!         break;
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! The live PTY byte stream is intentionally absent from this first release.
+//! It is CMA's priority-3, CLI-shaped interface; this crate covers the REST
+//! terminal operations (resize and screen snapshot) but does not pretend a
+//! bidirectional terminal attachment is an HTTP operation.
+
+#![deny(missing_docs)]
+
+mod client;
+mod error;
+mod event;
+mod stream;
+mod types;
+
+pub use client::{Client, ClientBuilder, RetryPolicy};
+pub use error::{Error, Result};
+pub use event::{
+    AvailableCommand, ConfigOption, Event, EventKind, PlanStep, ProvisioningStage,
+    RuntimeLossCause, SessionPlane, ToolBody,
+};
+pub use stream::EventStream;
+pub use types::{
+    Agent, ApprovalDecision, CreateSessionRequest, CredentialMode, PermissionMode, PublicIdentity,
+    Reach, ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput,
+    SessionPricing, SessionSize, SessionStatus, Skill, StopReason, TerminalGeometry, Usage,
+};
