@@ -27,6 +27,8 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
@@ -42,14 +44,15 @@ use crate::rest::{problem_document, problem_response, BodyProblem, Problem, Requ
 /// from when authoring one; it is a static segment, which a router matches
 /// ahead of the identifier pattern beside it.
 pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
-    Router::new()
-        .route("/api/v1/environment-profiles", get(list).post(create))
-        .route("/api/v1/environment-profiles/skills", get(skills))
-        .route("/api/v1/environment-profiles/services", get(services))
-        .route(
-            "/api/v1/environment-profiles/{id}",
-            get(read).put(replace).delete(remove),
-        )
+    documented_router(service).into()
+}
+
+pub(super) fn documented_router(service: Arc<EnvironmentProfileService>) -> OpenApiRouter {
+    OpenApiRouter::new()
+        .routes(routes!(list, create))
+        .routes(routes!(skills))
+        .routes(routes!(services))
+        .routes(routes!(read, replace, remove))
         /*
          * Which profile clients should preselect for this owner.
          *
@@ -60,7 +63,7 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
          * client never has to guess which other rows moved. It is assembled
          * through bounded list pages after the mutation succeeds.
          */
-        .route("/api/v1/environment-profiles/preferred", put(prefer))
+        .routes(routes!(prefer))
         .with_state(service)
 }
 
@@ -152,6 +155,13 @@ impl IntoResponse for ProfileBodyProblem {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/environment-profiles",
+    tag = "environment profiles",
+    request_body = ProfileRequest,
+    responses((status = 201, description = "Profile created", body = ProfileView))
+)]
 async fn create(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -164,6 +174,13 @@ async fn create(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles",
+    tag = "environment profiles",
+    params(("limit" = Option<u32>, Query), ("cursor" = Option<String>, Query)),
+    responses((status = 200, description = "Newest-first profile page", body = [ProfileView]))
+)]
 async fn list(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -190,12 +207,19 @@ async fn list(
 /// server never substitutes this value into a session-create request;
 /// `deny_unknown_fields` ensures a misspelling is reported instead of silently
 /// clearing it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct PreferredRequest {
     profile: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/environment-profiles/preferred",
+    tag = "environment profiles",
+    request_body = PreferredRequest,
+    responses((status = 200, description = "Complete profile collection after preference change", body = [ProfileView]))
+)]
 async fn prefer(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -246,6 +270,13 @@ async fn complete_profile_collection(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles/{id}",
+    tag = "environment profiles",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Profile", body = ProfileView))
+)]
 async fn read(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -255,6 +286,14 @@ async fn read(
     Ok(Json(ProfileView::render(profile, &service)))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/environment-profiles/{id}",
+    tag = "environment profiles",
+    params(("id" = String, Path)),
+    request_body = ProfileRequest,
+    responses((status = 200, description = "Replaced profile", body = ProfileView))
+)]
 async fn replace(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -270,6 +309,13 @@ async fn replace(
     Ok(Json(ProfileView::render(profile, &service)))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/environment-profiles/{id}",
+    tag = "environment profiles",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Profile deleted"))
+)]
 async fn remove(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -285,6 +331,12 @@ async fn remove(
 /// and this service's own identity would answer with a different one. The
 /// mandatory entries travel alongside so a client can draw them as fixed
 /// rather than inferring which of them cannot be unticked.
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles/services",
+    tag = "environment profiles",
+    responses((status = 200, description = "Available service catalogue", body = ServiceCatalogView))
+)]
 async fn services(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -313,7 +365,7 @@ async fn services(
 }
 
 /// A service as the picker renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServiceView {
     id: String,
     name: String,
@@ -322,13 +374,19 @@ pub struct ServiceView {
 }
 
 /// The picker's answer.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServiceCatalogView {
     services: Vec<ServiceView>,
     /// Which of them every session reaches whatever the profile says.
     mandatory: Vec<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles/skills",
+    tag = "environment profiles",
+    responses((status = 200, description = "Available skill catalogue", body = SkillCatalogView))
+)]
 async fn skills(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,

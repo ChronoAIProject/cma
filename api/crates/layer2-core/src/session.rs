@@ -11,7 +11,7 @@ use crate::terminal::TerminalGeometry;
 /// Ordered, and each knows its position, so a client can show how far along
 /// something is without hard-coding the sequence — adding a step here changes
 /// what every client displays rather than requiring each to be taught.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProvisioningStage {
     /// The request arrived and the session exists.
@@ -57,7 +57,7 @@ impl ProvisioningStage {
 
 /// Lifecycle state of a session. `Idle` means the runtime was reclaimed while
 /// the session itself remains valid and revivable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     /// Runtime is being provisioned.
@@ -133,7 +133,7 @@ impl SessionStatus {
 ///
 /// `RequiresAction` is the trap: it means the runtime is waiting on the client
 /// and is explicitly **not** terminal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     /// The turn finished normally.
@@ -204,7 +204,7 @@ impl From<layer3_adapter::RuntimeLossReason> for RuntimeLossCause {
 
 /// Operational health, reported alongside lifecycle so operators read this
 /// control plane the same way they read neighbouring ones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryState {
     /// Nothing unusual.

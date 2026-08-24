@@ -33,7 +33,7 @@ use layer3_adapter::{
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tower::ServiceExt;
 
-use super::{rest_api_router, with_cors};
+use super::{rest_api_router, with_cors, with_request_context};
 use crate::activity::{self, ActivityRecorder};
 
 const OVERSIZED_BODY_LEN: usize = 2 * 1024 * 1024 + 1;
@@ -1002,12 +1002,14 @@ async fn seed_profiles(store: &MemoryProfiles, owner: &SubjectId, count: usize) 
 }
 
 fn next_link(headers: &HeaderMap) -> Option<String> {
-    let value = headers.get(header::LINK)?.to_str().expect("Link is text");
-    let target = value
-        .strip_prefix('<')
-        .and_then(|rest| rest.strip_suffix(">; rel=\"next\""))
-        .expect("Link has the RFC 8288 next relation shape");
-    Some(target.to_string())
+    headers.get_all(header::LINK).iter().find_map(|value| {
+        value
+            .to_str()
+            .expect("Link is text")
+            .strip_prefix('<')
+            .and_then(|rest| rest.strip_suffix(">; rel=\"next\""))
+            .map(str::to_string)
+    })
 }
 
 async fn get_collection(app: &Router, uri: &str) -> (Vec<serde_json::Value>, HeaderMap) {
@@ -1675,6 +1677,376 @@ async fn conformance_remains_public() {
             .as_array()
             .is_some_and(|classes| !classes.is_empty()),
         "public conformance document must name at least one class: {body}"
+    );
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert!(
+        body["build_sha"]
+            .as_str()
+            .is_some_and(|build| !build.is_empty()),
+        "conformance must identify the running build: {body}"
+    );
+}
+
+#[tokio::test]
+async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
+    let app = test_surface(false).app;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/openapi.json")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let document = assert_json(response, StatusCode::OK).await;
+    assert_eq!(document["openapi"], "3.1.0");
+
+    let paths = document["paths"]
+        .as_object()
+        .expect("OpenAPI paths are an object");
+    let expected: std::collections::BTreeSet<_> = [
+        "/openapi.json",
+        "/api/v1/pricing/quote",
+        "/api/v1/sessions",
+        "/api/v1/sessions/allowance",
+        "/api/v1/sessions/{id}",
+        "/api/v1/sessions/{id}/terminate",
+        "/api/v1/sessions/{id}/stop",
+        "/api/v1/sessions/{id}/plane",
+        "/api/v1/sessions/{id}/revive",
+        "/api/v1/sessions/{id}/terminal-ticket",
+        "/api/v1/sessions/{id}/input",
+        "/api/v1/sessions/{id}/interrupt",
+        "/api/v1/sessions/{id}/steer",
+        "/api/v1/sessions/{id}/resize",
+        "/api/v1/sessions/{id}/approvals/{request_id}",
+        "/api/v1/sessions/{id}/usage",
+        "/api/v1/sessions/{id}/resources",
+        "/api/v1/sessions/{id}/spend",
+        "/api/v1/sessions/{id}/screen",
+        "/api/v1/sessions/{id}/transcript",
+        "/api/v1/sessions/{id}/events",
+        "/api/v1/conformance",
+        "/api/v1/kernels",
+        "/api/v1/environment-profiles",
+        "/api/v1/environment-profiles/skills",
+        "/api/v1/environment-profiles/services",
+        "/api/v1/environment-profiles/{id}",
+        "/api/v1/environment-profiles/preferred",
+        "/api/v1/admin/users",
+        "/api/v1/admin/activity",
+        "/api/v1/admin/runtimes",
+        "/api/v1/admin/sessions",
+        "/api/v1/admin/sessions/{id}/stop",
+        "/api/v1/admin/sessions/{id}/terminate",
+        "/api/v1/admin/settings",
+        "/api/v1/admin/settings/reset",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        paths
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+
+    let problem = &document["components"]["schemas"]["ProblemDocument"];
+    for required in ["type", "title", "status", "detail", "code"] {
+        assert!(
+            problem["properties"].get(required).is_some(),
+            "problem schema is missing {required}: {problem}"
+        );
+        assert!(
+            problem["required"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == required)),
+            "problem schema does not require {required}: {problem}"
+        );
+    }
+    assert_eq!(
+        document["components"]["responses"]["Problem"]["content"]["application/problem+json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/ProblemDocument"
+    );
+    assert_eq!(
+        document["components"]["responses"]["Problem"]["headers"]["X-Request-Id"]["schema"]["type"],
+        "string"
+    );
+    assert_eq!(
+        document["components"]["responses"]["Problem"]["headers"]["Link"]["schema"]["type"],
+        "string"
+    );
+
+    fn assert_local_refs_resolve(value: &serde_json::Value, document: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str) {
+                    let pointer = reference
+                        .strip_prefix('#')
+                        .expect("the generated document uses only local references");
+                    assert!(
+                        document.pointer(pointer).is_some(),
+                        "OpenAPI reference does not resolve: {reference}"
+                    );
+                }
+                for nested in object.values() {
+                    assert_local_refs_resolve(nested, document);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for nested in array {
+                    assert_local_refs_resolve(nested, document);
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_local_refs_resolve(&document, &document);
+
+    let schemas = document["components"]["schemas"]
+        .as_object()
+        .expect("component schemas are an object");
+    for (schema, expected_properties) in [
+        (
+            "SessionView",
+            &["id", "status", "agent", "conforms_to", "reach"][..],
+        ),
+        (
+            "ProfileRequest",
+            &["name", "variables", "packages", "nyxid", "agent"][..],
+        ),
+        (
+            "ProfileView",
+            &["id", "name", "agent", "mandatory", "created_at"][..],
+        ),
+        (
+            "ActivityView",
+            &["id", "at", "action", "target", "outcome", "detail"][..],
+        ),
+        (
+            "PlatformSettings",
+            &[
+                "briefing",
+                "deployment_capacity",
+                "memory_pressure",
+                "pricing",
+                "size_bounds",
+                "live_sessions",
+            ][..],
+        ),
+        (
+            "MemoryPressurePolicy",
+            &[
+                "enter_permille",
+                "exit_permille",
+                "enter_samples",
+                "exit_samples",
+                "settle_seconds",
+            ][..],
+        ),
+    ] {
+        let schema = schemas
+            .get(schema)
+            .unwrap_or_else(|| panic!("OpenAPI is missing the {schema} schema"));
+        for property in expected_properties {
+            assert!(
+                schema["properties"].get(property).is_some(),
+                "{schema} is missing {property}: {schema}"
+            );
+        }
+    }
+    assert!(
+        schemas.contains_key("ActivityTarget"),
+        "the tagged activity target must remain typed"
+    );
+    for (schema, expected_properties) in [
+        (
+            "SessionAgentView",
+            &["permission", "reasoning_effort", "credential", "skills"][..],
+        ),
+        (
+            "ProfileAgentView",
+            &[
+                "kernel",
+                "mode",
+                "permission",
+                "record_tool_bodies",
+                "skills",
+            ][..],
+        ),
+        (
+            "SessionSkillView",
+            &["id", "version", "name", "description"][..],
+        ),
+        (
+            "CatalogSkillView",
+            &["id", "name", "description", "access"][..],
+        ),
+    ] {
+        let schema_properties = schemas
+            .get(schema)
+            .unwrap_or_else(|| panic!("OpenAPI is missing the distinct {schema} schema"))
+            ["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{schema} properties are an object"));
+        for property in expected_properties {
+            assert!(
+                schema_properties.contains_key(*property),
+                "{schema} is missing {property}"
+            );
+        }
+    }
+    assert_eq!(
+        schemas["SessionView"]["properties"]["agent"]["$ref"],
+        "#/components/schemas/SessionAgentView"
+    );
+    assert_eq!(
+        schemas["ProfileView"]["properties"]["agent"]["$ref"],
+        "#/components/schemas/ProfileAgentView"
+    );
+
+    let mut operations = 0;
+    let mut operation_ids = std::collections::BTreeSet::new();
+    for (template, item) in paths {
+        for method in ["get", "put", "post", "delete", "patch"] {
+            if item.get(method).is_none() {
+                continue;
+            }
+            operations += 1;
+            let operation = &item[method];
+            let operation_id = operation["operationId"]
+                .as_str()
+                .expect("every SDK operation has an identifier");
+            assert!(
+                operation_ids.insert(operation_id),
+                "duplicate OpenAPI operationId: {operation_id}"
+            );
+            assert_eq!(
+                operation["responses"]["default"]["$ref"], "#/components/responses/Problem",
+                "{method} {template} must type its refusals"
+            );
+            assert!(
+                operation["parameters"]
+                    .as_array()
+                    .is_some_and(|parameters| parameters.iter().any(|parameter| {
+                        parameter["name"] == "X-Request-Id"
+                            && parameter["in"] == "header"
+                            && parameter["required"] == false
+                    })),
+                "{method} {template} must document caller correlation"
+            );
+            for (status, response) in operation["responses"]
+                .as_object()
+                .expect("operation responses are an object")
+            {
+                if status == "default" {
+                    continue;
+                }
+                assert_eq!(
+                    response["headers"]["X-Request-Id"]["schema"]["type"], "string",
+                    "{method} {template} {status} must document correlation"
+                );
+                assert_eq!(
+                    response["headers"]["Link"]["schema"]["type"], "string",
+                    "{method} {template} {status} must document discovery links"
+                );
+            }
+            let path = template
+                .replace("{id}", "sesn_openapi_parity")
+                .replace("{request_id}", "approval_openapi_parity");
+            let request = Request::builder()
+                .method(
+                    Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+                        .expect("OpenAPI method is HTTP"),
+                )
+                .uri(path)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .expect("parity request builds");
+            let response = app.clone().oneshot(request).await.expect("router answers");
+            assert_ne!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "documented {method} {template} has no route"
+            );
+            assert_ne!(
+                response.status(),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "documented {method} {template} has no matching method"
+            );
+        }
+    }
+    assert_eq!(operations, 43, "every REST operation must be documented");
+}
+
+#[tokio::test]
+async fn request_ids_cover_success_auth_and_routing_failures_and_echo_callers() {
+    let app = with_request_context(test_surface(false).app);
+    for (uri, status) in [
+        ("/api/v1/conformance", StatusCode::OK),
+        ("/api/v1/sessions", StatusCode::UNAUTHORIZED),
+        ("/api/v1/no-such-rest-route", StatusCode::NOT_FOUND),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(uri)
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), status, "for {uri}");
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok());
+        assert!(
+            request_id.is_some_and(|value| !value.is_empty()),
+            "{uri} must carry a minted request id"
+        );
+    }
+
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/conformance")
+                .header("x-request-id", "support-case-488")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(
+        response.headers().get("x-request-id"),
+        Some(&HeaderValue::from_static("support-case-488"))
+    );
+}
+
+#[tokio::test]
+async fn rest_responses_advertise_profile_and_service_description_links() {
+    let response = test_surface(false)
+        .app
+        .oneshot(
+            Request::get("/api/v1/conformance")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let links = response
+        .headers()
+        .get_all(header::LINK)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert!(links.contains("rel=\"profile\""), "{links}");
+    assert!(
+        links.contains("</openapi.json>; rel=\"service-desc\""),
+        "{links}"
     );
 }
 
