@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import type { InterruptOption } from '../agui';
+import type { InterruptOption } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import { renderInline } from './inline';
 import { parse } from './markdown';
-import type { PendingApproval } from './conversationModel';
+import type { PendingApproval } from '@chronoai/cma-sdk';
 import { timeOfDay } from '../sessions/sessionTime';
 import './ApprovalCard.css';
 

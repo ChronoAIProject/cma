@@ -46,6 +46,29 @@ mod event;
 mod stream;
 mod types;
 
+/// Executable integration guides shipped with the crate.
+///
+/// Each child module includes one file from `docs/`. Rustdoc therefore tests
+/// every Rust fence in the published guides as part of `cargo test --doc`.
+pub mod guides {
+    #[doc = include_str!("../docs/README.md")]
+    pub mod overview {}
+    #[doc = include_str!("../docs/quickstart.md")]
+    pub mod quickstart {}
+    #[doc = include_str!("../docs/authentication.md")]
+    pub mod authentication {}
+    #[doc = include_str!("../docs/sessions.md")]
+    pub mod sessions {}
+    #[doc = include_str!("../docs/streaming.md")]
+    pub mod streaming {}
+    #[doc = include_str!("../docs/operations.md")]
+    pub mod operations {}
+    #[doc = include_str!("../docs/errors.md")]
+    pub mod errors {}
+    #[doc = include_str!("../docs/reference.md")]
+    pub mod reference {}
+}
+
 pub use client::{Client, ClientBuilder, RetryPolicy};
 pub use error::{Error, Result};
 pub use event::{

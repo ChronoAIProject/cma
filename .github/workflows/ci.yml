@@ -152,6 +152,59 @@ jobs:
           manifest-path: api/Cargo.toml
           command: check advisories licenses bans sources
 
+  sdk-typescript:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Install (lockfile integrity)
+        run: npm ci
+      - name: Server fixtures are byte-identical
+        run: diff -ru ../../api/crates/layer1-public/tests/fixtures/rest-sdk tests/fixtures
+      - name: Format
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests and coverage
+        run: npm run test:coverage
+      - name: Build
+        run: npm run build
+      - name: Documentation examples
+        run: npm run docs:check
+      - name: Publishable contents
+        run: npm pack --dry-run
+      - name: Scratch Node consumer
+        run: |
+          archive=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
+          scratch=$(mktemp -d)
+          cd "$scratch"
+          npm init --yes >/dev/null
+          npm install --silent --ignore-scripts "$RUNNER_TEMP/$archive"
+          node --input-type=module <<'NODE'
+          import { createClient } from '@chronoai/cma-sdk';
+          import { transcriptNamed } from '@chronoai/cma-sdk/testing';
+
+          const client = createClient({ baseUrl: 'https://example.invalid' });
+          if (typeof client.createSession !== 'function' || typeof client.streamEvents !== 'function') {
+            throw new Error('the package entry point did not expose the client surface');
+          }
+          if (transcriptNamed('plain-turn').frames.length === 0) {
+            throw new Error('the package testing entry point did not expose its fixtures');
+          }
+          NODE
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
   sdk-rust:
     name: Rust SDK
     runs-on: ubuntu-latest
@@ -217,7 +270,15 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            sdk/typescript/package-lock.json
+            web/package-lock.json
+      - name: Install TypeScript SDK (lockfile integrity)
+        working-directory: sdk/typescript
+        run: npm ci
+      - name: Build TypeScript SDK
+        working-directory: sdk/typescript
+        run: npm run build
       - name: Install (lockfile integrity)
         run: npm ci
       - name: Format
