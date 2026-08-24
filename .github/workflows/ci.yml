@@ -179,6 +179,8 @@ jobs:
         run: npm run test:coverage
       - name: Build
         run: npm run build
+      - name: Documentation examples
+        run: npm run docs:check
       - name: Publishable contents
         run: npm pack --dry-run
       - name: Scratch Node consumer
