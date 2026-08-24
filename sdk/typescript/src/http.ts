@@ -333,13 +333,14 @@ function nextPagePath(link: string | null, collectionPath: string): PageContinua
   for (const entry of link.split(',')) {
     const match = /^\s*<([^>]*)>(.*)$/.exec(entry);
     if (match === null) {
+      if (linkRelations(entry)?.includes('next') === true) {
+        throw new ProtocolError('pagination next link was malformed');
+      }
       continue;
     }
     const target = match[1];
     const parameters = match[2] ?? '';
-    const relation = /(?:^|;)\s*rel\s*=\s*(?:"([^"]*)"|([^;\s]+))/i.exec(parameters);
-    const names = (relation?.[1] ?? relation?.[2] ?? '').split(/\s+/);
-    if (!names.some((name) => name.toLowerCase() === 'next')) {
+    if (linkRelations(parameters)?.includes('next') !== true) {
       continue;
     }
     if (target === undefined || !target.startsWith(`${collectionPath}?`) || target.includes('#')) {
@@ -347,7 +348,22 @@ function nextPagePath(link: string | null, collectionPath: string): PageContinua
     }
     return target as PageContinuation;
   }
-  throw new ProtocolError('pagination Link header carried no valid next relation');
+  return undefined;
+}
+
+function linkRelations(parameters: string): readonly string[] | undefined {
+  const marker = /(?:^|;)\s*rel\s*=/i.exec(parameters);
+  if (marker === null) {
+    return undefined;
+  }
+  const relation = /(?:^|;)\s*rel\s*=\s*(?:"([^"]*)"|([^";\s]+))\s*(?=;|$)/i.exec(parameters);
+  if (relation === null) {
+    throw new ProtocolError('pagination Link header carried a malformed relation');
+  }
+  return (relation[1] ?? relation[2] ?? '')
+    .split(/\s+/)
+    .filter((name) => name !== '')
+    .map((name) => name.toLowerCase());
 }
 
 async function requireSuccess(

@@ -335,13 +335,18 @@ async fn every_required_operation_uses_the_server_fixture_shape() {
 }
 
 #[tokio::test]
-async fn list_sessions_follows_next_links_under_the_configured_base_path() {
+async fn list_sessions_finds_next_after_unrelated_link_header_fields() {
     let older = SESSIONS.replace("sesn_fixture", "sesn_older");
     let stub = Stub::start([
-        StubResponse::json(StatusCode::OK, SESSIONS).header(
-            "link",
-            "</api/v1/sessions?limit=50&cursor=opaque>; rel=\"next\"",
-        ),
+        StubResponse::json(StatusCode::OK, SESSIONS)
+            .header(
+                "link",
+                "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\"",
+            )
+            .header(
+                "link",
+                "</api/v1/sessions?limit=50&cursor=opaque>; rel=\"next\"",
+            ),
         StubResponse::json(StatusCode::OK, &older),
     ])
     .await;
@@ -367,6 +372,21 @@ async fn list_sessions_follows_next_links_under_the_configured_base_path() {
             "/proxy/api/v1/sessions?limit=50&cursor=opaque",
         ]
     );
+}
+
+#[tokio::test]
+async fn list_sessions_accepts_an_unrelated_link_on_the_final_page() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, SESSIONS).header(
+        "link",
+        "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\"",
+    )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let sessions = client.list_sessions().await.expect("the final page lists");
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(stub.requests().await.len(), 1);
 }
 
 #[tokio::test]
@@ -489,6 +509,20 @@ async fn list_sessions_refuses_a_link_to_a_different_control_plane_route() {
         "link",
         "</api/v1/environment-profiles?cursor=x>; rel=\"next\"",
     )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_sessions().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn list_sessions_refuses_a_malformed_entry_that_declares_next() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, SESSIONS)
+        .header("link", "/api/v1/sessions?cursor=x; rel=\"next\"")])
     .await;
     let (client, _) = stub_client(&stub, 1);
 
