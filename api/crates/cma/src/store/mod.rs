@@ -5,8 +5,11 @@
 //! object store.
 
 pub mod activity;
+pub mod auth;
 pub mod context;
 pub mod directory;
+mod durability;
+mod encryption;
 pub mod environment;
 mod event_doc;
 pub mod mongo;
@@ -20,12 +23,15 @@ use layer2_core::store::StoreError;
 use mongodb::Client;
 
 pub use activity::MongoActivityStore;
+pub use auth::MongoAuthStore;
 pub use context::ChronoStorageContextStore;
 pub use directory::MongoUserDirectoryStore;
 pub use environment::MongoEnvironmentProfileStore;
 pub use mongo::MongoSessionStore;
 pub use settings::MongoPlatformSettingsStore;
 pub use tickets::MongoTerminalTicketStore;
+
+pub(crate) use encryption::AuthEncryptionKey;
 
 /// Everything this deployment keeps in MongoDB.
 ///
@@ -45,6 +51,8 @@ pub struct MongoStores {
     pub settings: MongoPlatformSettingsStore,
     /// One-time grants used to authenticate terminal upgrades.
     pub tickets: MongoTerminalTicketStore,
+    /// Browser, OAuth, provider-token, and session-credential authority.
+    pub auth: MongoAuthStore,
 }
 
 /// Open every MongoDB-backed store over one connection.
@@ -62,6 +70,8 @@ pub async fn connect(
     database: &str,
     activity_retention: Duration,
     legacy_cutover_confirmed: bool,
+    deployment: &str,
+    auth_encryption_key: &AuthEncryptionKey,
 ) -> Result<MongoStores, StoreError> {
     let client = Client::with_uri_str(uri)
         .await
@@ -73,5 +83,6 @@ pub async fn connect(
         users: MongoUserDirectoryStore::open(&client, database).await?,
         settings: MongoPlatformSettingsStore::open(&client, database).await?,
         tickets: MongoTerminalTicketStore::open(&client, database).await?,
+        auth: MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
     })
 }
