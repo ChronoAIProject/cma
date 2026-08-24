@@ -3,13 +3,14 @@ import type { FormEvent } from 'react';
 import { MAX_TURN_LENGTH, capturePendingTurn } from '../auth/pendingTurn';
 import { useAuth } from '../auth/context';
 import { Button } from '../ui/Button';
-import markMarkup from '../assets/brand/cma-mark-animated.svg?raw';
+import { LandingCharacter } from './LandingCharacter';
 import './Landing.css';
 
 /**
  * The signed-out surface — `docs/Web_Style.md` §20.
  *
- * The mark, at the size a mark is worth showing at, and one thing to do.
+ * The live character, at a size where its expression is legible, and one thing
+ * to do.
  *
  * This replaced a simulated terminal that typed a scripted boot log beside a
  * statement column. It was demonstrating the product by pretending to be it,
@@ -67,24 +68,7 @@ export function Landing() {
   return (
     <main className="landing">
       <div className="landing__stack">
-        {/*
-         * Inlined rather than loaded through <img>, and that is not a
-         * preference. The mark carries its own `prefers-reduced-motion` block,
-         * and inside an <img> that block does not take effect: measured in
-         * Chrome, the base rules stay frozen and the mark renders as its arc
-         * alone — no base, no lenses, no bridge. Inline, the same stylesheet
-         * resolves correctly, which was measured the same way.
-         *
-         * The markup is this repository's own build-time asset, never input.
-         *
-         * Decorative: the wordmark beside it already says CMA, and a second
-         * announcement of the same two letters is noise on a screen reader.
-         */}
-        <span
-          className="landing__mark"
-          aria-hidden="true"
-          dangerouslySetInnerHTML={{ __html: markMarkup }}
-        />
+        <LandingCharacter />
 
         <h1 className="landing__word">CMA</h1>
         <p className="landing__expand">ChronoAI Managed Agent</p>
