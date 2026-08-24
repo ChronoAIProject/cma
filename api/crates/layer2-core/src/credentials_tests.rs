@@ -53,7 +53,7 @@ impl KernelAdapter for RecordingAdapter {
         // make the service's terminal writes fail for reasons unrelated to
         // what is under test.
         let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<layer3_adapter::TerminalInput>(16);
-        let (_out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+        let (_out_tx, out_rx) = tokio::sync::mpsc::channel::<layer3_adapter::TerminalOutput>(16);
         tokio::spawn(async move { while in_rx.recv().await.is_some() {} });
         Ok(layer3_adapter::TerminalChannel {
             output: out_rx,

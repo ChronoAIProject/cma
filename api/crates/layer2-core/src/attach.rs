@@ -85,7 +85,7 @@ impl SessionService {
             self.supply_credential(id, &caller.subject).await;
         }
 
-        let (screen, live, generation, superseded) = {
+        let (screen, live, ending, generation, superseded) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
             // Attaching is acting, not observing, so ownership is required
@@ -120,20 +120,30 @@ impl SessionService {
             (
                 Arc::clone(&entry.screen),
                 entry.live.clone(),
+                entry.terminal_ending.subscribe(),
                 generation,
                 superseded,
             )
         };
         self.flush(id).await;
 
-        // Subscribe before rendering the repaint: output produced between the
-        // two is then buffered rather than lost.
-        let output = live.subscribe();
-
-        let repaint = {
+        // The relay applies and broadcasts while holding this same lock. Taking
+        // it before subscribing makes the boundary atomic: a chunk is either in
+        // the repaint or queued as live output, never both and never neither.
+        let (repaint, output) = {
             let mut s = screen.lock().await;
+            let output = match live.as_ref() {
+                Some(live) => live.subscribe(),
+                None => {
+                    // The runtime channel already ended. A closed receiver lets
+                    // the interface deliver the recorded ending after repaint.
+                    let (closed, output) = broadcast::channel(1);
+                    drop(closed);
+                    output
+                }
+            };
             s.resize(geometry);
-            s.repaint_bytes()
+            (s.repaint_bytes(), output)
         };
 
         self.forward_input(
@@ -152,6 +162,7 @@ impl SessionService {
             generation,
             output,
             superseded,
+            ending,
             repaint,
             geometry,
         })

@@ -228,40 +228,134 @@ impl Default for SandboxShape {
     }
 }
 
-/// A kernel running in a provider-managed sandbox.
 /// Who is waiting to hear whether a plane switch happened, by runtime handle.
 ///
 /// Shared rather than owned: a link's inbound task is what hears the answer,
 /// and it outlives the call that asked the question.
 #[derive(Clone, Default)]
-pub(crate) struct SwitchWaiters(
-    std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, oneshot::Sender<bool>>>>,
-);
+pub(crate) struct SwitchWaiters(std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, SwitchWaiter>>>);
+
+struct SwitchWaiter {
+    link: mpsc::WeakSender<TerminalInput>,
+    answer: oneshot::Sender<bool>,
+}
 
 impl SwitchWaiters {
-    /// Register interest in the next answer from this runtime.
-    pub(crate) async fn expect(&self, handle: &str) -> oneshot::Receiver<bool> {
+    /// Register interest in the next answer from this link generation.
+    pub(crate) async fn expect(
+        &self,
+        handle: &str,
+        link: &mpsc::Sender<TerminalInput>,
+    ) -> oneshot::Receiver<bool> {
         let (tx, rx) = oneshot::channel();
         // A second switch replaces the first waiter; the earlier caller sees
         // its sender dropped and rotates, which is the safe reading.
-        self.0.lock().await.insert(handle.to_string(), tx);
+        self.0.lock().await.insert(
+            handle.to_string(),
+            SwitchWaiter {
+                // Identity only. Keeping a strong sender here would keep the
+                // control lane alive after every real owner had dropped it.
+                link: link.downgrade(),
+                answer: tx,
+            },
+        );
         rx
     }
 
-    /// Hand an answer to whoever asked. An answer nobody awaits is dropped:
-    /// it belongs to a caller that has already given up and rotated.
-    pub(crate) async fn settle(&self, handle: &str, accepted: bool) {
-        if let Some(waiter) = self.0.lock().await.remove(handle) {
-            let _ = waiter.send(accepted);
+    /// Hand an answer to whoever asked on this same link generation.
+    ///
+    /// An answer nobody awaits is dropped. In particular, an old socket may
+    /// answer after a replacement has registered its own waiter, and that old
+    /// answer says nothing about the command sent through the replacement.
+    pub(crate) async fn settle(
+        &self,
+        handle: &str,
+        link: &mpsc::Sender<TerminalInput>,
+        accepted: bool,
+    ) {
+        let mut waiters = self.0.lock().await;
+        let is_same_link = waiters
+            .get(handle)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if !is_same_link {
+            return;
+        }
+        if let Some(waiter) = waiters.remove(handle) {
+            let _ = waiter.answer.send(accepted);
         }
     }
 
-    /// Forget a waiter whose link has gone.
-    pub(crate) async fn forget(&self, handle: &str) {
-        self.0.lock().await.remove(handle);
+    /// Forget a waiter only if it belongs to the link that has gone.
+    pub(crate) async fn forget(&self, handle: &str, link: &mpsc::Sender<TerminalInput>) {
+        let mut waiters = self.0.lock().await;
+        let is_same_link = waiters
+            .get(handle)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if is_same_link {
+            waiters.remove(handle);
+        }
     }
 }
 
+/// Registration and cleanup for one runtime link generation.
+///
+/// The socket reader owns the ending of a generation, while callers use the
+/// shared map to deliver credentials and switches. Keeping both pieces here
+/// makes registration happen before the reader can close and makes every close
+/// remove only the sender belonging to that socket.
+#[derive(Clone)]
+pub(crate) struct LinkLifecycle {
+    runtime: String,
+    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>>,
+    switch_waiters: SwitchWaiters,
+}
+
+impl LinkLifecycle {
+    /// Record this generation before its reader begins observing the socket.
+    pub(crate) async fn register(&self, link: mpsc::Sender<TerminalInput>) {
+        let previous = {
+            let mut links = self.links.lock().await;
+            if links
+                .get(&self.runtime)
+                .is_some_and(|current| current.same_channel(&link))
+            {
+                return;
+            }
+            links.insert(self.runtime.clone(), link)
+        };
+        if let Some(previous) = previous {
+            // Replacing a generation invalidates only a request that was sent
+            // through that old socket.
+            self.switch_waiters.forget(&self.runtime, &previous).await;
+        }
+    }
+
+    /// Forget this generation without disturbing a successor already present.
+    pub(crate) async fn forget(&self, link: &mpsc::Sender<TerminalInput>) {
+        let mut links = self.links.lock().await;
+        if links
+            .get(&self.runtime)
+            .is_some_and(|current| current.same_channel(link))
+        {
+            links.remove(&self.runtime);
+        }
+        drop(links);
+        // A successor may be in the map while this generation still owns the
+        // previous waiter, so waiter cleanup independently checks identity.
+        self.switch_waiters.forget(&self.runtime, link).await;
+    }
+
+    /// Settle a switch only when it was sent through this same generation.
+    pub(crate) async fn settle(&self, link: &mpsc::Sender<TerminalInput>, accepted: bool) {
+        self.switch_waiters
+            .settle(&self.runtime, link, accepted)
+            .await;
+    }
+}
+
+/// A kernel running in a provider-managed sandbox.
 pub struct HostedKernel {
     pub(crate) client: SandboxClient,
     shape: SandboxShape,
@@ -282,7 +376,7 @@ pub struct HostedKernel {
     /// already open. Opening a second attachment to deliver it is not an
     /// option: attaching declares a geometry, and a connection made without
     /// one would resize the pty under whoever is looking at it.
-    links: tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>,
+    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>>,
     /// Who is waiting to hear whether a plane switch was performed.
     ///
     /// A switch is only recorded once the runtime says it happened (#289):
@@ -308,7 +402,7 @@ impl HostedKernel {
             kernel,
             skills_root: skills_root.into(),
             agent_notes: agent_notes.into(),
-            links: tokio::sync::Mutex::new(BTreeMap::new()),
+            links: std::sync::Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             switch_waiters: SwitchWaiters::default(),
         }
     }
@@ -544,7 +638,10 @@ impl HostedKernel {
         // Dropped first: the link belongs to a sandbox that is about to stop
         // existing, and keeping it would leave this map growing with the
         // remains of every session this process has ever served.
-        self.links.lock().await.remove(&handle.0);
+        let link = self.links.lock().await.remove(&handle.0);
+        if let Some(link) = link {
+            self.switch_waiters.forget(&handle.0, &link).await;
+        }
         self.client.delete(&handle.0).await?;
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
         Ok(())
@@ -570,8 +667,9 @@ impl HostedKernel {
     }
 
     /// Remember the link to a runtime, so a credential can reach it later.
+    #[cfg(test)]
     pub(crate) async fn remember_link(&self, handle: &str, link: mpsc::Sender<TerminalInput>) {
-        self.links.lock().await.insert(handle.to_string(), link);
+        self.link_lifecycle(handle).register(link).await;
     }
 
     /// The link to a runtime, if one is open.
@@ -579,18 +677,18 @@ impl HostedKernel {
         self.links.lock().await.get(handle).cloned()
     }
 
-    /// Forget a link that has closed.
-    pub(crate) async fn forget_link(&self, handle: &str) {
-        self.links.lock().await.remove(handle);
-        // A waiter on a link that has gone will never be answered, so it is
-        // dropped here rather than left to time out: dropping the sender
-        // wakes the waiter at once and the caller rotates.
-        self.switch_waiters.forget(handle).await;
-    }
-
     /// The registry a link's inbound task answers into.
     pub(crate) fn switch_waiters(&self) -> SwitchWaiters {
         self.switch_waiters.clone()
+    }
+
+    /// Registration and cleanup shared by both halves of a runtime link.
+    pub(crate) fn link_lifecycle(&self, handle: &str) -> LinkLifecycle {
+        LinkLifecycle {
+            runtime: handle.to_string(),
+            links: std::sync::Arc::clone(&self.links),
+            switch_waiters: self.switch_waiters.clone(),
+        }
     }
 
     /// Wait until a sandbox reports itself running.

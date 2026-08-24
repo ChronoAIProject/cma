@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket};
+use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use layer2_core::{
     AttachmentClaim, Caller, ResourceReading, SessionId, SessionService, TerminalGeometry,
 };
 
 use super::{
-    ending, error_code, reports_resources, ClientControl, Limits, ServerControl, CONFORMS_TO,
-    KEEPALIVE_INTERVAL, MAX_FRAME_BYTES, SCROLLBACK_LINES,
+    ending, error_code, reported_ending, reports_resources, ClientControl, Limits, ServerControl,
+    CONFORMS_TO, KEEPALIVE_INTERVAL, MAX_FRAME_BYTES, SCROLLBACK_LINES,
 };
 
 pub(super) async fn serve(
@@ -144,9 +144,12 @@ pub(super) async fn serve(
             .await;
     }
 
-    let mut output = attachment.output.resubscribe();
-    let mut superseded = attachment.superseded.resubscribe();
+    let process_ending = attachment.ending.clone();
     let mut pump_out = tokio::spawn(async move {
+        // Own the original receivers. Resubscribing here would discard output
+        // queued while the ready frame and repaint were being sent, including
+        // a fast process's final bytes immediately before its exit report.
+        let mut attachment = attachment;
         // A terminal is mostly silent — someone reading output produces no
         // traffic at all — and an idle connection is exactly what proxies and
         // load balancers reclaim. Without this the session dies mid-thought
@@ -163,7 +166,7 @@ pub(super) async fn serve(
         loop {
             let has_resources = resources.is_some();
             tokio::select! {
-                received = output.recv() => match received {
+                received = attachment.output.recv() => match received {
                     Ok(chunk) => {
                         if sink.send(Message::Binary(chunk.into())).await.is_err() {
                             break;
@@ -172,7 +175,27 @@ pub(super) async fn serve(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::warn!(skipped, "terminal client lagged");
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        // The core records an exit before closing this sender,
+                        // and broadcast drains queued bytes before returning
+                        // Closed. A rotation records its attachment ending even
+                        // earlier, before removing the old live entry, so it
+                        // takes precedence when both become ready together.
+                        let frames = match attachment.superseded.try_recv() {
+                            Ok(taken) => ending(Some(taken)),
+                            Err(_) => {
+                                // No record means the runtime link was merely
+                                // lost, so no process ending is fabricated.
+                                reported_ending(*process_ending.borrow())
+                            }
+                        };
+                        for frame in frames {
+                            if sink.send(frame).await.is_err() {
+                                break;
+                            }
+                        }
+                        break;
+                    }
                 },
                 received = receive_resource(&mut resources), if has_resources => match received {
                     Ok(reading) => {
@@ -203,14 +226,12 @@ pub(super) async fn serve(
                 // indistinguishable from a broken one, and one that names the
                 // wrong reason sends its owner somewhere there is nothing to
                 // find.
-                taken = superseded.recv() => {
-                    let (code, reason) = ending(taken.ok());
-                    let _ = sink
-                        .send(Message::Close(Some(CloseFrame {
-                            code,
-                            reason: reason.into(),
-                        })))
-                        .await;
+                taken = attachment.superseded.recv() => {
+                    for frame in ending(taken.ok()) {
+                        if sink.send(frame).await.is_err() {
+                            break;
+                        }
+                    }
                     break;
                 }
             }
@@ -266,9 +287,9 @@ pub(super) async fn serve(
         _ = &mut pump_out => pump_in.abort(),
         _ = &mut pump_in => pump_out.abort(),
     }
-    // Dropping the attachment releases the exclusive lease. The session keeps
-    // running: a dropped connection detaches, it does not terminate.
-    drop(attachment);
+    // Dropping the output task drops its attachment and releases the exclusive
+    // lease. The session keeps running: a dropped connection detaches, it does
+    // not terminate.
 }
 
 /// Receive from the optional lane whose select guard established its presence.
