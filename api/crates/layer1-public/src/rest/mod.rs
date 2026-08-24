@@ -622,10 +622,11 @@ async fn reached(
 
 /// Name the skills each session was given, as far as the catalogue can say.
 ///
-/// One targeted lookup per distinct grant on the whole page, rather than one
-/// full catalogue walk per row. A catalogue that cannot be reached costs the
-/// names and not the answer: the identifiers were already on the view, and
-/// they are still true.
+/// Targeted lookups for distinct grants on the whole page, rather than one full
+/// catalogue walk per row. The adapter applies a total enrichment budget; any
+/// grants beyond it retain their recorded identifiers and versions. A catalogue
+/// that cannot be reached likewise costs the names and not the answer: the
+/// identifiers were already on the view, and they are still true.
 ///
 /// Nothing here is asked unless some session actually carries a skill, so the
 /// common case of a page of sessions with none costs no registry call at all.
@@ -681,6 +682,8 @@ async fn skilled(
             continue;
         };
         for skill in skills.iter_mut() {
+            // Missing catalogue metadata, including an entry outside the
+            // adapter's budget, must not remove or rewrite the durable grant.
             let Some(known) = named.get(&skill.id) else {
                 continue;
             };
