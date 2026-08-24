@@ -4,6 +4,7 @@
 //! core operation and serves as the reference realisation. Errors are RFC 9457
 //! problem documents, never a bare status code.
 
+use std::ops::Index;
 use std::sync::Arc;
 
 use axum::{
@@ -314,6 +315,43 @@ pub struct SessionView {
     pricing: Option<SessionPricingView>,
 }
 
+/// A session response that has passed through every public projection step.
+///
+/// Handlers return this type rather than `Json<SessionView>` so a raw core
+/// conversion cannot accidentally become a public response. The only values
+/// are produced by [`viewed_one`], alongside the collection equivalent below.
+struct ProjectedSession(SessionView);
+
+impl IntoResponse for ProjectedSession {
+    fn into_response(self) -> Response {
+        Json(self.0).into_response()
+    }
+}
+
+/// A session-list response whose rows have all been publicly projected.
+struct ProjectedSessions(Vec<SessionView>);
+
+impl ProjectedSessions {
+    fn into_one(mut self) -> ProjectedSession {
+        assert_eq!(self.0.len(), 1, "one session projects to one view");
+        ProjectedSession(self.0.pop().expect("the projected session is present"))
+    }
+}
+
+impl Index<usize> for ProjectedSessions {
+    type Output = SessionView;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl IntoResponse for ProjectedSessions {
+    fn into_response(self) -> Response {
+        Json(self.0).into_response()
+    }
+}
+
 /// A rendered terminal screen on the REST wire.
 #[derive(Debug, Serialize)]
 struct ScreenView {
@@ -467,7 +505,7 @@ impl From<Session> for SessionView {
 
 /// Render sessions for a caller: their names, and what each may reach.
 ///
-/// One function for all three handlers that answer with sessions. It exists
+/// One function for all five handlers that answer with sessions. It exists
 /// because `From<Session>` deliberately leaves `reach` empty for `reached` to
 /// fill — and an empty reach is a real answer on this interface, meaning the
 /// session reaches nothing. A handler that returned before filling it told the
@@ -478,11 +516,27 @@ async fn viewed(
     caller: &Caller,
     credential: Option<&str>,
     sessions: Vec<Session>,
-) -> Vec<SessionView> {
+) -> ProjectedSessions {
     let mut views = named(users, caller, sessions.clone()).await;
     reached(environments, caller, credential, &sessions, &mut views).await;
     skilled(environments, caller, credential, &mut views).await;
-    views
+    ProjectedSessions(views)
+}
+
+/// Render the single session returned by create, read, plane, or revive.
+///
+/// Kept beside [`viewed`] so collection and item handlers cannot accidentally
+/// acquire different projection steps as the public resource grows.
+async fn viewed_one(
+    environments: &EnvironmentProfileService,
+    users: &UserDirectory,
+    caller: &Caller,
+    credential: Option<&str>,
+    session: Session,
+) -> ProjectedSession {
+    viewed(environments, users, caller, credential, vec![session])
+        .await
+        .into_one()
 }
 
 /// Describe what each session may reach, as far as this caller can be told.
@@ -987,7 +1041,7 @@ async fn create(
     // different error shapes from one endpoint depending on which half of the
     // request was wrong.
     body: Result<Json<CreateSessionRequest>, axum::extract::rejection::JsonRejection>,
-) -> Result<(StatusCode, Json<SessionView>), RequestFailure> {
+) -> Result<(StatusCode, ProjectedSession), RequestFailure> {
     let Json(body) = body?;
     let parts = body.into_parts()?;
     let credential_value = credential.as_ref().map(|axum::Extension(c)| c.0.clone());
@@ -1025,17 +1079,15 @@ async fn create(
      * until something refetched it. The two ends disagreed about what `[]`
      * meant, and both were reading their own contract correctly.
      */
-    let sessions = vec![session];
-    let fallback: SessionView = sessions[0].clone().into();
-    let mut views = viewed(
+    let view = viewed_one(
         &environments,
         &users,
         &caller,
         credential_value.as_deref(),
-        sessions,
+        session,
     )
     .await;
-    Ok((StatusCode::CREATED, Json(views.pop().unwrap_or(fallback))))
+    Ok((StatusCode::CREATED, view))
 }
 
 async fn list(
@@ -1044,19 +1096,18 @@ async fn list(
     State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
-) -> Result<Json<Vec<SessionView>>, Problem> {
+) -> Result<ProjectedSessions, Problem> {
     let sessions = service.list_sessions(&caller).await?;
-    let mut views = named(&users, &caller, sessions.clone()).await;
     let credential = credential.map(|axum::Extension(c)| c.0);
-    reached(
+    let views = viewed(
         &environments,
+        &users,
         &caller,
         credential.as_deref(),
-        &sessions,
-        &mut views,
+        sessions,
     )
     .await;
-    Ok(Json(views))
+    Ok(views)
 }
 
 async fn read(
@@ -1066,20 +1117,18 @@ async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
     Path(id): Path<String>,
-) -> Result<Json<SessionView>, Problem> {
+) -> Result<ProjectedSession, Problem> {
     let session = service.get_session(&caller, &SessionId(id)).await?;
-    let sessions = vec![session];
-    let mut views = named(&users, &caller, sessions.clone()).await;
     let credential = credential.map(|axum::Extension(c)| c.0);
-    reached(
+    let view = viewed_one(
         &environments,
+        &users,
         &caller,
         credential.as_deref(),
-        &sessions,
-        &mut views,
+        session,
     )
     .await;
-    Ok(Json(views.remove(0)))
+    Ok(view)
 }
 
 async fn terminate(
@@ -1119,24 +1168,46 @@ pub struct PlaneRequest {
 /// conversation across, is refused before anything is torn down.
 async fn plane(
     State(service): State<Arc<SessionService>>,
+    State(users): State<Arc<UserDirectory>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
     Path(id): Path<String>,
     body: Result<Json<PlaneRequest>, axum::extract::rejection::JsonRejection>,
-) -> Result<Json<SessionView>, RequestFailure> {
+) -> Result<ProjectedSession, RequestFailure> {
     let Json(body) = body?;
     let session = service
         .change_plane(&caller, &SessionId(id), body.plane)
         .await?;
-    Ok(Json(session.into()))
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    Ok(viewed_one(
+        &environments,
+        &users,
+        &caller,
+        credential.as_deref(),
+        session,
+    )
+    .await)
 }
 
 async fn revive(
     State(service): State<Arc<SessionService>>,
+    State(users): State<Arc<UserDirectory>>,
+    State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
     Path(id): Path<String>,
-) -> Result<Json<SessionView>, Problem> {
+) -> Result<ProjectedSession, Problem> {
     let session = service.revive_session(&caller, &SessionId(id)).await?;
-    Ok(Json(session.into()))
+    let credential = credential.map(|axum::Extension(c)| c.0);
+    Ok(viewed_one(
+        &environments,
+        &users,
+        &caller,
+        credential.as_deref(),
+        session,
+    )
+    .await)
 }
 
 /// The session's terminal output as the bytes a terminal would render.
