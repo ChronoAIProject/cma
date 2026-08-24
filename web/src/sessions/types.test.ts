@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { SessionLifecycle } from './types';
 import { labelFor, toneFor } from './types';
 
-const ALL: readonly SessionLifecycle[] = ['provisioning', 'ready', 'running', 'idle', 'terminated'];
+const ALL: readonly SessionLifecycle[] = [
+  'provisioning',
+  'ready',
+  'running',
+  'rotating',
+  'idle',
+  'terminated',
+  'unknown',
+];
 
 describe('session lifecycle presentation', () => {
   it('never presents idle as a failure', () => {
@@ -17,6 +25,11 @@ describe('session lifecycle presentation', () => {
   it('treats healthy states as healthy', () => {
     expect(toneFor('ready')).toBe('live');
     expect(toneFor('running')).toBe('live');
+  });
+
+  it('shows a future lifecycle under the server word without failure tone', () => {
+    expect(labelFor('unknown', 'hibernating')).toBe('hibernating');
+    expect(toneFor('unknown')).not.toBe('fail');
   });
 
   it('gives every lifecycle state a tone and a label', () => {

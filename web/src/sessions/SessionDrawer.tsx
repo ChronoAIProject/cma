@@ -139,7 +139,9 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
         <header className="drawer__band" data-tone={tone}>
           <p className="drawer__state">
             {dot === undefined ? null : <StateDot state={dot} placement="drawer__dot" />}
-            <span className="drawer__statename">{labelFor(session.lifecycle)}</span>
+            <span className="drawer__statename">
+              {labelFor(session.lifecycle, session.reportedStatus)}
+            </span>
           </p>
           <p className="drawer__started">Started {fullTimestamp(session.createdAt)}</p>
           {/*
