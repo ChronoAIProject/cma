@@ -14,7 +14,7 @@ import { StateDot } from '../ui/StateDot';
 import { CreatorFace, Fact, Facts, ReachList, Section, SkillList, Unknown } from './SessionFacts';
 import './SessionDrawer.css';
 import { IconCloseOutline16 } from '../ui/icons';
-import type { SessionSpend } from '../sdk';
+import type { SessionSpend } from '@chronoai/cma-sdk';
 
 /**
  * What is known about the open session — `docs/Web_Style.md` §17.

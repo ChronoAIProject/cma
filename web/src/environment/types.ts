@@ -23,6 +23,12 @@ export interface ProfilePackage {
   readonly version?: string;
 }
 
+/** A profile's requested sandbox reservation. */
+export interface ProfileSessionSize {
+  readonly cpuMillis: number;
+  readonly memoryMib: number;
+}
+
 /** What the platform mandates, which no profile may remove. */
 export interface MandatoryEntries {
   readonly packages: readonly string[];
@@ -74,6 +80,9 @@ export interface AgentConfiguration {
   readonly reasoningEffort: ReasoningEffort;
   readonly permission: PermissionMode;
   readonly credential: CredentialMode;
+  readonly size?: ProfileSessionSize;
+  /** Whether durable tool events retain their request and response bodies. */
+  readonly recordToolBodies?: boolean;
   readonly skills: readonly string[];
 }
 
@@ -135,6 +144,8 @@ export const DEFAULT_AGENT: AgentConfiguration = {
   reasoningEffort: 'high',
   permission: 'guarded',
   credential: 'delegated',
+  size: undefined,
+  recordToolBodies: false,
   skills: [],
 };
 

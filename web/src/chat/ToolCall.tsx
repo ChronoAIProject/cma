@@ -1,4 +1,4 @@
-import type { ToolCallEntry } from './conversation';
+import type { ToolCallEntry } from '@chronoai/cma-sdk';
 import type { DetailsSection } from './DetailsPanel';
 import './ToolCall.css';
 import { StateDot } from '../ui/StateDot';

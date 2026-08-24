@@ -2,12 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ConversationSurface } from './ConversationSurface';
-import {
-  MockSession,
-  transcriptNamed,
-  type OperationTransport,
-  type SessionCapabilities,
-} from '../agui';
+import { type OperationTransport, type SessionCapabilities } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 import type { Session } from '../sessions/types';
 
 /**
@@ -102,6 +98,7 @@ const refuses = (capability: string) => () =>
   new Response(
     JSON.stringify({
       code: 'capability_unsupported',
+      capability,
       detail: `capability not supported: ${capability}`,
       status: 422,
     }),

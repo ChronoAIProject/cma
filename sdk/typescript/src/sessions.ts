@@ -14,11 +14,11 @@
  * wrong thing entirely.
  */
 
-import { toCapabilities } from '../agui';
-import { headersFor, urlOf, type ResolvedConfig } from './config';
-import { ApiError } from './errors';
-import { request } from './http';
-import { PRICING_WIRE } from './wire';
+import { toCapabilities } from './agui/index.js';
+import type { ResolvedConfig } from './config.js';
+import { ProtocolError, ValidationError } from './errors.js';
+import { request, requestBytes, requestVoid, type OperationOptions } from './http.js';
+import { PRICING_WIRE } from './wire.js';
 import type {
   CredentialMode,
   Kernel,
@@ -30,9 +30,11 @@ import type {
   SessionCreator,
   SessionLifecycle,
   SessionPlane,
+  StopReason,
   SessionService,
+  SessionSize,
   SessionSkill,
-} from './types';
+} from './types.js';
 
 /*
  * The wire vocabularies this client can draw, kept beside the parser that
@@ -58,6 +60,18 @@ const LIFECYCLES: readonly SessionLifecycle[] = [
   'terminated',
 ];
 
+/** Exact `StopReason` spellings serialized by layer2-core. */
+export const STOP_REASONS = [
+  'end_turn',
+  'user_terminated',
+  'idle_timeout',
+  'lifetime_cap',
+  'requires_action',
+  'revoked',
+  'budget_reached',
+  'error',
+] as const satisfies readonly Exclude<StopReason, 'other'>[];
+
 // Deliberately no allowlist of kernel identifiers. This build does not decide
 // which runtimes a deployment offers, and a session naming one it has not
 // heard of is still that owner's session: it is carried under its own
@@ -69,6 +83,7 @@ interface SessionPayload {
   id?: unknown;
   kernel?: unknown;
   status?: unknown;
+  recovery_state?: unknown;
   created_at?: unknown;
   stop_reason?: unknown;
   runtime_version?: unknown;
@@ -78,24 +93,28 @@ interface SessionPayload {
   reach?: unknown;
   conforms_to?: unknown;
   agent?: unknown;
+  last_seq?: unknown;
+  cols?: unknown;
+  rows?: unknown;
 }
 
 /**
  * Convert a payload into the model a consumer reads.
  *
- * An unknown lifecycle is rejected rather than coerced: reporting a session in
- * a state the model does not have would misstate what the control plane said.
+ * A row with no id or no string status cannot be attributed and fails loudly.
+ * A string status from a newer server is still the owner's session, so it is
+ * carried as `unknown` with its raw word just as an unfamiliar kernel is.
  */
 export function toSession(raw: unknown): Session {
   const p = raw as SessionPayload;
   if (typeof p?.id !== 'string' || p.id === '') {
-    throw new ApiError(0, 'session payload carried no id');
+    throw new ProtocolError('session payload carried no id');
   }
-  if (typeof p.status !== 'string' || !LIFECYCLES.includes(p.status as SessionLifecycle)) {
-    throw new ApiError(0, `session ${p.id} has an unrecognised status`);
+  if (typeof p.status !== 'string' || p.status === '') {
+    throw new ProtocolError(`session ${p.id} carried no status`);
   }
   if (typeof p.kernel !== 'string' || p.kernel === '') {
-    throw new ApiError(0, `session ${p.id} names no kernel`);
+    throw new ProtocolError(`session ${p.id} names no kernel`);
   }
   // The wire carries RFC 3339; consumers count age in milliseconds. An
   // unparseable date falls back to now rather than propagating NaN.
@@ -103,12 +122,19 @@ export function toSession(raw: unknown): Session {
   return {
     id: p.id,
     kernel: p.kernel as Kernel,
-    lifecycle: p.status as SessionLifecycle,
+    lifecycle: LIFECYCLES.includes(p.status as SessionLifecycle)
+      ? (p.status as SessionLifecycle)
+      : 'unknown',
+    reportedStatus: LIFECYCLES.includes(p.status as SessionLifecycle) ? undefined : p.status,
+    recoveryState:
+      typeof p.recovery_state === 'string' && p.recovery_state !== ''
+        ? p.recovery_state
+        : undefined,
     createdAt: Number.isNaN(parsed) ? Date.now() : parsed,
-    // Narrowed to the one distinction a consumer acts on. Carrying the control
-    // plane's full vocabulary here would invite reasoning about reasons
-    // nothing has behaviour for.
-    stopReason: p.stop_reason === 'error' ? 'error' : p.stop_reason ? 'other' : undefined,
+    stopReason: stopReason(p.stop_reason),
+    lastSeq: nonNegativeInteger(p.last_seq),
+    cols: positiveInteger(p.cols),
+    rows: positiveInteger(p.rows),
     runtimeVersion: typeof p.runtime_version === 'string' ? p.runtime_version : undefined,
     rotations: typeof p.rotations === 'number' ? p.rotations : undefined,
     // Absent until a session has actually been moved, so an unparseable value
@@ -122,6 +148,15 @@ export function toSession(raw: unknown): Session {
     capabilities: toCapabilities(raw),
     agent: agent(p.agent),
   };
+}
+
+function stopReason(raw: unknown): StopReason | undefined {
+  if (typeof raw !== 'string' || raw === '') {
+    return undefined;
+  }
+  return STOP_REASONS.includes(raw as (typeof STOP_REASONS)[number])
+    ? (raw as (typeof STOP_REASONS)[number])
+    : 'other';
 }
 
 /**
@@ -145,10 +180,32 @@ function agent(raw: unknown): SessionAgent | undefined {
     permission: oneOf(a.permission, PERMISSION_MODES),
     reasoningEffort: oneOf(a.reasoning_effort, REASONING_EFFORTS),
     credential: oneOf(a.credential, CREDENTIAL_MODES),
+    size: sessionSize(a.size),
     // Absent and empty stay different facts. An entry with no usable
     // identifier is dropped rather than carried blank, exactly as in `reach`.
     skills: Array.isArray(a.skills) ? a.skills.flatMap(skill) : undefined,
   };
+}
+
+function sessionSize(raw: unknown): SessionSize | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ProtocolError('session agent size was not an object');
+  }
+  const size = raw as Record<string, unknown>;
+  return {
+    cpuMillis: sessionSizeFigure(size.cpu_millis, 'cpu_millis'),
+    memoryMib: sessionSizeFigure(size.memory_mib, 'memory_mib'),
+  };
+}
+
+function sessionSizeFigure(raw: unknown, field: string): number {
+  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw <= 0 || raw > 4_294_967_295) {
+    throw new ProtocolError(`session agent size carried an invalid ${field}`);
+  }
+  return raw;
 }
 
 /** One granted skill, or nothing where the entry carried no identifier. */
@@ -265,11 +322,14 @@ function rotatedAt(raw: unknown): number | undefined {
 }
 
 /** Sessions belonging to the authenticated subject, newest first. */
-export async function listSessions(config: ResolvedConfig): Promise<readonly Session[]> {
-  const body = await request(config, '/api/v1/sessions');
+export async function listSessions(
+  config: ResolvedConfig,
+  options: OperationOptions = {},
+): Promise<readonly Session[]> {
+  const body = await request(config, '/api/v1/sessions', { ...options, expectedStatus: 200 });
   const items = (body as { sessions?: unknown })?.sessions ?? body;
   if (!Array.isArray(items)) {
-    throw new ApiError(0, 'session list was not a list');
+    throw new ProtocolError('session list was not a list');
   }
   return items.map(toSession);
 }
@@ -289,8 +349,14 @@ export interface SessionAllowance {
  * revive request remains authoritative. An older or malformed advisory
  * response must not disable the only way to start work.
  */
-export async function readAllowance(config: ResolvedConfig): Promise<SessionAllowance> {
-  const body = (await request(config, '/api/v1/sessions/allowance')) as {
+export async function readAllowance(
+  config: ResolvedConfig,
+  options: OperationOptions = {},
+): Promise<SessionAllowance> {
+  const body = (await request(config, '/api/v1/sessions/allowance', {
+    ...options,
+    expectedStatus: 200,
+  })) as {
     limit?: unknown;
     live?: unknown;
     exempt?: unknown;
@@ -326,16 +392,26 @@ function nonNegativeInteger(value: unknown): number | undefined {
  * holding the object it got back from `POST /sessions` is holding the answer
  * from before any of that happened.
  */
-export async function readSession(config: ResolvedConfig, id: string): Promise<Session> {
-  const body = await request(config, `/api/v1/sessions/${encodeURIComponent(id)}`);
+export async function readSession(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions = {},
+): Promise<Session> {
+  const body = await request(config, `/api/v1/sessions/${encodeURIComponent(id)}`, {
+    ...options,
+    expectedStatus: 200,
+  });
   return toSession(body);
 }
 
-export async function listKernels(config: ResolvedConfig): Promise<readonly KernelOffer[]> {
-  const body = await request(config, '/api/v1/kernels');
+export async function listKernels(
+  config: ResolvedConfig,
+  options: OperationOptions = {},
+): Promise<readonly KernelOffer[]> {
+  const body = await request(config, '/api/v1/kernels', { ...options, expectedStatus: 200 });
   const items = (body as { kernels?: unknown })?.kernels;
   if (!Array.isArray(items)) {
-    throw new ApiError(0, 'the kernel list was not a list');
+    throw new ProtocolError('the kernel list was not a list');
   }
   return items.map(toKernelOffer);
 }
@@ -351,7 +427,7 @@ export async function listKernels(config: ResolvedConfig): Promise<readonly Kern
 function toKernelOffer(raw: unknown): KernelOffer {
   const k = raw as { id?: unknown; modes?: unknown };
   if (typeof k?.id !== 'string' || k.id === '') {
-    throw new ApiError(0, 'a runtime arrived with no identifier');
+    throw new ProtocolError('a runtime arrived with no identifier');
   }
   const modes = Array.isArray(k.modes) ? k.modes : [];
   return { id: k.id, modes: modes.filter(isPlane) };
@@ -364,9 +440,9 @@ function isPlane(value: unknown): value is SessionPlane {
 /** What a new session is asked for. */
 export interface CreateSession {
   /** Terminal width, in columns. */
-  readonly cols: number;
+  readonly cols?: number;
   /** Terminal height, in rows. */
-  readonly rows: number;
+  readonly rows?: number;
   /**
    * The bundle describing the agent — which one, which model, how freely it
    * acts, what it carries.
@@ -425,20 +501,31 @@ export type SessionSpend = PricedSpend | UnpricedSpend;
 export async function quoteSession(
   config: ResolvedConfig,
   environmentProfile?: string | null,
+  options: OperationOptions = {},
 ): Promise<PricingQuote> {
   const query = new URLSearchParams();
   if (environmentProfile !== undefined && environmentProfile !== null) {
     query.set(PRICING_WIRE.environmentProfile, environmentProfile);
   }
   const suffix = query.size === 0 ? '' : `?${query.toString()}`;
-  return toPricingQuote(await request(config, `${PRICING_WIRE.quotePath}${suffix}`));
+  return toPricingQuote(
+    await request(config, `${PRICING_WIRE.quotePath}${suffix}`, {
+      ...options,
+      expectedStatus: 200,
+    }),
+  );
 }
 
 /** Read a session's reserved-capacity spend, never the model vendor's cost. */
-export async function readSpend(config: ResolvedConfig, id: string): Promise<SessionSpend> {
+export async function readSpend(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions = {},
+): Promise<SessionSpend> {
   const body = await request(
     config,
     `/api/v1/sessions/${encodeURIComponent(id)}/${PRICING_WIRE.spend}`,
+    { ...options, expectedStatus: 200 },
   );
   return toSessionSpend(body);
 }
@@ -451,7 +538,7 @@ export function toPricingQuote(raw: unknown): PricingQuote {
   }
   const per = textOf(body, PRICING_WIRE.per, 'pricing quote');
   if (per !== 'hour') {
-    throw new ApiError(0, 'pricing quote used an unrecognised interval');
+    throw new ProtocolError('pricing quote used an unrecognised interval');
   }
   return {
     priced: true,
@@ -475,7 +562,7 @@ export function toSessionSpend(raw: unknown): SessionSpend {
   }
   const accruing = body[PRICING_WIRE.accruing];
   if (body[PRICING_WIRE.priced] !== true || typeof accruing !== 'boolean') {
-    throw new ApiError(0, 'session spend carried no pricing state');
+    throw new ProtocolError('session spend carried no pricing state');
   }
   return {
     priced: true,
@@ -492,7 +579,7 @@ export function toSessionSpend(raw: unknown): SessionSpend {
 
 function objectOf(raw: unknown, name: string): Record<string, unknown> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new ApiError(0, `${name} was not an object`);
+    throw new ProtocolError(`${name} was not an object`);
   }
   return raw as Record<string, unknown>;
 }
@@ -500,7 +587,7 @@ function objectOf(raw: unknown, name: string): Record<string, unknown> {
 function textOf(body: Record<string, unknown>, field: string, name: string): string {
   const value = body[field];
   if (typeof value !== 'string' || value === '') {
-    throw new ApiError(0, `${name} carried no ${field}`);
+    throw new ProtocolError(`${name} carried no ${field}`);
   }
   return value;
 }
@@ -508,7 +595,7 @@ function textOf(body: Record<string, unknown>, field: string, name: string): str
 function decimalOf(body: Record<string, unknown>, field: string, name: string): string {
   const value = body[field];
   if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) {
-    throw new ApiError(0, `${name} carried an invalid ${field}`);
+    throw new ProtocolError(`${name} carried an invalid ${field}`);
   }
   return value;
 }
@@ -516,7 +603,7 @@ function decimalOf(body: Record<string, unknown>, field: string, name: string): 
 function integerOf(body: Record<string, unknown>, field: string, name: string): number {
   const value = body[field];
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new ApiError(0, `${name} carried an invalid ${field}`);
+    throw new ProtocolError(`${name} carried an invalid ${field}`);
   }
   return value;
 }
@@ -529,18 +616,22 @@ function integerOf(body: Record<string, unknown>, field: string, name: string): 
  */
 export async function createSession(
   config: ResolvedConfig,
-  options: CreateSession,
+  session: CreateSession = {},
+  options: OperationOptions = {},
 ): Promise<Session> {
+  const geometry = geometryOf(session.cols, session.rows, 'session creation');
   const body = await request(config, '/api/v1/sessions', {
+    ...options,
     method: 'POST',
+    expectedStatus: 201,
     body: {
-      cols: options.cols,
-      rows: options.rows,
+      cols: geometry?.cols,
+      rows: geometry?.rows,
       // Omitted rather than sent as null when nothing was chosen: absent means
       // "this deployment's answer", which is not the same as a caller naming a
       // bundle that does not exist.
-      environment_profile: options.environmentProfile ?? undefined,
-      [PRICING_WIRE.quotedRateCard]: options.quotedRateCard,
+      environment_profile: session.environmentProfile ?? undefined,
+      [PRICING_WIRE.quotedRateCard]: session.quotedRateCard,
     },
   });
   return toSession(body);
@@ -561,9 +652,15 @@ export async function changePlane(
   config: ResolvedConfig,
   id: string,
   plane: SessionPlane,
+  options: OperationOptions = {},
 ): Promise<Session> {
+  if (!isPlane(plane)) {
+    throw new ValidationError("plane must be 'terminal' or 'conversation'");
+  }
   const body = await request(config, `/api/v1/sessions/${encodeURIComponent(id)}/plane`, {
+    ...options,
     method: 'POST',
+    expectedStatus: 200,
     body: { plane },
   });
   return toSession(body);
@@ -575,8 +672,16 @@ export async function changePlane(
  * Distinct from removing it: a finished conversation is still worth reading,
  * and the control plane keeps it until its owner deletes it.
  */
-export async function terminateSession(config: ResolvedConfig, id: string): Promise<void> {
-  await request(config, `/api/v1/sessions/${encodeURIComponent(id)}/terminate`, { method: 'POST' });
+export async function terminateSession(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions = {},
+): Promise<void> {
+  await requestVoid(config, `/api/v1/sessions/${encodeURIComponent(id)}/terminate`, {
+    ...options,
+    method: 'POST',
+    expectedStatus: 204,
+  });
 }
 
 /**
@@ -586,21 +691,43 @@ export async function terminateSession(config: ResolvedConfig, id: string): Prom
  * for, while the history stays readable and the session can be picked up again
  * with `reviveSession`.
  */
-export async function stopSession(config: ResolvedConfig, id: string): Promise<void> {
-  await request(config, `/api/v1/sessions/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+export async function stopSession(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions = {},
+): Promise<void> {
+  await requestVoid(config, `/api/v1/sessions/${encodeURIComponent(id)}/stop`, {
+    ...options,
+    method: 'POST',
+    expectedStatus: 204,
+  });
 }
 
 /** Give a stopped session a sandbox again, under the same id. */
-export async function reviveSession(config: ResolvedConfig, id: string): Promise<Session> {
+export async function reviveSession(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions = {},
+): Promise<Session> {
   const body = await request(config, `/api/v1/sessions/${encodeURIComponent(id)}/revive`, {
+    ...options,
     method: 'POST',
+    expectedStatus: 200,
   });
   return toSession(body);
 }
 
 /** Remove a session and its history permanently. */
-export async function deleteSession(config: ResolvedConfig, id: string): Promise<void> {
-  await request(config, `/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export async function deleteSession(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions = {},
+): Promise<void> {
+  await requestVoid(config, `/api/v1/sessions/${encodeURIComponent(id)}`, {
+    ...options,
+    method: 'DELETE',
+    expectedStatus: 204,
+  });
 }
 
 /**
@@ -610,16 +737,34 @@ export async function deleteSession(config: ResolvedConfig, id: string): Promise
  * an escape-sequence stream that only a terminal knows how to interpret —
  * decoding it here would corrupt exactly the sequences that carry the meaning.
  */
-export async function fetchTranscript(config: ResolvedConfig, id: string): Promise<Uint8Array> {
-  const response = await config.fetch(
-    urlOf(config, `/api/v1/sessions/${encodeURIComponent(id)}/transcript`),
-    {
-      headers: await headersFor(config),
-      credentials: config.cookies ? 'include' : 'same-origin',
-    },
-  );
-  if (!response.ok) {
-    throw new ApiError(response.status, 'could not read the session transcript');
+export async function fetchTranscript(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions = {},
+): Promise<Uint8Array> {
+  return requestBytes(config, `/api/v1/sessions/${encodeURIComponent(id)}/transcript`, {
+    ...options,
+    expectedStatus: 200,
+    headers: { Accept: 'application/octet-stream' },
+  });
+}
+
+function geometryOf(
+  cols: number | undefined,
+  rows: number | undefined,
+  boundary: string,
+): { cols: number; rows: number } | undefined {
+  if (cols === undefined && rows === undefined) {
+    return undefined;
   }
-  return new Uint8Array(await response.arrayBuffer());
+  if (!wireDimension(cols) || !wireDimension(rows)) {
+    throw new ValidationError(
+      `${boundary} requires columns and rows between 1 and 65535 when either is supplied`,
+    );
+  }
+  return { cols, rows };
+}
+
+function wireDimension(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 65_535;
 }
