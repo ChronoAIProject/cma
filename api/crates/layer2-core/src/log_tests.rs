@@ -170,6 +170,10 @@ struct Miscounting(Arc<FakeStore>);
 
 #[async_trait::async_trait]
 impl SessionStore for Miscounting {
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.0.ping().await
+    }
+
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         Err(StoreError::SequenceTaken {
             written: events.len() + 5,
