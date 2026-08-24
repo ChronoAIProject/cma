@@ -454,51 +454,29 @@ pub trait EnvironmentProfileStore: Send + Sync {
         page: &PageRequest,
     ) -> Result<Page<EnvironmentProfile>, StoreError>;
 
-    /// Walk every profile for an internal mutation through bounded reads.
-    async fn scan_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
-        let mut profiles = Vec::new();
-        let mut cursor = None;
-        loop {
-            let requested = cursor.clone();
-            let page = self
-                .list_for(
-                    owner,
-                    &PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
-                )
-                .await?;
-            profiles.extend(page.items);
-            match page.next {
-                Some(next) if Some(&next) != requested.as_ref() => cursor = Some(next),
-                Some(_) => {
-                    return Err(StoreError::Malformed(
-                        "environment profile listing repeated its continuation cursor".into(),
-                    ))
-                }
-                None => return Ok(profiles),
-            }
-        }
-    }
+    /// Replace every stored preference claim for an owner with one chosen profile, or none.
+    ///
+    /// The chosen identifier must still name one of the owner's profiles when
+    /// this operation begins. Implementations must validate that before
+    /// clearing an existing claim. This is a mutation rather than a listing:
+    /// it must not collect or return the owner's profiles while doing the
+    /// replacement.
+    async fn set_preferred(
+        &self,
+        owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError>;
 
     /// The winning preferred profile, where one or more records claim it.
     ///
-    /// The default stays correct for simple stores by walking bounded pages.
-    /// Database adapters should override this with a one-row query so listing a
-    /// page never grows with the owner's history.
+    /// This lookup must retain at most one profile. It is deliberately a
+    /// required store operation: implementing it by collecting a complete
+    /// profile listing would make both listing one page and changing the
+    /// preference grow with the owner's history.
     async fn preferred_for(
         &self,
         owner: &SubjectId,
-    ) -> Result<Option<EnvironmentProfile>, StoreError> {
-        Ok(self
-            .scan_for(owner)
-            .await?
-            .into_iter()
-            .filter(|profile| profile.preferred)
-            .max_by(|a, b| {
-                a.updated_at
-                    .cmp(&b.updated_at)
-                    .then_with(|| a.id.0.cmp(&b.id.0))
-            }))
-    }
+    ) -> Result<Option<EnvironmentProfile>, StoreError>;
 
     /// Remove a profile permanently.
     ///

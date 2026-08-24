@@ -247,6 +247,31 @@ opaque, and `Link: rel="next"` appears only when another page exists. Profiles
 do not accept the session-only `status` filter. Unknown parameters and malformed
 cursors return the same `400 invalid_query` problem document.
 
+### Preferred environment profile
+
+```http
+PUT /api/v1/environment-profiles/preferred
+Content-Type: application/json
+
+{ "profile": "envp_01K3" }
+```
+
+`profile` names one profile the caller owns. `null` clears the choice and
+returns later sessions to the deployment's defaults. The selected profile is
+validated before the existing preference is changed.
+
+The `200 OK` body is a JSON array, but it is a **bounded change set rather than
+the profile collection**. It contains at most two rows: the previously visible
+preferred profile with `preferred: false` when it changed, followed by the
+selected profile with `preferred: true` when there is one. Selecting the row
+that already holds the preference returns that one row; clearing an existing
+choice returns its one changed row; clearing when none exists returns `[]`.
+
+Merge the returned rows by `id` into an already loaded collection. Use the
+paginated `GET /api/v1/environment-profiles` route when a fresh collection is
+needed. The action never walks or serializes every profile an owner has, and it
+does not impose a profile-count quota.
+
 ### Changing which plane a session is driven on
 
 ```http

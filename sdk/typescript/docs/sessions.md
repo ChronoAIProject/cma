@@ -58,6 +58,12 @@ session-status filter. Page limits are integers from 1 through 200. `cursor` and
 `next` are alternatives: a server-issued `next` already carries the original
 filters and cannot be combined with new ones.
 
+`preferEnvironmentProfile(id)` is an action, not another listing. Its array is
+a bounded change set containing at most the previously preferred profile and
+the newly preferred profile. Merge those rows by `id` into locally loaded
+profiles; use `listEnvironmentProfilesPage` or `listEnvironmentProfiles` when a
+fresh collection is required. Passing `null` clears the preference.
+
 Creation can return while the lifecycle is still `provisioning`. Use the durable
 event stream for progress and `readSession` for the latest full projection.
 
