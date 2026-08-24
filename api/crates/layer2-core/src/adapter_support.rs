@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use layer3_adapter::{
     AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeLossReason, RuntimeSpec,
-    TerminalChannel,
+    TerminalChannel, TerminalOutput,
 };
 use tokio::sync::{mpsc, Mutex};
 
@@ -30,7 +30,7 @@ pub(crate) struct FakeAdapter {
     pub(crate) refuse_attach: bool,
     /// Kept alive so the relay's output channel does not close immediately,
     /// which would make a live session look dead.
-    pub(crate) senders: Mutex<Vec<mpsc::Sender<Vec<u8>>>>,
+    pub(crate) senders: Mutex<Vec<mpsc::Sender<TerminalOutput>>>,
     /// What the provider currently has running: handle to the session it was
     /// provisioned for. This is the provider's own view, which is the thing
     /// reconciliation compares the record against.

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, RuntimeHandle, TerminalInput};
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
 
 use crate::environment_service::EnvironmentProfileService;
 use crate::event::Event;
@@ -68,7 +68,11 @@ pub(crate) struct SessionEntry {
     pub(crate) context_ref: Option<String>,
     /// Transcript length at the last capture, so an unchanged one is not rewritten.
     pub(crate) captured_len: usize,
-    pub(crate) live: broadcast::Sender<Vec<u8>>,
+    /// Current runtime output. `None` after that channel ends; receivers on the
+    /// previous sender then close after draining every queued byte.
+    pub(crate) live: Option<broadcast::Sender<Vec<u8>>>,
+    /// Process ending recorded before `live` is closed.
+    pub(crate) terminal_ending: watch::Sender<Option<crate::lease::Detached>>,
     /// Liveness on the conversation plane: pieces of a message being assembled.
     ///
     /// Separate from the terminal's byte stream because the two are different

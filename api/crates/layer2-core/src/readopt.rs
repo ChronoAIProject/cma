@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use layer3_adapter::RuntimeHandle;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, watch, Mutex};
 
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
@@ -291,6 +291,7 @@ impl SessionService {
         };
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
+        let (terminal_ending, _) = watch::channel(None);
         let (live_frames, _) = broadcast::channel(LIVE_BUFFER);
         let (resources, _) = broadcast::channel(RESOURCE_BUFFER);
         let mut model = (self.screen_factory)(record.session.geometry);
@@ -335,7 +336,8 @@ impl SessionService {
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
             input: terminal.as_ref().map(|c| c.input.clone()),
-            live: live.clone(),
+            live: Some(live.clone()),
+            terminal_ending: terminal_ending.clone(),
             live_frames: live_frames.clone(),
             resources,
             last_reading: None,
@@ -358,7 +360,14 @@ impl SessionService {
             handle,
         );
         if let Some(channel) = terminal {
-            spawn_relay(id.clone(), channel.output, screen, live);
+            spawn_relay(
+                Arc::clone(self),
+                id.clone(),
+                channel.output,
+                screen,
+                live,
+                terminal_ending,
+            );
         }
 
         // The sandbox kept running, but the credential it was given belonged to

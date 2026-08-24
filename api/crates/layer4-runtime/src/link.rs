@@ -33,7 +33,7 @@
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
+        ws::{close_code, CloseFrame, Message, WebSocket},
         Path, Query, State, WebSocketUpgrade,
     },
     response::IntoResponse,
@@ -137,6 +137,24 @@ pub(crate) const CONTROL_REPLIES: usize = 4;
 /// word, and a literal repeated in two crates is how they stop agreeing.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
 
+/// A process ending sent to the control plane after its terminal is drained.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum OutboundControl {
+    Exit { code: Option<i32> },
+}
+
+/// Why the socket's inbound half stopped.
+///
+/// A peer ending means there is nowhere left to send output. A PTY write
+/// failure is different: the child may just have closed its slave, and the
+/// output half still owes the peer the latched process ending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalInputEnd {
+    PeerEnded,
+    PtyWriteFailed,
+}
+
 pub(crate) type Sink = SplitSink<WebSocket, Message>;
 
 pub(crate) async fn attach(
@@ -209,23 +227,83 @@ async fn relay_terminal(
     let rows = params.rows.unwrap_or(24).max(1);
     let framed = params.framed();
 
-    let session: std::sync::Arc<PtySession> = state
+    let (session, mut output): (
+        std::sync::Arc<PtySession>,
+        tokio::sync::broadcast::Receiver<Vec<u8>>,
+    ) = state
         .registry
         .get_or_start(&id, &state.agent_command(), cols, rows, PLACEHOLDER_KEY)
         .await?;
 
-    // Subscribe before the first resize so no output produced during startup
-    // is missed by this attachment.
-    let mut output = session.output.subscribe();
+    let mut exited = session.subscribe_exit();
     session.resize(cols, rows)?;
 
     // Answers to control frames share the one sink the output pump owns, so
     // the inbound side never needs a second half of the socket.
     let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
     let runtime = id.clone();
-    let mut pump_out = tokio::spawn(async move {
+    let pump_out = tokio::spawn(async move {
+        // A short-lived process may have ended before this task was scheduled.
+        // The watch is latched precisely so that case cannot lose the status.
+        let mut reported = *exited.borrow_and_update();
         loop {
+            if let Some(exit) = reported {
+                // Exit is published only after the supervisor stops forwarding
+                // pty bytes, so every remaining item was sent before it. Drain
+                // those bytes before putting the ending on the control lane.
+                loop {
+                    match output.try_recv() {
+                        Ok(chunk) => {
+                            let payload = if framed {
+                                lanes::frame(LANE_TERMINAL, &chunk)
+                            } else {
+                                chunk
+                            };
+                            if sink.send(Message::Binary(payload.into())).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                            tracing::warn!(runtime = %runtime, skipped, "terminal consumer lagged");
+                        }
+                        Err(
+                            tokio::sync::broadcast::error::TryRecvError::Empty
+                            | tokio::sync::broadcast::error::TryRecvError::Closed,
+                        ) => break,
+                    }
+                }
+                let text = match serde_json::to_string(&OutboundControl::Exit { code: exit.code }) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        tracing::warn!(runtime = %runtime, %error, "process exit could not be rendered");
+                        return;
+                    }
+                };
+                if sink.send(Message::Text(text.into())).await.is_err() {
+                    return;
+                }
+                let _ = sink
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "".into(),
+                    })))
+                    .await;
+                break;
+            }
+
             let chunk = tokio::select! {
+                chunk = output.recv() => Some(chunk),
+                changed = exited.changed() => {
+                    match changed {
+                        Ok(()) => {
+                            reported = *exited.borrow_and_update();
+                            continue;
+                        }
+                        // Waiting failed, so there is no status to report. The
+                        // link closes without inventing one.
+                        Err(_) => break,
+                    }
+                }
                 answer = answers.recv() => {
                     match answer {
                         Some(text) => {
@@ -237,9 +315,8 @@ async fn relay_terminal(
                         None => continue,
                     }
                 }
-                chunk = output.recv() => chunk,
             };
-            match chunk {
+            match chunk.expect("the output branch always carries a receive result") {
                 Ok(chunk) => {
                     let payload = if framed {
                         lanes::frame(LANE_TERMINAL, &chunk)
@@ -263,7 +340,7 @@ async fn relay_terminal(
     let session_in = std::sync::Arc::clone(&session);
     let state_in = state.clone();
     let runtime = id.clone();
-    let mut pump_in = tokio::spawn(async move {
+    let pump_in = tokio::spawn(async move {
         while let Some(frame) = source.next().await {
             match frame {
                 Ok(Message::Binary(bytes)) => {
@@ -284,7 +361,7 @@ async fn relay_terminal(
                     };
                     if let Err(e) = session_in.write_input(&typed) {
                         tracing::warn!(runtime = %runtime, error = %e, "pty write failed");
-                        break;
+                        return TerminalInputEnd::PtyWriteFailed;
                     }
                 }
                 Ok(Message::Text(text)) => {
@@ -298,16 +375,33 @@ async fn relay_terminal(
                 }
             }
         }
+        TerminalInputEnd::PeerEnded
     });
 
-    // A dropped connection detaches; it does not end the session. The process
-    // keeps running and the next attach reuses it.
-    tokio::select! {
-        _ = &mut pump_out => pump_in.abort(),
-        _ = &mut pump_in => pump_out.abort(),
-    }
+    finish_terminal_pumps(pump_out, pump_in).await;
     tracing::info!(runtime = %id, "terminal detached");
     Ok(())
+}
+
+/// Finish the terminal halves without losing a process ending to late input.
+async fn finish_terminal_pumps(
+    mut pump_out: tokio::task::JoinHandle<()>,
+    mut pump_in: tokio::task::JoinHandle<TerminalInputEnd>,
+) {
+    // A dropped connection detaches; it does not end the session. There is no
+    // peer left to receive output, so the output task can stop. A failed PTY
+    // write instead commonly means the child has just exited while a keystroke
+    // was in flight. In that case the output task must drain the latched exit
+    // and send its normal ending rather than being aborted by the input race.
+    tokio::select! {
+        _ = &mut pump_out => pump_in.abort(),
+        input_end = &mut pump_in => match input_end {
+            Ok(TerminalInputEnd::PtyWriteFailed) => {
+                let _ = pump_out.await;
+            }
+            Ok(TerminalInputEnd::PeerEnded) | Err(_) => pump_out.abort(),
+        },
+    }
 }
 
 /// Act on a control-lane frame.
