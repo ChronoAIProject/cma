@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AguiConnection, type AguiTransport, type LinkFailure } from '../../src/agui/connection.js';
 import type { AguiEvent } from '../../src/agui/events.js';
+import { fold } from '../../src/conversation/fold.js';
 import { ApiError, ProtocolError, RequestAborted, ValidationError } from '../../src/errors.js';
 
 /**
@@ -57,6 +58,52 @@ function text(seq: number, body: string) {
     seq,
     messageId: `m_${String(seq)}`,
     delta: body,
+  };
+}
+
+function committedMessage(seq: number, messageId: string, body: string) {
+  return [
+    {
+      type: 'TEXT_MESSAGE_START',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId,
+      role: 'assistant',
+    },
+    {
+      type: 'TEXT_MESSAGE_CONTENT',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId,
+      delta: body,
+    },
+    { type: 'TEXT_MESSAGE_END', threadId: 'sesn_1', runId: 'run_1', seq, messageId },
+  ] as const;
+}
+
+function toolStart(toolCallId: string) {
+  return {
+    type: 'TOOL_CALL_START',
+    threadId: 'sesn_1',
+    runId: 'run_1',
+    seq: 0,
+    toolCallId,
+    toolCallName: `Read for ${toolCallId}`,
+    'cma:toolKind': 'read',
+  };
+}
+
+function toolArgs(seq: number, toolCallId: string) {
+  return {
+    type: 'TOOL_CALL_ARGS',
+    threadId: 'sesn_1',
+    runId: 'run_1',
+    seq,
+    toolCallId,
+    delta: '{}',
+    'cma:truncated': false,
   };
 }
 
@@ -588,64 +635,106 @@ describe('a durable event that projects to several frames', () => {
     expect(seen.filter((event) => event.type === 'TEXT_MESSAGE_START')).toHaveLength(1);
   });
 
-  it('deduplicates an unnumbered projection across the history and stream overlap', async () => {
+  it('folds a normal history and buffered-stream overlap exactly once', async () => {
     const fake = new Fake();
-    const projection = [
+    const turn = [
+      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
+      ...committedMessage(2, 'm_2', 'one answer'),
       {
-        type: 'TEXT_MESSAGE_START',
+        type: 'RUN_FINISHED',
         threadId: 'sesn_1',
         runId: 'run_1',
-        seq: 0,
-        messageId: 'm_7',
-        role: 'assistant',
-      },
-      {
-        type: 'TEXT_MESSAGE_CONTENT',
-        threadId: 'sesn_1',
-        runId: 'run_1',
-        seq: 0,
-        messageId: 'm_7',
-        delta: 'one answer',
-      },
-      {
-        type: 'TEXT_MESSAGE_END',
-        threadId: 'sesn_1',
-        runId: 'run_1',
-        seq: 7,
-        messageId: 'm_7',
+        seq: 3,
       },
     ];
-    fake.onOpen = projection;
-    fake.responses = [projection];
+    fake.onOpen = turn;
+    fake.responses = [turn];
 
-    const { seen, stop } = connect(fake);
-    await tick();
+    const { seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('live'));
     stop();
 
     expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
       'TEXT_MESSAGE_START',
       'TEXT_MESSAGE_CONTENT',
       'TEXT_MESSAGE_END',
+      'RUN_FINISHED',
+    ]);
+    expect(fold(seen).entries).toEqual([
+      expect.objectContaining({
+        kind: 'message',
+        id: 'm_2',
+        text: 'one answer',
+        committed: true,
+        seq: 2,
+      }),
     ]);
   });
 
-  it('deduplicates unnumbered tool frames by tool-call identity', async () => {
+  it('retains every completed projection until a multi-projection overlap drains', async () => {
     const fake = new Fake();
-    const start = (toolCallId: string) => ({
-      type: 'TOOL_CALL_START',
-      threadId: 'sesn_1',
-      runId: 'run_1',
-      seq: 0,
-      toolCallId,
-      toolCallName: `Read for ${toolCallId}`,
-      'cma:toolKind': 'read',
-    });
+    const turn = [
+      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
+      ...committedMessage(2, 'm_2', 'first'),
+      ...committedMessage(3, 'm_3', 'second'),
+      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 4 },
+    ];
+    fake.onOpen = turn;
+    fake.responses = [turn];
+
+    const { connection, seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('live'));
+    stop();
+
+    expect(connection.cursor).toBe(4);
+    expect(seen.map((event) => event.seq)).toEqual([1, 0, 0, 2, 0, 0, 3, 4]);
+    expect(fold(seen).entries).toEqual([
+      expect.objectContaining({ id: 'm_2', text: 'first', committed: true, seq: 2 }),
+      expect.objectContaining({ id: 'm_3', text: 'second', committed: true, seq: 3 }),
+    ]);
+  });
+
+  it('releases overlap identities and retires an open key on a stale final', async () => {
+    const fake = new Fake();
+    const turn = [
+      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
+      toolStart('call-1'),
+      toolArgs(2, 'call-1'),
+      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 3 },
+    ];
+    fake.onOpen = turn;
+    fake.responses = [turn];
+
+    const { seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('live'));
+    const before = seen.length;
+
+    // Once the buffered overlap is gone, its completed identities are gone
+    // too. The stale final is still responsible for retiring the newly open
+    // prefix, so the same key can become the next active projection again.
+    fake.frames?.(toolStart('call-1'));
+    fake.frames?.(toolArgs(2, 'call-1'));
+    fake.frames?.(toolStart('call-1'));
+    stop();
+
+    expect(seen.slice(before).map((event) => event.type)).toEqual([
+      'TOOL_CALL_START',
+      'TOOL_CALL_START',
+    ]);
+  });
+
+  it('deduplicates sequential unnumbered tool frames by tool-call identity', async () => {
+    const fake = new Fake();
     const { seen, stop } = connect(fake);
     await tick();
 
-    fake.frames?.(start('call-1'));
-    fake.frames?.(start('call-1'));
-    fake.frames?.(start('call-2'));
+    fake.frames?.(toolStart('call-1'));
+    fake.frames?.(toolStart('call-1'));
+    fake.frames?.(toolArgs(1, 'call-1'));
+    fake.frames?.(toolStart('call-2'));
+    fake.frames?.(toolStart('call-2'));
+    fake.frames?.(toolArgs(2, 'call-2'));
     await tick();
     stop();
 
