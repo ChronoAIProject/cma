@@ -8,6 +8,7 @@
 mod activity;
 mod auth;
 mod config;
+mod health;
 mod kernels;
 mod permissions;
 mod renewal;
@@ -23,8 +24,8 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     http::{header, HeaderName, HeaderValue, Method},
-    routing::{any, get},
-    Json, Router,
+    routing::any,
+    Router,
 };
 use layer1_public::{
     a2a::A2aInterface,
@@ -298,7 +299,7 @@ async fn main() {
     let service = SessionService::new(
         adapters,
         screen_factory,
-        store,
+        Arc::clone(&store),
         layer2_core::SessionPorts {
             context,
             credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
@@ -374,8 +375,7 @@ async fn main() {
 
     let app = with_cors(
         Router::new()
-            .route("/livez", get(|| async { "ok" }))
-            .route("/ready", get(ready))
+            .merge(health::router(store))
             .merge(rest)
             // The priority-1 interface, sharing the facade's state because it
             // projects the same sessions: a thread here is a session there, and
@@ -419,10 +419,6 @@ async fn main() {
         tracing::error!(error = %e, "server stopped with an error");
         std::process::exit(1);
     }
-}
-
-async fn ready() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ready" }))
 }
 
 async fn shutdown_signal() {

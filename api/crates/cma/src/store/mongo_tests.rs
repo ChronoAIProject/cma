@@ -162,6 +162,47 @@ fn reservation_query_has_a_status_index() {
     );
 }
 
+#[tokio::test]
+async fn readiness_ping_accepts_a_database_reply() {
+    bounded_ping(
+        async { Ok(doc! { "ok": 1_i32 }) },
+        Duration::from_millis(10),
+    )
+    .await
+    .expect("a database reply is healthy");
+}
+
+#[tokio::test]
+async fn readiness_ping_returns_at_its_deadline_without_cancelling_the_driver_future() {
+    let (release, wait_for_release) = tokio::sync::oneshot::channel();
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let completed_by_ping = std::sync::Arc::clone(&completed);
+    let error = bounded_ping(
+        async move {
+            wait_for_release.await.expect("test releases the ping");
+            completed_by_ping.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(doc! { "ok": 1_i32 })
+        },
+        Duration::from_millis(10),
+    )
+    .await
+    .expect_err("a hung database must fail readiness");
+
+    assert!(matches!(error, StoreError::Unavailable(_)));
+    assert!(error.to_string().contains("timed out after 10 ms"));
+
+    release
+        .send(())
+        .expect("the timed-out ping task remains alive");
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !completed.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the detached ping is still polled to completion");
+}
+
 #[test]
 fn an_empty_reservation_aggregate_is_the_zero_ledger() {
     assert_eq!(
