@@ -24,6 +24,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
+    "docs:check": "node scripts/check-docs.mjs",
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
