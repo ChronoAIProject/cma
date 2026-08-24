@@ -158,6 +158,12 @@ impl PtyRegistry {
         self.inner.lock().await.len()
     }
 
+    /// Inspect a started runtime from an in-crate integration test.
+    #[cfg(test)]
+    pub(crate) async fn session_for_test(&self, id: &str) -> Option<Arc<PtySession>> {
+        self.inner.lock().await.get(id).cloned()
+    }
+
     /// Whether no runtime is live.
     #[allow(dead_code)] // part of the registry's API; exercised by tests
     pub async fn is_empty(&self) -> bool {
