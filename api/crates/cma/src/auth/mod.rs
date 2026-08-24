@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::http::HeaderMap;
+pub mod persistence;
 pub mod profile;
 
 use layer2_core::{Authorization, SessionId, SubjectId};
