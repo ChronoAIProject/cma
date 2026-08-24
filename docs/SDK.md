@@ -24,9 +24,10 @@ deployment grant. Add each application's exact origin to
 host, and optional port, without a path. The service keeps credentialed CORS
 enabled and deliberately provides no wildcard-origin mode.
 
-For a listed origin, preflights admit the `Authorization` request header and the
-supported REST methods, including `PUT`, and browsers may cache that verdict for
-one hour. If an origin is absent, the preflight `OPTIONS` response omits
+For a listed origin, preflights admit the `Authorization` request header, the
+`Last-Event-ID` cursor used when event streams reconnect, and the supported REST
+methods, including `PUT`. Browsers may cache that verdict for one hour. If an
+origin is absent, the preflight `OPTIONS` response omits
 `Access-Control-Allow-Origin`. The browser then reports a CORS or network failure
 and does not send the bearer-bearing API request, so the SDK receives no HTTP
 problem document. The failed `OPTIONS` request in the browser network panel is
