@@ -48,8 +48,8 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
          * A collection rather than a flag on one profile, because setting it
          * changes two records — the one taking it and the one giving it up —
          * and a `PUT` on a single profile would describe only half of that.
-         * The answer is the whole list, so a client never has to guess which
-         * other rows moved.
+         * The answer is the bounded change set, so a client can update both
+         * rows without this mutation becoming another unbounded listing.
          */
         .route("/api/v1/environment-profiles/preferred", put(prefer))
         .with_state(service)
@@ -107,9 +107,9 @@ async fn prefer(
 ) -> Result<Json<Vec<ProfileView>>, RequestFailure> {
     let Json(body) = body?;
     let wanted = body.profile.map(EnvironmentProfileId);
-    let profiles = service.prefer(&caller, wanted.as_ref()).await?;
+    let changed = service.prefer(&caller, wanted.as_ref()).await?;
     Ok(Json(
-        profiles
+        changed
             .into_iter()
             .map(|p| ProfileView::render(p, &service))
             .collect(),
@@ -250,6 +250,24 @@ mod tests {
                 items: Vec::new(),
                 next: None,
             })
+        }
+        async fn set_preferred(
+            &self,
+            _owner: &SubjectId,
+            chosen: Option<&EnvironmentProfileId>,
+        ) -> Result<(), StoreError> {
+            if chosen.is_some() {
+                return Err(StoreError::Malformed(
+                    "an empty store has no selectable profile".into(),
+                ));
+            }
+            Ok(())
+        }
+        async fn preferred_for(
+            &self,
+            _owner: &SubjectId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
         }
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
             Ok(())
@@ -412,6 +430,49 @@ mod tests {
                     items: profiles,
                     next: None,
                 })
+            }
+
+            async fn set_preferred(
+                &self,
+                owner: &SubjectId,
+                chosen: Option<&EnvironmentProfileId>,
+            ) -> Result<(), StoreError> {
+                let mut profiles = self.0.lock().unwrap();
+                if let Some(id) = chosen {
+                    let selected = profiles
+                        .iter()
+                        .find(|profile| profile.id == *id && &profile.owner == owner);
+                    if selected.is_none() {
+                        return Err(StoreError::Malformed(
+                            "selected environment profile is not owned by the subject".into(),
+                        ));
+                    }
+                }
+                for profile in profiles
+                    .iter_mut()
+                    .filter(|profile| &profile.owner == owner)
+                {
+                    profile.preferred = chosen.is_some_and(|id| profile.id == *id);
+                }
+                Ok(())
+            }
+
+            async fn preferred_for(
+                &self,
+                owner: &SubjectId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|profile| &profile.owner == owner && profile.preferred)
+                    .max_by(|a, b| {
+                        a.updated_at
+                            .cmp(&b.updated_at)
+                            .then_with(|| a.id.0.cmp(&b.id.0))
+                    })
+                    .cloned())
             }
 
             async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {

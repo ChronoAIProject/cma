@@ -348,11 +348,10 @@ impl EnvironmentProfileService {
 
     /// Make one of the caller's profiles the one their sessions start from.
     ///
-    /// At most one may hold it, so the others are cleared in the same call.
-    /// There is no transaction across the store port, so this is written to be
-    /// safe without one: a write that half-succeeds leaves either two claims or
-    /// none, and both are resolved on read rather than left to be discovered —
-    /// see `settle_preferred`.
+    /// The answer is a bounded change set rather than another profile listing:
+    /// it contains the previously visible preference when that row was cleared,
+    /// followed by the selected row when there is one. It therefore contains at
+    /// most two profiles regardless of how many the caller owns.
     ///
     /// Passing `None` clears the preference, which is a real choice: it returns
     /// the caller to the deployment's own defaults rather than being the
@@ -365,32 +364,40 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
-        // Read through `owned` so a profile the caller does not own is refused
-        // by the same rule every other operation is refused by.
-        if let Some(wanted) = id {
-            self.owned(caller, wanted).await?;
-        }
-
-        let mut profiles = self
+        // Validate before asking the store to clear anything. A profile the
+        // caller does not own is refused by the same rule as every other read.
+        let selected = match id {
+            Some(wanted) => Some(self.owned(caller, wanted).await?),
+            None => None,
+        };
+        let previous = self
             .store
-            .scan_for(&caller.subject)
+            .preferred_for(&caller.subject)
             .await
             .map_err(store_failed)?;
-        for profile in &mut profiles {
-            let wanted = id.is_some_and(|chosen| &profile.id == chosen);
-            if profile.preferred == wanted {
-                continue;
+        self.store
+            .set_preferred(&caller.subject, id)
+            .await
+            .map_err(store_failed)?;
+
+        let mut changed = Vec::with_capacity(2);
+        if let Some(mut old) = previous {
+            if selected.as_ref().is_none_or(|new| old.id != new.id) {
+                old.preferred = false;
+                changed.push(old);
             }
-            profile.preferred = wanted;
-            self.store.upsert(profile).await.map_err(store_failed)?;
+        }
+        if let Some(mut new) = selected {
+            new.preferred = true;
+            changed.push(new);
         }
         tracing::info!(
             owner = %caller.subject,
             profile_id = id.map(|chosen| chosen.0.as_str()).unwrap_or("<none>"),
             "the profile this owner's sessions start from"
         );
-        settle_preferred(&mut profiles);
-        Ok(profiles)
+        debug_assert!(changed.len() <= 2);
+        Ok(changed)
     }
 
     /// Replace a profile's contents, keeping its identity and creation time.
@@ -588,28 +595,3 @@ mod environment_resolution_tests;
 #[cfg(test)]
 #[path = "environment_service_tests.rs"]
 mod tests;
-
-/// Leave at most one profile claiming to be the owner's default.
-///
-/// The store has no transaction, so a half-finished `prefer` can leave two
-/// claims. Rather than trusting the write, the read settles it: the most
-/// recently updated wins, and the rest are reported as what they are. None
-/// claiming it is not a fault — it means the owner has not chosen one, and
-/// their sessions start from the deployment's own defaults.
-fn settle_preferred(profiles: &mut [EnvironmentProfile]) {
-    let winner = profiles
-        .iter()
-        .filter(|profile| profile.preferred)
-        .max_by(|a, b| {
-            a.updated_at
-                .cmp(&b.updated_at)
-                .then_with(|| a.id.0.cmp(&b.id.0))
-        })
-        .map(|profile| profile.id.clone());
-    let Some(winner) = winner else {
-        return;
-    };
-    for profile in profiles.iter_mut() {
-        profile.preferred = profile.id == winner;
-    }
-}

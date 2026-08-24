@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftOf, emptyDraft, isValidKey, validate } from './types';
+import { draftOf, emptyDraft, isValidKey, mergeProfileChanges, validate } from './types';
 import { DEFAULT_AGENT } from './types';
 import type { EnvironmentProfile } from './types';
 
@@ -95,5 +95,26 @@ describe('draftOf', () => {
     const draft = draftOf(PROFILE);
     expect(draft.variables).not.toBe(PROFILE.variables);
     expect(draft.agent.skills).not.toBe(PROFILE.agent.skills);
+  });
+});
+
+describe('mergeProfileChanges', () => {
+  it('updates both preference rows without dropping profiles from later pages', () => {
+    const loaded = Array.from({ length: 51 }, (_, index) => ({
+      ...PROFILE,
+      id: `envp_${index}`,
+      name: `profile ${index}`,
+      preferred: index === 0,
+    }));
+    const changed = [
+      { ...loaded[0]!, preferred: false },
+      { ...loaded[50]!, preferred: true },
+    ];
+
+    const merged = mergeProfileChanges(loaded, changed);
+
+    expect(merged).toHaveLength(51);
+    expect(merged.map(({ id }) => id)).toEqual(loaded.map(({ id }) => id));
+    expect(merged.filter(({ preferred }) => preferred).map(({ id }) => id)).toEqual(['envp_50']);
   });
 });
