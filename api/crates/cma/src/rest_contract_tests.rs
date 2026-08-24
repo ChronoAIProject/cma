@@ -466,6 +466,7 @@ impl KernelAdapter for TestKernel {
         KernelCapabilities {
             terminal: true,
             conversation: true,
+            snapshot: true,
             ..Default::default()
         }
     }
@@ -490,6 +491,18 @@ impl KernelAdapter for TestKernel {
         })
     }
 
+    async fn open_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+        _options: &layer3_adapter::RuntimeOptions,
+        _updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
+    ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
+        Ok(layer3_adapter::ConversationChannel {
+            input: layer3_adapter::ConversationInputSender::spawn(8, |_input| async { Ok(()) }),
+            conversation_id: Some("rest-contract-conversation".into()),
+        })
+    }
+
     async fn refresh_credential(
         &self,
         _handle: &RuntimeHandle,
@@ -498,12 +511,18 @@ impl KernelAdapter for TestKernel {
         Ok(())
     }
 
+    async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
+        Ok(Some(b"rest-contract-conversation".to_vec()))
+    }
+
     async fn switch_plane(
         &self,
         _handle: &RuntimeHandle,
         _mode: RuntimeMode,
     ) -> Result<(), AdapterError> {
-        Ok(())
+        Err(AdapterError::Rejected(
+            "the REST fixture requires runtime carry-over".into(),
+        ))
     }
 
     async fn terminate(&self, _handle: &RuntimeHandle) -> Result<(), AdapterError> {
@@ -1387,6 +1406,7 @@ async fn every_session_response_uses_the_complete_projection() {
         StatusCode::OK,
     )
     .await;
+    wait_until_ready(&sessions, &caller, &id).await;
     assert_catalogue_received_credential(&catalogue, "plane", true).await;
 
     let stopped = app
@@ -1476,6 +1496,7 @@ async fn directory_outages_cost_creator_names_not_session_responses() {
         StatusCode::OK,
     )
     .await;
+    wait_until_ready(&sessions, &caller, &id).await;
 
     let stopped = app
         .clone()
@@ -1598,6 +1619,7 @@ async fn catalogue_outages_cost_names_not_session_responses() {
         StatusCode::OK,
     )
     .await;
+    wait_until_ready(&sessions, &caller, &id).await;
 
     let stopped = app
         .clone()
