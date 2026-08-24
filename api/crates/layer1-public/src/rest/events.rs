@@ -116,14 +116,18 @@ pub(super) async fn stream(
 /// The id carries the sequence, which is what makes resume work: the browser
 /// hands it back on reconnect and the stream continues from there.
 fn to_sse(event: &layer2_core::Event) -> SseEvent {
-    let payload = serde_json::json!({
+    SseEvent::default()
+        .id(event.seq.to_string())
+        .data(event_payload(event).to_string())
+}
+
+/// The JSON object carried in an SSE frame.
+fn event_payload(event: &layer2_core::Event) -> serde_json::Value {
+    serde_json::json!({
         "seq": event.seq,
         "session_id": event.session_id.0,
         "event": event.kind,
-    });
-    SseEvent::default()
-        .id(event.seq.to_string())
-        .data(payload.to_string())
+    })
 }
 
 #[cfg(test)]
@@ -183,5 +187,24 @@ mod tests {
         let rendered = format!("{:?}", to_sse(&e));
         assert!(rendered.contains("runtime_lost"), "got {rendered}");
         assert!(rendered.contains("runtime-gone"), "got {rendered}");
+    }
+
+    #[test]
+    fn the_sdk_event_fixture_is_produced_by_the_server_serializer() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/rest-sdk/event.json"))
+                .expect("the checked-in fixture is JSON");
+        let event = Event {
+            session_id: SessionId("sesn_fixture".into()),
+            seq: 8,
+            kind: EventKind::ApprovalRequested {
+                request_id: "req_fixture".into(),
+                action: Some("Run the release command".into()),
+                detail: Some("This command writes a release tag".into()),
+            },
+            appended_at: "2026-08-24T08:01:00Z".into(),
+        };
+
+        assert_eq!(event_payload(&event), fixture);
     }
 }
