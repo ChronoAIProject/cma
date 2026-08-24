@@ -149,7 +149,10 @@ async fn a_kernel_this_deployment_does_not_run_is_refused_before_anything_is_rec
         "got {err:?}"
     );
     assert!(
-        svc.list_sessions(&alice).await.is_empty(),
+        svc.list_sessions(&alice)
+            .await
+            .expect("session list is readable")
+            .is_empty(),
         "nothing may be recorded for a session that was refused"
     );
 }
