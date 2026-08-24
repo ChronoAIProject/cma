@@ -10,6 +10,8 @@ use mongodb::options::IndexOptions;
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
+use super::durability::majority_collection;
+
 const TICKETS: &str = "terminal_tickets";
 const EXPIRY_INDEX: &str = "terminal_ticket_expiry";
 
@@ -31,8 +33,9 @@ pub struct MongoTerminalTicketStore {
 
 impl MongoTerminalTicketStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+        let database = client.database(database);
         let store = Self {
-            tickets: client.database(database).collection(TICKETS),
+            tickets: majority_collection(&database, TICKETS),
         };
         let expiry = IndexModel::builder()
             .keys(doc! { "expires_at": 1 })
@@ -161,6 +164,8 @@ fn capability(name: &str) -> Result<Capability, StoreError> {
 
 #[cfg(test)]
 mod tests {
+    use futures_util::TryStreamExt as _;
+
     use super::*;
 
     #[test]
@@ -176,5 +181,70 @@ mod tests {
     #[test]
     fn an_unknown_stored_capability_fails_closed() {
         assert!(super::capability("unknown_privilege").is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
+    async fn real_mongo_has_exact_ttl_and_one_cross_instance_redeemer() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri).await.unwrap();
+        let database_name = format!("chrono_ticket_test_{}", uuid::Uuid::new_v4().simple());
+        let first = MongoTerminalTicketStore::open(&client, &database_name)
+            .await
+            .unwrap();
+        let second = MongoTerminalTicketStore::open(&client, &database_name)
+            .await
+            .unwrap();
+
+        let indexes = client
+            .database(&database_name)
+            .collection::<mongodb::bson::Document>(TICKETS)
+            .list_indexes()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        let expiry = indexes
+            .into_iter()
+            .find(|index| {
+                index
+                    .options
+                    .as_ref()
+                    .and_then(|options| options.name.as_deref())
+                    == Some(EXPIRY_INDEX)
+            })
+            .expect("named ticket expiry index exists");
+        assert_eq!(expiry.keys, doc! { "expires_at": 1 });
+        assert_eq!(expiry.options.unwrap().expire_after, Some(Duration::ZERO));
+
+        let ticket_id = TicketId::from_bytes([7_u8; 32]);
+        first
+            .put(StoredTicket {
+                id: ticket_id.clone(),
+                session: SessionId("sesn_a".into()),
+                subject: SubjectId("subject-a".into()),
+                authorization: Authorization::from_capabilities([Capability::UseOwnSessions]),
+                claim: AttachmentClaim::Exclusive,
+                expires_at: std::time::SystemTime::now() + Duration::from_secs(30),
+            })
+            .await
+            .unwrap();
+        let (left, right) = tokio::join!(first.take(&ticket_id), second.take(&ticket_id));
+        let redeemed = [left.unwrap(), right.unwrap()];
+        assert_eq!(redeemed.iter().filter(|ticket| ticket.is_some()).count(), 1);
+        assert_eq!(
+            redeemed
+                .into_iter()
+                .flatten()
+                .next()
+                .unwrap()
+                .session
+                .as_str(),
+            "sesn_a"
+        );
+
+        client.database(&database_name).drop().await.unwrap();
     }
 }

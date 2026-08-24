@@ -119,6 +119,40 @@ async fn credential_compare_and_swap_rejects_a_stale_worker() {
 }
 
 #[tokio::test]
+async fn subject_revision_overflow_is_rejected_instead_of_saturating() {
+    let store = MemoryAuthStore::default();
+    store
+        .subjects
+        .lock()
+        .await
+        .insert(SubjectId("subject-a".into()), subject_state(u64::MAX));
+
+    assert!(matches!(
+        store
+            .replace_subject(u64::MAX, subject_state(u64::MAX))
+            .await,
+        Err(StoreError::Malformed(_))
+    ));
+}
+
+#[tokio::test]
+async fn credential_generation_overflow_is_rejected_instead_of_saturating() {
+    let store = MemoryAuthStore::default();
+    store
+        .credentials
+        .lock()
+        .await
+        .insert(SessionId("sesn_a".into()), credential_state(u64::MAX));
+
+    assert!(matches!(
+        store
+            .replace_credential(u64::MAX, credential_state(u64::MAX))
+            .await,
+        Err(StoreError::Malformed(_))
+    ));
+}
+
+#[tokio::test]
 async fn store_failure_is_distinct_from_absent_state() {
     let store = MemoryAuthStore::default();
     store.set_unavailable(true);

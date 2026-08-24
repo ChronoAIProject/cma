@@ -229,6 +229,8 @@ async fn main() {
         &config.mongodb_database,
         config.activity_retention,
         config.mongodb_legacy_cutover,
+        &config.deployment_id,
+        &config.auth_encryption_key,
     )
     .await
     {
