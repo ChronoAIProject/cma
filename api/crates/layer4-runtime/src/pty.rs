@@ -83,6 +83,21 @@ impl PtySession {
         failure_observed
     }
 
+    /// Replace this session's writer with one that records every input byte.
+    #[cfg(test)]
+    pub(crate) fn capture_input_writes_for_test(&self) -> Arc<StdMutex<Vec<u8>>> {
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let mut writer = self.writer.lock().expect("the pty writer is healthy");
+        *writer = Box::new(CapturingWriter(Arc::clone(&captured)));
+        captured
+    }
+
+    /// Publish terminal output directly at the link's fan-out boundary.
+    #[cfg(test)]
+    pub(crate) fn publish_output_for_test(&self, bytes: &[u8]) {
+        let _ = self.output.send(bytes.to_vec());
+    }
+
     /// Propagate a new window size to the process.
     ///
     /// This is what makes a full-screen application repaint at the client's
@@ -124,6 +139,24 @@ impl Write for FailingWriter {
             std::io::ErrorKind::BrokenPipe,
             "injected pty write failure",
         ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+struct CapturingWriter(Arc<StdMutex<Vec<u8>>>);
+
+#[cfg(test)]
+impl Write for CapturingWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("the captured input is healthy")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {

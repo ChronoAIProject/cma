@@ -7,8 +7,8 @@ use layer2_core::{
 };
 
 use super::{
-    ending, error_code, reported_ending, reports_resources, ClientControl, Limits, ServerControl,
-    CONFORMS_TO, KEEPALIVE_INTERVAL, MAX_FRAME_BYTES, SCROLLBACK_LINES,
+    ending, error_code, reported_ending, reports_resources, supported_signal, ClientControl,
+    Limits, ServerControl, CONFORMS_TO, KEEPALIVE_INTERVAL, MAX_FRAME_BYTES, SCROLLBACK_LINES,
 };
 
 pub(super) async fn serve(
@@ -267,7 +267,17 @@ pub(super) async fn serve(
                         }
                     }
                     Ok(ClientControl::Signal { sig }) => {
-                        let _ = svc.send_signal(&caller_in, &sid, sig).await;
+                        if !supported_signal(&sig) {
+                            // The sink belongs to pump_out, so this half cannot
+                            // return an error frame without introducing a second
+                            // writer. Reject and name the bad request here.
+                            tracing::warn!(session_id = %sid, signal = %sig, "unknown signal rejected");
+                            continue;
+                        }
+                        if let Err(error) = svc.send_signal(&caller_in, &sid, sig).await {
+                            let code = error_code(&error);
+                            tracing::warn!(session_id = %sid, %code, error = %error, "signal refused");
+                        }
                     }
                     // Answered by the heartbeat above rather than here: this
                     // half of the socket cannot write. A client ping still
