@@ -3,6 +3,7 @@ import type { User } from '../auth/types';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import {
   IconAgentPresetOutline16,
+  IconCodeOutline16,
   IconDarkOutline16,
   IconDataOutline16,
   IconFollowsystemOutline16,
@@ -58,6 +59,10 @@ interface ProfileMenuProps {
   readonly onOperations?: () => void;
   /** Whether the operator panel is the surface currently showing. */
   readonly operationsActive?: boolean;
+  /** Open the repository-authored SDK documentation surface. */
+  readonly onDeveloper?: () => void;
+  /** Whether the Developer surface is currently showing. */
+  readonly developerActive?: boolean;
   /**
    * Whether the sidebar it sits in is closed.
    *
@@ -119,6 +124,8 @@ export function ProfileMenu({
   onManageEnvironments,
   onOperations,
   operationsActive = false,
+  onDeveloper,
+  developerActive = false,
   collapsed = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
@@ -142,15 +149,21 @@ export function ProfileMenu({
     });
   }
   /*
-   * Operations sits here now. It was the app bar's view switch, which §9
-   * retired along with the bar — leaving an account menu that omitted the one
-   * place an operator goes, beside a switch with nowhere left to live.
-   *
-   * It is still a view rather than an account action, so it is separated from
-   * the two settings above it and marked when it is the surface showing.
+   * Developer and Operations are surfaces rather than account settings, so a
+   * separator keeps them out of the settings group. They still remain actions:
+   * each row names where it goes instead of pretending this menu is navigation.
    */
-  if (onOperations !== undefined) {
+  if (onDeveloper !== undefined || onOperations !== undefined) {
     items.push({ type: 'separator', id: 'after-settings' });
+  }
+  if (onDeveloper !== undefined) {
+    items.push({
+      id: 'developer',
+      icon: <IconCodeOutline16 />,
+      label: developerActive ? 'Back to sessions' : 'Developer',
+    });
+  }
+  if (onOperations !== undefined) {
     items.push({
       id: 'operations',
       icon: <IconDataOutline16 />,
@@ -188,6 +201,10 @@ export function ProfileMenu({
       case 'operations':
         setOpen(false);
         onOperations?.();
+        return;
+      case 'developer':
+        setOpen(false);
+        onDeveloper?.();
         return;
       case 'sign-out':
         setOpen(false);
