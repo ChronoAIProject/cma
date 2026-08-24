@@ -86,6 +86,38 @@ impl Sequences {
         *last
     }
 
+    /// The currently issued tail, without creating an allocator entry.
+    pub(crate) fn current(&self, id: &SessionId) -> Option<u64> {
+        self.issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .copied()
+    }
+
+    /// Return an abandoned reservation to this session's lane.
+    ///
+    /// The lane serializes this with allocation and shifts every queued unit by
+    /// the same amount. Lowering is therefore safe here even though ordinary
+    /// observations may only move the allocator forward.
+    pub(crate) fn rewind(&self, id: &SessionId, count: u64) {
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(last) = issued.get_mut(id) {
+            *last = last.saturating_sub(count);
+        }
+    }
+
+    /// Reconcile every reservation in a lane to a store-authoritative tail.
+    ///
+    /// Called only while the lane lock excludes allocation. Unlike `issued`,
+    /// this may move backward when a missing local write is being closed.
+    pub(crate) fn reconcile(&self, id: &SessionId, tail: u64) {
+        self.issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.clone(), tail);
+    }
+
     /// Drop what is remembered about a session.
     ///
     /// Only for a session whose events are being deleted with it. A session
@@ -96,6 +128,11 @@ impl Sequences {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.issued.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 

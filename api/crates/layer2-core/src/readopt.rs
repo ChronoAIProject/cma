@@ -343,7 +343,8 @@ impl SessionService {
         let mut adopted = current.session.clone();
         adopted.capabilities = capabilities;
         let event_log = self.event_logs.lane(&id);
-        event_log.observe_revision(current.revision);
+        event_log.observe_tail(adopted.last_seq);
+        event_log.observe_record(&current);
         let entry = SessionEntry {
             session: adopted,
             event_log,

@@ -443,38 +443,45 @@ impl SessionService {
         };
 
         let mut record = SessionRecord::new(session.clone());
-        self.create_durably(
-            &mut record,
-            vec![
-                Event {
-                    session_id: id.clone(),
-                    seq: 0,
-                    kind: EventKind::SessionCreated,
-                    appended_at: String::new(),
-                },
-                Event {
-                    session_id: id.clone(),
-                    seq: 0,
-                    kind: EventKind::StatusChanged {
-                        status: SessionStatus::Provisioning,
-                        stop_reason: None,
-                        detail: None,
-                        capability: None,
+        if let Err(error) = self
+            .create_durably(
+                &mut record,
+                vec![
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::SessionCreated,
+                        appended_at: String::new(),
                     },
-                    appended_at: String::new(),
-                },
-                Event {
-                    session_id: id.clone(),
-                    seq: 0,
-                    kind: EventKind::Progress {
-                        stage: crate::session::ProvisioningStage::Accepted,
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::StatusChanged {
+                            status: SessionStatus::Provisioning,
+                            stop_reason: None,
+                            detail: None,
+                            capability: None,
+                        },
+                        appended_at: String::new(),
                     },
-                    appended_at: String::new(),
-                },
-            ],
-        )
-        .await
-        .map_err(store_failed)?;
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::Progress {
+                            stage: crate::session::ProvisioningStage::Accepted,
+                        },
+                        appended_at: String::new(),
+                    },
+                ],
+            )
+            .await
+        {
+            // This identifier was generated for this request and never became
+            // a session the caller can use. Keeping its three reserved event
+            // positions would retain one strong map key per failed creation.
+            self.sequences.forget(&id);
+            return Err(store_failed(error));
+        }
         drop(capacity_guard);
         if let Some(error) = settings_fallback.as_ref() {
             tracing::error!(
