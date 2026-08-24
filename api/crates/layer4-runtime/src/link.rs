@@ -237,9 +237,9 @@ async fn relay_terminal(
         let mut reported = *exited.borrow_and_update();
         loop {
             if let Some(exit) = reported {
-                // Exit is published only after the pty reader reaches EOF, so
-                // every remaining item was sent before it. Drain those bytes
-                // before putting the ending on the text control lane.
+                // Exit is published only after the supervisor stops forwarding
+                // pty bytes, so every remaining item was sent before it. Drain
+                // those bytes before putting the ending on the control lane.
                 loop {
                     match output.try_recv() {
                         Ok(chunk) => {
@@ -281,10 +281,6 @@ async fn relay_terminal(
             }
 
             let chunk = tokio::select! {
-                // Once the exit watch changes, all terminal sends have already
-                // happened. Preferring queued output makes the ordering explicit
-                // even before the drain above handles the final scheduling race.
-                biased;
                 chunk = output.recv() => Some(chunk),
                 changed = exited.changed() => {
                     match changed {
