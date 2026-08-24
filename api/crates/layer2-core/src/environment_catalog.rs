@@ -6,6 +6,8 @@
 //! so the code that holds a credential and speaks HTTP lives in the composition
 //! root rather than here.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::environment_values::{ServiceId, SkillId};
@@ -69,6 +71,29 @@ pub trait SkillCatalog: Send + Sync {
         subject: &SubjectId,
         credential: Option<&str>,
     ) -> Result<Vec<CatalogSkill>, CatalogError>;
+
+    /// Describe only the skills a session says it was given.
+    ///
+    /// Adapters with a single-resource read should override this so rendering a
+    /// session does not walk the whole picker catalogue. The default keeps
+    /// simple catalogues useful and filters by both accepted identifier forms:
+    /// profiles may hold either the registry's id or its human-facing name.
+    async fn describe(
+        &self,
+        subject: &SubjectId,
+        credential: Option<&str>,
+        skills: &[SkillId],
+    ) -> Result<Vec<CatalogSkill>, CatalogError> {
+        let wanted: HashSet<&str> = skills.iter().map(|skill| skill.0.as_str()).collect();
+        Ok(self
+            .available(subject, credential)
+            .await?
+            .into_iter()
+            .filter(|skill| {
+                wanted.contains(skill.id.0.as_str()) || wanted.contains(skill.name.as_str())
+            })
+            .collect())
+    }
 }
 
 /// Where the services a caller may allow are listed.
