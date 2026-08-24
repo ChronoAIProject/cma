@@ -817,6 +817,7 @@ async fn a_rotation_whose_replacement_cannot_start_does_not_end_the_session() {
     assert!(
         new.list_sessions(&alice)
             .await
+            .expect("session list is readable")
             .iter()
             .any(|s| s.id == created.id),
         "it keeps its place in its owner's list"
