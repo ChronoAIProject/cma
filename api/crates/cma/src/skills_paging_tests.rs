@@ -1,14 +1,25 @@
 //! Contract tests for Ornn's cursor-paged skill catalogue.
 
-use std::collections::VecDeque;
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
+use axum::body::{to_bytes, Body};
 use axum::extract::{Request, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::any;
-use axum::{Json, Router};
-use tokio::sync::Mutex;
+use axum::{Extension, Json, Router};
+use layer1_public::{auth::DelegatedCredential, AuthenticatedSubject};
+use layer2_core::{
+    AgentConfiguration, Authorization, Baseline, Capability, EnvironmentProfile,
+    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore,
+    PlatformSettingsService, StoreError,
+};
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tower::ServiceExt;
 
 use super::*;
 use crate::store::token::StaticToken;
@@ -49,6 +60,18 @@ struct RegistryFixture {
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
 
+struct BlockedDetail {
+    skill: String,
+    release: oneshot::Sender<()>,
+}
+
+#[derive(Clone)]
+struct BlockingRegistryFixture {
+    started: mpsc::UnboundedSender<BlockedDetail>,
+    current: Arc<AtomicUsize>,
+    maximum: Arc<AtomicUsize>,
+}
+
 async fn answer(State(fixture): State<RegistryFixture>, request: Request) -> impl IntoResponse {
     let request_path = request.uri().path().to_string();
     fixture.requests.lock().await.push(RecordedRequest {
@@ -71,6 +94,40 @@ async fn answer(State(fixture): State<RegistryFixture>, request: Request) -> imp
             body: serde_json::json!({ "error": "unexpected request" }),
         });
     (reply.status, Json(reply.body))
+}
+
+async fn answer_blocked_detail(
+    State(fixture): State<BlockingRegistryFixture>,
+    request: Request,
+) -> impl IntoResponse {
+    let skill = request
+        .uri()
+        .path()
+        .rsplit('/')
+        .next()
+        .expect("detail path has a final segment")
+        .to_string();
+    let current = fixture.current.fetch_add(1, Ordering::SeqCst) + 1;
+    fixture.maximum.fetch_max(current, Ordering::SeqCst);
+    let (release, blocked) = oneshot::channel();
+    fixture
+        .started
+        .send(BlockedDetail {
+            skill: skill.clone(),
+            release,
+        })
+        .expect("the concurrency test is receiving starts");
+    let _ = blocked.await;
+    fixture.current.fetch_sub(1, Ordering::SeqCst);
+
+    Json(serde_json::json!({
+        "data": {
+            "guid": format!("guid-{skill}"),
+            "name": skill,
+            "description": "blocked detail response"
+        },
+        "error": null
+    }))
 }
 
 async fn registry(
@@ -96,6 +153,85 @@ async fn registry(
             .expect("serve registry fixture");
     });
     (format!("http://{address}"), requests, server)
+}
+
+async fn blocking_registry() -> (
+    String,
+    mpsc::UnboundedReceiver<BlockedDetail>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (started, receiver) = mpsc::unbounded_channel();
+    let current = Arc::new(AtomicUsize::new(0));
+    let maximum = Arc::new(AtomicUsize::new(0));
+    let fixture = BlockingRegistryFixture {
+        started,
+        current: Arc::clone(&current),
+        maximum: Arc::clone(&maximum),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind blocking registry fixture");
+    let address = listener.local_addr().expect("fixture address");
+    let app = Router::new()
+        .fallback(any(answer_blocked_detail))
+        .with_state(fixture);
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve blocking registry fixture");
+    });
+    (
+        format!("http://{address}"),
+        receiver,
+        current,
+        maximum,
+        server,
+    )
+}
+
+struct EmptyProfiles;
+
+#[async_trait::async_trait]
+impl EnvironmentProfileStore for EmptyProfiles {
+    async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    async fn get(
+        &self,
+        _id: &EnvironmentProfileId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(None)
+    }
+
+    async fn list_for(&self, _owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+fn public_skills_router(catalog: PlatformSkillCatalog) -> Router {
+    let environments = EnvironmentProfileService::new(
+        Arc::new(EmptyProfiles),
+        Baseline::new([], [], []),
+        Some(Arc::new(catalog)),
+        None,
+        AgentConfiguration::default(),
+        Arc::new(PlatformSettingsService::unconfigured()),
+    );
+    layer1_public::rest::environments::router(environments)
+        .layer(Extension(DelegatedCredential("caller-token".into())))
+        .layer(Extension(Authorization::from_capabilities([
+            Capability::ManageOwnEnvironmentProfiles,
+        ])))
+        .layer(Extension(AuthenticatedSubject(SubjectId(
+            "subject-a".into(),
+        ))))
 }
 
 fn catalog(base: &str) -> PlatformSkillCatalog {
@@ -416,6 +552,72 @@ async fn missing_pagination_metadata_is_a_failure_not_an_empty_or_partial_page()
 }
 
 #[tokio::test]
+async fn explicit_empty_items_is_a_valid_empty_catalogue() {
+    let (base, requests, server) = registry(vec![Reply::ok(page(Vec::new(), false, None))]).await;
+
+    let listed = catalog(&base)
+        .available(&SubjectId("subject-a".into()), None)
+        .await
+        .expect("an explicit empty item list is complete");
+
+    assert!(listed.is_empty());
+    assert_eq!(requests.lock().await.len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn missing_items_is_malformed_and_publicly_redacted_as_a_coded_503() {
+    const PRIVATE_UPSTREAM_MARKER: &str = "private-upstream-diagnostic";
+    let malformed = serde_json::json!({
+        "data": {
+            "meta": {
+                "limit": PAGE_SIZE,
+                "hasMore": false
+            },
+            "diagnostic": PRIVATE_UPSTREAM_MARKER
+        },
+        "error": null
+    });
+    let (base, requests, server) =
+        registry(vec![Reply::ok(malformed.clone()), Reply::ok(malformed)]).await;
+
+    let error = catalog(&base)
+        .available(&SubjectId("subject-a".into()), Some("caller-token"))
+        .await
+        .expect_err("absence is not an explicitly empty catalogue");
+    assert!(matches!(error, CatalogError::Malformed(_)), "got {error:?}");
+
+    let response = public_skills_router(catalog(&base))
+        .oneshot(
+            Request::get("/api/v1/environment-profiles/skills")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("public router answers");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&header::HeaderValue::from_static(
+            "application/problem+json"
+        ))
+    );
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("problem body is bounded");
+    let problem: serde_json::Value = serde_json::from_slice(&body).expect("problem is JSON");
+    assert_eq!(problem["code"], "skill_catalogue_unavailable");
+    assert_eq!(problem["status"], 503);
+    assert_eq!(
+        problem["detail"],
+        "The skill catalogue could not be read completely."
+    );
+    assert!(!String::from_utf8_lossy(&body).contains(PRIVATE_UPSTREAM_MARKER));
+    assert_eq!(requests.lock().await.len(), 2);
+    server.abort();
+}
+
+#[tokio::test]
 async fn missing_data_is_a_failure_not_an_empty_catalogue() {
     let (base, requests, server) =
         registry(vec![Reply::ok(serde_json::json!({ "error": null }))]).await;
@@ -525,6 +727,38 @@ async fn one_missing_grant_does_not_hide_another_grants_description() {
 }
 
 #[tokio::test]
+async fn a_non_not_found_detail_failure_remains_a_loud_catalogue_error() {
+    const PRIVATE_UPSTREAM_MARKER: &str = "provider-body-must-not-be-consumed";
+    let path = "/api/v1/proxy/s/ornn-api/api/v1/skills/unavailable-skill";
+    let (base, requests, server) = registry(vec![Reply::at(
+        path,
+        StatusCode::BAD_GATEWAY,
+        serde_json::json!({ "error": PRIVATE_UPSTREAM_MARKER }),
+    )])
+    .await;
+
+    let error = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &[SkillId::new("unavailable-skill")],
+        )
+        .await
+        .expect_err("only a 404 means one recorded grant is missing");
+
+    assert!(
+        matches!(error, CatalogError::Unavailable(_)),
+        "got {error:?}"
+    );
+    assert!(error.to_string().contains("502 Bad Gateway"));
+    assert!(!error.to_string().contains(PRIVATE_UPSTREAM_MARKER));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(parsed(&requests[0]).path(), path);
+    server.abort();
+}
+
+#[tokio::test]
 async fn description_lookups_below_the_ceiling_call_every_distinct_skill_once() {
     let count = 3;
     let (base, requests, server) = registry(detail_replies(count)).await;
@@ -613,5 +847,88 @@ async fn description_lookups_over_the_ceiling_use_the_first_distinct_skills_only
         skill.name == format!("skill-{DESCRIPTION_LOOKUP_LIMIT}")
             || skill.name == format!("skill-{}", DESCRIPTION_LOOKUP_LIMIT + 1)
     }));
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_eighth_in_flight_detail_blocks_the_ninth_until_one_finishes() {
+    let (base, mut started, current, maximum, server) = blocking_registry().await;
+    let operation = tokio::spawn(async move {
+        catalog(&base)
+            .describe(
+                &SubjectId("subject-a".into()),
+                Some("caller-token"),
+                &skill_ids(DESCRIPTION_LOOKUP_CONCURRENCY + 1),
+            )
+            .await
+    });
+    let mut blocked = HashMap::new();
+
+    for _ in 0..DESCRIPTION_LOOKUP_CONCURRENCY {
+        let detail = tokio::time::timeout(std::time::Duration::from_secs(1), started.recv())
+            .await
+            .expect("eight detail handlers start")
+            .expect("blocking registry remains connected");
+        assert!(
+            blocked.insert(detail.skill, detail.release).is_none(),
+            "each selected detail starts once"
+        );
+    }
+    tokio::task::yield_now().await;
+    assert_eq!(
+        current.load(Ordering::SeqCst),
+        DESCRIPTION_LOOKUP_CONCURRENCY
+    );
+    assert_eq!(
+        maximum.load(Ordering::SeqCst),
+        DESCRIPTION_LOOKUP_CONCURRENCY
+    );
+    assert!(matches!(
+        started.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+
+    blocked
+        .remove("skill-0")
+        .expect("the ordered first detail is blocked")
+        .send(())
+        .expect("release the first detail");
+    let ninth = tokio::time::timeout(std::time::Duration::from_secs(1), started.recv())
+        .await
+        .expect("the ninth detail starts after one completion")
+        .expect("blocking registry remains connected");
+    assert_eq!(ninth.skill, "skill-8");
+    assert!(blocked.insert(ninth.skill, ninth.release).is_none());
+    assert_eq!(
+        current.load(Ordering::SeqCst),
+        DESCRIPTION_LOOKUP_CONCURRENCY
+    );
+    assert_eq!(
+        maximum.load(Ordering::SeqCst),
+        DESCRIPTION_LOOKUP_CONCURRENCY
+    );
+
+    for release in blocked.into_values() {
+        release.send(()).expect("release remaining detail");
+    }
+    let described = tokio::time::timeout(std::time::Duration::from_secs(1), operation)
+        .await
+        .expect("description call completes")
+        .expect("description task does not panic")
+        .expect("released detail responses are valid");
+    assert_eq!(
+        described
+            .iter()
+            .map(|skill| skill.name.clone())
+            .collect::<Vec<_>>(),
+        (0..=DESCRIPTION_LOOKUP_CONCURRENCY)
+            .map(|number| format!("skill-{number}"))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(current.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        maximum.load(Ordering::SeqCst),
+        DESCRIPTION_LOOKUP_CONCURRENCY
+    );
     server.abort();
 }

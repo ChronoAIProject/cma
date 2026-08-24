@@ -796,14 +796,21 @@ coded `503 skill_catalogue_unavailable` problem and no catalogue body. Its
 detail is fixed and never reflects an upstream URL, cursor, or transport error.
 The route never presents the pages collected so far as a complete picker.
 
-Session reads do not repeat that full walk. Each distinct skill recorded across
-the rendered session page is read by id or slug, with at most eight registry
-requests in flight. This supplies `agent.skills[].name` and `description` even
-when the skill would have appeared after the picker's first registry page,
-while retaining the recorded id and version if the registry cannot be asked.
-If one recorded skill has since been removed or is no longer visible, that
-entry retains its raw recorded metadata while descriptions for the other
-visible grants are still returned.
+Session reads do not repeat that full walk. Starting with the first rendered
+session and then each session's recorded skill order, CMA selects the first 100
+distinct skill ids or slugs for detail reads. A repeated id keeps its first
+position and consumes no second lookup. At most eight registry requests are in
+flight at once, and no more than 100 are made for one response, including a
+collection page containing the maximum 200 sessions.
+
+Selected entries receive `agent.skills[].name` and `description` even when the
+skill would have appeared after the picker's first registry page. Entries after
+the first-100 budget are not looked up: they remain in their original positions
+with the raw recorded `id` and `version`, and omit current catalogue metadata.
+The same raw fallback applies when the registry cannot be asked. If one selected
+skill has since been removed or is no longer visible, only that entry remains
+raw while descriptions for the other visible selected grants are still
+returned.
 
 ---
 
