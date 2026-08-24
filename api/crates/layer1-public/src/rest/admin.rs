@@ -35,7 +35,7 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
-use crate::rest::{Problem, PROBLEM_BASE};
+use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
 
 mod settings;
 
@@ -64,17 +64,14 @@ struct NotAnOperator;
 
 impl IntoResponse for NotAnOperator {
     fn into_response(self) -> Response {
-        (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "type": format!("{PROBLEM_BASE}/not-an-operator"),
-                "title": "not an operator",
-                "status": 403,
-                "detail": "This operation requires an operator capability this caller does not hold.",
-                "code": "forbidden",
-            })),
-        )
-            .into_response()
+        let status = StatusCode::FORBIDDEN;
+        let body = problem_document(
+            status,
+            "not-an-operator",
+            "This operation requires an operator capability this caller does not hold.",
+            "forbidden",
+        );
+        problem_response(status, body)
     }
 }
 
@@ -104,6 +101,33 @@ impl IntoResponse for AdminProblem {
         match self {
             Self::NotAnOperator => NotAnOperator.into_response(),
             Self::Other(problem) => problem.into_response(),
+        }
+    }
+}
+
+/// An operator request can fail before or after its query is decoded.
+enum AdminRequestFailure {
+    Query(QueryProblem),
+    Refused(AdminProblem),
+}
+
+impl From<axum::extract::rejection::QueryRejection> for AdminRequestFailure {
+    fn from(error: axum::extract::rejection::QueryRejection) -> Self {
+        Self::Query(QueryProblem(error))
+    }
+}
+
+impl From<CoreError> for AdminRequestFailure {
+    fn from(error: CoreError) -> Self {
+        Self::Refused(AdminProblem::from(error))
+    }
+}
+
+impl IntoResponse for AdminRequestFailure {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Query(problem) => problem.into_response(),
+            Self::Refused(problem) => problem.into_response(),
         }
     }
 }
@@ -350,8 +374,9 @@ pub fn router(state: Arc<AdminState>) -> Router {
 async fn users(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(params): Query<DirectoryParams>,
-) -> Result<Json<Vec<UserView>>, AdminProblem> {
+    params: Result<Query<DirectoryParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Vec<UserView>>, AdminRequestFailure> {
+    let Query(params) = params?;
     let users = state
         .users
         .list(
@@ -367,8 +392,9 @@ async fn users(
 async fn activity(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(params): Query<ActivityParams>,
-) -> Result<Json<Vec<ActivityView>>, AdminProblem> {
+    params: Result<Query<ActivityParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Vec<ActivityView>>, AdminRequestFailure> {
+    let Query(params) = params?;
     let entries = state
         .activity
         .list(

@@ -29,9 +29,8 @@ use axum::{
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
-use layer1_public::{ActedUpon, AuthenticatedSubject, SettingsTouched};
+use layer1_public::{rest::HttpProblem, ActedUpon, AuthenticatedSubject, SettingsTouched};
 use layer2_core::{
     ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, DetailKey, SubjectId,
 };
@@ -166,16 +165,7 @@ fn outcome_of(status: StatusCode) -> ActivityOutcome {
 
 /// The refusal for a body too large to serve.
 fn too_large() -> Response {
-    (
-        StatusCode::PAYLOAD_TOO_LARGE,
-        Json(serde_json::json!({
-            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/request-too-large",
-            "title": "request too large",
-            "status": 413,
-            "detail": "The request body exceeds what this service accepts.",
-        })),
-    )
-        .into_response()
+    HttpProblem::RequestTooLarge.into_response()
 }
 
 #[cfg(test)]
