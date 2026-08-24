@@ -1,6 +1,12 @@
 //! Production-composition checks for the REST error contract.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use axum::{
     body::{to_bytes, Body},
@@ -33,6 +39,7 @@ const UNLISTED_ORIGIN: &str = "https://unlisted.example";
 struct MemorySessions {
     records: Mutex<HashMap<String, SessionRecord>>,
     events: Mutex<Vec<Event>>,
+    fail_lists: AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -50,6 +57,9 @@ impl SessionStore for MemorySessions {
     }
 
     async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+        if self.fail_lists.load(Ordering::SeqCst) {
+            return Err(StoreError::Unavailable("test store is down".into()));
+        }
         Ok(self
             .records
             .lock()
@@ -71,6 +81,9 @@ impl SessionStore for MemorySessions {
     }
 
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
+        if self.fail_lists.load(Ordering::SeqCst) {
+            return Err(StoreError::Unavailable("test store is down".into()));
+        }
         Ok(self.records.lock().await.values().cloned().collect())
     }
 
@@ -239,6 +252,7 @@ impl KernelAdapter for TestKernel {
 struct TestSurface {
     app: Router,
     sessions: Arc<SessionService>,
+    store: Arc<MemorySessions>,
     caller: Caller,
 }
 
@@ -258,10 +272,11 @@ fn test_surface(authenticated: bool) -> TestSurface {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(KernelId::new("test"), Arc::new(TestKernel));
     let factory: ScreenFactory = Arc::new(|geometry| Box::new(EmptyScreen(geometry)));
+    let store = Arc::new(MemorySessions::default());
     let sessions = SessionService::new(
         adapters,
         factory,
-        Arc::new(MemorySessions::default()),
+        Arc::clone(&store) as Arc<dyn SessionStore>,
         SessionPorts {
             settings: Some(Arc::clone(&settings)),
             ..Default::default()
@@ -310,6 +325,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     TestSurface {
         app,
         sessions,
+        store,
         caller,
     }
 }
@@ -711,6 +727,7 @@ async fn the_optional_ticket_body_distinguishes_empty_from_untyped() {
         app,
         sessions,
         caller,
+        ..
     } = test_surface(true);
     let id = create_ready_session(&app, &sessions, &caller).await;
     let uri = format!("/api/v1/sessions/{}/terminal-ticket", id.0);
@@ -776,6 +793,69 @@ async fn an_authenticated_route_without_a_credential_returns_the_coded_401() {
         .expect("router answers");
     let body = assert_problem(response, StatusCode::UNAUTHORIZED).await;
     assert_eq!(body["code"], "not_authenticated");
+}
+
+#[tokio::test]
+async fn session_list_distinguishes_empty_success_from_a_store_outage() {
+    let TestSurface {
+        app,
+        sessions,
+        store,
+        caller,
+    } = test_surface(true);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/sessions")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("session lists are bounded"),
+    )
+    .expect("the session list is json");
+    assert_eq!(body, serde_json::json!([]));
+
+    let id = create_ready_session(&app, &sessions, &caller).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/sessions")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("session lists are bounded"),
+    )
+    .expect("the session list is json");
+    assert_eq!(body.as_array().map(Vec::len), Some(1));
+    assert_eq!(body[0]["id"], id.0);
+
+    store.fail_lists.store(true, Ordering::SeqCst);
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/sessions")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::SERVICE_UNAVAILABLE).await;
+    assert_eq!(body["code"], "runtime_unavailable");
+    assert!(body["type"]
+        .as_str()
+        .is_some_and(|problem_type| problem_type.ends_with("/runtime-unavailable")));
 }
 
 #[tokio::test]
@@ -896,6 +976,7 @@ async fn well_formed_create_and_input_keep_their_success_statuses() {
         app,
         sessions,
         caller,
+        ..
     } = test_surface(true);
     let id = create_ready_session(&app, &sessions, &caller).await;
 

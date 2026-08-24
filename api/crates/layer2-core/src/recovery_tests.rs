@@ -706,7 +706,10 @@ async fn stopping_keeps_the_session_and_releases_the_sandbox() {
         "the sandbox must actually be released"
     );
 
-    let listed = svc.list_sessions(&alice).await;
+    let listed = svc
+        .list_sessions(&alice)
+        .await
+        .expect("session list is readable");
     assert!(
         listed.iter().any(|s| s.id == created.id),
         "a stopped session must still be listed: stopping is not deleting"
