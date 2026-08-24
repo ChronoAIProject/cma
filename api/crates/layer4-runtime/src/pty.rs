@@ -549,8 +549,8 @@ mod tests {
     #[tokio::test]
     async fn removing_a_silent_live_session_does_not_strand_its_supervisor() {
         let reg = PtyRegistry::new();
-        let (session, _output) = reg
-            .get_or_start("silent", "/bin/sleep 1", 80, 24, "k")
+        let (session, mut output) = reg
+            .get_or_start("silent", "/bin/sh", 80, 24, "k")
             .await
             .expect("the silent process starts");
         let original_master = session
@@ -560,6 +560,25 @@ mod tests {
             .as_raw_fd()
             .expect("the native pty has a descriptor");
         let mut exited = session.subscribe_exit();
+        let writer = Arc::clone(&session.writer);
+
+        // Keep the shell silent so a readable replacement descriptor cannot
+        // accidentally make the real pty reader return before its slave shuts.
+        session
+            .write_input(b"PS1=; trap '' HUP; stty -echo; printf '\\101\\122\\115\\105\\104'\n")
+            .expect("the shell disables terminal echo");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut seen = Vec::new();
+            while let Ok(chunk) = output.recv().await {
+                seen.extend_from_slice(&chunk);
+                if String::from_utf8_lossy(&seen).contains("ARMED") {
+                    return;
+                }
+            }
+            panic!("the shell output channel closed before it was armed");
+        })
+        .await
+        .expect("the shell disables echo in time");
 
         reg.remove("silent").await;
         drop(session);
@@ -569,24 +588,55 @@ mod tests {
         // than mistake this unrelated readable file for terminal output and
         // block forever on the real reader.
         let mut replacements = Vec::new();
+        let mut reused = None;
         while replacements.len() < 64 {
-            let file = std::fs::File::open("/dev/null").expect("/dev/null opens");
-            let reused = file.as_raw_fd() == original_master;
-            replacements.push(file);
-            if reused {
+            let pair = std::os::unix::net::UnixStream::pair().expect("a local socket pair opens");
+            let target = if pair.0.as_raw_fd() == original_master {
+                Some(true)
+            } else if pair.1.as_raw_fd() == original_master {
+                Some(false)
+            } else {
+                None
+            };
+            replacements.push(pair);
+            if let Some(target_is_left) = target {
+                reused = Some((replacements.len() - 1, target_is_left));
                 break;
             }
         }
-        assert!(
-            replacements
-                .iter()
-                .any(|file| file.as_raw_fd() == original_master),
-            "the removed session's descriptor is reused for the regression"
-        );
+        let (pair_index, target_is_left) =
+            reused.expect("the removed session's descriptor is reused for the regression");
 
-        tokio::time::timeout(Duration::from_secs(3), exited.changed())
+        // Let the supervisor repoll the quiet replacement, then make only that
+        // descriptor readable. An implementation that retained the bare
+        // integer consequently blocks on the unrelated pty reader here.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let peer = if target_is_left {
+            &mut replacements[pair_index].1
+        } else {
+            &mut replacements[pair_index].0
+        };
+        peer.write_all(b"wake")
+            .expect("the replacement is signalled");
+        peer.flush().expect("the replacement signal is flushed");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(
+            *exited.borrow(),
+            None,
+            "the primary stays alive until the explicit exit command"
+        );
+        {
+            let mut writer = writer.lock().expect("the retained writer is healthy");
+            writer
+                .write_all(b"exec /bin/sh -c 'sleep 5 & exit 0'\n")
+                .expect("the primary receives its exit command");
+            writer.flush().expect("the exit command is flushed");
+        }
+        drop(writer);
+
+        tokio::time::timeout(Duration::from_secs(2), exited.changed())
             .await
-            .expect("supervision is not stranded on a reused descriptor")
+            .expect("the primary exit is reported before its child closes the pty slave")
             .expect("the exit watch remains open");
         assert_eq!(*exited.borrow(), Some(ProcessExit { code: Some(0) }));
     }
