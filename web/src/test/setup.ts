@@ -3,7 +3,7 @@ import { cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 /*
- * Some suites run without a DOM on purpose. `web/src/agui/` is a protocol
+ * Some suites run without a DOM on purpose. `@chronoai/cma-sdk` is a protocol
  * client and #116 requires it to be testable without jsdom, so everything
  * below that reaches for `window` is skipped rather than crashing the file
  * before its first assertion.

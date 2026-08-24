@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ConcurrentInput, SessionCapabilities } from '../agui';
-import type { AvailableCommand } from './conversation';
+import type { ConcurrentInput, SessionCapabilities } from '@chronoai/cma-sdk';
+import type { AvailableCommand } from '@chronoai/cma-sdk';
 import { CommandMenu } from './CommandMenu';
 import './Composer.css';
 import { Pill } from '../ui/Pill';

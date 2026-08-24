@@ -3,7 +3,7 @@ import type { KeyboardEvent, PointerEvent } from 'react';
 import { TerminalSurface } from '../terminal/TerminalSurface';
 import type { TerminalHandle } from '../terminal/TerminalSurface';
 import { ConversationRecap } from './ConversationRecap';
-import type { AguiTransport } from '../agui';
+import type { AguiTransport } from '@chronoai/cma-sdk';
 import type { TerminalDriver } from '../terminal/types';
 import type { Session } from '../sessions/types';
 import { labelFor, stateDotFor, toneFor } from '../sessions/types';
@@ -137,7 +137,7 @@ export function CanvasNode({
   }
 
   const started = tabLabel(session.createdAt);
-  const state = labelFor(session.lifecycle);
+  const state = labelFor(session.lifecycle, session.reportedStatus);
   const dot = stateDotFor(toneFor(session.lifecycle));
   const name = `Session ${started} on ${session.kernel}, ${state}`;
 

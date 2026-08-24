@@ -44,7 +44,7 @@ export function lastActivity(
    * the lifecycle and the most alive a session gets to its owner. The line
    * says it is waiting for them, never that it stopped.
    */
-  if (waiting && session.lifecycle === 'idle') {
+  if ((waiting || session.stopReason === 'requires_action') && session.lifecycle === 'idle') {
     return 'Waiting for your answer';
   }
 
@@ -66,6 +66,9 @@ export function lastActivity(
 
     case 'terminated':
       return session.stopReason === 'error' ? 'Ended after a failure' : 'Ended';
+
+    case 'unknown':
+      return session.reportedStatus ?? 'State unavailable';
 
     default: {
       const exhaustive: never = session.lifecycle;

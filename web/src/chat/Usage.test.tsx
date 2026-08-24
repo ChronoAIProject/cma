@@ -1,8 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Usage, formatTokens } from './Usage';
-import { fold } from './conversation';
-import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
+import { fold } from '@chronoai/cma-sdk';
+import { AguiConnection, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * Usage, and the honest absence of it — `Web_Style.md` §18.5.

@@ -17,16 +17,15 @@ import type { AuthProvider } from './auth/types';
  * right surface, and a swapped-out client would stop testing that.
  */
 const sockets: FakeSocket[] = [];
-const streams: FakeEventSource[] = [];
+const streams: FakeEventStream[] = [];
 
 /**
- * A stand-in for the progress stream.
+ * A controllable fetch-backed progress stream.
  *
  * A session now starts as `provisioning` and becomes usable later, so the
  * console learns it is ready from here rather than from the create response.
  */
-class FakeEventSource {
-  static readonly CLOSED = 2;
+class FakeEventStream {
   /** What the next session reports reaching. Not every start succeeds. */
   static outcome = 'ready';
   /**
@@ -38,30 +37,62 @@ class FakeEventSource {
    * model a session that signs itself in.
    */
   static signIn: { url: string; code?: string; message?: string } | null = null;
-  readyState = 1;
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onerror: (() => void) | null = null;
+  readonly response: Response;
+  #controller!: ReadableStreamDefaultController<Uint8Array>;
+  #sequence = 1;
+  #closed = false;
 
-  constructor(readonly url: string) {
+  constructor(
+    readonly sessionId: string,
+    signal?: AbortSignal | null,
+  ) {
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        this.#controller = controller;
+      },
+      cancel: () => {
+        this.#closed = true;
+      },
+    });
+    this.response = new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    });
     streams.push(this);
+    signal?.addEventListener('abort', () => this.close(signal.reason), { once: true });
+
     // Announce on the next tick, as a real runtime would.
     queueMicrotask(() => {
-      if (FakeEventSource.signIn !== null) {
-        this.send({ type: 'sign_in_required', ...FakeEventSource.signIn });
+      if (FakeEventStream.signIn !== null) {
+        this.send({ type: 'sign_in_required', ...FakeEventStream.signIn });
         return;
       }
-      this.announce(FakeEventSource.outcome);
+      this.announce(FakeEventStream.outcome);
     });
   }
+
   announce(status: string): void {
     this.send({ type: 'status_changed', status });
   }
-  /** One frame, in the shape the control plane serialises. */
+
+  /** One SSE frame, in the exact envelope the control plane serialises. */
   send(event: unknown): void {
-    this.onmessage?.({ data: JSON.stringify({ seq: 2, event }) } as MessageEvent);
+    if (this.#closed) {
+      return;
+    }
+    this.#sequence += 1;
+    const data = JSON.stringify({ seq: this.#sequence, session_id: this.sessionId, event });
+    this.#controller.enqueue(
+      new TextEncoder().encode(`id: ${String(this.#sequence)}\ndata: ${data}\n\n`),
+    );
   }
-  close(): void {
-    this.readyState = FakeEventSource.CLOSED;
+
+  close(reason: unknown = new Error('event stream closed')): void {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
+    this.#controller.error(reason);
   }
 }
 
@@ -147,35 +178,52 @@ beforeEach(() => {
   allowanceFails = false;
   allowanceReads = 0;
   reviveProblem = null;
-  FakeEventSource.outcome = 'ready';
-  FakeEventSource.signIn = null;
+  FakeEventStream.outcome = 'ready';
+  FakeEventStream.signIn = null;
   vi.stubGlobal('WebSocket', FakeSocket);
-  vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = new URL(String(input), window.location.origin);
+      const path = url.pathname;
+      const method = init?.method ?? 'GET';
       const json = (status: number, body: unknown) =>
-        ({ ok: status < 400, status, json: async () => body }) as Response;
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        });
+      const problem = (status: number, body: Record<string, unknown>) =>
+        new Response(JSON.stringify({ status, ...body }), {
+          status,
+          headers: { 'content-type': 'application/problem+json' },
+        });
 
-      if (url.endsWith('/api/v1/sessions/allowance')) {
+      if (path === '/api/v1/environment-profiles' && method === 'GET') {
+        return json(200, []);
+      }
+      if (path === '/api/v1/kernels' && method === 'GET') {
+        return json(200, {
+          kernels: [{ id: 'codex', modes: ['terminal', 'conversation'] }],
+        });
+      }
+      if (path === '/api/v1/sessions/allowance') {
         allowanceReads += 1;
         if (allowanceFails) {
           throw new Error('allowance unavailable');
         }
         return json(200, allowanceAnswer);
       }
-      if (url.includes('/api/v1/pricing/quote')) {
+      if (path === '/api/v1/pricing/quote') {
         return json(200, { priced: false });
       }
-      if (url.endsWith('/api/v1/sessions') && (init?.method ?? 'GET') === 'GET') {
+      if (path === '/api/v1/sessions' && method === 'GET') {
         // Empty unless a test seeded a fleet, which is the fresh-owner case.
         return json(200, { sessions: listing });
       }
-      if (init?.method === 'DELETE') {
-        return json(204, {});
+      if (method === 'DELETE') {
+        return new Response(null, { status: 204 });
       }
-      if (url.endsWith('/api/v1/sessions') && init?.method === 'POST') {
+      if (path === '/api/v1/sessions' && method === 'POST') {
         created += 1;
         // Creation answers before a runtime exists; readiness arrives on the
         // event stream.
@@ -186,10 +234,40 @@ beforeEach(() => {
           created_at: new Date(0).toISOString(),
         });
       }
-      if (url.endsWith('/revive') && init?.method === 'POST' && reviveProblem !== null) {
-        return json(reviveProblem.status, reviveProblem.body);
+      if (path.endsWith('/revive') && method === 'POST' && reviveProblem !== null) {
+        return problem(reviveProblem.status, reviveProblem.body as Record<string, unknown>);
       }
-      return json(404, {});
+
+      const events = /^\/api\/v1\/sessions\/([^/]+)\/events$/.exec(path);
+      if (events?.[1] !== undefined && method === 'GET') {
+        return new FakeEventStream(decodeURIComponent(events[1]), init?.signal).response;
+      }
+      if (path.endsWith('/transcript') && method === 'GET') {
+        return new Response(new Uint8Array(), {
+          status: 200,
+          headers: { 'content-type': 'application/octet-stream' },
+        });
+      }
+
+      const session = /^\/api\/v1\/sessions\/([^/]+)$/.exec(path);
+      if (session?.[1] !== undefined && method === 'GET') {
+        const id = decodeURIComponent(session[1]);
+        const existing = listing.find((candidate) => candidate.id === id);
+        if (existing !== undefined) {
+          return json(200, existing);
+        }
+        const createdIndex = Number(id.replace(/^sesn_/, ''));
+        if (Number.isSafeInteger(createdIndex) && createdIndex > 0 && createdIndex <= created) {
+          return json(200, {
+            id,
+            kernel: 'codex',
+            status: 'ready',
+            created_at: new Date(0).toISOString(),
+          });
+        }
+      }
+
+      return problem(404, { detail: 'The requested resource was not found.', code: 'not_found' });
     }),
   );
 });
@@ -478,7 +556,7 @@ describe('App', () => {
     // Such a session leaves the rail — a list of everything ever run is not a
     // list of someone's sessions — but whoever had it open is still owed the
     // last thing it said, so the terminal stays rather than becoming a wait.
-    FakeEventSource.outcome = 'terminated';
+    FakeEventStream.outcome = 'terminated';
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();
@@ -500,7 +578,7 @@ describe('App', () => {
      * will never finish on its own. The request was arriving on the stream the
      * whole time and being dropped.
      */
-    FakeEventSource.signIn = {
+    FakeEventStream.signIn = {
       url: 'https://auth.example.test/device',
       code: 'WDJB-MJHT',
       message: 'Sign in to continue',
@@ -522,7 +600,7 @@ describe('App', () => {
   it('clears the sign-in once the session moves on', async () => {
     // A completed sign-in leaves a code that has already expired. Showing it
     // afterwards asks somebody to enter something that cannot work.
-    FakeEventSource.signIn = { url: 'https://auth.example.test/device', code: 'WDJB-MJHT' };
+    FakeEventStream.signIn = { url: 'https://auth.example.test/device', code: 'WDJB-MJHT' };
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
     await waitForConsole();

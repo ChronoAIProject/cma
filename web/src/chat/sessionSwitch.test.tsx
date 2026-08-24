@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Console } from '../Console';
 import type { Capability, User } from '../auth/types';
+import { sessionPayload } from '@chronoai/cma-sdk/testing';
 
 /**
  * Switching between sessions — one conversation at a time.
@@ -28,51 +29,40 @@ const CAPABILITIES: readonly Capability[] = ['create_session', 'use_own_sessions
 const user: User = { id: 'sub_switch', handle: 'switcher', capabilities: CAPABILITIES };
 
 /** Two conversation sessions, as the control plane sends them. */
-const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
-  id,
-  status: 'running',
-  kernel: 'codex',
-  cols: 120,
-  rows: 32,
-  last_seq: 3,
-  created_at: new Date(Date.UTC(2026, 7, 20, 6 - index, 0)).toISOString(),
-  conforms_to: [
-    'https://spec.chrono-ai.fun/cma/1.0/conf/core',
-    'https://spec.chrono-ai.fun/cma/1.0/conf/conversation',
-  ],
-}));
-
-/**
- * A stream that opens and says nothing.
- *
- * `addEventListener` is not decoration: the AG-UI wire subscribes by event
- * name for every kind this build knows (`wire.ts`), so a stub carrying only
- * `onmessage` throws the moment a conversation surface mounts — and throws
- * outside any assertion, which is an unhandled error rather than a failure.
- */
-class QuietEventSource {
-  static readonly CLOSED = 2;
-  readyState = 1;
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onerror: (() => void) | null = null;
-  addEventListener(): void {}
-  removeEventListener(): void {}
-  close(): void {
-    this.readyState = QuietEventSource.CLOSED;
-  }
-}
+const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) =>
+  sessionPayload({
+    id,
+    cols: 120,
+    rows: 32,
+    lastSeq: 3,
+    createdAt: new Date(Date.UTC(2026, 7, 20, 6 - index, 0)).toISOString(),
+    grants: ['conversation'],
+  }),
+);
 
 beforeEach(() => {
-  vi.stubGlobal('EventSource', QuietEventSource);
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       const json = (body: unknown) =>
-        Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+        Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      const events = (follow: boolean) =>
+        Promise.resolve(
+          new Response(follow ? new ReadableStream<Uint8Array>() : '', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+        );
       if (url.endsWith('/api/v1/sessions')) return json({ sessions: SESSIONS });
       if (url.includes('/api/v1/kernels')) return json({ kernels: [] });
-      if (url.includes('/environment-profiles')) return json({ profiles: [] });
+      if (url.includes('/environment-profiles')) return json([]);
+      if (url.includes('/api/v1/agui/events')) return events(!url.includes('follow=false'));
       return json({});
     }),
   );
