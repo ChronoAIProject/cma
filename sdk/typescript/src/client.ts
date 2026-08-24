@@ -104,7 +104,7 @@ export class Cma {
     return environment.deleteEnvironmentProfile(this.#config, id, options);
   }
 
-  /** Set the preference and receive its bounded, at-most-two-row change set. */
+  /** Set the preference and receive the complete post-write profile collection. */
   preferEnvironmentProfile(
     id: string | null,
     options: OperationOptions = {},
