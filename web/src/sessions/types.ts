@@ -88,7 +88,7 @@ export function toneFor(lifecycle: SessionLifecycle): StateTone {
 }
 
 /** Short label shown on the tab. Colour is never the only signal. */
-export function labelFor(lifecycle: SessionLifecycle): string {
+export function labelFor(lifecycle: SessionLifecycle, reportedStatus?: string): string {
   switch (lifecycle) {
     case 'provisioning':
       return 'starting';
@@ -103,7 +103,7 @@ export function labelFor(lifecycle: SessionLifecycle): string {
     case 'terminated':
       return 'ended';
     case 'unknown':
-      return 'unknown';
+      return reportedStatus ?? 'unknown';
     default: {
       const exhaustive: never = lifecycle;
       return exhaustive;

@@ -119,14 +119,28 @@ describe('a plane change is a boundary', () => {
     // Both are boundaries and neither is the other: one is something the owner
     // asked for and the other is something that happened to them.
     const state = stream([
-      delta(4, '/gaps/-', { reason: 'behind' }),
+      delta(4, '/gaps/-', { frames: 7 }),
       delta(5, '/planeChanges/-', { to: 'terminal', snapshotAt: '2026-08-18T10:00:00Z' }),
     ]);
 
     const gaps = state.entries.filter((entry) => entry.kind === 'gap');
     expect(gaps).toHaveLength(2);
+    expect(gaps[0]).toMatchObject({ frames: 7 });
     expect(gaps[0]?.kind === 'gap' && gaps[0].movedTo).toBeUndefined();
     expect(gaps[1]).toMatchObject({ movedTo: 'terminal' });
+  });
+
+  it.each([{}, { frames: 'seven' }, { frames: Number.NaN }])(
+    'keeps a malformed conversation gap visible without inventing a count %#',
+    (value) => {
+      const state = stream([delta(4, '/gaps/-', value)]);
+      expect(state.entries[0]).toMatchObject({ kind: 'gap', frames: undefined });
+    },
+  );
+
+  it('does not interpret a lookalike patch path as a conversation gap', () => {
+    const state = stream([delta(4, '/gaps-not-the-log/-', { frames: 7 })]);
+    expect(state.entries).toEqual([]);
   });
 });
 

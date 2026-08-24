@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAguiTransport, parseEventStream } from '../../src/agui/wire.js';
 import { toEvent } from '../../src/agui/events.js';
-import { ProtocolError, TimeoutError } from '../../src/errors.js';
+import { ApiError, ProtocolError, TimeoutError } from '../../src/errors.js';
 
 /**
  * The seam between what the interface serves and what this client reads.
@@ -287,6 +287,27 @@ describe('the live stream, not just the history read', () => {
 });
 
 describe('the history read finishes', () => {
+  it('retains a permanent HTTP status for the reconnect classifier', async () => {
+    const fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            status: 404,
+            code: 'not_found',
+            detail: 'this session no longer exists',
+          }),
+          { status: 404, headers: { 'content-type': 'application/problem+json' } },
+        ),
+      ),
+    );
+    const transport = createAguiTransport({ fetch: fetch as typeof globalThis.fetch });
+
+    const failure = await transport.history('sesn_1', 0).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 404, message: 'this session no longer exists' });
+  });
+
   it('asks the route to stop at the end of the log', async () => {
     // The whole defect in one assertion. Without this the route holds the
     // stream open across turns, `text()` never settles, and the connection —

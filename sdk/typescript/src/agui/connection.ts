@@ -1,5 +1,12 @@
 import { frameKey } from '../wire.js';
-import { CmaError, ProtocolError, RequestAborted, ValidationError } from '../errors.js';
+import {
+  ApiError,
+  CmaError,
+  ProtocolError,
+  RequestAborted,
+  TransportError,
+  ValidationError,
+} from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { toEvent, type AguiEvent } from './events.js';
 
@@ -51,14 +58,24 @@ export interface ConnectionOptions extends OperationOptions {
   readonly maxBackoffMs?: number;
   /** Injected so tests do not wait in real time. */
   readonly sleep?: (ms: number) => Promise<void>;
-  /** Fractional random spread around backoff, from zero through one. */
+  /** Fraction of each backoff window eligible for jitter; one is full jitter. */
   readonly jitterRatio?: number;
   readonly random?: () => number;
 }
 
 const DEFAULT_BACKOFF = 500;
 const DEFAULT_MAX_BACKOFF = 15_000;
-const DEFAULT_JITTER_RATIO = 0.2;
+const DEFAULT_JITTER_RATIO = 1;
+const TERMINAL_HTTP_STATUSES = new Set([401, 403, 404, 410, 422]);
+
+/** Where the link is, for a surface that has to say so. */
+export type LinkStatus = 'live' | 'reconnecting' | 'failed' | 'closed';
+
+/** A permanent link failure, retaining the service status when there was one. */
+export interface LinkFailure {
+  readonly status?: number;
+  readonly message: string;
+}
 
 /**
  * One session's stream, resumable.
@@ -71,8 +88,10 @@ const DEFAULT_JITTER_RATIO = 0.2;
 export class AguiConnection {
   #cursor = 0;
   /*
-   * Frames already delivered, keyed by the durable event they came from AND
-   * the kind of frame it projected to.
+   * Frames already delivered at the current cursor, keyed by the durable event
+   * they came from AND the kind of frame it projected to. Advancing the cursor
+   * clears older keys, keeping this set bounded for a connection that lives as
+   * long as its session.
    *
    * Not by sequence alone. One durable event legitimately projects to several
    * frames — a committed message becomes TEXT_MESSAGE_START, then CONTENT,
@@ -90,6 +109,8 @@ export class AguiConnection {
    */
   #seen = new Set<string>();
   #closed = false;
+  /** The one terminal notification this one-shot connection has emitted. */
+  #terminal: 'failed' | 'closed' | undefined;
   #stopStream: (() => void) | undefined;
   /** Ends the current wait, so closing does not have to wait for a drop. */
   #wake: (() => void) | undefined;
@@ -112,11 +133,10 @@ export class AguiConnection {
    */
   subscribe(
     onEvent: (event: AguiEvent) => void,
-    onStatus?: (status: LinkStatus) => void,
+    onStatus?: (status: LinkStatus, failure?: LinkFailure) => void,
     onError?: (error: CmaError) => void,
   ): () => void {
     void this.#run(onEvent, onStatus, onError).catch((cause: unknown) => {
-      this.#closed = true;
       this.#stopStream?.();
       this.#stopStream = undefined;
       this.#wake?.();
@@ -124,21 +144,23 @@ export class AguiConnection {
         cause instanceof CmaError
           ? cause
           : new ProtocolError('the AG-UI connection failed while delivering an event', { cause });
-      onError?.(error);
-      onStatus?.('closed');
+      this.#fail(error, onStatus, onError);
     });
     return () => {
+      if (this.#terminal !== undefined) {
+        return;
+      }
       this.#closed = true;
       this.#stopStream?.();
       this.#stopStream = undefined;
       this.#wake?.();
-      onStatus?.('closed');
+      this.#close(onStatus);
     };
   }
 
   async #run(
     onEvent: (event: AguiEvent) => void,
-    onStatus?: (status: LinkStatus) => void,
+    onStatus?: (status: LinkStatus, failure?: LinkFailure) => void,
     onError?: (error: CmaError) => void,
   ) {
     let backoff = this.options.backoffMs ?? DEFAULT_BACKOFF;
@@ -148,19 +170,27 @@ export class AguiConnection {
     const sleep = this.options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
     const invalid = validateOptions(backoff, ceiling, jitterRatio);
     if (invalid !== undefined) {
-      onError?.(invalid);
-      onStatus?.('closed');
+      this.#fail(invalid, onStatus, onError);
       return;
     }
     if (this.options.signal?.aborted === true) {
-      onError?.(new RequestAborted(undefined, { cause: this.options.signal.reason }));
-      onStatus?.('closed');
+      this.#close(
+        onStatus,
+        onError,
+        new RequestAborted(undefined, { cause: this.options.signal.reason }),
+      );
       return;
     }
     const onAbort = () => {
       this.#closed = true;
       this.#stopStream?.();
+      this.#stopStream = undefined;
       this.#wake?.();
+      this.#close(
+        onStatus,
+        onError,
+        new RequestAborted(undefined, { cause: this.options.signal?.reason }),
+      );
     };
     this.options.signal?.addEventListener('abort', onAbort, { once: true });
 
@@ -200,6 +230,9 @@ export class AguiConnection {
           this.#cursor,
           (raw) => {
             try {
+              if (this.#closed || dropped) {
+                return;
+              }
               if (live) {
                 this.#deliver(raw, onEvent);
               } else {
@@ -218,28 +251,45 @@ export class AguiConnection {
         // Then history, from the cursor. Then deduplicate — which the delivery
         // below does on `seq`, so a frame seen twice is delivered once.
         try {
-          for (const raw of await this.transport.history(
-            this.session,
-            this.#cursor,
-            this.options,
-          )) {
+          const history = await this.transport.history(this.session, this.#cursor, this.options);
+          if (this.#closed) {
+            return;
+          }
+          for (const raw of history) {
+            if (this.#closed) {
+              return;
+            }
             this.#deliver(raw, onEvent);
           }
         } catch (cause) {
-          // A history read that failed is a reconnect, not a lost session. The
-          // cursor has not moved, so the next attempt asks for the same range.
           this.#stopStream?.();
           this.#stopStream = undefined;
-          if (cause instanceof ProtocolError) {
-            onError?.(cause);
-            onStatus?.('closed');
+          if (this.#wake === settle) {
+            this.#wake = undefined;
+          }
+          if (this.#closed) {
             return;
           }
+          if (cause instanceof RequestAborted) {
+            this.#close(onStatus, onError, cause);
+            return;
+          }
+          const permanent = permanentFailure(cause);
+          if (permanent !== undefined) {
+            this.#fail(permanent, onStatus, onError);
+            return;
+          }
+          // A transient history failure reconnects from the same cursor. A
+          // permanent service answer above ends the loop instead of retrying
+          // an operation whose result cannot change.
           onStatus?.('reconnecting');
           if (this.#closed) {
             return;
           }
-          await sleep(jittered(backoff, jitterRatio, random, onError));
+          await this.#pause(sleep(jittered(backoff, jitterRatio, random)));
+          if (this.#closed) {
+            return;
+          }
           backoff = Math.min(backoff * 2, ceiling);
           continue;
         }
@@ -247,6 +297,9 @@ export class AguiConnection {
         live = true;
         try {
           for (const raw of pending.splice(0)) {
+            if (this.#closed) {
+              return;
+            }
             this.#deliver(raw, onEvent);
           }
         } catch (cause) {
@@ -258,33 +311,87 @@ export class AguiConnection {
         }
 
         await ended;
-        this.#wake = undefined;
+        if (this.#wake === settle) {
+          this.#wake = undefined;
+        }
         this.#stopStream?.();
         this.#stopStream = undefined;
         if (this.#closed) {
           return;
         }
-        if (dropCause instanceof ProtocolError) {
-          onError?.(dropCause);
-          onStatus?.('closed');
+        if (dropCause instanceof RequestAborted) {
+          this.#close(onStatus, onError, dropCause);
           return;
         }
-        if (dropCause instanceof RequestAborted) {
-          onError?.(dropCause);
-          onStatus?.('closed');
+        const permanent = permanentFailure(dropCause);
+        if (permanent !== undefined) {
+          this.#fail(permanent, onStatus, onError);
           return;
         }
         onStatus?.('reconnecting');
-        await sleep(jittered(backoff, jitterRatio, random, onError));
+        if (this.#closed) {
+          return;
+        }
+        await this.#pause(sleep(jittered(backoff, jitterRatio, random)));
+        if (this.#closed) {
+          return;
+        }
         backoff = Math.min(backoff * 2, ceiling);
       }
     } finally {
       this.options.signal?.removeEventListener('abort', onAbort);
-      if (isAborted(this.options.signal)) {
-        onError?.(new RequestAborted(undefined, { cause: this.options.signal?.reason }));
-        onStatus?.('closed');
+    }
+  }
+
+  async #pause(delay: Promise<void>): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    let wake: () => void = () => {};
+    const cancelled = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    this.#wake = wake;
+    try {
+      await Promise.race([delay, cancelled]);
+    } finally {
+      if (this.#wake === wake) {
+        this.#wake = undefined;
       }
     }
+  }
+
+  #fail(
+    error: CmaError,
+    onStatus: ((status: LinkStatus, failure?: LinkFailure) => void) | undefined,
+    onError: ((error: CmaError) => void) | undefined,
+  ): void {
+    this.#closed = true;
+    if (this.#terminal !== undefined) {
+      return;
+    }
+    this.#terminal = 'failed';
+    onError?.(error);
+    onStatus?.('failed', {
+      ...(error instanceof ApiError ? { status: error.status } : {}),
+      message: error.message,
+    });
+  }
+
+  #close(
+    onStatus: ((status: LinkStatus, failure?: LinkFailure) => void) | undefined,
+    onError?: ((error: CmaError) => void) | undefined,
+    error?: RequestAborted,
+  ): void {
+    this.#closed = true;
+    if (this.#terminal !== undefined) {
+      return;
+    }
+    this.#terminal = 'closed';
+    if (error !== undefined) {
+      onError?.(error);
+    }
+    onStatus?.('closed');
   }
 
   /**
@@ -297,6 +404,9 @@ export class AguiConnection {
    * the siblings of a frame already seen.
    */
   #deliver(raw: unknown, onEvent: (event: AguiEvent) => void) {
+    if (this.#closed) {
+      return;
+    }
     const event = toEvent(raw);
     /*
      * Liveness passes straight through, touching neither the cursor nor the
@@ -311,20 +421,24 @@ export class AguiConnection {
       return;
     }
     const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    if (event.seq < this.#cursor) {
+      return;
+    }
+    if (event.seq > this.#cursor) {
+      this.#cursor = event.seq;
+      // A reconnect asks strictly after the cursor. Only sibling projections
+      // at the current sequence can overlap now, so older keys retain no value
+      // and would otherwise grow for the session's entire lifetime.
+      this.#seen.clear();
+    }
     const delivered = frameKey(event.seq, wireKind);
     if (this.#seen.has(delivered)) {
       return;
     }
     this.#seen.add(delivered);
-    if (event.seq > this.#cursor) {
-      this.#cursor = event.seq;
-    }
     onEvent(event);
   }
 }
-
-/** Where the link is, for a surface that has to say so. */
-export type LinkStatus = 'live' | 'reconnecting' | 'closed';
 
 function validateOptions(
   backoff: number,
@@ -343,23 +457,26 @@ function validateOptions(
   return undefined;
 }
 
-function jittered(
-  delay: number,
-  ratio: number,
-  random: () => number,
-  onError: ((error: CmaError) => void) | undefined,
-): number {
+function jittered(delay: number, ratio: number, random: () => number): number {
   const sample = random();
-  if (!Number.isFinite(sample) || sample < 0 || sample > 1) {
-    const error = new ValidationError(
-      'connection random source must return a finite number from zero through one',
+  if (!Number.isFinite(sample) || sample < 0 || sample >= 1) {
+    throw new ValidationError(
+      'connection random source must return a finite number from zero (inclusive) to one (exclusive)',
     );
-    onError?.(error);
-    return delay;
   }
-  return Math.max(0, Math.round(delay * (1 + (sample * 2 - 1) * ratio)));
+  const minimum = delay * (1 - ratio);
+  return Math.floor(minimum + sample * (delay - minimum));
 }
 
-function isAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true;
+function permanentFailure(cause: unknown): CmaError | undefined {
+  if (!(cause instanceof CmaError) || cause instanceof RequestAborted) {
+    return undefined;
+  }
+  if (cause instanceof ApiError) {
+    return TERMINAL_HTTP_STATUSES.has(cause.status) ? cause : undefined;
+  }
+  if (cause instanceof TransportError) {
+    return undefined;
+  }
+  return cause;
 }

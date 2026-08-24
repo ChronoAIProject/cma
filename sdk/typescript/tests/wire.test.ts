@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { PATHS, PRICING_WIRE, STATE_DELTA_PATCHES, frameKey } from '../src/wire.js';
+import {
+  GAP_VALUE_FRAMES,
+  PATHS,
+  PRICING_WIRE,
+  STATE_DELTA_PATCHES,
+  frameKey,
+} from '../src/wire.js';
 import { toEvent } from '../src/agui/events.js';
 import { toSession } from '../src/sessions.js';
 import { EMPTY, reduce } from '../src/conversation/fold.js';
@@ -34,6 +41,35 @@ describe('a STATE_DELTA carries its patches under the name the service uses', ()
       return;
     }
     expect(event.patch).toHaveLength(1);
+  });
+});
+
+describe('a conversation gap carries the field the service writes', () => {
+  it('pins the value shape directly to the service projection', () => {
+    const source = readFileSync(
+      new URL('../../../api/crates/layer1-public/src/agui/project.rs', import.meta.url),
+      'utf8',
+    );
+    const projection = /EventKind::ConversationGap[\s\S]*?ending: None,\n\s*},/.exec(source)?.[0];
+    expect(projection).toBeDefined();
+    expect(projection).toContain(`"path": "${PATHS.gaps}"`);
+    expect(projection).toContain(`"value": { "${GAP_VALUE_FRAMES}": frames }`);
+
+    const asTheServiceWritesIt = { frames: 7 };
+    expect(GAP_VALUE_FRAMES).toBe('frames');
+    expect(Object.keys(asTheServiceWritesIt)).toEqual([GAP_VALUE_FRAMES]);
+
+    const state = reduce(
+      EMPTY,
+      toEvent({
+        type: 'STATE_DELTA',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 4,
+        delta: [{ op: 'add', path: '/gaps/-', value: asTheServiceWritesIt }],
+      }),
+    );
+    expect(state.entries[0]).toMatchObject({ kind: 'gap', frames: 7 });
   });
 });
 

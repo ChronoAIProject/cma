@@ -16,6 +16,9 @@
 /** Where an AG-UI event's RFC 6902 patches live — `docs/API_AGUI.md` §3. */
 export const STATE_DELTA_PATCHES = 'delta';
 
+/** The one field in a `/gaps/-` value, as emitted by `agui/project.rs`. */
+export const GAP_VALUE_FRAMES = 'frames';
+
 /**
  * Pricing names on the REST wire — `docs/API_REST.md` §7.
  *

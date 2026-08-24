@@ -10,6 +10,7 @@ export {
   AguiConnection,
   type AguiTransport,
   type ConnectionOptions,
+  type LinkFailure,
   type LinkStatus,
 } from './connection.js';
 export {

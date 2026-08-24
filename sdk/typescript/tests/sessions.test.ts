@@ -44,6 +44,39 @@ function sessionFixture(overrides: Record<string, unknown> = {}): Record<string,
   return { ...(fixture('session.json') as Record<string, unknown>), ...overrides };
 }
 
+const KNOWN_LIFECYCLES = [
+  'provisioning',
+  'ready',
+  'running',
+  'rotating',
+  'idle',
+  'terminated',
+] as const;
+
+const RECOVERY_STATES = [
+  'normal',
+  'idle',
+  'recovering',
+  'degraded',
+  'unknown',
+  'retired',
+  'invalid',
+] as const;
+
+function serializedEnumWords(name: string): readonly string[] {
+  const source = readFileSync(
+    new URL('../../../api/crates/layer2-core/src/session.rs', import.meta.url),
+    'utf8',
+  );
+  const body = new RegExp(`pub enum ${name} \\{([\\s\\S]*?)\\n\\}`).exec(source)?.[1];
+  if (body === undefined) {
+    throw new Error(`layer2-core no longer declares ${name}`);
+  }
+  return [...body.matchAll(/^ {4}([A-Z][A-Za-z0-9]*),$/gm)].map(([, variant]) =>
+    (variant ?? '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase(),
+  );
+}
+
 describe('the shared session fixture', () => {
   it('keeps every client-visible field, including runtime size and resume cursor', () => {
     const session = toSession(fixture('session.json'));
@@ -130,6 +163,52 @@ describe('the shared session fixture', () => {
     expect(toSession(sessionFixture({ stop_reason: null })).stopReason).toBeUndefined();
   });
 
+  it('pins every stop reason and recovery state to the layer2-core enums', () => {
+    expect(serializedEnumWords('StopReason')).toEqual(STOP_REASONS);
+    expect(serializedEnumWords('RecoveryState')).toEqual(RECOVERY_STATES);
+
+    for (const reason of STOP_REASONS) {
+      expect(toSession(sessionFixture({ stop_reason: reason })).stopReason).toBe(reason);
+    }
+    for (const recoveryState of RECOVERY_STATES) {
+      expect(toSession(sessionFixture({ recovery_state: recoveryState })).recoveryState).toBe(
+        recoveryState,
+      );
+    }
+  });
+
+  it('keeps all list rows when one lifecycle comes from a newer server', async () => {
+    const answer = answering([
+      sessionFixture({ id: 'sesn_ready', status: 'ready' }),
+      sessionFixture({ id: 'sesn_future', status: 'hibernating' }),
+      sessionFixture({ id: 'sesn_idle', status: 'idle' }),
+    ]);
+
+    const sessions = await listSessions(resolveConfig({ fetch: answer.fetch }));
+
+    expect(sessions.map(({ id }) => id)).toEqual(['sesn_ready', 'sesn_future', 'sesn_idle']);
+    expect(sessions[1]).toMatchObject({
+      lifecycle: 'unknown',
+      reportedStatus: 'hibernating',
+    });
+  });
+
+  it('reads an unfamiliar lifecycle under its raw word and keeps known words exact', async () => {
+    for (const status of KNOWN_LIFECYCLES) {
+      const session = toSession(sessionFixture({ status }));
+      expect(session.lifecycle).toBe(status);
+      expect(session).not.toHaveProperty('reportedStatus');
+    }
+
+    const answer = answering(sessionFixture({ status: 'hibernating' }));
+    await expect(
+      readSession(resolveConfig({ fetch: answer.fetch }), 'sesn_future'),
+    ).resolves.toMatchObject({
+      lifecycle: 'unknown',
+      reportedStatus: 'hibernating',
+    });
+  });
+
   it('keeps optional fields absent and rejects a malformed reported size', () => {
     const sparse = toSession({
       id: 'sesn_sparse',
@@ -173,6 +252,8 @@ describe('the shared session fixture', () => {
       ProtocolError,
     );
     expect(() => toSession(null)).toThrow(ProtocolError);
+    expect(() => toSession(sessionFixture({ id: undefined }))).toThrow(ProtocolError);
+    expect(() => toSession(sessionFixture({ status: 7 }))).toThrow(ProtocolError);
     expect(() => toSession(sessionFixture({ status: '' }))).toThrow(ProtocolError);
     expect(() => toSession(sessionFixture({ kernel: null }))).toThrow(ProtocolError);
   });
