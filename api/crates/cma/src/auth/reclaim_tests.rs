@@ -163,6 +163,24 @@ impl SessionStore for NoSessions {
         Ok(())
     }
 
+    async fn commit_session_idempotent(
+        &self,
+        _write_id: &str,
+        record: &SessionRecord,
+        _events: &[Event],
+    ) -> Result<u64, StoreError> {
+        Ok(record.revision.saturating_add(1))
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        _write_id: &str,
+        record: &SessionRecord,
+        _events: &[Event],
+    ) -> Result<u64, StoreError> {
+        Ok(record.revision.saturating_add(1))
+    }
+
     async fn events_since(
         &self,
         _id: &SessionId,

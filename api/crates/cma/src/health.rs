@@ -106,6 +106,24 @@ mod tests {
             unreachable!("readiness must only ping the store")
         }
 
+        async fn commit_session_idempotent(
+            &self,
+            _write_id: &str,
+            _record: &SessionRecord,
+            _events: &[Event],
+        ) -> Result<u64, StoreError> {
+            unreachable!("readiness must only ping the store")
+        }
+
+        async fn create_session_idempotent(
+            &self,
+            _write_id: &str,
+            _record: &SessionRecord,
+            _events: &[Event],
+        ) -> Result<u64, StoreError> {
+            unreachable!("readiness must only ping the store")
+        }
+
         async fn events_since(
             &self,
             _id: &SessionId,
