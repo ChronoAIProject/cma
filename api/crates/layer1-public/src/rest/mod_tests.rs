@@ -697,7 +697,8 @@ mod reach {
     use super::*;
     use layer2_core::{
         Baseline, CatalogService, EnvironmentProfile, EnvironmentProfileId,
-        EnvironmentProfileService, EnvironmentProfileStore, ServiceId, StoreError,
+        EnvironmentProfileService, EnvironmentProfileStore, Page, PageRequest, ServiceId,
+        StoreError,
     };
 
     /// A store that holds nothing: these tests never read a profile, which is
@@ -718,8 +719,12 @@ mod reach {
         async fn list_for(
             &self,
             _owner: &layer2_core::SubjectId,
-        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-            Ok(Vec::new())
+            _page: &PageRequest,
+        ) -> Result<Page<EnvironmentProfile>, StoreError> {
+            Ok(Page {
+                items: Vec::new(),
+                next: None,
+            })
         }
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
             Ok(())

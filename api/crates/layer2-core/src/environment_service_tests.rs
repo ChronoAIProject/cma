@@ -27,6 +27,10 @@ fn admin() -> Caller {
     )
 }
 
+fn first_page() -> PageRequest {
+    PageRequest::new(200, None)
+}
+
 #[tokio::test]
 async fn a_created_profile_is_readable_by_its_owner() {
     let service = environments(Arc::new(FakeProfileStore::default()));
@@ -41,7 +45,15 @@ async fn a_created_profile_is_readable_by_its_owner() {
 
     let read = service.get(&owner, &created.id).await.expect("reads");
     assert_eq!(read.id, created.id);
-    assert_eq!(service.list(&owner).await.expect("lists").len(), 1);
+    assert_eq!(
+        service
+            .list(&owner, &first_page())
+            .await
+            .expect("lists")
+            .items
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -124,9 +136,12 @@ async fn listing_shows_only_the_callers_own_profiles() {
         .await
         .expect("creates");
 
-    let mine = service.list(&caller("subject-a")).await.expect("lists");
-    assert_eq!(mine.len(), 2);
-    assert!(mine.iter().all(|p| p.owner.as_str() == "subject-a"));
+    let mine = service
+        .list(&caller("subject-a"), &first_page())
+        .await
+        .expect("lists");
+    assert_eq!(mine.items.len(), 2);
+    assert!(mine.items.iter().all(|p| p.owner.as_str() == "subject-a"));
 }
 
 #[tokio::test]
@@ -177,7 +192,10 @@ async fn a_caller_without_the_capability_is_refused_every_operation() {
         CoreError::Forbidden
     );
     assert_eq!(
-        service.list(&unarmed).await.expect_err("refused"),
+        service
+            .list(&unarmed, &first_page())
+            .await
+            .expect_err("refused"),
         CoreError::Forbidden
     );
     assert_eq!(
@@ -234,7 +252,12 @@ async fn a_removed_profile_is_gone() {
         service.get(&owner, &created.id).await.expect_err("gone"),
         CoreError::EnvironmentProfileNotFound
     );
-    assert!(service.list(&owner).await.expect("lists").is_empty());
+    assert!(service
+        .list(&owner, &first_page())
+        .await
+        .expect("lists")
+        .items
+        .is_empty());
 }
 
 #[tokio::test]
@@ -391,9 +414,10 @@ async fn two_profiles_claiming_the_default_are_settled_on_read() {
         store.upsert(&claim).await.expect("writes");
     }
 
-    let listed = service.list(&owner).await.expect("lists");
+    let listed = service.list(&owner, &first_page()).await.expect("lists");
 
     let held: Vec<_> = listed
+        .items
         .iter()
         .filter(|p| p.preferred)
         .map(|p| &p.id)

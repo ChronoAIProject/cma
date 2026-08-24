@@ -1,7 +1,7 @@
 //! Production-composition checks for the REST error contract.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -15,11 +15,12 @@ use axum::{
 };
 use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, AuthenticatedSubject};
 use layer2_core::{
-    ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, Authorization, Baseline,
-    Caller, Capability, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
-    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore, Event, KernelId,
-    PlatformSettingsService, RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
-    ServiceCatalog, ServiceId, SessionId, SessionPorts, SessionRecord, SessionService,
+    ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
+    Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
+    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore,
+    Event, KernelId, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
+    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
+    ServiceId, Session, SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService,
     SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource, StoreError,
     StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
 };
@@ -181,19 +182,25 @@ impl SessionStore for MemorySessions {
         Ok(self.state.lock().await.records.get(&id.0).cloned())
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
         if self.fail_lists.load(Ordering::SeqCst) {
             return Err(StoreError::Unavailable("test store is down".into()));
         }
-        Ok(self
-            .state
-            .lock()
-            .await
-            .records
-            .values()
-            .filter(|record| &record.session.owner == owner)
-            .cloned()
-            .collect())
+        Ok(page_sessions(
+            self.state
+                .lock()
+                .await
+                .records
+                .values()
+                .filter(|record| &record.session.owner == owner)
+                .cloned()
+                .collect(),
+            query,
+        ))
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
@@ -206,11 +213,14 @@ impl SessionStore for MemorySessions {
         Ok(reserved)
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
         if self.fail_lists.load(Ordering::SeqCst) {
             return Err(StoreError::Unavailable("test store is down".into()));
         }
-        Ok(self.state.lock().await.records.values().cloned().collect())
+        Ok(page_sessions(
+            self.state.lock().await.records.values().cloned().collect(),
+            query,
+        ))
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
@@ -283,27 +293,104 @@ impl SessionStore for MemorySessions {
     }
 }
 
-struct NoProfiles;
+fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> Page<SessionRecord> {
+    records.retain(|record| {
+        query
+            .status
+            .is_none_or(|status| record.session.status == status)
+            && query.page.cursor().is_none_or(|cursor| {
+                record.session.created_at < cursor.created_at
+                    || (record.session.created_at == cursor.created_at
+                        && record.session.id.0 < cursor.id)
+            })
+    });
+    records.sort_by(|a, b| {
+        b.session
+            .created_at
+            .cmp(&a.session.created_at)
+            .then_with(|| b.session.id.0.cmp(&a.session.id.0))
+    });
+    let has_more = records.len() > query.page.limit() as usize;
+    records.truncate(query.page.limit() as usize);
+    let next = has_more.then(|| {
+        let last = records.last().expect("a continuing page has a last row");
+        PageCursor::new(&last.session.created_at, &last.session.id.0)
+    });
+    Page {
+        items: records,
+        next,
+    }
+}
+
+#[derive(Default)]
+struct MemoryProfiles {
+    records: Mutex<HashMap<String, EnvironmentProfile>>,
+}
 
 #[async_trait::async_trait]
-impl EnvironmentProfileStore for NoProfiles {
-    async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
+impl EnvironmentProfileStore for MemoryProfiles {
+    async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError> {
+        self.records
+            .lock()
+            .await
+            .insert(profile.id.0.clone(), profile.clone());
         Ok(())
     }
 
     async fn get(
         &self,
-        _id: &EnvironmentProfileId,
+        id: &EnvironmentProfileId,
     ) -> Result<Option<EnvironmentProfile>, StoreError> {
-        Ok(None)
+        Ok(self.records.lock().await.get(&id.0).cloned())
     }
 
-    async fn list_for(&self, _owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
-        Ok(Vec::new())
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
+        Ok(page_profiles(
+            self.records
+                .lock()
+                .await
+                .values()
+                .filter(|profile| &profile.owner == owner)
+                .cloned()
+                .collect(),
+            page,
+        ))
     }
 
-    async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+    async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError> {
+        self.records.lock().await.remove(&id.0);
         Ok(())
+    }
+}
+
+fn page_profiles(
+    mut profiles: Vec<EnvironmentProfile>,
+    page: &PageRequest,
+) -> Page<EnvironmentProfile> {
+    profiles.retain(|profile| {
+        page.cursor().is_none_or(|cursor| {
+            profile.created_at < cursor.created_at
+                || (profile.created_at == cursor.created_at && profile.id.0 < cursor.id)
+        })
+    });
+    profiles.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.0.cmp(&a.id.0))
+    });
+    let has_more = profiles.len() > page.limit() as usize;
+    profiles.truncate(page.limit() as usize);
+    let next = has_more.then(|| {
+        let last = profiles.last().expect("a continuing page has a last row");
+        PageCursor::new(&last.created_at, &last.id.0)
+    });
+    Page {
+        items: profiles,
+        next,
     }
 }
 
@@ -534,6 +621,7 @@ struct TestSurface {
     app: Router,
     sessions: Arc<SessionService>,
     store: Arc<MemorySessions>,
+    profiles: Arc<MemoryProfiles>,
     catalogue: Arc<TestCatalogue>,
     directory: Arc<TestDirectory>,
     caller: Caller,
@@ -542,8 +630,9 @@ struct TestSurface {
 fn test_surface(authenticated: bool) -> TestSurface {
     let settings = Arc::new(PlatformSettingsService::unconfigured());
     let catalogue = Arc::new(TestCatalogue::default());
+    let profiles = Arc::new(MemoryProfiles::default());
     let environments = EnvironmentProfileService::new(
-        Arc::new(NoProfiles),
+        Arc::clone(&profiles) as Arc<dyn EnvironmentProfileStore>,
         Baseline::new(
             [],
             [SkillId::new(TEST_SKILL_NAME)],
@@ -582,6 +671,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
             Capability::CreateSession,
             Capability::UseOwnSessions,
             Capability::TerminateOwnSession,
+            Capability::ReadAllSessions,
             Capability::ManageOwnEnvironmentProfiles,
             Capability::ReadUserDirectory,
             Capability::ReadActivityLog,
@@ -619,6 +709,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         app,
         sessions,
         store,
+        profiles,
         catalogue,
         directory,
         caller,
@@ -748,6 +839,102 @@ async fn create_ready_session(
     let (id, _) = create_session(app).await;
     wait_until_ready(sessions, caller, &id).await;
     id
+}
+
+fn session_record(sequence: usize, owner: &SubjectId, status: SessionStatus) -> SessionRecord {
+    SessionRecord::new(Session {
+        id: SessionId(format!("sesn_page_{sequence:04}")),
+        owner: owner.clone(),
+        kernel: KernelId::new("test"),
+        status,
+        recovery_state: RecoveryState::Normal,
+        stop_reason: None,
+        options: AgentOptions::default(),
+        environment_profile: None,
+        geometry: TerminalGeometry::default(),
+        last_seq: 0,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: Some(Vec::new()),
+        granted_skills: Some(Vec::new()),
+        pricing: None,
+        // Every fixture deliberately ties on time, so traversal depends on
+        // the durable id tie-breaker instead of passing accidentally.
+        created_at: "2026-08-24T10:11:12Z".into(),
+    })
+}
+
+async fn seed_sessions(
+    store: &MemorySessions,
+    owner: &SubjectId,
+    statuses: impl IntoIterator<Item = SessionStatus>,
+) {
+    let records = statuses
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, status)| session_record(sequence, owner, status));
+    let mut state = store.state.lock().await;
+    for record in records {
+        state.records.insert(record.session.id.0.clone(), record);
+    }
+}
+
+fn profile_record(sequence: usize, owner: &SubjectId) -> EnvironmentProfile {
+    EnvironmentProfile {
+        preferred: false,
+        id: EnvironmentProfileId(format!("envp_page_{sequence:04}")),
+        owner: owner.clone(),
+        name: format!("profile {sequence}"),
+        variables: Vec::new(),
+        packages: Vec::new(),
+        services: Vec::new(),
+        agent_notes: String::new(),
+        agent: AgentConfiguration {
+            kernel: KernelId::new("test"),
+            ..Default::default()
+        },
+        created_at: "2026-08-24T10:11:12Z".into(),
+        updated_at: "2026-08-24T10:11:12Z".into(),
+    }
+}
+
+async fn seed_profiles(store: &MemoryProfiles, owner: &SubjectId, count: usize) {
+    let mut stored = store.records.lock().await;
+    for sequence in 0..count {
+        let profile = profile_record(sequence, owner);
+        stored.insert(profile.id.0.clone(), profile);
+    }
+}
+
+fn next_link(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(header::LINK)?.to_str().expect("Link is text");
+    let target = value
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix(">; rel=\"next\""))
+        .expect("Link has the RFC 8288 next relation shape");
+    Some(target.to_string())
+}
+
+async fn get_collection(app: &Router, uri: &str) -> (Vec<serde_json::Value>, HeaderMap) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(uri)
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK, "for {uri}");
+    let headers = response.headers().clone();
+    let body = assert_json(response, StatusCode::OK).await;
+    let rows = body
+        .as_array()
+        .cloned()
+        .expect("collection body is an array");
+    (rows, headers)
 }
 
 fn assert_creator(view: &serde_json::Value) {
@@ -980,6 +1167,39 @@ async fn listed_origin_allows_the_sdk_reconnect_cursor_header() {
 }
 
 #[tokio::test]
+async fn listed_origin_can_read_the_pagination_link_header() {
+    let surface = test_surface(true);
+    seed_sessions(
+        &surface.store,
+        &surface.caller.subject,
+        [SessionStatus::Ready, SessionStatus::Ready],
+    )
+    .await;
+    let app = with_cors(surface.app, vec![HeaderValue::from_static(LISTED_ORIGIN)]);
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/sessions?limit=1")
+                .header(header::ORIGIN, LISTED_ORIGIN)
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&HeaderValue::from_static(LISTED_ORIGIN))
+    );
+    assert_header_list_contains(
+        response.headers(),
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        "link",
+    );
+    assert!(next_link(response.headers()).is_some());
+}
+
+#[tokio::test]
 async fn listed_origin_allows_profile_put_preflight() {
     let app = with_cors(
         test_surface(true).app,
@@ -1072,6 +1292,11 @@ async fn bad_query_strings_are_problem_documents_on_every_query_route() {
     for uri in [
         "/api/v1/sessions/sesn_bad/events?after=not-a-number",
         "/api/v1/pricing/quote?environment_profile=one&environment_profile=two",
+        "/api/v1/sessions?limitt=5",
+        "/api/v1/sessions?cursor=not-base64url",
+        "/api/v1/admin/sessions?limitt=5",
+        "/api/v1/environment-profiles?limitt=5",
+        "/api/v1/environment-profiles?cursor=not-base64url",
         "/api/v1/admin/users?limit=not-a-number",
         "/api/v1/admin/activity?limit=not-a-number",
     ] {
@@ -1342,6 +1567,115 @@ async fn session_list_distinguishes_empty_success_from_a_store_outage() {
     assert!(body["type"]
         .as_str()
         .is_some_and(|problem_type| problem_type.ends_with("/runtime-unavailable")));
+}
+
+#[tokio::test]
+async fn session_list_defaults_to_fifty_and_clamps_both_limit_bounds() {
+    let TestSurface {
+        app, store, caller, ..
+    } = test_surface(true);
+    seed_sessions(
+        &store,
+        &caller.subject,
+        std::iter::repeat_n(SessionStatus::Ready, 205),
+    )
+    .await;
+
+    let (default_page, default_headers) = get_collection(&app, "/api/v1/sessions").await;
+    assert_eq!(default_page.len(), 50);
+    assert!(next_link(&default_headers).is_some());
+
+    let (maximum_page, maximum_headers) = get_collection(&app, "/api/v1/sessions?limit=500").await;
+    assert_eq!(maximum_page.len(), 200);
+    assert!(next_link(&maximum_headers)
+        .expect("205 rows continue after the maximum page")
+        .contains("limit=200&cursor="));
+
+    let (minimum_page, minimum_headers) = get_collection(&app, "/api/v1/sessions?limit=0").await;
+    assert_eq!(minimum_page.len(), 1);
+    assert!(next_link(&minimum_headers)
+        .expect("205 rows continue after a one-row page")
+        .contains("limit=1&cursor="));
+}
+
+#[tokio::test]
+async fn session_cursor_walk_has_no_overlap_and_status_is_an_exact_store_filter() {
+    let TestSurface {
+        app, store, caller, ..
+    } = test_surface(true);
+    seed_sessions(
+        &store,
+        &caller.subject,
+        [
+            SessionStatus::Running,
+            SessionStatus::Ready,
+            SessionStatus::Running,
+            SessionStatus::Idle,
+            SessionStatus::Running,
+            SessionStatus::Terminated,
+            SessionStatus::Running,
+        ],
+    )
+    .await;
+
+    let mut uri = "/api/v1/sessions?limit=2".to_string();
+    let mut seen = HashSet::new();
+    let mut pages = 0;
+    loop {
+        let (rows, headers) = get_collection(&app, &uri).await;
+        pages += 1;
+        assert!(pages <= 4, "seven rows at two per page cannot take longer");
+        for row in rows {
+            let id = row["id"].as_str().expect("session id").to_string();
+            assert!(seen.insert(id.clone()), "cursor walk repeated {id}");
+        }
+        match next_link(&headers) {
+            Some(next) => uri = next,
+            None => break,
+        }
+    }
+    assert_eq!(pages, 4);
+    assert_eq!(seen.len(), 7);
+
+    let (running, headers) = get_collection(&app, "/api/v1/sessions?status=running&limit=2").await;
+    assert_eq!(running.len(), 2);
+    assert!(running.iter().all(|row| row["status"] == "running"));
+    let next = next_link(&headers).expect("four running rows need a second page");
+    assert!(next.contains("status=running&limit=2&cursor="));
+    let (running, headers) = get_collection(&app, &next).await;
+    assert_eq!(running.len(), 2);
+    assert!(running.iter().all(|row| row["status"] == "running"));
+    assert!(next_link(&headers).is_none());
+}
+
+#[tokio::test]
+async fn admin_sessions_and_environment_profiles_use_the_same_page_contract() {
+    let TestSurface {
+        app,
+        store,
+        profiles,
+        caller,
+        ..
+    } = test_surface(true);
+    seed_sessions(
+        &store,
+        &caller.subject,
+        std::iter::repeat_n(SessionStatus::Ready, 3),
+    )
+    .await;
+    seed_profiles(&profiles, &caller.subject, 3).await;
+
+    for path in [
+        "/api/v1/admin/sessions?limit=2",
+        "/api/v1/environment-profiles?limit=2",
+    ] {
+        let (first, headers) = get_collection(&app, path).await;
+        assert_eq!(first.len(), 2, "for {path}");
+        let next = next_link(&headers).expect("the third row has a next page");
+        let (last, headers) = get_collection(&app, &next).await;
+        assert_eq!(last.len(), 1, "for {path}");
+        assert!(next_link(&headers).is_none(), "for {path}");
+    }
 }
 
 #[tokio::test]

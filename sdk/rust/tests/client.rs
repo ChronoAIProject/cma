@@ -334,6 +334,57 @@ async fn every_required_operation_uses_the_server_fixture_shape() {
 }
 
 #[tokio::test]
+async fn list_sessions_follows_next_links_under_the_configured_base_path() {
+    let older = SESSIONS.replace("sesn_fixture", "sesn_older");
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, SESSIONS).header(
+            "link",
+            "</api/v1/sessions?limit=50&cursor=opaque>; rel=\"next\"",
+        ),
+        StubResponse::json(StatusCode::OK, &older),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let sessions = client.list_sessions().await.expect("both pages list");
+
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        ["sesn_fixture", "sesn_older"]
+    );
+    assert_eq!(
+        stub.requests()
+            .await
+            .iter()
+            .map(|request| request.uri.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "/proxy/api/v1/sessions",
+            "/proxy/api/v1/sessions?limit=50&cursor=opaque",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_sessions_refuses_a_link_that_could_redirect_the_bearer_credential() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, SESSIONS).header(
+        "link",
+        "<https://outside.example/api/v1/sessions?cursor=x>; rel=\"next\"",
+    )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_sessions().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
 async fn create_stream_interrupt_smoke_uses_a_fresh_credential_each_time() {
     let event = event_fixture(EVENT);
     let stub = Stub::start([

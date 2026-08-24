@@ -142,6 +142,53 @@ describe('the shared session fixture', () => {
     expect(url).toBe('/api/v1/sessions/sesn%2Ffixture');
   });
 
+  it('follows same-collection next links until every session is listed', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'sesn_newer' })]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/sessions?limit=50&cursor=opaque>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'sesn_older' })]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+    const sessions = await listSessions(
+      resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }),
+    );
+
+    expect(sessions.map(({ id }) => id)).toEqual(['sesn_newer', 'sesn_older']);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/sessions',
+      '/api/v1/sessions?limit=50&cursor=opaque',
+    ]);
+  });
+
+  it('refuses a continuation that could redirect the caller credential', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([sessionFixture()]), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          link: '<https://outside.example/api/v1/sessions?cursor=x>; rel="next"',
+        },
+      }),
+    );
+
+    await expect(
+      listSessions(resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch })),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves future lifecycle, recovery, and stop-reason vocabulary', () => {
     const future = toSession(
       sessionFixture({

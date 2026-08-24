@@ -15,7 +15,7 @@ use crate::environment::{
 };
 use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{EnvironmentProfileId, SubjectId};
-use crate::store::{EnvironmentProfileStore, StoreError};
+use crate::store::{EnvironmentProfileStore, Page, PageCursor, PageRequest, StoreError};
 
 /// The shipped policy, for tests whose subject is not platform configuration.
 pub(crate) fn unconfigured_settings() -> Arc<crate::PlatformSettingsService> {
@@ -66,16 +66,43 @@ impl EnvironmentProfileStore for FakeProfileStore {
         Ok(self.profiles.lock().await.get(&id.0).cloned())
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
         self.guard().await?;
-        Ok(self
+        let mut profiles: Vec<_> = self
             .profiles
             .lock()
             .await
             .values()
             .filter(|p| &p.owner == owner)
+            .filter(|profile| {
+                page.cursor().is_none_or(|cursor| {
+                    profile.created_at < cursor.created_at
+                        || (profile.created_at == cursor.created_at && profile.id.0 < cursor.id)
+                })
+            })
             .cloned()
-            .collect())
+            .collect();
+        profiles.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.0.cmp(&a.id.0))
+        });
+        let has_more = profiles.len() > page.limit() as usize;
+        profiles.truncate(page.limit() as usize);
+        let next = has_more.then(|| {
+            let last = profiles
+                .last()
+                .expect("a non-empty bounded page has a last row");
+            PageCursor::new(&last.created_at, &last.id.0)
+        });
+        Ok(Page {
+            items: profiles,
+            next,
+        })
     }
 
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError> {

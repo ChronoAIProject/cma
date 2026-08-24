@@ -169,8 +169,9 @@ pub use session::{
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
-    SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, Page, PageCursor,
+    PageRequest, SessionListQuery, SessionRecord, SessionStore, SkillPack, SkillSource, StoreError,
+    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

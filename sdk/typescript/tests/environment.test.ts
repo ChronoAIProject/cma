@@ -170,6 +170,37 @@ describe('environment profile responses', () => {
 });
 
 describe('the environment profile routes', () => {
+  it('follows profile continuation links without changing the public list shape', async () => {
+    const second = { ...PROFILE, id: 'envp_2', name: 'Older profile' };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([PROFILE]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/environment-profiles?limit=50&cursor=opaque>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([second]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+    const profiles = await listEnvironmentProfiles(
+      resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }),
+    );
+
+    expect(profiles.map(({ id }) => id)).toEqual(['envp_1', 'envp_2']);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/environment-profiles',
+      '/api/v1/environment-profiles?limit=50&cursor=opaque',
+    ]);
+  });
+
   it('covers list, read, create, replace, delete, prefer, and both catalogues', async () => {
     const { calls, config } = service();
 
