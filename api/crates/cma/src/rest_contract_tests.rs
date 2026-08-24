@@ -1316,7 +1316,7 @@ async fn bad_query_strings_are_problem_documents_on_every_query_route() {
 }
 
 #[tokio::test]
-async fn cursors_reject_cross_route_reuse_mutation_and_nonsemantic_timestamps() {
+async fn cursors_reject_cross_route_reuse_truncation_and_nonsemantic_timestamps() {
     let TestSurface {
         app,
         store,
@@ -1361,11 +1361,11 @@ async fn cursors_reject_cross_route_reuse_mutation_and_nonsemantic_timestamps() 
         .expect("continuation names its cursor");
     let mut truncated = encoded.to_string();
     truncated.pop();
-    let mutated = format!("/api/v1/sessions?{before_cursor}cursor={truncated}");
+    let truncated_uri = format!("/api/v1/sessions?{before_cursor}cursor={truncated}");
     let response = app
         .clone()
         .oneshot(
-            Request::get(&mutated)
+            Request::get(&truncated_uri)
                 .body(Body::empty())
                 .expect("request builds"),
         )

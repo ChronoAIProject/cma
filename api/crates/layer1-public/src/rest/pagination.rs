@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn a_structurally_mutated_cursor_is_refused() {
+    fn a_truncated_cursor_is_refused() {
         let cursor = PageCursor::new("2026-08-24T10:11:12Z", "sesn_1");
         let mut encoded = encode_cursor(CursorCollection::Sessions, &cursor);
         encoded.pop();
