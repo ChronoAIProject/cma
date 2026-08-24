@@ -48,6 +48,7 @@ import { OperatorPage } from './operator/OperatorPage';
 import { canOperate } from './operator/access';
 import { createRestOperatorStore } from './operator/rest';
 import type { OperatorStore } from './operator/types';
+import { DeveloperSurface } from './developer/DeveloperSurface';
 import './Console.css';
 import { DetailsPanel } from './chat/DetailsPanel';
 import { sectionsOf } from './chat/ToolCall';
@@ -56,10 +57,10 @@ import type { ToolCallEntry } from '@chronoai/cma-sdk';
 /**
  * The authenticated surface. Same page, now driven live.
  *
- * Two views inside one page frame, per docs/Web_Style.md §1: sessions and
- * operations. There is no router and no URL — the app bar's switch chooses
- * between them and nothing is pushed onto history, which is what keeps the
- * frame from becoming navigation.
+ * Three views inside one page frame, per docs/Web_Style.md §1: sessions,
+ * operations and Developer. There is no router and no URL — account actions
+ * choose between them and nothing is pushed onto history, which is what keeps
+ * the frame from becoming navigation.
  *
  * **The view does not persist; the arrangement does.** A view is where
  * somebody is right now, and reloading into a surface nobody asked for is how
@@ -78,8 +79,8 @@ interface ConsoleProps {
   readonly onSignOut: () => void;
 }
 
-/** The two views §1 admits. Not a route, and never a third. */
-type ConsoleView = 'sessions' | 'operations';
+/** The three transient surfaces §1 admits. They are state, never routes. */
+type ConsoleView = 'sessions' | 'operations' | 'developer';
 
 /**
  * Geometry the first frame is requested at.
@@ -131,7 +132,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
   // Built once, for the same reason the profile store is.
   const [operatorStore] = useState<OperatorStore>(() => createRestOperatorStore());
   /*
-   * Which of §1's two views is showing. State rather than a route: the app
+   * Which of §1's three views is showing. State rather than a route: the app
    * carries no router, and this is deliberately not persisted — see above.
    */
   const [view, setView] = useState<ConsoleView>('sessions');
@@ -479,6 +480,9 @@ export function Console({ user, onSignOut }: ConsoleProps) {
     if (view === 'operations') {
       return 'Operations';
     }
+    if (view === 'developer') {
+      return 'Developer';
+    }
     if (loading) {
       return 'Loading sessions';
     }
@@ -492,7 +496,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
 
   return (
     <AppFrame
-      detailsOpen={active !== null && detailsOpen}
+      detailsOpen={view === 'sessions' && active !== null && detailsOpen}
       sidebarCollapsed={railCollapsed}
       onSidebarCollapsedChange={setRailCollapsed}
       sidebar={({ collapsed, onToggle }) => (
@@ -523,6 +527,10 @@ export function Console({ user, onSignOut }: ConsoleProps) {
               }}
               collapsed={collapsed}
               operationsActive={view === 'operations'}
+              developerActive={view === 'developer'}
+              onDeveloper={() => {
+                setView(view === 'developer' ? 'sessions' : 'developer');
+              }}
               onOperations={
                 canOperate(user.capabilities)
                   ? () => {
@@ -579,6 +587,8 @@ export function Console({ user, onSignOut }: ConsoleProps) {
       center={
         view === 'operations' ? (
           <OperatorPage store={operatorStore} capabilities={user.capabilities} />
+        ) : view === 'developer' ? (
+          <DeveloperSurface />
         ) : (
           <main className="console__surface">
             <SessionHeader
