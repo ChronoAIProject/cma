@@ -369,6 +369,15 @@ jobs:
           fi
           git push origin "$branch"
 
+          existing_pr="$(
+            gh pr list --base develop --head "$branch" --state open \
+              --json url --jq '.[0].url // empty'
+          )"
+          if [[ -n "$existing_pr" ]]; then
+            echo "back-merge pull request already open: $existing_pr"
+            exit 0
+          fi
+
           gh pr create --base develop --head "$branch" \
             --title "chore: take $VERSION's release merge back into develop" \
             --body "Opened by the publish workflow.
@@ -377,5 +386,4 @@ jobs:
           \`develop\` never receives, so every release ends with \`main\` one commit
           ahead and the next release PR reading \`BEHIND\`.
 
-          Carries no content — only the merge commit." \
-            || echo "a back-merge pull request is already open"
+          Carries no content — only the merge commit."
