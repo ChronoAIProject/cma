@@ -179,6 +179,7 @@ fn a_document_without_revision_reads_as_revision_zero() {
     let stored = to_doc(&record).expect("record can be stored");
     let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
     assert!(document.remove("revision").is_some());
+    assert!(document.remove(WRITE_PROTOCOL_FIELD).is_some());
 
     let legacy: SessionDoc =
         mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
@@ -273,6 +274,7 @@ fn an_empty_record_only_transaction_is_valid_input() {
 fn a_receipt_belongs_to_exactly_one_session_and_carries_a_valid_revision() {
     let receipt = SessionWriteDoc {
         id: "write-owned".into(),
+        write_protocol: WRITE_PROTOCOL,
         session_id: "sesn_owner".into(),
         revision: 7,
     };
@@ -357,6 +359,10 @@ fn reserved_capacity_pipeline_matches_and_sums_only_durable_runtime_promises() {
                     }
                 }
             },
+            tombstone_lookup_stage(),
+            doc! {
+                "$match": { "_cma_tombstones.0": { "$exists": false } }
+            },
             doc! {
                 "$group": {
                     "_id": null,
@@ -380,6 +386,228 @@ fn reserved_capacity_pipeline_matches_and_sums_only_durable_runtime_promises() {
             },
         ]
     );
+}
+
+#[test]
+fn transaction_topology_accepts_replica_sets_and_mongos_only() {
+    validate_transaction_topology_reply(&doc! { "setName": "rs0" })
+        .expect("a replica set supports transactions");
+    validate_transaction_topology_reply(&doc! { "msg": "isdbgrid" })
+        .expect("mongos supports transactions");
+
+    let standalone = validate_transaction_topology_reply(&doc! { "isWritablePrimary": true })
+        .expect_err("a standalone cannot commit this store's transactions");
+    assert!(matches!(standalone, StoreError::Unavailable(_)));
+    assert!(standalone.to_string().contains("replica set or mongos"));
+}
+
+#[test]
+fn namespace_cutover_is_crash_resumable_but_never_merges_collections() {
+    assert_eq!(
+        next_namespace_action(&NamespacePair::default(), "old", "new").unwrap(),
+        NamespaceAction::CreateAuthoritative
+    );
+    assert_eq!(
+        next_namespace_action(
+            &NamespacePair {
+                legacy: Some(NamespaceKind::Collection),
+                authoritative: None,
+            },
+            "old",
+            "new",
+        )
+        .unwrap(),
+        NamespaceAction::RenameLegacy
+    );
+    assert_eq!(
+        next_namespace_action(
+            &NamespacePair {
+                legacy: None,
+                authoritative: Some(NamespaceKind::Collection),
+            },
+            "old",
+            "new",
+        )
+        .unwrap(),
+        NamespaceAction::CreateLegacyView
+    );
+    assert_eq!(
+        next_namespace_action(
+            &NamespacePair {
+                legacy: Some(NamespaceKind::View {
+                    source: Some("new".into()),
+                    pipeline_is_empty: true,
+                }),
+                authoritative: Some(NamespaceKind::Collection),
+            },
+            "old",
+            "new",
+        )
+        .unwrap(),
+        NamespaceAction::Ready
+    );
+
+    let split_brain = next_namespace_action(
+        &NamespacePair {
+            legacy: Some(NamespaceKind::Collection),
+            authoritative: Some(NamespaceKind::Collection),
+        },
+        "old",
+        "new",
+    )
+    .expect_err("two writable histories must never be merged or guessed between");
+    assert!(split_brain.to_string().contains("ambiguous"));
+
+    assert!(next_namespace_action(
+        &NamespacePair {
+            legacy: Some(NamespaceKind::View {
+                source: Some("somewhere_else".into()),
+                pipeline_is_empty: true,
+            }),
+            authoritative: Some(NamespaceKind::Collection),
+        },
+        "old",
+        "new",
+    )
+    .is_err());
+}
+
+#[test]
+fn protocol_validators_require_the_current_marker_and_session_revision() {
+    let sessions = session_protocol_validator();
+    let schema = sessions
+        .get_document("$jsonSchema")
+        .expect("sessions use JSON schema validation");
+    let required = schema
+        .get_array("required")
+        .expect("required fields are explicit");
+    assert!(required.contains(&Bson::String(WRITE_PROTOCOL_FIELD.into())));
+    assert!(required.contains(&Bson::String("revision".into())));
+    assert_eq!(
+        schema
+            .get_document("properties")
+            .unwrap()
+            .get_document("revision")
+            .unwrap()
+            .get_str("bsonType")
+            .unwrap(),
+        "long"
+    );
+
+    for validator in [
+        event_protocol_validator(),
+        write_protocol_validator(),
+        tombstone_protocol_validator(),
+    ] {
+        let schema = validator.get_document("$jsonSchema").unwrap();
+        assert!(schema
+            .get_array("required")
+            .unwrap()
+            .contains(&Bson::String(WRITE_PROTOCOL_FIELD.into())));
+        assert_eq!(
+            schema
+                .get_document("properties")
+                .unwrap()
+                .get_document(WRITE_PROTOCOL_FIELD)
+                .unwrap()
+                .get_array("enum")
+                .unwrap(),
+            &[Bson::Int32(WRITE_PROTOCOL)]
+        );
+    }
+}
+
+#[test]
+fn current_session_documents_carry_the_write_protocol() {
+    let stored = to_doc(&record_with(None)).expect("record encodes");
+    let document = mongodb::bson::serialize_to_document(&stored).expect("record serializes");
+    assert_eq!(
+        document.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
+        WRITE_PROTOCOL
+    );
+}
+
+#[test]
+fn read_aggregations_hide_tombstoned_sessions() {
+    let listed = visible_sessions_pipeline(doc! { "owner": "subject" });
+    assert_eq!(listed[1], tombstone_lookup_stage());
+    assert_eq!(
+        listed[2],
+        doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } }
+    );
+
+    let counted = visible_count_pipeline(doc! { "status": "ready" });
+    assert_eq!(counted[1], tombstone_lookup_stage());
+    assert_eq!(
+        counted.last().unwrap(),
+        &doc! { "$group": { "_id": null, "count": { "$sum": 1_i64 } } }
+    );
+}
+
+#[test]
+fn raw_append_touches_the_session_without_lowering_a_legacy_tail() {
+    assert_eq!(
+        appended_event_session_update(&doc! { "last_seq": 9_i64 }, 7),
+        doc! {
+            "$set": {
+                "_cma_write_protocol": WRITE_PROTOCOL,
+                "revision": 0_i64,
+            },
+            "$max": { "last_seq": 7_i64 },
+        }
+    );
+    assert_eq!(
+        appended_event_session_update(&doc! { "last_seq": 4_i64, "revision": 3_i64 }, 5),
+        doc! {
+            "$set": { "_cma_write_protocol": WRITE_PROTOCOL },
+            "$max": { "last_seq": 5_i64 },
+        }
+    );
+}
+
+#[test]
+fn post_fence_event_validation_detects_internal_and_initial_gaps() {
+    let mut sequence = StoredEventSequence::default();
+    sequence
+        .observe(&doc! { "session_id": "s-1", "seq": 1_i64 })
+        .unwrap();
+    sequence
+        .observe(&doc! { "session_id": "s-1", "seq": 2_i64 })
+        .unwrap();
+    sequence
+        .observe(&doc! { "session_id": "s-2", "seq": 1_i64 })
+        .unwrap();
+
+    let internal = sequence
+        .observe(&doc! { "session_id": "s-2", "seq": 3_i64 })
+        .expect_err("sequence two is missing");
+    assert!(internal.to_string().contains("expected 2, found 3"));
+
+    let mut initial = StoredEventSequence::default();
+    assert!(initial
+        .observe(&doc! { "session_id": "s-3", "seq": 2_i64 })
+        .is_err());
+    assert!(StoredEventSequence::default()
+        .observe(&doc! { "session_id": "s-4", "seq": -1_i64 })
+        .is_err());
+    assert!(StoredEventSequence::default()
+        .observe(&doc! { "session_id": "s-5", "seq": "one" })
+        .is_err());
+}
+
+#[test]
+fn post_fence_session_validation_allows_legacy_revision_zero_but_not_bad_tails() {
+    let stored = to_doc(&record_with(None)).unwrap();
+    let mut legacy = mongodb::bson::serialize_to_document(&stored).unwrap();
+    legacy.remove("revision");
+    legacy.remove(WRITE_PROTOCOL_FIELD);
+    assert_eq!(validate_stored_session_document(&legacy).unwrap().1, 7);
+
+    legacy.insert("last_seq", -1_i64);
+    assert!(validate_stored_session_document(&legacy).is_err());
+    legacy.insert("last_seq", 7_i64);
+    legacy.insert("revision", 1_i32);
+    assert!(validate_stored_session_document(&legacy).is_err());
 }
 
 #[test]
@@ -543,6 +771,10 @@ async fn the_real_store_refuses_a_forward_gap_without_committing_it() {
         .await
         .expect("test store opens");
     let id = SessionId("sesn_real_gap".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    store.upsert(&seed).await.expect("live session is seeded");
 
     let error = store
         .append_events(&[event(&id.0, 2)])
@@ -577,20 +809,22 @@ async fn a_real_legacy_document_passes_its_first_revision_zero_cas() {
         .expect("clock is after epoch")
         .as_nanos();
     let database = format!("chrono_legacy_revision_{}_{}", std::process::id(), nonce);
-    let store = MongoSessionStore::open(&client, &database)
-        .await
-        .expect("test store opens");
 
-    let original = record_with(None);
+    let mut original = record_with(None);
+    original.session.last_seq = 0;
     let stored = to_doc(&original).expect("record encodes");
     let mut legacy = mongodb::bson::serialize_to_document(&stored).expect("record serializes");
     assert!(legacy.remove("revision").is_some());
-    store
-        .sessions
-        .clone_with_type::<Document>()
+    assert!(legacy.remove(WRITE_PROTOCOL_FIELD).is_some());
+    client
+        .database(&database)
+        .collection::<Document>(LEGACY_SESSIONS)
         .insert_one(legacy)
         .await
-        .expect("legacy document inserts");
+        .expect("legacy document is seeded before the writer fence");
+    let store = MongoSessionStore::open(&client, &database)
+        .await
+        .expect("test store opens and fences the legacy namespace");
 
     let mut update = store
         .get(&original.session.id)
@@ -618,4 +852,472 @@ async fn a_real_legacy_document_passes_its_first_revision_zero_cas() {
         .drop()
         .await
         .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_STANDALONE_URI pointing at a standalone MongoDB"]
+async fn a_real_standalone_is_rejected_before_the_store_reports_ready() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_STANDALONE_URI")
+        .expect("CHRONO_TEST_MONGODB_STANDALONE_URI must name a standalone MongoDB");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_standalone_refusal_{}_{}", std::process::id(), nonce);
+
+    let error = match MongoSessionStore::open(&client, &database).await {
+        Ok(_) => panic!("a standalone cannot support session transactions"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, StoreError::Unavailable(_)));
+    assert!(error.to_string().contains("replica set or mongos"));
+    assert!(client
+        .database(&database)
+        .list_collection_names()
+        .await
+        .expect("standalone namespace list succeeds")
+        .is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_legacy_names_are_readable_views_but_refuse_every_old_mutation() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_legacy_view_fence_{}_{}", std::process::id(), nonce);
+    let db = client.database(&database);
+
+    let mut original = record_with(None);
+    original.session.id = SessionId("sesn_view_fence".into());
+    original.session.last_seq = 1;
+    let mut legacy_session = mongodb::bson::serialize_to_document(&to_doc(&original).unwrap())
+        .expect("record serializes");
+    legacy_session.remove("revision");
+    legacy_session.remove(WRITE_PROTOCOL_FIELD);
+    db.collection::<Document>(LEGACY_SESSIONS)
+        .insert_one(legacy_session)
+        .await
+        .expect("legacy session is seeded");
+    let mut legacy_event = event_doc::to_document(&event("sesn_view_fence", 1)).unwrap();
+    legacy_event.remove(WRITE_PROTOCOL_FIELD);
+    db.collection::<Document>(LEGACY_EVENTS)
+        .insert_one(legacy_event)
+        .await
+        .expect("legacy event is seeded");
+
+    let store = MongoSessionStore::open(&client, &database)
+        .await
+        .expect("cutover succeeds");
+    let legacy_sessions = db.collection::<Document>(LEGACY_SESSIONS);
+    let legacy_events = db.collection::<Document>(LEGACY_EVENTS);
+    assert!(legacy_sessions
+        .find_one(doc! { "_id": "sesn_view_fence" })
+        .await
+        .expect("legacy view reads")
+        .is_some());
+    assert!(legacy_events
+        .find_one(doc! { "session_id": "sesn_view_fence", "seq": 1_i64 })
+        .await
+        .expect("legacy event view reads")
+        .is_some());
+
+    let mut advanced = store
+        .get(&original.session.id)
+        .await
+        .unwrap()
+        .expect("migrated session reads");
+    advanced.context_ref = Some("revision-one-survives".into());
+    assert_eq!(
+        store
+            .commit_session_idempotent("advance-before-old-replace", &advanced, &[])
+            .await
+            .unwrap(),
+        1
+    );
+    let mut old_replacement =
+        mongodb::bson::serialize_to_document(&to_doc(&original).unwrap()).unwrap();
+    old_replacement.remove("revision");
+    old_replacement.remove(WRITE_PROTOCOL_FIELD);
+
+    assert!(legacy_sessions
+        .insert_one(doc! { "_id": "old-insert" })
+        .await
+        .is_err());
+    assert!(legacy_sessions
+        .replace_one(doc! { "_id": "sesn_view_fence" }, old_replacement)
+        .with_options(ReplaceOptions::builder().upsert(true).build())
+        .await
+        .is_err());
+    assert!(legacy_sessions
+        .delete_one(doc! { "_id": "sesn_view_fence" })
+        .await
+        .is_err());
+    assert!(legacy_events
+        .insert_one(doc! {
+            "session_id": "sesn_view_fence",
+            "seq": 2_i64,
+            "kind": { "type": "session_created" },
+        })
+        .await
+        .is_err());
+
+    let durable = store.get(&original.session.id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, 1);
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some("revision-one-survives")
+    );
+    assert_eq!(store.event_tail(&original.session.id).await.unwrap(), 1);
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_tombstoned_session_cannot_be_recreated_or_appended_to() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_tombstone_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database)
+        .await
+        .expect("test store opens");
+    let mut record = record_with(None);
+    record.session.id = SessionId("sesn_tombstoned".into());
+    record.session.last_seq = 0;
+    store
+        .create_session_idempotent("create-before-delete", &record, &[])
+        .await
+        .expect("session creates");
+    store
+        .delete(&record.session.id)
+        .await
+        .expect("session deletes");
+
+    let create = store
+        .create_session_idempotent("create-after-delete", &record, &[])
+        .await
+        .expect_err("tombstone blocks create");
+    assert!(matches!(create, StoreError::SessionDeleted { .. }));
+    assert!(matches!(
+        store.upsert(&record).await,
+        Err(StoreError::SessionDeleted { .. })
+    ));
+    assert!(matches!(
+        store.append_events(&[event("sesn_tombstoned", 1)]).await,
+        Err(StoreError::SessionDeleted { .. })
+    ));
+    assert!(store
+        .database
+        .collection::<Document>(LEGACY_SESSIONS)
+        .replace_one(
+            doc! { "_id": &record.session.id.0 },
+            doc! { "_id": &record.session.id.0, "last_seq": 0_i64 },
+        )
+        .with_options(ReplaceOptions::builder().upsert(true).build())
+        .await
+        .is_err());
+    assert!(store.get(&record.session.id).await.unwrap().is_none());
+    assert!(store
+        .events_since(&record.session.id, 0)
+        .await
+        .unwrap()
+        .is_empty());
+
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_cutover_rejects_an_advertised_hole_but_allows_physical_history_ahead() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+
+    let ahead_database = format!("chrono_tail_ahead_{}_{}", std::process::id(), nonce);
+    let ahead = client.database(&ahead_database);
+    let mut ahead_record = record_with(None);
+    ahead_record.session.id = SessionId("sesn_tail_ahead".into());
+    ahead_record.session.last_seq = 2;
+    let mut ahead_doc =
+        mongodb::bson::serialize_to_document(&to_doc(&ahead_record).unwrap()).unwrap();
+    ahead_doc.remove("revision");
+    ahead_doc.remove(WRITE_PROTOCOL_FIELD);
+    ahead
+        .collection::<Document>(LEGACY_SESSIONS)
+        .insert_one(ahead_doc)
+        .await
+        .unwrap();
+    let mut first = event_doc::to_document(&event("sesn_tail_ahead", 1)).unwrap();
+    first.remove(WRITE_PROTOCOL_FIELD);
+    ahead
+        .collection::<Document>(LEGACY_EVENTS)
+        .insert_one(first)
+        .await
+        .unwrap();
+
+    let error = match MongoSessionStore::open(&client, &ahead_database).await {
+        Ok(_) => panic!("an advertised second event cannot survive with only event one"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, StoreError::Malformed(_)));
+    assert!(error.to_string().contains("advertises event 2"));
+    ahead.drop().await.unwrap();
+
+    let behind_database = format!("chrono_tail_behind_{}_{}", std::process::id(), nonce);
+    let behind = client.database(&behind_database);
+    let mut behind_record = record_with(None);
+    behind_record.session.id = SessionId("sesn_tail_behind".into());
+    behind_record.session.last_seq = 1;
+    let mut behind_doc =
+        mongodb::bson::serialize_to_document(&to_doc(&behind_record).unwrap()).unwrap();
+    behind_doc.remove("revision");
+    behind_doc.remove(WRITE_PROTOCOL_FIELD);
+    behind
+        .collection::<Document>(LEGACY_SESSIONS)
+        .insert_one(behind_doc)
+        .await
+        .unwrap();
+    let mut history = Vec::new();
+    for seq in [1, 2] {
+        let mut document = event_doc::to_document(&event("sesn_tail_behind", seq)).unwrap();
+        document.remove(WRITE_PROTOCOL_FIELD);
+        history.push(document);
+    }
+    behind
+        .collection::<Document>(LEGACY_EVENTS)
+        .insert_many(history)
+        .await
+        .unwrap();
+
+    let store = MongoSessionStore::open(&client, &behind_database)
+        .await
+        .expect("a physical tail ahead of the record is recoverable");
+    assert_eq!(
+        store
+            .event_tail(&SessionId("sesn_tail_behind".into()))
+            .await
+            .unwrap(),
+        2
+    );
+    behind.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_namespace_cutover_resumes_known_states_and_rejects_ambiguous_ones() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+
+    let partial_name = format!("chrono_cutover_partial_{}_{}", std::process::id(), nonce);
+    let partial = client.database(&partial_name);
+    partial.create_collection(SESSIONS).await.unwrap();
+    let store = MongoSessionStore::open(&client, &partial_name)
+        .await
+        .expect("rename-complete/view-missing state resumes");
+    MongoSessionStore::open(&client, &partial_name)
+        .await
+        .expect("a complete cutover is idempotent");
+    partial
+        .collection::<Document>(LEGACY_SESSIONS)
+        .drop()
+        .await
+        .unwrap();
+    partial.create_collection("wrong_sessions").await.unwrap();
+    partial
+        .create_collection(LEGACY_SESSIONS)
+        .view_on("wrong_sessions")
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.ping().await,
+        Err(StoreError::Unavailable(_))
+    ));
+    partial.drop().await.unwrap();
+
+    let ambiguous_name = format!("chrono_cutover_ambiguous_{}_{}", std::process::id(), nonce);
+    let ambiguous = client.database(&ambiguous_name);
+    ambiguous.create_collection(LEGACY_SESSIONS).await.unwrap();
+    ambiguous.create_collection(SESSIONS).await.unwrap();
+    assert!(MongoSessionStore::open(&client, &ambiguous_name)
+        .await
+        .is_err());
+    ambiguous.drop().await.unwrap();
+
+    let wrong_name = format!("chrono_cutover_wrong_view_{}_{}", std::process::id(), nonce);
+    let wrong = client.database(&wrong_name);
+    wrong.create_collection(SESSIONS).await.unwrap();
+    wrong.create_collection("wrong_sessions").await.unwrap();
+    wrong
+        .create_collection(LEGACY_SESSIONS)
+        .view_on("wrong_sessions")
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
+    assert!(MongoSessionStore::open(&client, &wrong_name).await.is_err());
+    wrong.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_late_receipt_failure_aborts_events_and_record_replacement_too() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_atomic_abort_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database)
+        .await
+        .expect("test store opens");
+    let mut original = record_with(None);
+    original.session.id = SessionId("sesn_atomic_abort".into());
+    original.session.last_seq = 0;
+    store
+        .create_session_idempotent("atomic-abort-seed", &original, &[])
+        .await
+        .unwrap();
+    store
+        .database
+        .run_command(doc! {
+            "collMod": WRITES,
+            "validator": { "required_only_for_abort_test": { "$exists": true } },
+            "validationLevel": "strict",
+            "validationAction": "error",
+        })
+        .await
+        .expect("test forces the final receipt insert to fail validation");
+
+    let mut replacement = store.get(&original.session.id).await.unwrap().unwrap();
+    replacement.session.last_seq = 1;
+    assert!(store
+        .commit_session_idempotent(
+            "atomic-abort-must-fail",
+            &replacement,
+            &[event("sesn_atomic_abort", 1)],
+        )
+        .await
+        .is_err());
+
+    let durable = store.get(&original.session.id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, 1);
+    assert_eq!(durable.session.last_seq, 0);
+    assert!(store
+        .events_since(&original.session.id, 0)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .writes
+        .find_one(doc! { "_id": "atomic-abort-must-fail" })
+        .await
+        .unwrap()
+        .is_none());
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_raw_append_and_delete_serialize_without_leaving_orphan_events() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_append_delete_race_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database)
+        .await
+        .expect("test store opens");
+
+    for attempt in 0..16 {
+        let id = SessionId(format!("sesn_append_delete_{attempt}"));
+        let mut record = record_with(None);
+        record.session.id = id.clone();
+        record.session.last_seq = 0;
+        store
+            .create_session_idempotent(&format!("race-create-{attempt}"), &record, &[])
+            .await
+            .unwrap();
+
+        let append_store = store.clone();
+        let delete_store = store.clone();
+        let append_id = id.clone();
+        let delete_id = id.clone();
+        let (append, delete) = tokio::join!(
+            async move { append_store.append_events(&[event(&append_id.0, 1)]).await },
+            async move { delete_store.delete(&delete_id).await }
+        );
+        assert!(matches!(
+            append,
+            Ok(()) | Err(StoreError::SessionDeleted { .. })
+        ));
+        delete.expect("delete commits");
+        assert_eq!(
+            store
+                .events
+                .count_documents(doc! { "session_id": &id.0 })
+                .await
+                .unwrap(),
+            0,
+            "attempt {attempt} left an event behind"
+        );
+        assert!(store
+            .sessions
+            .find_one(doc! { "_id": &id.0 })
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store.is_tombstoned(&id).await.unwrap());
+    }
+
+    MongoSessionStore::open(&client, &database)
+        .await
+        .expect("the post-fence audit accepts every race result");
+    client.database(&database).drop().await.unwrap();
 }
