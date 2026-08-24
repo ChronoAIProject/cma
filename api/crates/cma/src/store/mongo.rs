@@ -1409,10 +1409,6 @@ impl SessionStore for MongoSessionStore {
         .await
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.transactional_upsert(record).await
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         Ok(self.query(doc! { "_id": &id.0 }).await?.into_iter().next())
     }
@@ -1534,95 +1530,6 @@ impl SessionStore for MongoSessionStore {
 }
 
 impl MongoSessionStore {
-    async fn transactional_upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        let id = record.session.id.clone();
-        let document = to_doc(record)?;
-        let context = (
-            self.sessions.clone(),
-            self.events.clone(),
-            self.tombstones.clone(),
-            id.clone(),
-            document,
-        );
-        let mut session = self.client.start_session().await.map_err(|error| {
-            StoreError::Unavailable(format!("start session upsert transaction: {error}"))
-        })?;
-        let outcome = session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::majority())
-            .and_run(
-                context,
-                |session, (sessions, events, tombstones, id, document)| {
-                    async move {
-                        if tombstones
-                            .find_one(doc! { "_id": &id.0 })
-                            .session(&mut *session)
-                            .await?
-                            .is_some()
-                        {
-                            return Err(mongodb::error::Error::custom(
-                                StoreError::SessionDeleted { id: (*id).clone() },
-                            ));
-                        }
-                        let existing = sessions
-                            .find_one(doc! { "_id": &id.0 })
-                            .session(&mut *session)
-                            .await?;
-                        if let Some(existing) = existing.as_ref() {
-                            validate_status_transition(id, &existing.status, &document.status)
-                                .map_err(mongodb::error::Error::custom)?;
-                        }
-                        let found = events
-                            .find_one(doc! { "session_id": &id.0 })
-                            .sort(doc! { "seq": -1 })
-                            .projection(doc! { "_id": 0, "seq": 1 })
-                            .session(&mut *session)
-                            .await?;
-                        let event_tail =
-                            stored_event_tail(found).map_err(mongodb::error::Error::custom)?;
-                        let sequence_floor = durable_sequence_floor(
-                            event_tail,
-                            existing.as_ref().map(|record| record.last_seq),
-                        )
-                        .map_err(mongodb::error::Error::custom)?;
-                        let requested_tail = u64::try_from(document.last_seq).map_err(|_| {
-                            mongodb::error::Error::custom(StoreError::Malformed(
-                                "session event tail must not be negative".into(),
-                            ))
-                        })?;
-                        let durable_tail =
-                            resolved_transaction_tail(id, sequence_floor, requested_tail, &[])
-                                .map_err(mongodb::error::Error::custom)?;
-                        document.last_seq = i64::try_from(durable_tail).map_err(|_| {
-                            mongodb::error::Error::custom(StoreError::Malformed(format!(
-                                "session event tail {durable_tail} cannot be stored"
-                            )))
-                        })?;
-                        sessions
-                            .replace_one(doc! { "_id": &document.id }, &*document)
-                            .with_options(ReplaceOptions::builder().upsert(true).build())
-                            .session(&mut *session)
-                            .await?;
-                        Ok(())
-                    }
-                    .boxed()
-                },
-            )
-            .await;
-        match outcome {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                if let Some(error) = error.get_custom::<StoreError>() {
-                    return Err(error.clone());
-                }
-                Err(StoreError::Unavailable(format!(
-                    "upsert session transaction: {error}"
-                )))
-            }
-        }
-    }
-
     /// Atomically commit one exact writer-owned record/event unit.
     ///
     /// The receipt is part of the transaction. The driver's convenient runner

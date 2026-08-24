@@ -290,7 +290,7 @@ async fn a_session_that_never_had_a_runtime_records_no_loss() {
         .expect("present");
     let old = record.runtime_id.take().expect("had a runtime");
     record.session.status = SessionStatus::Provisioning;
-    store.upsert(&record).await.expect("the fixture is updated");
+    store.seed(&record).await.expect("the fixture is updated");
     adapter.lose(&old).await;
     drop(first);
 
@@ -965,7 +965,7 @@ async fn a_session_recorded_before_capabilities_existed_is_settled_when_it_comes
         .expect("present");
     record.session.capabilities = Default::default();
     assert!(record.session.capabilities.unrecorded());
-    store.upsert(&record).await.expect("recorded");
+    store.seed(&record).await.expect("recorded");
 
     drop(first);
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
@@ -1020,7 +1020,7 @@ async fn a_session_that_recorded_its_own_set_keeps_it() {
         snapshot: false,
         ..Default::default()
     };
-    store.upsert(&record).await.expect("recorded");
+    store.seed(&record).await.expect("recorded");
 
     drop(first);
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));

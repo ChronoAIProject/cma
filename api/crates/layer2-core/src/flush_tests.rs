@@ -105,10 +105,6 @@ impl SessionStore for PairingStore {
         self.inner.ping().await
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.inner.upsert(record).await
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.inner.get(id).await
     }
@@ -514,7 +510,7 @@ async fn public_cursor_waits_for_a_lower_runtime_event_racing_send_prompt() {
 async fn two_queued_writers_keep_each_event_with_its_own_record_snapshot() {
     let store = Arc::new(PairingStore::default());
     let base = base_record();
-    store.inner.upsert(&base).await.expect("seed record");
+    store.inner.seed(&base).await.expect("seed record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
     let mut first_record = base.clone();
@@ -600,7 +596,7 @@ async fn two_queued_writers_keep_each_event_with_its_own_record_snapshot() {
 async fn deletion_in_another_service_prevents_stale_resurrection() {
     let store = Arc::new(FakeStore::default());
     let base = base_record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
     let stale_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let deleting_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let mut stale = base;
@@ -626,12 +622,12 @@ async fn deletion_in_another_service_prevents_stale_resurrection() {
 async fn a_no_entry_stop_blocks_only_its_session_while_the_store_call_is_pending() {
     let store = Arc::new(PairingStore::default());
     let base = base_record();
-    store.inner.upsert(&base).await.expect("seed record");
+    store.inner.seed(&base).await.expect("seed record");
     let mut unrelated = base.clone();
     unrelated.session.id = SessionId("sesn_unrelated_progress".into());
     store
         .inner
-        .upsert(&unrelated)
+        .seed(&unrelated)
         .await
         .expect("seed unrelated record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
@@ -709,7 +705,7 @@ async fn a_failed_no_entry_stop_cannot_commit_later_or_tear_down_the_runtime() {
     let mut base = base_record();
     let handle = "runtime-that-must-stay-live".to_string();
     base.runtime_id = Some(handle.clone());
-    store.inner.upsert(&base).await.expect("seed record");
+    store.inner.seed(&base).await.expect("seed record");
     adapter
         .running
         .lock()
@@ -769,7 +765,7 @@ async fn readoption_cannot_install_from_a_snapshot_that_has_since_terminated() {
     let mut stale = base_record();
     let handle = "runtime-stale-readoption".to_string();
     stale.runtime_id = Some(handle.clone());
-    store.upsert(&stale).await.expect("seed live record");
+    store.seed(&stale).await.expect("seed live record");
     adapter.running.lock().await.insert(handle, Some(id().0));
 
     let service = service_over(store.clone(), adapter);
@@ -777,7 +773,7 @@ async fn readoption_cannot_install_from_a_snapshot_that_has_since_terminated() {
     terminal.session.status = SessionStatus::Terminated;
     terminal.runtime_id = None;
     store
-        .upsert(&terminal)
+        .seed(&terminal)
         .await
         .expect("the stale read is superseded durably");
 

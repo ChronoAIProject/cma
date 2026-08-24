@@ -78,10 +78,6 @@ mod tests {
             }
         }
 
-        async fn upsert(&self, _record: &SessionRecord) -> Result<(), StoreError> {
-            unreachable!("readiness must only ping the store")
-        }
-
         async fn get(&self, _id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
             unreachable!("readiness must only ping the store")
         }
