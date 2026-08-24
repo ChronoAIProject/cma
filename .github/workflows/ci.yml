@@ -181,7 +181,7 @@ jobs:
         run: npm run build
       - name: Documentation examples
         run: npm run docs:check
-      - name: Publishable contents
+      - name: Repository package contents
         run: npm pack --dry-run
       - name: Scratch Node consumer
         run: |
