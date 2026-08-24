@@ -1,20 +1,25 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AguiTransport } from '../agui';
-import type { SessionResourceStatus } from '../sdk';
-import { toSession } from '../sdk/sessions';
+import {
+  NO_CAPABILITIES,
+  type AguiTransport,
+  type Session,
+  type SessionResourceStatus,
+} from '@chronoai/cma-sdk';
+import { stateFrame } from '@chronoai/cma-sdk/testing';
 import { ConversationSurface } from './ConversationSurface';
 
 class ControlledTransport implements AguiTransport {
   opens = 0;
   histories = 0;
   #frame: ((raw: unknown) => void) | undefined;
-  #drop: ((why: string) => void) | undefined;
+  #drop: ((cause: unknown) => void) | undefined;
 
   open(
     _session: string,
+    _cursor: number,
     onFrame: (raw: unknown) => void,
-    onDrop: (why: string) => void,
+    onDrop: (cause: unknown) => void,
   ): () => void {
     this.opens += 1;
     this.#frame = onFrame;
@@ -36,19 +41,20 @@ class ControlledTransport implements AguiTransport {
   }
 }
 
-function session(resources = true) {
-  return toSession({
+function session(resources = true): Session {
+  return {
     id: 'sesn_resources',
-    status: 'running',
+    lifecycle: 'running',
     kernel: 'codex',
-    created_at: '2026-08-23T04:00:00Z',
-    conforms_to: [
-      'https://spec.chrono-ai.fun/cma/1.0/conf/core',
-      'https://spec.chrono-ai.fun/cma/1.0/conf/conversation',
-      'https://spec.chrono-ai.fun/cma/1.0/conf/usage',
-      ...(resources ? ['https://spec.chrono-ai.fun/cma/1.0/conf/resources'] : []),
-    ],
-  });
+    createdAt: Date.parse('2026-08-23T04:00:00Z'),
+    plane: 'conversation',
+    capabilities: {
+      ...NO_CAPABILITIES,
+      conversation: true,
+      usage: true,
+      resources,
+    },
+  };
 }
 
 async function settle(): Promise<void> {
@@ -106,7 +112,8 @@ describe('the resource status point read', () => {
       transport.drop();
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      // Full jitter keeps the 500 ms reconnect delay below this bound.
+      await vi.advanceTimersByTimeAsync(600);
     });
     await settle();
 
@@ -174,31 +181,34 @@ describe('the projected state in its reading column', () => {
     await settle();
 
     act(() => {
-      transport.emit({
-        type: 'STATE_DELTA',
-        threadId: current.id,
-        runId: 'run_resources',
-        'cma:live': true,
-        delta: [{ op: 'replace', path: '/resources', value: READING }],
-      });
-      transport.emit({
-        type: 'STATE_DELTA',
-        threadId: current.id,
-        runId: 'run_resources',
-        seq: 8,
-        delta: [
-          {
-            op: 'replace',
-            path: '/memoryPressure',
-            value: {
-              usedBytes: 892 * 1024 ** 2,
-              limitBytes: 1024 ** 3,
-              occupancyPermille: 871,
-              since: '2026-08-23T04:12:00Z',
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_resources',
+          seq: 7,
+          live: true,
+          patches: [{ op: 'replace', path: 'resources', value: READING }],
+        }),
+      );
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_resources',
+          seq: 8,
+          patches: [
+            {
+              op: 'replace',
+              path: 'memoryPressure',
+              value: {
+                usedBytes: 892 * 1024 ** 2,
+                limitBytes: 1024 ** 3,
+                occupancyPermille: 871,
+                since: '2026-08-23T04:12:00Z',
+              },
             },
-          },
-        ],
-      });
+          ],
+        }),
+      );
     });
 
     const usage = document.querySelector('.usage');
@@ -228,42 +238,46 @@ describe('the projected state in its reading column', () => {
     await settle();
 
     act(() => {
-      transport.emit({
-        type: 'STATE_DELTA',
-        threadId: current.id,
-        runId: 'run_resources',
-        'cma:live': true,
-        delta: [{ op: 'replace', path: '/resources', value: READING }],
-      });
-      transport.emit({
-        type: 'STATE_DELTA',
-        threadId: current.id,
-        runId: 'run_resources',
-        seq: 8,
-        delta: [
-          {
-            op: 'replace',
-            path: '/memoryPressure',
-            value: {
-              usedBytes: 892 * 1024 ** 2,
-              limitBytes: 1024 ** 3,
-              occupancyPermille: 871,
-              since: '2026-08-23T04:12:00Z',
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_resources',
+          seq: 7,
+          live: true,
+          patches: [{ op: 'replace', path: 'resources', value: READING }],
+        }),
+      );
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_resources',
+          seq: 8,
+          patches: [
+            {
+              op: 'replace',
+              path: 'memoryPressure',
+              value: {
+                usedBytes: 892 * 1024 ** 2,
+                limitBytes: 1024 ** 3,
+                occupancyPermille: 871,
+                since: '2026-08-23T04:12:00Z',
+              },
             },
-          },
-        ],
-      });
+          ],
+        }),
+      );
     });
     expect(screen.getByRole('alert')).toBeInTheDocument();
 
     act(() => {
-      transport.emit({
-        type: 'STATE_DELTA',
-        threadId: current.id,
-        runId: 'run_resources',
-        seq: 9,
-        delta: [{ op: 'replace', path: '/memoryPressure', value: null }],
-      });
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_resources',
+          seq: 9,
+          patches: [{ op: 'replace', path: 'memoryPressure', value: null }],
+        }),
+      );
     });
 
     expect(screen.queryByRole('alert')).toBeNull();

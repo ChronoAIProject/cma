@@ -8,14 +8,19 @@ import { MessageStream } from './MessageStream';
 import { AgentContent } from './AgentContent';
 import { blocksOf } from './blocks';
 import { summaryOf } from './Thinking';
-import { EMPTY, fold, reduce, type Conversation, type Entry } from './conversation';
-import { AguiConnection, MockSession, toEvent, transcriptNamed, type AguiEvent } from '../agui';
+import { EMPTY, fold, reduce, type Conversation, type Entry } from '@chronoai/cma-sdk';
+import { AguiConnection, toEvent as parseEvent, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * The message stream — `Web_Style.md` §18.1.
  */
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Parse a frame in the session/run envelope shared by the focused fixtures. */
+const toEvent = (frame: Record<string, unknown>): AguiEvent =>
+  parseEvent({ threadId: 'sesn_1', runId: 'run_1', ...frame });
 
 /** Drive a transcript through the real client and fold what comes out. */
 async function conversationFrom(name: string, options: { dropAfter?: number } = {}) {
@@ -162,15 +167,15 @@ describe('a turn', () => {
     expect(doneHtml).not.toContain('turn__caret');
   });
 
-  it('draws a rotation as a boundary in the stream', async () => {
+  it('draws a counted conversation gap as a boundary in the stream', async () => {
     // §18.6: not a status chip. An owner who can see the boundary recognises a
     // gap rather than puzzling over one.
     const { conversation } = await conversationFrom('rotates');
     render(<MessageStream entries={conversation.entries} />);
 
     expect(screen.getByRole('separator')).toBeInTheDocument();
-    expect(screen.getByText(/carried forward from/i)).toBeInTheDocument();
-    expect(screen.getByText(/did not travel/i)).toBeInTheDocument();
+    expect(screen.getByText(/12 frames were not recorded/i)).toBeInTheDocument();
+    expect(screen.getByText(/surrounding conversation remains available/i)).toBeInTheDocument();
   });
 
   it('shows an event kind it does not know rather than hiding it', async () => {
@@ -256,7 +261,10 @@ describe('agent-emitted content', () => {
 
 /** The stylesheet itself is the assertion: no rule may colour agent content. */
 function readCss(): string {
-  return readFileSync(resolve(process.cwd(), 'src/chat/MessageStream.css'), 'utf8');
+  return [
+    readFileSync(resolve(process.cwd(), 'src/chat/MessageStream.css'), 'utf8'),
+    readFileSync(resolve(process.cwd(), 'src/markdown/MarkdownContent.css'), 'utf8'),
+  ].join('\n');
 }
 
 describe('the stream stylesheet contract', () => {
@@ -305,13 +313,19 @@ describe('the plane-change boundary', () => {
   it('still draws a boundary nobody asked for', () => {
     // A stretch the runtime had to drop is the same kind of fact and is drawn
     // the same way, minus a destination there is none of.
-    render(
-      <MessageStream entries={[{ kind: 'gap', id: 'gap-4', rotatedAt: undefined, seq: 4 }]} />,
-    );
+    render(<MessageStream entries={[{ kind: 'gap', id: 'gap-4', frames: 7, seq: 4 }]} />);
 
     const boundary = screen.getByRole('separator');
-    expect(boundary).toHaveTextContent(/carried forward/i);
+    expect(boundary).toHaveTextContent(/7 frames were not recorded/i);
     expect(boundary).not.toHaveTextContent(/moved to/i);
+  });
+
+  it('keeps a malformed gap visible without printing an invented count', () => {
+    render(<MessageStream entries={[{ kind: 'gap', id: 'gap-4', seq: 4 }]} />);
+
+    const boundary = screen.getByRole('separator');
+    expect(boundary).toHaveTextContent(/part of this conversation was not recorded/i);
+    expect(boundary).not.toHaveTextContent(/NaN/);
   });
 });
 
