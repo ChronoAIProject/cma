@@ -423,7 +423,7 @@ async fn create_ready_session(
 }
 
 #[tokio::test]
-async fn listed_origin_allows_authorization_over_an_actual_http_preflight() {
+async fn listed_origin_completes_an_authorized_http_cors_sequence() {
     let app = with_cors(
         test_surface(true).app,
         vec![HeaderValue::from_static(LISTED_ORIGIN)],
@@ -441,22 +441,20 @@ async fn listed_origin_allows_authorization_over_an_actual_http_preflight() {
             .await
     });
 
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let response = client
         .request(Method::OPTIONS, format!("http://{address}/api/v1/sessions"))
         .header(header::ORIGIN, LISTED_ORIGIN)
         .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
-        .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization")
+        .header(
+            header::ACCESS_CONTROL_REQUEST_HEADERS,
+            "authorization,content-type",
+        )
         .send()
         .await
         .expect("the HTTP server answers the preflight");
     let status = response.status();
     let headers = response.headers().clone();
-
-    shutdown_tx.send(()).expect("the server is still running");
-    server
-        .await
-        .expect("the server task joins")
-        .expect("the server stops cleanly");
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
@@ -476,12 +474,82 @@ async fn listed_origin_allows_authorization_over_an_actual_http_preflight() {
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         "authorization",
     );
+    assert_header_list_contains(
+        &headers,
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "content-type",
+    );
     assert_header_list_contains(&headers, header::ACCESS_CONTROL_ALLOW_METHODS, "POST");
     assert_eq!(
         headers
             .get(header::ACCESS_CONTROL_MAX_AGE)
             .expect("preflight decisions are cacheable"),
         "3600"
+    );
+
+    let response = client
+        .post(format!("http://{address}/api/v1/sessions"))
+        .header(header::ORIGIN, LISTED_ORIGIN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer browser-fixture")
+        .body("{}")
+        .send()
+        .await
+        .expect("the admitted browser request reaches the HTTP server");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .expect("the actual response retains the browser grant"),
+        LISTED_ORIGIN
+    );
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("the authenticated create response is JSON");
+    assert!(
+        body["id"].is_string(),
+        "the authenticated call created no session: {body}"
+    );
+
+    shutdown_tx.send(()).expect("the server is still running");
+    server
+        .await
+        .expect("the server task joins")
+        .expect("the server stops cleanly");
+}
+
+#[tokio::test]
+async fn listed_origin_allows_the_sdk_reconnect_cursor_header() {
+    let app = with_cors(
+        test_surface(true).app,
+        vec![HeaderValue::from_static(LISTED_ORIGIN)],
+    );
+    let response = app
+        .oneshot(preflight_request(
+            "/api/v1/sessions/session/events?after=17",
+            LISTED_ORIGIN,
+            Method::GET,
+            Some("authorization,last-event-id"),
+        ))
+        .await
+        .expect("router answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&HeaderValue::from_static(LISTED_ORIGIN))
+    );
+    assert_header_list_contains(
+        response.headers(),
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "authorization",
+    );
+    assert_header_list_contains(
+        response.headers(),
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "last-event-id",
     );
 }
 
