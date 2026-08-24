@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { SessionRail } from './SessionRail';
 import { SessionHeader } from './SessionHeader';
 import type { Session } from './types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 /**
  * The band grid — docs/Web_Style.md §5.

@@ -1,4 +1,4 @@
-import type { Usage as UsageState } from './conversation';
+import type { Usage as UsageState } from '@chronoai/cma-sdk';
 import './Usage.css';
 
 /**

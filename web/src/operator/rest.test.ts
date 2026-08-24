@@ -51,11 +51,10 @@ const SETTINGS_WIRE = {
  */
 
 function respond(body: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
+  return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
-    json: () => Promise.resolve(body),
-  } as unknown as Response;
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 afterEach(() => {
@@ -378,7 +377,7 @@ describe('talking to the control plane', () => {
   });
 
   it('reads, conditionally replaces, and briefing-resets platform settings', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(respond(SETTINGS_WIRE));
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(respond(SETTINGS_WIRE)));
     vi.stubGlobal('fetch', fetchMock);
     const store = createRestOperatorStore();
     const current = await store.readPlatformSettings();

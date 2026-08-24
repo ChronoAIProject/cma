@@ -8,8 +8,8 @@ import { SessionHeader } from './SessionHeader';
 import { SessionActions } from './SessionActions';
 import { abilitiesFor } from './availability';
 import type { Session, SessionLifecycle } from './types';
-import { NO_CAPABILITIES } from '../agui';
-import type { SessionSpend } from '../sdk';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
+import type { SessionSpend } from '@chronoai/cma-sdk';
 
 /**
  * The session header and the details drawer — docs/Web_Style.md §12 and §11.

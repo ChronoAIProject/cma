@@ -9,7 +9,7 @@ import { NewSessionDialog } from './sessions/NewSessionDialog';
 import { StartupProgress } from './sessions/StartupProgress';
 import { BouncingText } from './sessions/BouncingText';
 import { SignInCard } from './chat/SignInCard';
-import type { SignIn } from './chat/conversationModel';
+import type { SignIn } from '@chronoai/cma-sdk';
 import type { Stage } from './sessions/progress';
 import { SessionActions } from './sessions/SessionActions';
 import { SessionHeader } from './sessions/SessionHeader';
@@ -51,7 +51,7 @@ import type { OperatorStore } from './operator/types';
 import './Console.css';
 import { DetailsPanel } from './chat/DetailsPanel';
 import { sectionsOf } from './chat/ToolCall';
-import type { ToolCallEntry } from './chat/conversation';
+import type { ToolCallEntry } from '@chronoai/cma-sdk';
 
 /**
  * The authenticated surface. Same page, now driven live.
@@ -737,7 +737,7 @@ export function Console({ user, onSignOut }: ConsoleProps) {
                 /*
                  * The session's own granted set, parsed once at the boundary
                  * by `toSession`. Re-deriving it here handed `toCapabilities`
-                 * an already-parsed Session — which carries no `conforms_to`
+                 * an already-parsed Session — which carries no raw grant list
                  * — so every capability came back false: no interrupt key, no
                  * steering tag, usage permanently "not reported", and the
                  * concurrency policy silently falling back to `reject`.

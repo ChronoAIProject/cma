@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { SessionActions } from './SessionActions';
 import { switchFor } from './planeSwitch';
 import type { KernelOffer, Session, SessionLifecycle, SessionPlane } from './types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 /**
  * Switching a session between planes — `Web_Style.md` §18.6.

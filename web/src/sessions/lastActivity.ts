@@ -67,6 +67,9 @@ export function lastActivity(
     case 'terminated':
       return session.stopReason === 'error' ? 'Ended after a failure' : 'Ended';
 
+    case 'unknown':
+      return session.reportedStatus ?? 'State unavailable';
+
     default: {
       const exhaustive: never = session.lifecycle;
       return exhaustive;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AvailableCommand } from './conversation';
+import type { AvailableCommand } from '@chronoai/cma-sdk';
 import './CommandMenu.css';
 
 /**
