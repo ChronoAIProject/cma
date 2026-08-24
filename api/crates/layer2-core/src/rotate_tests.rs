@@ -7,14 +7,132 @@
 //!
 //! Two services over one store, expecting different versions, is an upgrade.
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
+use layer3_adapter::ConversationInput;
+use tokio::sync::Notify;
+
+use crate::event::{Event, EventKind, StoredEvent};
+use crate::ids::{SessionId, SubjectId};
 use crate::session::SessionStatus;
-use crate::store::SessionStore;
+use crate::store::{SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, service_on_version, service_on_version_with_skills, spec, user, FakeAdapter,
     FakeStore,
 };
+use crate::Reserved;
+
+#[derive(Default)]
+struct RotationStore {
+    inner: Arc<FakeStore>,
+    pause_next: AtomicBool,
+    entered: Notify,
+    release: Notify,
+    calls: AtomicUsize,
+    failures: AtomicUsize,
+}
+
+impl RotationStore {
+    fn arm(&self) {
+        assert!(!self.pause_next.swap(true, Ordering::SeqCst));
+    }
+
+    fn fail_next(&self, count: usize) {
+        self.failures.store(count, Ordering::SeqCst);
+    }
+
+    async fn wait_until_held(&self) {
+        tokio::time::timeout(Duration::from_secs(2), self.entered.notified())
+            .await
+            .expect("plane change reached the store");
+    }
+
+    async fn before_commit(&self) -> Result<(), StoreError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.pause_next.swap(false, Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        if self
+            .failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(StoreError::Unavailable("rotation store unavailable".into()));
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionStore for RotationStore {
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.inner.ping().await
+    }
+
+    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
+        self.inner.upsert(record).await
+    }
+
+    async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
+        self.inner.get(id).await
+    }
+
+    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+        self.inner.list_for(owner).await
+    }
+
+    async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
+        self.inner.reserved_capacity().await
+    }
+
+    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
+        self.inner.list_all().await
+    }
+
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
+        self.inner.delete(id).await
+    }
+
+    async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
+        self.inner.append_events(events).await
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.before_commit().await?;
+        self.inner
+            .commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .create_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn events_since(
+        &self,
+        id: &SessionId,
+        after: u64,
+    ) -> Result<Vec<StoredEvent>, StoreError> {
+        self.inner.events_since(id, after).await
+    }
+}
 
 /// Wait for a session to leave the states that mean "in progress".
 async fn await_usable(
@@ -484,6 +602,17 @@ fn ambidextrous() -> Arc<FakeAdapter> {
     })
 }
 
+fn switch_capable() -> Arc<FakeAdapter> {
+    Arc::new(FakeAdapter {
+        accept_plane_switch: true,
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    })
+}
+
 /// A live session on the terminal plane, and the service holding it.
 async fn started(
     adapter: Arc<FakeAdapter>,
@@ -501,11 +630,48 @@ async fn started(
     (svc, store, alice, created)
 }
 
+async fn started_adversarial(
+    store: Arc<RotationStore>,
+    adapter: Arc<FakeAdapter>,
+) -> (
+    Arc<crate::service::SessionService>,
+    crate::authz::Caller,
+    crate::session::Session,
+    SessionRecord,
+) {
+    let svc = crate::test_support::service_over(store.clone(), adapter);
+    let alice = user("plane-conflict-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let lane = svc.event_logs.lane(&created.id);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("session writes settle before the plane change");
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    store.calls.store(0, Ordering::SeqCst);
+    (svc, alice, created, before)
+}
+
+async fn wait_for_rotation_lane(svc: &Arc<crate::service::SessionService>, id: &SessionId) {
+    let lane = svc.event_logs.lane(id);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the rejected plane change leaves the durable lane");
+}
+
 #[tokio::test]
 async fn a_session_moves_between_planes_and_stays_the_same_session() {
     // The whole point: chat and terminal are two surfaces onto one session,
     // and moving between them costs a rotation and nothing else.
-    let adapter = ambidextrous();
+    let adapter = switch_capable();
     let (svc, store, alice, created) = started(Arc::clone(&adapter)).await;
     let runtime = store
         .get(&created.id)
@@ -545,6 +711,50 @@ async fn a_session_moves_between_planes_and_stays_the_same_session() {
         vec![b"what the agent has done so far".to_vec()],
         "the conversation must travel to the runtime on the other plane"
     );
+    let durable = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("moved session remains durable");
+    let replacement = durable.runtime_id.clone().expect("replacement is durable");
+    assert_ne!(replacement, runtime);
+    assert_eq!(
+        durable.session.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert!(durable.session.capabilities.conversation);
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("replacement is live");
+        assert_eq!(entry.session.options.mode, durable.session.options.mode);
+        assert_eq!(entry.session.capabilities, durable.session.capabilities);
+        assert_eq!(
+            entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+            Some(replacement.as_str())
+        );
+        assert!(entry.input.is_none());
+        assert!(entry.conversation.is_some());
+    }
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        &[runtime.clone()]
+    );
+    assert!(!adapter.running.lock().await.contains_key(&runtime));
+    assert!(adapter.running.lock().await.contains_key(&replacement));
+    assert!(
+        adapter.plane_switches.lock().await.is_empty(),
+        "even a willing adapter is replaced until it can atomically replace the active process and channels"
+    );
+    svc.send_prompt(&alice, &created.id, "continue on chat".into())
+        .await
+        .expect("the replacement conversation channel is usable");
+    let sent = crate::conversation_support::until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::Prompt(_))
+    })
+    .await;
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::Prompt(_))));
 
     // And back, because a plane change is not a one-way door.
     svc.change_plane(&alice, &created.id, crate::options::SessionMode::Terminal)
@@ -554,6 +764,165 @@ async fn a_session_moves_between_planes_and_stays_the_same_session() {
     assert_eq!(back.id, created.id);
     assert!(back.capabilities.terminal && !back.capabilities.conversation);
     assert_eq!(back.rotations, 2);
+    let back_record = store.get(&created.id).await.unwrap().unwrap();
+    let back_runtime = back_record
+        .runtime_id
+        .expect("terminal replacement is durable");
+    let entries = svc.entries.read().await;
+    let entry = entries
+        .get(&created.id)
+        .expect("terminal replacement is live");
+    assert_eq!(
+        entry.session.options.mode,
+        crate::options::SessionMode::Terminal
+    );
+    assert_eq!(
+        entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+        Some(back_runtime.as_str())
+    );
+    assert!(entry.input.is_some());
+    assert!(entry.conversation.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plane_change_revision_collision_never_switches_or_tears_down_the_runtime() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = switch_capable();
+    let (svc, alice, created, before) = started_adversarial(store.clone(), adapter.clone()).await;
+    let old_runtime = before.runtime_id.clone().expect("old runtime is durable");
+    store.arm();
+
+    let moving_service = Arc::clone(&svc);
+    let moving_owner = alice.clone();
+    let moving_id = created.id.clone();
+    let moving = tokio::spawn(async move {
+        moving_service
+            .change_plane(
+                &moving_owner,
+                &moving_id,
+                crate::options::SessionMode::Conversation,
+            )
+            .await
+    });
+    store.wait_until_held().await;
+
+    let mut rival = store.inner.get(&created.id).await.unwrap().unwrap();
+    rival.session.status = SessionStatus::Running;
+    let rival_seq = rival.session.last_seq + 1;
+    rival.session.last_seq = rival_seq;
+    store
+        .inner
+        .commit_session_idempotent(
+            "rival-before-plane-change",
+            &rival,
+            &[Event {
+                session_id: created.id.clone(),
+                seq: rival_seq,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Running,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .expect("rival lifecycle decision commits first");
+    store.release.notify_one();
+
+    assert!(matches!(
+        moving.await.expect("plane change task completes"),
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Running);
+    assert_eq!(
+        durable.session.options.mode,
+        crate::options::SessionMode::Terminal
+    );
+    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    let replay = store
+        .inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap();
+    assert_eq!(replay.len(), 1);
+    assert!(replay.iter().all(|event| !matches!(
+        event.kind,
+        crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
+    )));
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("old runtime stays live");
+        assert_eq!(entry.session.status, SessionStatus::Ready);
+        assert_eq!(
+            entry.session.options.mode,
+            crate::options::SessionMode::Terminal
+        );
+        assert_eq!(
+            entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+            Some(old_runtime.as_str())
+        );
+        assert!(entry.input.is_some());
+        assert!(entry.conversation.is_none());
+    }
+    assert!(adapter.plane_switches.lock().await.is_empty());
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(adapter.running.lock().await.contains_key(&old_runtime));
+}
+
+#[tokio::test]
+async fn a_plane_change_ends_after_four_store_failures_without_runtime_side_effects() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = switch_capable();
+    let (svc, alice, created, before) = started_adversarial(store.clone(), adapter.clone()).await;
+    let old_runtime = before.runtime_id.clone().expect("old runtime is durable");
+    store.fail_next(4);
+
+    assert!(matches!(
+        svc.change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await,
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(durable.session.options, before.session.options);
+    assert_eq!(durable.session.capabilities, before.session.capabilities);
+    assert_eq!(durable.session.last_seq, before.session.last_seq);
+    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert!(store
+        .inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap()
+        .is_empty());
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("old runtime stays live");
+        assert_eq!(entry.session.status, SessionStatus::Ready);
+        assert_eq!(entry.session.options, before.session.options);
+        assert_eq!(entry.session.capabilities, before.session.capabilities);
+        assert_eq!(
+            entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+            Some(old_runtime.as_str())
+        );
+        assert!(entry.input.is_some());
+        assert!(entry.conversation.is_none());
+    }
+    assert!(adapter.plane_switches.lock().await.is_empty());
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(adapter.running.lock().await.contains_key(&old_runtime));
 }
 
 #[tokio::test]

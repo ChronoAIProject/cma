@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeLossReason, RuntimeSpec,
-    TerminalChannel, TerminalOutput,
+    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeLossReason, RuntimeMode,
+    RuntimeSpec, TerminalChannel, TerminalOutput,
 };
 use tokio::sync::{mpsc, Mutex};
 
@@ -73,6 +73,10 @@ pub(crate) struct FakeAdapter {
     pub(crate) provision_calls: std::sync::atomic::AtomicUsize,
     /// What each runtime says its agent's conversation is.
     pub(crate) conversations: Mutex<HashMap<String, Vec<u8>>>,
+    /// Whether this adapter would accept an in-place plane switch.
+    pub(crate) accept_plane_switch: bool,
+    /// Every in-place plane switch the core attempted.
+    pub(crate) plane_switches: Mutex<Vec<(String, RuntimeMode)>>,
     /// Conversations handed to newly provisioned runtimes, in order.
     pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
     /// When set, the runtime cannot hand its conversation over.
@@ -136,6 +140,8 @@ impl Default for FakeAdapter {
             issued: std::sync::atomic::AtomicUsize::new(0),
             provision_calls: std::sync::atomic::AtomicUsize::new(0),
             conversations: Mutex::default(),
+            accept_plane_switch: false,
+            plane_switches: Mutex::default(),
             handovers: Mutex::default(),
             refuse_snapshot: false,
             conversation: Mutex::default(),
@@ -375,6 +381,24 @@ impl KernelAdapter for FakeAdapter {
             return Err(AdapterError::Unsupported("cannot capture".into()));
         }
         Ok(self.conversations.lock().await.get(&handle.0).cloned())
+    }
+
+    async fn switch_plane(
+        &self,
+        handle: &RuntimeHandle,
+        mode: RuntimeMode,
+    ) -> Result<(), AdapterError> {
+        self.plane_switches
+            .lock()
+            .await
+            .push((handle.0.clone(), mode));
+        if self.accept_plane_switch {
+            Ok(())
+        } else {
+            Err(AdapterError::Unsupported(
+                "this test runtime cannot switch plane in place".into(),
+            ))
+        }
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
