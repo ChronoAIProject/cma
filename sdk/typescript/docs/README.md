@@ -8,11 +8,19 @@ transport, environment profiles, usage, resources, pricing, and the operations
 needed to drive a session. The CMA dashboard consumes this package rather than a
 private client implementation.
 
-For a published release, install the package from npm:
+This package is repository-only, deliberately marked private, and is not published
+to npm. CMA's web application consumes it through its local file dependency. A
+checkout can build and pack the same archive exercised by the scratch-consumer CI
+check with:
 
 ```sh
-npm install @chronoai/cma-sdk
+cd sdk/typescript
+npm ci
+npm run build
+npm pack
 ```
+
+The archive is a local integration boundary, not a publication artifact.
 
 The package is ESM-only and uses the platform `fetch`, `Headers`, `Request`, and
 `Response` implementations. Current browsers and Node provide those globals. A
