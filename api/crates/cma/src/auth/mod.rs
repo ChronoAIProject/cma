@@ -8,16 +8,22 @@
 //! Endpoints are discovered from the provider's metadata document rather than
 //! hard-coded, so a provider that moves a route does not break this service.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use axum::http::HeaderMap;
 pub mod persistence;
 pub mod profile;
 
-use layer2_core::{Authorization, SessionId, SubjectId};
+use layer2_core::store::StoreError;
+use layer2_core::{Authorization, SubjectId};
 use tokio::sync::{Mutex, RwLock};
 
+use persistence::{
+    AuthStore, BrowserSession, DurableSubjectTokens, SecretDigest, SubjectAuthState,
+};
+#[cfg(test)]
+use persistence::{MemoryAuthStore, SecretValue};
 use token::random_token;
 
 /// Name of the session cookie this service issues.
@@ -25,6 +31,9 @@ pub const SESSION_COOKIE: &str = "cma_session";
 
 /// Name issued before the CMA migration, accepted during the compatibility window.
 pub(crate) const LEGACY_SESSION_COOKIE: &str = "chrono_bot_session";
+
+const BROWSER_SESSION_DOMAIN: &str = "browser-session";
+const BROWSER_SESSION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// How the service establishes who is calling.
 #[derive(Debug, Clone)]
@@ -60,15 +69,8 @@ pub struct AuthState {
     mode: AuthMode,
     http: reqwest::Client,
     metadata: RwLock<Option<ProviderMetadata>>,
-    /// Issued session cookies mapped to their subject.
-    sessions: RwLock<HashMap<String, SubjectId>>,
-    /// Provider tokens held per subject, for delegation and renewal.
-    tokens: RwLock<HashMap<SubjectId, SubjectTokens>>,
-    /// Capabilities resolved at sign-in, per subject.
-    authorizations: RwLock<HashMap<SubjectId, Authorization>>,
-    /// Display details captured at sign-in, so the interface can show a person
-    /// rather than an identifier.
-    pub profiles: RwLock<HashMap<SubjectId, profile::Profile>>,
+    /// Durable authority shared by every replica.
+    store: Arc<dyn AuthStore>,
     /// Mints and reclaims the credential each session presents.
     ///
     /// Optional: without it a session falls back to its owner's own token, and
@@ -76,43 +78,15 @@ pub struct AuthState {
     /// credentials were scoped, and it is what a deployment that has not
     /// configured a platform root still gets.
     issuer: RwLock<Option<Arc<keys::KeyIssuer>>>,
-    /// The credential minted for each live session.
-    ///
-    /// Held so a session keeps presenting one value rather than minting a
-    /// fresh one on every ask, and so the old one can be reclaimed once its
-    /// replacement is in place. The owner is kept alongside because reclaiming
-    /// a key needs their token, and by then the session may be gone.
-    issued: Arc<RwLock<HashMap<SessionId, Issued>>>,
-    /// Credentials no runtime will present, but which are not yet taken back.
-    ///
-    /// Usually a replaced credential: it is not safe to revoke the moment its
-    /// successor is minted because the session may still be presenting it.
-    /// Also carries an ended session's credential when its owner token is
-    /// momentarily absent. In both cases the sweep waits until revocation can
-    /// actually be attempted instead of forgetting a still-valid key.
-    superseded: Arc<RwLock<Vec<(String, SubjectId)>>>,
-    /// Replacement credentials whose provider mint completed but whose
-    /// runtime has not yet confirmed receiving the new value.
-    ///
-    /// Minting runs in a detached progress task. That task records its result
-    /// here even when the sweep awaiting it is cancelled, so the next sweep can
-    /// retry delivery without minting another no-expiry key. `retiring` routes
-    /// a mint that finishes after release directly onto revoke debt instead.
-    reissues: Arc<RwLock<ReissueProgress>>,
-    /// Serialises passes so cancellation keeps queued debt and overlapping
-    /// sweeps cannot attempt or account for the same key.
-    superseded_sweep: Mutex<()>,
+    /// Avoid duplicate provider deletes within one replica. Durable debt and
+    /// generation CAS remain the authority across replicas.
+    credential_sweep: Mutex<()>,
     /// What the provider has said about bearer tokens, briefly.
     ///
     /// Separate from `sessions` because the two are different credentials with
     /// different lifetimes: a cookie is minted here and lasts until sign-out, a
     /// token is minted elsewhere and stops being valid when its issuer says so.
     bearer: bearer::BearerCache,
-    /// In-flight authorization attempts: state to PKCE verifier.
-    ///
-    /// The state parameter is what binds a callback to the login that started
-    /// it. Without it a callback from an unrelated flow would be accepted.
-    pending: RwLock<HashMap<String, String>>,
     /// Where a sign-in is written down, when this deployment keeps a record.
     ///
     /// Optional because a control plane can be stood up with a fixed subject
@@ -120,26 +94,6 @@ pub struct AuthState {
     /// so there is genuinely nothing to record rather than somewhere missing
     /// to record it.
     records: Option<records::SignInRecords>,
-}
-
-/// A credential this service minted for one session.
-#[derive(Clone)]
-pub struct Issued {
-    /// The platform's identifier, used to take it back.
-    pub id: String,
-    /// The value the session presents. Never logged.
-    pub value: String,
-    /// Whose account it was minted on.
-    pub owner: SubjectId,
-    /// When it was minted, which is what says when to replace it.
-    pub minted_at: std::time::Instant,
-}
-
-#[derive(Default)]
-struct ReissueProgress {
-    pending: HashMap<SessionId, Issued>,
-    minting: HashSet<SessionId>,
-    retiring: HashSet<SessionId>,
 }
 
 /// Derive the PKCE challenge for a verifier, per S256.
@@ -152,26 +106,29 @@ fn code_challenge(verifier: &str) -> String {
 
 impl AuthState {
     /// Build auth state for a mode, and for wherever sign-ins are recorded.
+    #[cfg(test)]
     pub fn new(mode: AuthMode, records: Option<records::SignInRecords>) -> Arc<Self> {
+        Self::with_store(mode, records, Arc::new(MemoryAuthStore::default()))
+    }
+
+    /// Build auth state over the durable authority shared by this deployment.
+    pub fn with_store(
+        mode: AuthMode,
+        records: Option<records::SignInRecords>,
+        store: Arc<dyn AuthStore>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             mode,
             records,
+            store,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .expect("http client builds"),
             metadata: RwLock::new(None),
             issuer: RwLock::new(None),
-            issued: Arc::new(RwLock::new(HashMap::new())),
-            superseded: Arc::new(RwLock::new(Vec::new())),
-            reissues: Arc::new(RwLock::new(ReissueProgress::default())),
-            superseded_sweep: Mutex::new(()),
-            sessions: RwLock::new(HashMap::new()),
-            tokens: RwLock::new(HashMap::new()),
-            authorizations: RwLock::new(HashMap::new()),
-            profiles: RwLock::new(HashMap::new()),
+            credential_sweep: Mutex::new(()),
             bearer: bearer::BearerCache::default(),
-            pending: RwLock::new(HashMap::new()),
         })
     }
 
@@ -207,20 +164,34 @@ impl AuthState {
     }
 
     /// Resolve the subject for a request, if any.
-    pub async fn resolve(&self, headers: &HeaderMap) -> Option<SubjectId> {
+    pub async fn resolve(&self, headers: &HeaderMap) -> Result<Option<SubjectId>, StoreError> {
         match &self.mode {
-            AuthMode::Trusted { subject } => Some(SubjectId(subject.clone())),
+            AuthMode::Trusted { subject } => Ok(Some(SubjectId(subject.clone()))),
             AuthMode::Provider { .. } => {
                 for token in session_cookies(headers) {
-                    if let Some(subject) = self.sessions.read().await.get(&token).cloned() {
-                        return Some(subject);
+                    let id = SecretDigest::identify(BROWSER_SESSION_DOMAIN, &token);
+                    if let Some(session) = self.store.browser_session(&id).await? {
+                        if session.expires_at > SystemTime::now() {
+                            return Ok(Some(session.subject));
+                        }
+                        // TTL deletion is eventual. An expired record is never
+                        // accepted, and best-effort cleanup does not change the
+                        // authentication answer.
+                        if let Err(error) = self.store.delete_browser_session(&id).await {
+                            tracing::warn!(
+                                error = %error,
+                                "could not remove an expired browser session"
+                            );
+                        }
                     }
                 }
                 // A server client has no cookie jar. Its token is checked with
                 // the provider rather than read here, so a token this service
                 // did not issue — and one that has since been withdrawn — is
                 // refused rather than believed.
-                let token = bearer::bearer_token(headers)?;
+                let Some(token) = bearer::bearer_token(headers) else {
+                    return Ok(None);
+                };
                 self.subject_for_bearer(&token).await
             }
         }
@@ -307,27 +278,25 @@ impl AuthState {
     pub async fn sessions_due_for_reissue(
         &self,
         lifetime: std::time::Duration,
-    ) -> Vec<(SessionId, SubjectId)> {
-        let now = std::time::Instant::now();
-        let issued = self.issued.read().await;
-        let progress = self.reissues.read().await;
-        let mut due: Vec<(SessionId, SubjectId)> = progress
-            .pending
-            .iter()
-            .map(|(s, h)| (s.clone(), h.owner.clone()))
-            .collect();
-        due.extend(
-            issued
-                .iter()
-                .filter(|&(session, held)| {
-                    !progress.pending.contains_key(session)
-                        && !progress.minting.contains(session)
-                        && !progress.retiring.contains(session)
-                        && now.duration_since(held.minted_at) >= lifetime
-                })
-                .map(|(session, held)| (session.clone(), held.owner.clone())),
-        );
-        due
+    ) -> Result<Vec<(layer2_core::SessionId, SubjectId)>, StoreError> {
+        let now = SystemTime::now();
+        Ok(self
+            .store
+            .credentials()
+            .await?
+            .into_iter()
+            .filter(|state| !state.retired && state.lease.is_none())
+            .filter_map(|state| {
+                if let Some(pending) = state.pending {
+                    return Some((state.session, pending.owner));
+                }
+                let current = state.current?;
+                let age = now
+                    .duration_since(current.issued_at)
+                    .unwrap_or(Duration::ZERO);
+                (age >= lifetime).then_some((state.session, current.owner))
+            })
+            .collect())
     }
 
     /// Mint, or resume delivering, a fresh credential for one session.
@@ -339,239 +308,184 @@ impl AuthState {
     /// the runtime accepted this value.
     pub async fn reissue(
         &self,
-        session: &SessionId,
+        session: &layer2_core::SessionId,
         subject: &SubjectId,
         services: &[layer2_core::ServiceId],
-    ) -> Option<String> {
-        if let Some(pending) = self.reissues.read().await.pending.get(session) {
-            return Some(pending.value.clone());
-        }
-
-        let issuer = { self.issuer.read().await.clone() }?;
-        let owner_token = self.access_token(subject).await?;
-
-        // Reserve while issued is still known to exist. Release and commit use
-        // the same issued -> superseded -> reissues order; the mint completion
-        // never waits for another lock while holding reissues.
-        {
-            let issued = self.issued.read().await;
-            let mut progress = self.reissues.write().await;
-            if let Some(pending) = progress.pending.get(session) {
-                return Some(pending.value.clone());
-            }
-            if !issued.contains_key(session)
-                || progress.retiring.contains(session)
-                || !progress.minting.insert(session.clone())
-            {
-                return None;
-            }
-        }
-
-        let reissues = Arc::clone(&self.reissues);
-        let superseded = Arc::clone(&self.superseded);
-        let minted_session = session.clone();
-        let minted_subject = subject.clone();
-        let minted_services = services.to_vec();
-        let mint = tokio::spawn(async move {
-            let minted = issuer
-                .mint(
-                    &minted_session,
-                    &minted_subject,
-                    &owner_token,
-                    &minted_services,
-                )
-                .await;
-            // Acquire in the global superseded -> reissues order. In
-            // particular, a mint completing after release must not clear its
-            // retiring marker before the replacement is visible as retry debt.
-            let mut superseded = superseded.write().await;
-            let mut progress = reissues.write().await;
-            progress.minting.remove(&minted_session);
-            let Some(minted) = minted else {
-                progress.retiring.remove(&minted_session);
-                return None;
-            };
-            let replacement = Issued {
-                id: minted.id,
-                value: minted.full_key,
-                owner: minted_subject,
-                minted_at: std::time::Instant::now(),
-            };
-            let value = replacement.value.clone();
-
-            if progress.retiring.remove(&minted_session) {
-                superseded.push((replacement.id, replacement.owner));
-                return None;
-            }
-
-            let displaced = progress.pending.insert(minted_session, replacement);
-            if let Some(displaced) = displaced {
-                superseded.push((displaced.id, displaced.owner));
-            }
-            Some(value)
-        });
-
-        match mint.await {
-            Ok(value) => value,
-            Err(error) => {
-                self.reissues.write().await.minting.remove(session);
-                tracing::error!(session_id = %session, %error, "credential replacement task failed");
-                None
-            }
-        }
+    ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential(session, subject, services, true)
+            .await
     }
 
     /// Promote a pending replacement after its runtime accepted the new value.
     ///
-    /// Every mutation happens after all three locks are held in the one global
-    /// order. Cancellation while acquiring them leaves the pending replacement
-    /// untouched for a later sweep; after acquisition there is no await in the
-    /// ownership transfer.
-    pub async fn confirm_reissue(&self, session: &SessionId) -> bool {
-        let mut issued = self.issued.write().await;
-        let mut superseded = self.superseded.write().await;
-        let mut progress = self.reissues.write().await;
-        let Some(replacement) = progress.pending.remove(session) else {
-            return false;
-        };
-        if progress.retiring.contains(session) || !issued.contains_key(session) {
-            superseded.push((replacement.id, replacement.owner));
-            return false;
-        }
-        let old = issued
-            .insert(session.clone(), replacement)
-            .expect("the issued credential was checked while its lock was held");
-        superseded.push((old.id, old.owner));
-        true
+    /// A generation compare-and-swap moves the old current value to durable
+    /// revoke debt in the same transition that promotes the replacement.
+    pub async fn confirm_reissue(
+        &self,
+        session: &layer2_core::SessionId,
+    ) -> Result<bool, StoreError> {
+        self.promote_pending_credential(session).await
     }
 
     /// Take back credentials queued on an earlier pass or release.
-    pub async fn take_back_superseded(&self) -> usize {
-        let _sweep = self.superseded_sweep.lock().await;
-        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
-            return 0;
-        };
-        let pending = self.superseded.read().await.clone();
-        let mut taken = 0;
-        for queued in pending {
-            let Some(token) = self.access_token(&queued.1).await else {
-                continue;
-            };
-            if issuer.revoke(&queued.0, &token).await {
-                let mut owed = self.superseded.write().await;
-                if let Some(index) = owed.iter().position(|owed| owed == &queued) {
-                    owed.remove(index);
-                    taken += 1;
-                }
-            }
-        }
-        taken
+    pub async fn revoke_retired_credentials(&self) -> Result<usize, StoreError> {
+        self.revoke_credential_debt().await
     }
 
     /// Take back credentials this deployment minted for sessions that are gone.
     ///
-    /// Read from the platform rather than from memory, because the ones worth
-    /// finding are exactly those this process has forgotten. Only keys whose
-    /// name says this deployment minted them are touched — the account is
-    /// shared with other products and other control planes.
+    /// Provider listings remain the reconciliation backstop for credentials
+    /// minted before durable custody existed, and for the response-loss window
+    /// tracked by #528. Only keys whose name says this deployment minted them
+    /// are touched; the account is shared with other control planes.
     pub async fn reclaim_orphaned_credentials(
         &self,
         service: &Arc<layer2_core::SessionService>,
-    ) -> usize {
-        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
-            return 0;
-        };
-        let owners: Vec<SubjectId> = { self.tokens.read().await.keys().cloned().collect() };
-        let mut reclaimed = 0;
-        for owner in owners {
-            let Some(token) = self.access_token(&owner).await else {
-                continue;
+    ) -> Result<usize, StoreError> {
+        self.reclaim_unrecorded_credentials(service).await
+    }
+
+    /// Replace a subject fact with revision-CAS, retrying a concurrent writer.
+    async fn replace_subject_fact<F>(
+        &self,
+        subject: &SubjectId,
+        mut update: F,
+    ) -> Result<(), StoreError>
+    where
+        F: FnMut(&mut SubjectAuthState),
+    {
+        loop {
+            let current = self.store.subject(subject).await?;
+            let mut next = current.clone().unwrap_or_else(|| SubjectAuthState {
+                subject: subject.clone(),
+                revision: 0,
+                tokens: None,
+                refresh_lease: None,
+                authorization: Authorization::none(),
+                profile: profile::Profile::default(),
+            });
+            update(&mut next);
+            let written = match current {
+                Some(current) => {
+                    next.revision = current.revision.checked_add(1).ok_or_else(|| {
+                        StoreError::Malformed("subject auth revision exhausted".into())
+                    })?;
+                    self.store.replace_subject(current.revision, next).await?
+                }
+                None => self.store.insert_subject(next).await?,
             };
-            let minted = match issuer.minted_here(&token).await {
-                Ok(minted) => minted,
-                Err(error) => {
-                    tracing::warn!(
-                        %owner,
-                        error = %error,
-                        "could not inspect this owner's keys for orphaned credentials"
-                    );
-                    continue;
-                }
-            };
-            for (id, session) in minted {
-                // Claimed, not merely running. A paused session is one its
-                // owner kept, and taking its key back leaves them to come
-                // back to a session whose credential was revoked underneath
-                // them — which is what happened to every stopped session as
-                // soon as this process restarted.
-                if service.session_claims_credential(&session).await {
-                    continue;
-                }
-                // Held, pending, or still being minted for a session this
-                // process is tracking? Then it is not orphaned. Acquire in the
-                // global issued -> reissues order so release cannot expose the
-                // interval between retiring an in-flight mint and queueing its
-                // eventual result.
-                let tracked = {
-                    let issued = self.issued.read().await;
-                    let progress = self.reissues.read().await;
-                    issued.contains_key(&session)
-                        || progress.pending.contains_key(&session)
-                        || progress.minting.contains(&session)
-                        || progress.retiring.contains(&session)
-                };
-                if tracked {
-                    continue;
-                }
-                // Explicit revocation debt has one owner. Letting this sweep
-                // delete it would leave its queue entry retrying a 404 forever.
-                if self.revoke_is_queued(&id).await {
-                    continue;
-                }
-                if issuer.revoke(&id, &token).await {
-                    reclaimed += 1;
-                }
+            if written {
+                return Ok(());
             }
         }
-        reclaimed
+    }
+
+    /// Read one subject fact from the durable authority.
+    pub(super) async fn subject_fact(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Option<SubjectAuthState>, StoreError> {
+        self.store.subject(subject).await
+    }
+
+    /// Persist a completed sign-in as one indivisible subject fact.
+    async fn store_sign_in(
+        &self,
+        subject: &SubjectId,
+        tokens: DurableSubjectTokens,
+        authorization: Authorization,
+        profile: profile::Profile,
+    ) -> Result<(), StoreError> {
+        self.replace_subject_fact(subject, |state| {
+            state.tokens = Some(tokens.clone());
+            state.refresh_lease = None;
+            state.authorization = authorization.clone();
+            state.profile = profile.clone();
+        })
+        .await
     }
 
     /// Store the tokens issued for a subject.
-    pub async fn store_tokens(&self, subject: &SubjectId, tokens: SubjectTokens) {
-        self.tokens.write().await.insert(subject.clone(), tokens);
+    #[cfg(test)]
+    pub async fn store_tokens(
+        &self,
+        subject: &SubjectId,
+        tokens: SubjectTokens,
+    ) -> Result<(), StoreError> {
+        let remaining = tokens
+            .expires_at
+            .saturating_duration_since(std::time::Instant::now());
+        let durable = DurableSubjectTokens {
+            access_token: SecretValue::new(tokens.access_token),
+            refresh_token: tokens.refresh_token.map(SecretValue::new),
+            expires_at: SystemTime::now() + remaining,
+        };
+        self.replace_subject_fact(subject, |state| {
+            state.tokens = Some(durable.clone());
+            state.refresh_lease = None;
+        })
+        .await
+    }
+
+    /// Revoke one raw browser cookie without ever storing or logging it.
+    async fn revoke_session(&self, token: &str) -> Result<(), StoreError> {
+        self.store
+            .delete_browser_session(&SecretDigest::identify(BROWSER_SESSION_DOMAIN, token))
+            .await
     }
 
     /// The subject's current access token, if one is held.
-    pub async fn access_token(&self, subject: &SubjectId) -> Option<String> {
-        self.tokens
-            .read()
-            .await
-            .get(subject)
-            .map(|t| t.access_token.clone())
+    pub async fn access_token(&self, subject: &SubjectId) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .store
+            .subject(subject)
+            .await?
+            .and_then(|state| state.tokens)
+            .filter(|tokens| tokens.expires_at > SystemTime::now())
+            .map(|tokens| tokens.access_token.into_inner()))
     }
 
     /// Subjects whose access token is close enough to expiry to renew.
     pub async fn subjects_needing_refresh(
         &self,
         margin: std::time::Duration,
-    ) -> Vec<(SubjectId, String)> {
-        self.tokens
-            .read()
-            .await
-            .iter()
-            .filter(|(_, t)| t.needs_refresh(margin))
-            .filter_map(|(s, t)| t.refresh_token.clone().map(|r| (s.clone(), r)))
-            .collect()
+    ) -> Result<Vec<(SubjectId, String)>, StoreError> {
+        let refresh_at = SystemTime::now() + margin;
+        Ok(self
+            .store
+            .subjects()
+            .await?
+            .into_iter()
+            .filter_map(|state| {
+                if state
+                    .refresh_lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.expires_at > SystemTime::now())
+                {
+                    return None;
+                }
+                let tokens = state.tokens?;
+                if tokens.expires_at > refresh_at {
+                    return None;
+                }
+                tokens
+                    .refresh_token
+                    .map(|refresh| (state.subject, refresh.into_inner()))
+            })
+            .collect())
     }
 
-    async fn issue_session(&self, subject: SubjectId) -> String {
+    async fn issue_session(&self, subject: SubjectId) -> Result<String, StoreError> {
         let token = random_token();
-        self.sessions
-            .write()
-            .await
-            .insert(token.clone(), subject.clone());
+        self.store
+            .put_browser_session(BrowserSession {
+                id: SecretDigest::identify(BROWSER_SESSION_DOMAIN, &token),
+                subject: subject.clone(),
+                expires_at: SystemTime::now() + BROWSER_SESSION_LIFETIME,
+            })
+            .await?;
         tracing::info!(subject = %subject, "session issued");
-        token
+        Ok(token)
     }
 }
 
@@ -599,11 +513,13 @@ mod middleware;
 mod tokens;
 
 pub use middleware::attach_subject;
+#[cfg(test)]
 pub use tokens::SubjectTokens;
 
 pub(crate) use middleware::session_cookies;
 pub(crate) use tokens::ProviderMetadata;
 
+#[cfg(test)]
 pub mod capabilities;
 pub mod entitlements;
 pub mod flow;

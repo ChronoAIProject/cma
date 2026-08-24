@@ -105,15 +105,24 @@ impl crate::store::CredentialSource for MintingSource {
         session: &crate::SessionId,
         _subject: &crate::SubjectId,
         _services: &[crate::environment::ServiceId],
-    ) -> Option<String> {
-        Some(format!("minted-for-{}", session.0))
+    ) -> Result<Option<String>, crate::store::StoreError> {
+        Ok(Some(format!("minted-for-{}", session.0)))
     }
 
     /// Nothing to reclaim: this mints a value rather than registering one.
-    async fn release(&self, _session: &crate::SessionId) {}
+    async fn release(&self, _session: &crate::SessionId) -> Result<(), crate::store::StoreError> {
+        Ok(())
+    }
 }
 
 fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
+    service_with_store(sent, Arc::new(FakeStore::default()))
+}
+
+fn service_with_store(
+    sent: Arc<tokio::sync::Mutex<Vec<String>>>,
+    store: Arc<FakeStore>,
+) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
         KernelId::new("recording"),
@@ -124,7 +133,7 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
     SessionService::new(
         adapters,
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
-        Arc::new(FakeStore::default()),
+        store,
         crate::service::SessionPorts {
             credentials: Some(Arc::new(MintingSource)),
             ..Default::default()
@@ -370,7 +379,9 @@ mod what_still_claims_a_credential {
             .expect("a session can be paused");
 
         assert!(
-            svc.session_claims_credential(&session.id).await,
+            svc.session_claims_credential(&session.id)
+                .await
+                .expect("session store works"),
             "a paused session keeps its claim"
         );
         assert!(
@@ -395,7 +406,9 @@ mod what_still_claims_a_credential {
             .expect("a session can be ended");
 
         assert!(
-            !svc.session_claims_credential(&session.id).await,
+            !svc.session_claims_credential(&session.id)
+                .await
+                .expect("session store works"),
             "an ended session has no claim, so its key is the sweep's to take"
         );
     }
@@ -406,8 +419,25 @@ mod what_still_claims_a_credential {
         let svc = service(Arc::clone(&sent));
         assert!(
             !svc.session_claims_credential(&crate::ids::SessionId("sesn_never".into()))
-                .await,
+                .await
+                .expect("session store works"),
             "a key naming a session nobody has is exactly what the sweep exists for"
         );
+    }
+
+    #[tokio::test]
+    async fn a_store_outage_is_not_misreported_as_an_unclaimed_credential() {
+        let store = Arc::new(FakeStore::default());
+        let svc = service_with_store(
+            Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            Arc::clone(&store),
+        );
+        store.fail_everything().await;
+
+        assert!(matches!(
+            svc.session_claims_credential(&crate::ids::SessionId("sesn_unreadable".into()))
+                .await,
+            Err(crate::store::StoreError::Unavailable(_))
+        ));
     }
 }

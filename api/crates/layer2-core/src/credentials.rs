@@ -58,8 +58,10 @@ impl SessionService {
         session: &SessionId,
         owner: &SubjectId,
         services: &[crate::environment::ServiceId],
-    ) -> Option<String> {
-        let source = self.credentials.as_ref()?;
+    ) -> Result<Option<String>, crate::store::StoreError> {
+        let Some(source) = self.credentials.as_ref() else {
+            return Ok(None);
+        };
         source.credential_for(session, owner, services).await
     }
 
@@ -90,11 +92,15 @@ impl SessionService {
     ///
     /// A credential is unclaimed only when the session it was minted for has
     /// ended or is no longer there at all.
-    pub async fn session_claims_credential(&self, id: &SessionId) -> bool {
-        match self.store.get(id).await {
-            Ok(Some(record)) => !record.session.status.is_terminal(),
-            _ => false,
-        }
+    pub async fn session_claims_credential(
+        &self,
+        id: &SessionId,
+    ) -> Result<bool, crate::store::StoreError> {
+        Ok(self
+            .store
+            .get(id)
+            .await?
+            .is_some_and(|record| !record.session.status.is_terminal()))
     }
 
     pub async fn session_services(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
@@ -148,9 +154,20 @@ impl SessionService {
     /// broken while being perfectly alive.
     pub(crate) async fn supply_credential(&self, id: &SessionId, owner: &SubjectId) {
         let services = self.services_for(id).await;
-        let Some(credential) = self.credential_for(id, owner, &services).await else {
-            tracing::debug!(session_id = %id, "no credential held for this session's owner");
-            return;
+        let credential = match self.credential_for(id, owner, &services).await {
+            Ok(Some(credential)) => credential,
+            Ok(None) => {
+                tracing::debug!(session_id = %id, "no credential held for this session's owner");
+                return;
+            }
+            Err(error) => {
+                tracing::error!(
+                    session_id = %id,
+                    error = %error,
+                    "could not read or mint this session's credential"
+                );
+                return;
+            }
         };
         {
             let mut entries = self.entries.write().await;

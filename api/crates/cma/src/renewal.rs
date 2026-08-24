@@ -55,18 +55,6 @@ const CREDENTIAL_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// One pass: renew what is close to expiry, then push it into live sessions.
 async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
-    // Credentials queued on an earlier pass or release. Replaced credentials
-    // wait so the sessions holding them have a full sweep to receive the value
-    // that supersedes them; released credentials wait for an owner token when
-    // release could not attempt the revoke itself.
-    let taken = auth.take_back_superseded().await;
-    if taken > 0 {
-        tracing::info!(
-            count = taken,
-            "took back credentials that had been replaced"
-        );
-    }
-
     // Credentials this deployment minted that no session accounts for.
     //
     // A control plane that stopped between minting and releasing leaves one
@@ -76,38 +64,96 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
     // until that owner signs in again the key stays valid. This sweep is the
     // only thing that takes it back, so a pass it cannot make is a credential
     // still open, not a tidy-up postponed.
-    let reclaimed = auth.reclaim_orphaned_credentials(service).await;
-    if reclaimed > 0 {
-        tracing::info!(
-            count = reclaimed,
-            "reclaimed credentials no session accounts for"
-        );
-    }
-
-    // Sessions whose own credential is old enough to swap. Distinct from the
-    // subject refresh below: that keeps this service able to mint, this keeps
-    // the sessions able to act.
-    for (session, owner) in auth.sessions_due_for_reissue(CREDENTIAL_LIFETIME).await {
-        let services = service.session_services(&session).await;
-        let Some(value) = auth.reissue(&session, &owner, &services).await else {
-            tracing::warn!(session_id = %session, "could not mint a replacement credential");
-            continue;
-        };
-        if service.push_session_credential(&session, value).await {
-            if auth.confirm_reissue(&session).await {
-                tracing::info!(session_id = %session, "session credential replaced");
-            } else {
-                // Release may have won the race after delivery. Its transfer
-                // owns both values in that case, so there is nothing here to
-                // promote or forget.
-                tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
+    let credentials_reconciled = match auth.reclaim_orphaned_credentials(service).await {
+        Ok(reclaimed) => {
+            if reclaimed > 0 {
+                tracing::info!(
+                    count = reclaimed,
+                    "reclaimed credentials no session accounts for"
+                );
             }
-        } else {
-            tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
+            true
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "could not reconcile unrecorded credentials");
+            false
+        }
+    };
+
+    // Reconciliation reads every durable session claim before any DELETE. If
+    // that authority is unavailable, skip all session-credential work so an
+    // unreadable claim can never masquerade as an unclaimed credential. The
+    // independent subject-token refresh below can still proceed.
+    if credentials_reconciled {
+        let taken = match auth.revoke_retired_credentials().await {
+            Ok(taken) => taken,
+            Err(error) => {
+                tracing::error!(error = %error, "could not process durable credential revoke debt");
+                0
+            }
+        };
+        if taken > 0 {
+            tracing::info!(count = taken, "took back retired session credentials");
+        }
+
+        // Sessions whose own credential is old enough to swap. Distinct from the
+        // subject refresh below: that keeps this service able to mint, this keeps
+        // the sessions able to act.
+        let due_for_reissue = match auth.sessions_due_for_reissue(CREDENTIAL_LIFETIME).await {
+            Ok(due) => due,
+            Err(error) => {
+                tracing::error!(error = %error, "could not list credentials due for replacement");
+                Vec::new()
+            }
+        };
+        for (session, owner) in due_for_reissue {
+            let services = service.session_services(&session).await;
+            let value = match auth.reissue(&session, &owner, &services).await {
+                Ok(Some(value)) => value,
+                Ok(None) => {
+                    tracing::warn!(session_id = %session, "could not mint a replacement credential");
+                    continue;
+                }
+                Err(error) => {
+                    tracing::error!(
+                        session_id = %session,
+                        error = %error,
+                        "could not update durable credential replacement state"
+                    );
+                    continue;
+                }
+            };
+            if service.push_session_credential(&session, value).await {
+                match auth.confirm_reissue(&session).await {
+                    Ok(true) => {
+                        tracing::info!(session_id = %session, "session credential replaced");
+                    }
+                    Ok(false) => {
+                        // Release may have won the race after delivery. Its
+                        // durable retirement owns both values in that case.
+                        tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            session_id = %session,
+                            error = %error,
+                            "could not confirm durable credential replacement"
+                        );
+                    }
+                }
+            } else {
+                tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
+            }
         }
     }
 
-    let due = auth.subjects_needing_refresh(RENEW_MARGIN).await;
+    let due = match auth.subjects_needing_refresh(RENEW_MARGIN).await {
+        Ok(due) => due,
+        Err(error) => {
+            tracing::error!(error = %error, "could not list subjects needing credential renewal");
+            return;
+        }
+    };
     if due.is_empty() {
         return;
     }
@@ -243,11 +289,16 @@ mod tests {
         let renewable = SubjectId("has-refresh".into());
         let stranded = SubjectId("no-refresh".into());
         auth.store_tokens(&renewable, tokens(Duration::from_secs(1), Some("r")))
-            .await;
+            .await
+            .expect("renewable tokens persist");
         auth.store_tokens(&stranded, tokens(Duration::from_secs(1), None))
-            .await;
+            .await
+            .expect("stranded tokens persist");
 
-        let due = auth.subjects_needing_refresh(RENEW_MARGIN).await;
+        let due = auth
+            .subjects_needing_refresh(RENEW_MARGIN)
+            .await
+            .expect("subject state loads");
         let subjects: Vec<_> = due.iter().map(|(s, _)| s.as_str().to_string()).collect();
         assert!(subjects.contains(&"has-refresh".to_string()));
         assert!(
@@ -265,10 +316,14 @@ mod tests {
             None,
         );
         let s = SubjectId("subject-a".into());
-        assert_eq!(auth.access_token(&s).await, None);
+        assert_eq!(auth.access_token(&s).await.expect("state loads"), None);
         auth.store_tokens(&s, tokens(Duration::from_secs(600), Some("r")))
-            .await;
-        assert_eq!(auth.access_token(&s).await.as_deref(), Some("access"));
+            .await
+            .expect("tokens persist");
+        assert_eq!(
+            auth.access_token(&s).await.expect("state loads").as_deref(),
+            Some("access")
+        );
     }
 
     #[tokio::test]

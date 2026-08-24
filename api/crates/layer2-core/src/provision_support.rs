@@ -65,9 +65,29 @@ impl SessionService {
             .await
             .briefing
             .render(&reaches);
-        spec.runtime_credential = self
+        spec.runtime_credential = match self
             .credential_for(&session.id, &session.owner, &services)
-            .await;
+            .await
+        {
+            Ok(credential) => credential,
+            Err(error) => {
+                tracing::error!(
+                    session_id = %id,
+                    error = %error,
+                    "could not establish durable credential custody"
+                );
+                self.abandon(
+                    &id,
+                    &adapter,
+                    &crate::provision_failure::StartFailure::transient(
+                        "the durable credential store is unavailable".to_string(),
+                    ),
+                    outcome,
+                )
+                .await;
+                return;
+            }
+        };
         if spec.runtime_credential.is_none() {
             tracing::warn!(
                 session_id = %id,
