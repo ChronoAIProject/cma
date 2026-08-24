@@ -313,6 +313,14 @@ pub struct SessionView {
     pricing: Option<SessionPricingView>,
 }
 
+/// A rendered terminal screen on the REST wire.
+#[derive(Debug, Serialize)]
+struct ScreenView {
+    cols: u16,
+    rows: u16,
+    lines: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct SessionPricingView {
     rate_card: String,
@@ -1065,13 +1073,13 @@ async fn screen(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, Problem> {
+) -> Result<Json<ScreenView>, Problem> {
     let snapshot = service.screen_snapshot(&caller, &SessionId(id)).await?;
-    Ok(Json(serde_json::json!({
-        "cols": snapshot.geometry.columns(),
-        "rows": snapshot.geometry.rows(),
-        "lines": snapshot.rows,
-    })))
+    Ok(Json(ScreenView {
+        cols: snapshot.geometry.columns(),
+        rows: snapshot.geometry.rows(),
+        lines: snapshot.rows,
+    }))
 }
 
 async fn conformance() -> Json<serde_json::Value> {
