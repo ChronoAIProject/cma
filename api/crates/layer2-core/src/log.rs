@@ -1,15 +1,19 @@
 //! Ordered, cancellation-safe session persistence.
 //!
 //! Every state writer places one record snapshot and its own events into a
-//! session-scoped FIFO. A detached worker owns the write from that point on, so
-//! cancelling the caller cannot strand the only copy of a drained batch. The
-//! store remains the cross-process authority: local lanes order one process,
-//! while store revisions, atomic transactions, and contiguous appends arbitrate
-//! replicas.
+//! session-scoped FIFO. A detached worker owns retryable writes from that point
+//! on. An outage failure ends an update only when the receiver acknowledges it
+//! in the poll that observes it; cancellation before then leaves the worker in
+//! charge. The store remains the cross-process authority: local lanes order one
+//! process, while store revisions, atomic transactions, and contiguous appends
+//! arbitrate replicas.
 
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use tokio::sync::oneshot;
@@ -38,23 +42,84 @@ enum PendingOperation {
         write_id: String,
         mode: CommitMode,
         record: Box<SessionRecord>,
+        change: Option<Box<RecordChange>>,
         events: Vec<Event>,
         complete: oneshot::Sender<Result<SessionRecord, StoreError>>,
+        observed: oneshot::Receiver<()>,
     },
     Delete {
         complete: oneshot::Sender<Result<(), StoreError>>,
     },
+    ObserveRecord(Box<SessionRecord>),
+    #[cfg(test)]
     ObserveRevision(u64),
 }
 
+/// One live snapshot's change from the snapshot immediately before it.
+///
+/// The predecessor is retained beside the pending operation's intended record.
+/// A revision is only a compare token; it cannot prove that a queued full record
+/// contains fields a competing replica committed under that revision.
+/// Reapplying this change to the latest durable record preserves fields this
+/// process did not change and detects two replicas changing the same field
+/// differently.
+struct RecordChange {
+    before: Box<SessionRecord>,
+    fields: RecordFields,
+}
+
+#[derive(Clone, Copy, Default)]
+struct RecordFields {
+    all: bool,
+    status: bool,
+    geometry: bool,
+    plane: bool,
+    runtime_loss: bool,
+}
+
 struct EnqueuedCommit {
-    complete: oneshot::Receiver<Result<SessionRecord, StoreError>>,
+    complete: CommitReceiver,
     last_seq: u64,
+}
+
+/// Reports that an explicit failure was actually observed in the caller's
+/// poll, rather than merely placed in a channel it canceled without reading.
+struct CommitReceiver {
+    complete: oneshot::Receiver<Result<SessionRecord, StoreError>>,
+    acknowledge_error: Option<oneshot::Sender<()>>,
+}
+
+impl Future for CommitReceiver {
+    type Output = Result<Result<SessionRecord, StoreError>, oneshot::error::RecvError>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        let result = Pin::new(&mut self.complete).poll(context);
+        if matches!(result, Poll::Ready(Ok(Err(_)))) {
+            if let Some(acknowledge) = self.acknowledge_error.take() {
+                let _ = acknowledge.send(());
+            }
+        }
+        result
+    }
+}
+
+struct CommitReporter {
+    complete: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
+    observed: Option<oneshot::Receiver<()>>,
+    retain_after_cancellation: bool,
 }
 
 #[derive(Default)]
 struct LaneState {
     running: bool,
+    /// The newest authoritative record this worker has observed or committed.
+    durable: Option<Box<SessionRecord>>,
+    /// The raw snapshot at the tail of the local FIFO.
+    ///
+    /// Kept separate from `durable`: after a cross-replica rebase the live entry
+    /// still produces snapshots in its own local lineage. Successor changes must
+    /// be measured against that lineage, then applied to the rebased record.
+    local_tail: Option<Box<SessionRecord>>,
     // Deliberately lossless rather than hard-capped. Once live state has
     // emitted a semantic event, rejecting it at this boundary would make the
     // event unrecoverable. Memory therefore tracks uncommitted history during
@@ -70,6 +135,8 @@ pub(crate) struct SessionLog {
     sequences: Arc<Sequences>,
     revision: AtomicU64,
     state: StdMutex<LaneState>,
+    #[cfg(test)]
+    failure_delivered: tokio::sync::Notify,
 }
 
 impl SessionLog {
@@ -80,11 +147,63 @@ impl SessionLog {
             sequences,
             revision: AtomicU64::new(0),
             state: StdMutex::new(LaneState::default()),
+            #[cfg(test)]
+            failure_delivered: tokio::sync::Notify::new(),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn observe_revision(self: &Arc<Self>, revision: u64) {
         self.enqueue(PendingOperation::ObserveRevision(revision));
+    }
+
+    /// Place a durable snapshot in the FIFO before exposing a live entry built
+    /// from it.
+    ///
+    /// `local_tail` changes at enqueue time so an immediately appended event can
+    /// describe its change from this exact snapshot. The worker observes the
+    /// durable side in FIFO order, after any older write already in flight.
+    pub(crate) fn observe_record(self: &Arc<Self>, record: &SessionRecord) {
+        debug_assert_eq!(record.session.id, self.id);
+        let start = {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.local_tail = Some(Box::new(record.clone()));
+            state
+                .queued
+                .push_back(PendingOperation::ObserveRecord(Box::new(record.clone())));
+            if state.running {
+                false
+            } else {
+                state.running = true;
+                true
+            }
+        };
+        if start {
+            let lane = Arc::clone(self);
+            tokio::spawn(async move { lane.run().await });
+        }
+    }
+
+    /// Seed the local allocator from a durable record before exposing a live
+    /// entry backed by this lane.
+    pub(crate) fn observe_tail(&self, tail: u64) {
+        let _state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        self.sequences.issued(&self.id, tail);
+    }
+
+    /// The lane-authoritative tail for a live entry snapshot.
+    fn known_tail(&self, fallback: u64) -> u64 {
+        let _state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        self.sequences.current(&self.id).unwrap_or(fallback)
+    }
+
+    /// Bring a live entry's cached tail into line while excluding a concurrent
+    /// reservation rebase.
+    fn synchronize_tail(&self, tail: &mut u64) {
+        let _state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(current) = self.sequences.current(&self.id) {
+            *tail = current;
+        }
     }
 
     fn enqueue_commit(
@@ -107,12 +226,16 @@ impl SessionLog {
         F: FnOnce(u64),
     {
         let (complete, receiver) = oneshot::channel();
+        let (acknowledge_error, observed) = oneshot::channel();
         if record.session.id != self.id || events.iter().any(|event| event.session_id != self.id) {
             let _ = complete.send(Err(StoreError::Malformed(
                 "one durable session write named more than one session".into(),
             )));
             return EnqueuedCommit {
-                complete: receiver,
+                complete: CommitReceiver {
+                    complete: receiver,
+                    acknowledge_error: Some(acknowledge_error),
+                },
                 last_seq: record.session.last_seq,
             };
         }
@@ -129,6 +252,12 @@ impl SessionLog {
         // locks in the opposite order.
         let (start, last_seq) = {
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if matches!(mode, CommitMode::UpdateInheriting) {
+                record.session.last_seq = self
+                    .sequences
+                    .current(&self.id)
+                    .unwrap_or(record.session.last_seq);
+            }
             if !events.is_empty() {
                 let count = u64::try_from(events.len()).unwrap_or(u64::MAX);
                 let first = match self
@@ -139,7 +268,10 @@ impl SessionLog {
                     Err(error) => {
                         let _ = complete.send(Err(error));
                         return EnqueuedCommit {
-                            complete: receiver,
+                            complete: CommitReceiver {
+                                complete: receiver,
+                                acknowledge_error: Some(acknowledge_error),
+                            },
                             last_seq: record.session.last_seq,
                         };
                     }
@@ -147,7 +279,10 @@ impl SessionLog {
                 if let Err(error) = renumber(&self.id, &mut events, first) {
                     let _ = complete.send(Err(error));
                     return EnqueuedCommit {
-                        complete: receiver,
+                        complete: CommitReceiver {
+                            complete: receiver,
+                            acknowledge_error: Some(acknowledge_error),
+                        },
                         last_seq: record.session.last_seq,
                     };
                 }
@@ -157,12 +292,33 @@ impl SessionLog {
             }
             let last_seq = record.session.last_seq;
             after_allocation(last_seq);
+            let change = if matches!(mode, CommitMode::UpdateInheriting) {
+                state
+                    .local_tail
+                    .clone()
+                    .or_else(|| state.durable.clone())
+                    .map(|before| {
+                        let change = Box::new(RecordChange {
+                            before,
+                            fields: RecordFields::for_events(&events),
+                        });
+                        state.local_tail = Some(Box::new(change.next_local_tail(&record)));
+                        change
+                    })
+            } else {
+                None
+            };
+            if matches!(mode, CommitMode::UpdateInheriting) && change.is_none() {
+                state.local_tail = Some(Box::new(record.clone()));
+            }
             state.queued.push_back(PendingOperation::Commit {
                 write_id: format!("sesw_{}", uuid::Uuid::new_v4().simple()),
                 mode,
                 record: Box::new(record),
+                change,
                 events,
                 complete,
+                observed,
             });
             let start = if state.running {
                 false
@@ -177,7 +333,10 @@ impl SessionLog {
             tokio::spawn(async move { lane.run().await });
         }
         EnqueuedCommit {
-            complete: receiver,
+            complete: CommitReceiver {
+                complete: receiver,
+                acknowledge_error: Some(acknowledge_error),
+            },
             last_seq,
         }
     }
@@ -223,30 +382,48 @@ impl SessionLog {
                     write_id,
                     mode,
                     mut record,
+                    change,
                     mut events,
                     complete,
+                    observed,
                 } => {
-                    let mut complete = Some(complete);
-                    let retain_after_cancellation = !matches!(mode, CommitMode::Create);
+                    let mut reporter = CommitReporter {
+                        complete: Some(complete),
+                        observed: Some(observed),
+                        retain_after_cancellation: !matches!(mode, CommitMode::Create),
+                    };
                     let result = self
                         .commit(
                             &write_id,
                             mode,
                             &mut record,
+                            change.as_deref(),
                             &mut events,
-                            &mut complete,
-                            retain_after_cancellation,
+                            &mut reporter,
                         )
                         .await
                         .map(|()| *record);
-                    if let Some(complete) = complete {
-                        let _ = complete.send(result);
+                    if result.is_err() && !events.is_empty() {
+                        self.abandon_sequence_reservation(events.len());
+                    }
+                    if let Some(complete) = reporter.complete.take() {
+                        if let Err(Err(error)) = complete.send(result) {
+                            tracing::error!(
+                                session_id = %self.id,
+                                error = %error,
+                                "a detached durable session write failed"
+                            );
+                        }
                     }
                 }
                 PendingOperation::Delete { complete } => {
                     let result = self.delete().await;
                     let _ = complete.send(result);
                 }
+                PendingOperation::ObserveRecord(record) => {
+                    self.remember_durable(*record);
+                }
+                #[cfg(test)]
                 PendingOperation::ObserveRevision(revision) => {
                     self.revision.fetch_max(revision, Ordering::AcqRel);
                 }
@@ -259,12 +436,12 @@ impl SessionLog {
         write_id: &str,
         mode: CommitMode,
         record: &mut SessionRecord,
+        change: Option<&RecordChange>,
         events: &mut [Event],
-        complete: &mut Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
-        retain_after_cancellation: bool,
+        reporter: &mut CommitReporter,
     ) -> Result<(), StoreError> {
         if matches!(mode, CommitMode::UpdateInheriting) {
-            record.revision = record.revision.max(self.revision.load(Ordering::Acquire));
+            self.prepare_inheriting_record(record, change)?;
         }
         let mut attempt = 0_usize;
         // Collision recovery is forward progress, not an outage retry, and
@@ -295,6 +472,7 @@ impl SessionLog {
                     if let Some(last) = events.last() {
                         self.sequences.issued(&self.id, last.seq);
                     }
+                    self.remember_durable(record.clone());
                     return Ok(());
                 }
                 Err(StoreError::SequenceTaken { expected, .. }) if !events.is_empty() => {
@@ -303,11 +481,7 @@ impl SessionLog {
                             id: self.id.clone(),
                         });
                     }
-                    renumber(&self.id, events, expected)?;
-                    if let Some(last) = events.last() {
-                        record.session.last_seq = last.seq;
-                        self.sequences.issued(&self.id, last.seq);
-                    }
+                    self.resequence_from(record, events, expected)?;
                     tracing::warn!(
                         session_id = %self.id,
                         attempt,
@@ -321,10 +495,7 @@ impl SessionLog {
                             id: self.id.clone(),
                         });
                     }
-                    renumber(&self.id, events, expected)?;
-                    if let Some(last) = events.last() {
-                        record.session.last_seq = last.seq;
-                    }
+                    self.resequence_from(record, events, expected)?;
                     tracing::warn!(
                         session_id = %self.id,
                         attempt,
@@ -333,9 +504,10 @@ impl SessionLog {
                     );
                 }
                 Err(StoreError::RevisionConflict { .. })
-                    if !events.is_empty() && !matches!(mode, CommitMode::Create) =>
+                    if (!events.is_empty() || change.is_some())
+                        && !matches!(mode, CommitMode::Create) =>
                 {
-                    match self.rebase_conflicted_write(record, events).await {
+                    match self.rebase_conflicted_write(record, change, events).await {
                         Ok(()) => {
                             tracing::warn!(
                                 session_id = %self.id,
@@ -346,35 +518,156 @@ impl SessionLog {
                         }
                         Err(error @ StoreError::Unavailable(_)) => {
                             unavailable_attempt = unavailable_attempt.saturating_add(1);
-                            self.retry_or_stop(
-                                error,
-                                unavailable_attempt,
-                                complete,
-                                retain_after_cancellation,
-                            )
-                            .await?;
+                            self.retry_or_stop(error, unavailable_attempt, reporter)
+                                .await?;
                         }
                         Err(error) => return Err(error),
                     }
                 }
                 Err(error @ StoreError::Unavailable(_)) => {
                     unavailable_attempt = unavailable_attempt.saturating_add(1);
-                    self.retry_or_stop(
-                        error,
-                        unavailable_attempt,
-                        complete,
-                        retain_after_cancellation,
-                    )
-                    .await?;
+                    self.retry_or_stop(error, unavailable_attempt, reporter)
+                        .await?;
                 }
                 Err(error) => return Err(error),
             }
         }
     }
 
+    /// Build an inheriting write from the authoritative record, never merely
+    /// from an observed revision number.
+    fn prepare_inheriting_record(
+        &self,
+        record: &mut SessionRecord,
+        change: Option<&RecordChange>,
+    ) -> Result<(), StoreError> {
+        let Some(change) = change else {
+            // A lane with no predecessor cannot prove inheritance. Retaining
+            // the snapshot's own revision makes it an exact CAS; a conflict is
+            // safer than authorising a full replacement from a revision alone.
+            return Ok(());
+        };
+        let durable = self
+            .durable_record()
+            .unwrap_or_else(|| (*change.before).clone());
+        *record = change.apply(record, durable)?;
+        Ok(())
+    }
+
+    fn durable_record(&self) -> Option<SessionRecord> {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .durable
+            .as_deref()
+            .cloned()
+    }
+
+    fn remember_durable(&self, record: SessionRecord) {
+        self.revision.fetch_max(record.revision, Ordering::AcqRel);
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state
+            .durable
+            .as_ref()
+            .is_none_or(|known| record.revision >= known.revision)
+        {
+            state.durable = Some(Box::new(record));
+        }
+    }
+
+    /// Rebase the current unit and every queued reservation as one FIFO.
+    ///
+    /// The store supplies the authoritative first position. Holding the lane
+    /// lock while all later reservations move with it prevents a new producer
+    /// from allocating against the half-rebased queue.
+    fn resequence_from(
+        &self,
+        record: &mut SessionRecord,
+        events: &mut [Event],
+        first: u64,
+    ) -> Result<(), StoreError> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let queued_events = state.queued.iter().try_fold(0_u64, |total, operation| {
+            let count = match operation {
+                PendingOperation::Commit { events, .. } => u64::try_from(events.len())
+                    .map_err(|_| StoreError::Malformed("event batch is too large".into()))?,
+                PendingOperation::Delete { .. } | PendingOperation::ObserveRecord(_) => 0,
+                #[cfg(test)]
+                PendingOperation::ObserveRevision(_) => 0,
+            };
+            total.checked_add(count).ok_or_else(|| {
+                StoreError::Malformed(format!("event sequence overflow for {}", self.id))
+            })
+        })?;
+        let current_count = u64::try_from(events.len())
+            .map_err(|_| StoreError::Malformed("event batch is too large".into()))?;
+        let final_tail = first
+            .checked_sub(1)
+            .and_then(|tail| tail.checked_add(current_count))
+            .and_then(|tail| tail.checked_add(queued_events))
+            .ok_or_else(|| {
+                StoreError::Malformed(format!("event sequence overflow for {}", self.id))
+            })?;
+
+        renumber(&self.id, events, first)?;
+        let mut tail = events.last().map_or(first - 1, |event| event.seq);
+        record.session.last_seq = tail;
+        for operation in &mut state.queued {
+            let PendingOperation::Commit { record, events, .. } = operation else {
+                continue;
+            };
+            if events.is_empty() {
+                record.session.last_seq = tail;
+                continue;
+            }
+            let next = tail.checked_add(1).ok_or_else(|| {
+                StoreError::Malformed(format!("event sequence overflow for {}", self.id))
+            })?;
+            renumber(&self.id, events, next)?;
+            tail = events.last().map_or(tail, |event| event.seq);
+            record.session.last_seq = tail;
+        }
+        debug_assert_eq!(tail, final_tail);
+        self.sequences.reconcile(&self.id, final_tail);
+        if let Some(local_tail) = state.local_tail.as_mut() {
+            local_tail.session.last_seq = final_tail;
+        }
+        Ok(())
+    }
+
+    /// Remove one failed unit's reservation and shift every successor with it.
+    fn abandon_sequence_reservation(&self, count: usize) {
+        let count = u64::try_from(count).unwrap_or(u64::MAX);
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        for operation in &mut state.queued {
+            let PendingOperation::Commit {
+                mode,
+                record,
+                events,
+                ..
+            } = operation
+            else {
+                continue;
+            };
+            for event in events.iter_mut() {
+                event.seq = event.seq.saturating_sub(count);
+            }
+            if !events.is_empty() || matches!(mode, CommitMode::UpdateInheriting) {
+                record.session.last_seq = record.session.last_seq.saturating_sub(count);
+            }
+        }
+        self.sequences.rewind(&self.id, count);
+        if let (Some(local_tail), Some(tail)) =
+            (state.local_tail.as_mut(), self.sequences.current(&self.id))
+        {
+            local_tail.session.last_seq = tail;
+        }
+    }
+
     async fn rebase_conflicted_write(
         &self,
         record: &mut SessionRecord,
+        change: Option<&RecordChange>,
         events: &mut [Event],
     ) -> Result<(), StoreError> {
         let durable =
@@ -389,18 +682,17 @@ impl SessionLog {
                 id: self.id.clone(),
             });
         }
+        self.remember_durable(durable.clone());
 
         let intended = record.clone();
-        *record = rebase_semantic_record(&intended, durable, events);
+        *record = match change {
+            Some(change) => change.apply(&intended, durable)?,
+            None => rebase_semantic_record(&intended, durable, events)?,
+        };
         let first = record.session.last_seq.checked_add(1).ok_or_else(|| {
             StoreError::Malformed(format!("event sequence overflow for {}", self.id))
         })?;
-        renumber(&self.id, events, first)?;
-        if let Some(last) = events.last() {
-            record.session.last_seq = last.seq;
-            self.sequences.issued(&self.id, last.seq);
-        }
-        self.revision.fetch_max(record.revision, Ordering::AcqRel);
+        self.resequence_from(record, events, first)?;
         Ok(())
     }
 
@@ -408,8 +700,7 @@ impl SessionLog {
         &self,
         error: StoreError,
         unavailable_attempt: usize,
-        complete: &mut Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
-        retain_after_cancellation: bool,
+        reporter: &mut CommitReporter,
     ) -> Result<(), StoreError> {
         if unavailable_attempt == 1 || unavailable_attempt.is_power_of_two() {
             tracing::warn!(
@@ -420,15 +711,25 @@ impl SessionLog {
             );
         }
         if unavailable_attempt == REPORT_AFTER_ATTEMPTS {
-            if let Some(reporter) = complete.take() {
-                if reporter.send(Err(error.clone())).is_ok() {
-                    // Delivery, rather than a racy `is_closed` observation,
-                    // is the boundary: after an explicit failure the worker
-                    // no longer owns permission to commit this operation.
-                    return Err(error);
+            if let Some(complete) = reporter.complete.take() {
+                if complete.send(Err(error.clone())).is_ok() {
+                    #[cfg(test)]
+                    self.failure_delivered.notify_one();
+                    if reporter
+                        .observed
+                        .take()
+                        .expect("every commit reporter has an observation channel")
+                        .await
+                        .is_ok()
+                    {
+                        // The receiver acknowledges in the same poll that
+                        // observes the error. Only then can the worker give up
+                        // ownership without a cancellation window.
+                        return Err(error);
+                    }
                 }
             }
-            if !retain_after_cancellation {
+            if !reporter.retain_after_cancellation {
                 return Err(error);
             }
         }
@@ -448,7 +749,12 @@ impl SessionLog {
         loop {
             attempt = attempt.saturating_add(1);
             match self.store.delete(&self.id).await {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+                    state.durable = None;
+                    state.local_tail = None;
+                    return Ok(());
+                }
                 Err(error @ StoreError::Unavailable(_)) => {
                     if attempt == 1 || attempt.is_power_of_two() {
                         tracing::warn!(
@@ -577,65 +883,355 @@ impl SessionService {
                 )
                 .complete
         };
-        if let Err(error) = receiver
+        match receiver
             .await
             .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))
-            .and_then(|result| result.map(|_| ()))
+            .and_then(|result| result)
         {
-            tracing::error!(session_id = %id, error = %error, "cannot persist session");
+            Ok(record) => {
+                if let Some(entry) = self.entries.write().await.get_mut(id) {
+                    let event_log = Arc::clone(&entry.event_log);
+                    entry.session.last_seq = record.session.last_seq;
+                    event_log.synchronize_tail(&mut entry.session.last_seq);
+                }
+            }
+            Err(error) => {
+                tracing::error!(session_id = %id, error = %error, "cannot persist session");
+            }
         }
     }
 }
 
 fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
-    let mut record = SessionRecord::new(entry.session.clone());
+    let mut session = entry.session.clone();
+    session.last_seq = entry.event_log.known_tail(session.last_seq);
+    let mut record = SessionRecord::new(session);
     record.runtime_id = entry.runtime.as_ref().map(|handle| handle.0.clone());
     record.context_ref = entry.context_ref.clone();
     record.revision = entry.event_log.revision.load(Ordering::Acquire);
     record
 }
 
-/// Reapply the record effects represented by an event unit to a fresh durable
-/// snapshot. Event-only writes keep fields changed by the competing replica;
-/// state-changing events carry their corresponding record intent forward.
+impl RecordFields {
+    fn for_events(events: &[Event]) -> Self {
+        if events.is_empty() {
+            return Self {
+                all: true,
+                ..Self::default()
+            };
+        }
+        let mut fields = Self::default();
+        for event in events {
+            match event.kind {
+                EventKind::StatusChanged { .. } => fields.status = true,
+                EventKind::TerminalResized { .. } => fields.geometry = true,
+                EventKind::PlaneChanged { .. } => fields.plane = true,
+                EventKind::RuntimeLost { .. } => fields.runtime_loss = true,
+                _ => {}
+            }
+        }
+        fields
+    }
+}
+
+impl RecordChange {
+    /// Advance the raw local lineage only through fields this operation owns.
+    ///
+    /// A workflow may mutate status and then append an owner message and turn
+    /// boundary before its `StatusChanged` event. Keeping those earlier events
+    /// fieldless makes the status delta belong to the event that describes it.
+    fn next_local_tail(&self, intended: &SessionRecord) -> SessionRecord {
+        let mut next = (*self.before).clone();
+        self.copy_selected(intended, &mut next);
+        next.session.last_seq = intended.session.last_seq;
+        next.revision = intended.revision;
+        next
+    }
+
+    /// Apply only this operation's semantic fields to a fresh durable snapshot.
+    fn apply(
+        &self,
+        intended: &SessionRecord,
+        mut durable: SessionRecord,
+    ) -> Result<SessionRecord, StoreError> {
+        let before = &*self.before;
+        if before.session.id != intended.session.id || durable.session.id != intended.session.id {
+            return Err(StoreError::Malformed(
+                "one record change named more than one session".into(),
+            ));
+        }
+
+        let expected = before.revision;
+        let actual = durable.revision;
+        let all = self.fields.all;
+        let status = all || self.fields.status;
+        let geometry = all || self.fields.geometry;
+        let plane = all || self.fields.plane;
+        let recovery = all || self.fields.status || self.fields.runtime_loss;
+        let runtime = all
+            || self.fields.plane
+            || self.fields.runtime_loss
+            || (self.fields.status && !intended.session.status.wants_runtime());
+        let mut compatible = true;
+
+        compatible &= rebase_selected(
+            plane,
+            &mut durable.session.options,
+            &before.session.options,
+            &intended.session.options,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.session.owner,
+            &before.session.owner,
+            &intended.session.owner,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.session.kernel,
+            &before.session.kernel,
+            &intended.session.kernel,
+        );
+        compatible &= rebase_selected(
+            status,
+            &mut durable.session.status,
+            &before.session.status,
+            &intended.session.status,
+        );
+        compatible &= rebase_selected(
+            recovery,
+            &mut durable.session.recovery_state,
+            &before.session.recovery_state,
+            &intended.session.recovery_state,
+        );
+        compatible &= rebase_selected(
+            status,
+            &mut durable.session.stop_reason,
+            &before.session.stop_reason,
+            &intended.session.stop_reason,
+        );
+        compatible &= rebase_selected(
+            geometry,
+            &mut durable.session.geometry,
+            &before.session.geometry,
+            &intended.session.geometry,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.session.environment_profile,
+            &before.session.environment_profile,
+            &intended.session.environment_profile,
+        );
+        compatible &= rebase_selected(
+            plane,
+            &mut durable.session.runtime_version,
+            &before.session.runtime_version,
+            &intended.session.runtime_version,
+        );
+        compatible &= rebase_selected(
+            plane,
+            &mut durable.session.rotations,
+            &before.session.rotations,
+            &intended.session.rotations,
+        );
+        compatible &= rebase_selected(
+            plane,
+            &mut durable.session.rotated_at,
+            &before.session.rotated_at,
+            &intended.session.rotated_at,
+        );
+        compatible &= rebase_selected(
+            plane,
+            &mut durable.session.capabilities,
+            &before.session.capabilities,
+            &intended.session.capabilities,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.session.granted_services,
+            &before.session.granted_services,
+            &intended.session.granted_services,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.session.granted_skills,
+            &before.session.granted_skills,
+            &intended.session.granted_skills,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.session.pricing,
+            &before.session.pricing,
+            &intended.session.pricing,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.session.created_at,
+            &before.session.created_at,
+            &intended.session.created_at,
+        );
+        compatible &= rebase_selected(
+            runtime,
+            &mut durable.runtime_id,
+            &before.runtime_id,
+            &intended.runtime_id,
+        );
+        compatible &= rebase_selected(
+            all,
+            &mut durable.context_ref,
+            &before.context_ref,
+            &intended.context_ref,
+        );
+
+        if !compatible {
+            return Err(StoreError::RevisionConflict { expected, actual });
+        }
+        // `last_seq` belongs to the reservation FIFO and `revision` belongs to
+        // the store. Both stay on the authoritative record and are updated by
+        // the commit path, never copied from a queued snapshot.
+        Ok(durable)
+    }
+
+    fn copy_selected(&self, intended: &SessionRecord, target: &mut SessionRecord) {
+        let all = self.fields.all;
+        let status = all || self.fields.status;
+        let geometry = all || self.fields.geometry;
+        let plane = all || self.fields.plane;
+        let recovery = all || self.fields.status || self.fields.runtime_loss;
+        let runtime = all
+            || self.fields.plane
+            || self.fields.runtime_loss
+            || (self.fields.status && !intended.session.status.wants_runtime());
+
+        copy_selected(
+            plane,
+            &mut target.session.options,
+            &intended.session.options,
+        );
+        copy_selected(all, &mut target.session.owner, &intended.session.owner);
+        copy_selected(all, &mut target.session.kernel, &intended.session.kernel);
+        copy_selected(status, &mut target.session.status, &intended.session.status);
+        copy_selected(
+            recovery,
+            &mut target.session.recovery_state,
+            &intended.session.recovery_state,
+        );
+        copy_selected(
+            status,
+            &mut target.session.stop_reason,
+            &intended.session.stop_reason,
+        );
+        copy_selected(
+            geometry,
+            &mut target.session.geometry,
+            &intended.session.geometry,
+        );
+        copy_selected(
+            all,
+            &mut target.session.environment_profile,
+            &intended.session.environment_profile,
+        );
+        copy_selected(
+            plane,
+            &mut target.session.runtime_version,
+            &intended.session.runtime_version,
+        );
+        copy_selected(
+            plane,
+            &mut target.session.rotations,
+            &intended.session.rotations,
+        );
+        copy_selected(
+            plane,
+            &mut target.session.rotated_at,
+            &intended.session.rotated_at,
+        );
+        copy_selected(
+            plane,
+            &mut target.session.capabilities,
+            &intended.session.capabilities,
+        );
+        copy_selected(
+            all,
+            &mut target.session.granted_services,
+            &intended.session.granted_services,
+        );
+        copy_selected(
+            all,
+            &mut target.session.granted_skills,
+            &intended.session.granted_skills,
+        );
+        copy_selected(all, &mut target.session.pricing, &intended.session.pricing);
+        copy_selected(
+            all,
+            &mut target.session.created_at,
+            &intended.session.created_at,
+        );
+        copy_selected(runtime, &mut target.runtime_id, &intended.runtime_id);
+        copy_selected(all, &mut target.context_ref, &intended.context_ref);
+    }
+}
+
+fn rebase_selected<T: Clone + PartialEq>(
+    selected: bool,
+    durable: &mut T,
+    before: &T,
+    intended: &T,
+) -> bool {
+    !selected || rebase_field(durable, before, intended)
+}
+
+fn copy_selected<T: Clone>(selected: bool, target: &mut T, intended: &T) {
+    if selected {
+        target.clone_from(intended);
+    }
+}
+
+fn rebase_field<T: Clone + PartialEq>(durable: &mut T, before: &T, intended: &T) -> bool {
+    if before == intended {
+        return true;
+    }
+    if durable != before && durable != intended {
+        return false;
+    }
+    durable.clone_from(intended);
+    true
+}
+
+/// Reapply an event unit to a fresh durable snapshot when its semantic
+/// precondition still holds.
+///
+/// History-only writes preserve every field changed by the competing replica.
+/// Runtime loss names the exact runtime it observed, so that identity is a
+/// sufficient compare precondition. Other record-mutating events do not carry
+/// their complete prior state and must return the revision conflict instead of
+/// guessing that a newer lifecycle or plane decision is safe to overwrite.
 fn rebase_semantic_record(
     intended: &SessionRecord,
     mut durable: SessionRecord,
     events: &[Event],
-) -> SessionRecord {
+) -> Result<SessionRecord, StoreError> {
     for event in events {
         match &event.kind {
-            EventKind::StatusChanged {
-                status,
-                stop_reason,
-                ..
-            } => {
-                durable.session.status = *status;
-                durable.session.stop_reason = *stop_reason;
-                durable.session.recovery_state = intended.session.recovery_state;
-                if !status.wants_runtime() {
-                    durable.runtime_id = intended.runtime_id.clone();
-                }
-            }
-            EventKind::TerminalResized { .. } => {
-                durable.session.geometry = intended.session.geometry;
-            }
-            EventKind::PlaneChanged { .. } => {
-                durable.session.options.mode = intended.session.options.mode;
-                durable.session.capabilities = intended.session.capabilities;
-                durable.session.runtime_version = intended.session.runtime_version.clone();
-                durable.session.rotations = intended.session.rotations;
-                durable.session.rotated_at = intended.session.rotated_at.clone();
-                durable.runtime_id = intended.runtime_id.clone();
-            }
-            EventKind::RuntimeLost { .. } => {
+            EventKind::RuntimeLost { runtime_id, .. }
+                if durable.runtime_id.as_deref() == Some(runtime_id.as_str()) =>
+            {
                 durable.runtime_id = intended.runtime_id.clone();
                 durable.session.recovery_state = intended.session.recovery_state;
+            }
+            EventKind::RuntimeLost { .. }
+            | EventKind::StatusChanged { .. }
+            | EventKind::TerminalResized { .. }
+            | EventKind::PlaneChanged { .. } => {
+                return Err(StoreError::RevisionConflict {
+                    expected: intended.revision,
+                    actual: durable.revision,
+                });
             }
             _ => {}
         }
     }
-    durable
+    Ok(durable)
 }
 
 fn renumber(id: &SessionId, events: &mut [Event], first: u64) -> Result<(), StoreError> {
