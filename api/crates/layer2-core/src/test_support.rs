@@ -42,6 +42,19 @@ pub(crate) struct FakeStore {
 }
 
 impl FakeStore {
+    /// Install an exact record for a fixture, outside the production store port.
+    pub(crate) async fn seed(&self, record: &SessionRecord) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        self.upserts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.sessions
+            .lock()
+            .await
+            .insert(record.session.id.0.clone(), record.clone());
+        Ok(())
+    }
+
     pub(crate) async fn fail_everything(&self) {
         *self.broken.lock().await = true;
     }
@@ -186,18 +199,6 @@ impl FakeStore {
 impl SessionStore for FakeStore {
     async fn ping(&self) -> Result<(), StoreError> {
         self.guard().await
-    }
-
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.guard().await?;
-        let _transaction = self.transaction.lock().await;
-        self.upserts
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.sessions
-            .lock()
-            .await
-            .insert(record.session.id.0.clone(), record.clone());
-        Ok(())
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {

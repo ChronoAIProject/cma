@@ -74,10 +74,6 @@ impl SessionStore for RotationStore {
         self.inner.ping().await
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.inner.upsert(record).await
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.inner.get(id).await
     }
@@ -1044,7 +1040,7 @@ async fn a_session_already_being_moved_refuses_a_second_move() {
         .expect("readable")
         .expect("present");
     record.session.status = SessionStatus::Rotating;
-    store.upsert(&record).await.expect("recorded");
+    store.seed(&record).await.expect("recorded");
 
     let refusal = svc
         .change_plane(

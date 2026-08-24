@@ -126,9 +126,6 @@ pub trait SessionStore: Send + Sync {
     /// accidental substitute for handling a real store failure.
     async fn ping(&self) -> Result<(), StoreError>;
 
-    /// Create or replace a session record.
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError>;
-
     /// Read one session, whoever owns it. Ownership is decided above this.
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError>;
 
