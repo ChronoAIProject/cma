@@ -410,6 +410,15 @@ pub(crate) fn service_with_environments(
     adapter: Arc<FakeAdapter>,
     profiles: Arc<EnvironmentProfileService>,
 ) -> Arc<SessionService> {
+    service_over_with_environments(store, adapter, profiles)
+}
+
+/// The environment-aware fixture over an adversarial session store.
+pub(crate) fn service_over_with_environments(
+    store: Arc<dyn SessionStore>,
+    adapter: Arc<FakeAdapter>,
+    profiles: Arc<EnvironmentProfileService>,
+) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
