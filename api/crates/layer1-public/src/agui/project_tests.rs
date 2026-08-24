@@ -164,6 +164,7 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
         arguments: None,
     });
     assert_eq!(kinds(&p), vec!["TOOL_CALL_START"]);
+    assert_eq!(p.events[0].seq, Some(7));
     assert_eq!(p.events[0].body["toolCallId"], "call-1");
     // `toolCallName` is the protocol's own field, and this assertion was
     // always right. What nothing checked was whether the *client* read it —
@@ -206,6 +207,18 @@ fn a_tool_call_update_with_a_result_advances_only_after_the_result() {
 
     assert_eq!(kinds(&p), vec!["TOOL_CALL_END", "TOOL_CALL_RESULT"]);
     assert_only_final_carries_cursor(&p);
+}
+
+#[test]
+fn a_tool_call_update_without_a_result_advances_on_the_end() {
+    let p = projected(EventKind::ToolCallUpdated {
+        call_id: "call-1".into(),
+        status: "completed".into(),
+        result: None,
+    });
+
+    assert_eq!(kinds(&p), vec!["TOOL_CALL_END"]);
+    assert_eq!(p.events[0].seq, Some(7));
 }
 
 #[test]
