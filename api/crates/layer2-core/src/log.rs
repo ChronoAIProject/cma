@@ -224,7 +224,7 @@ impl SessionLog {
         record: SessionRecord,
         events: Vec<Event>,
     ) -> EnqueuedCommit {
-        self.enqueue_commit_with(mode, record, events, |_| {})
+        self.enqueue_commit_with(mode, record, events, None, |_| {})
     }
 
     fn enqueue_commit_with<F>(
@@ -232,6 +232,7 @@ impl SessionLog {
         mode: CommitMode,
         mut record: SessionRecord,
         mut events: Vec<Event>,
+        owned_fields: Option<RecordFields>,
         after_allocation: F,
     ) -> EnqueuedCommit
     where
@@ -310,7 +311,8 @@ impl SessionLog {
                     .clone()
                     .or_else(|| state.durable.clone())
                     .map(|before| {
-                        let fields = RecordFields::for_commit(&before, &record, &events);
+                        let fields = owned_fields
+                            .unwrap_or_else(|| RecordFields::for_commit(&before, &record, &events));
                         let change = Box::new(RecordChange { before, fields });
                         state.local_tail = Some(Box::new(change.next_local_tail(&record)));
                         change
@@ -988,6 +990,29 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
     record.context_ref = entry.context_ref.clone();
     record.revision = entry.event_log.revision.load(Ordering::Acquire);
     record
+}
+
+/// Queue a record-only transcript reference update with explicit narrow ownership.
+///
+/// Empty commits normally own no semantic fields because their snapshots may
+/// include rejected live state. Transcript capture is the exception: it has an
+/// awaited operation whose only intended change is the context reference.
+pub(crate) fn update_context_reference(entry: &SessionEntry, reference: String) -> CommitReceiver {
+    let mut record = record_from_entry(entry);
+    record.context_ref = Some(reference);
+    entry
+        .event_log
+        .enqueue_commit_with(
+            CommitMode::UpdateInheriting,
+            record,
+            Vec::new(),
+            Some(RecordFields {
+                context: true,
+                ..RecordFields::default()
+            }),
+            |_| {},
+        )
+        .complete
 }
 
 impl RecordFields {

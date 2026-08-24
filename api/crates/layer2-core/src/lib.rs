@@ -56,6 +56,8 @@ mod provision_tests;
 #[cfg(test)]
 mod adapter_support;
 #[cfg(test)]
+mod commit_fault_support;
+#[cfg(test)]
 mod conversation_support;
 #[cfg(test)]
 mod environment_support;

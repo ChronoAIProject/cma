@@ -15,8 +15,8 @@ use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::log::append;
-use crate::service::{Attachment, AttachmentHandle, SessionService};
+use crate::log::{append, append_with};
+use crate::service::{store_failed, Attachment, AttachmentHandle, SessionService};
 use crate::terminal::TerminalGeometry;
 
 /// How an attach should treat an attachment somebody already holds.
@@ -69,6 +69,8 @@ impl SessionService {
             // open — which is a lie the person cannot act on.
             self.readopt(&record).await?;
         }
+        let gate = self.lifecycle_gates.gate(id);
+        let _guard = gate.lock_owned().await;
 
         // The session may have been recovered before its owner had signed back
         // in, when there was no credential to be had. This is the moment they
@@ -85,7 +87,7 @@ impl SessionService {
             self.supply_credential(id, &caller.subject).await;
         }
 
-        let (screen, live, ending, generation, superseded) = {
+        let (screen, live, ending, generation, supersede, superseded, replaced, commit) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
             // Attaching is acting, not observing, so ownership is required
@@ -97,35 +99,45 @@ impl SessionService {
                 return Err(CoreError::SessionTerminated);
             }
             entry.session.capabilities.require(Capability::Terminal)?;
-            match (&entry.attached, claim) {
+            let replaced = match (&entry.attached, claim) {
                 (Some(_), AttachmentClaim::Exclusive) => return Err(CoreError::AlreadyAttached),
-                (Some(held), AttachmentClaim::Takeover) => {
-                    // A send with no receiver means the holder has already
-                    // gone, which is not a failure — it is the case takeover
-                    // exists to rescue.
-                    let _ = held.supersede.send(crate::lease::Detached::Superseded);
-                    tracing::info!(session_id = %id, "the terminal attachment was taken over");
-                }
-                (None, _) => {}
-            }
-            entry.attachments_issued += 1;
-            let generation = entry.attachments_issued;
+                (Some(held), AttachmentClaim::Takeover) => Some(held.supersede.clone()),
+                (None, _) => None,
+            };
+            let generation = entry.attachments_issued.saturating_add(1);
             let (supersede, superseded) = broadcast::channel(1);
-            entry.attached = Some(Attachment {
-                generation,
-                supersede,
+            let commit = append_with(entry, EventKind::TerminalAttached, |record| {
+                record.session.geometry = geometry;
             });
-            entry.session.geometry = geometry;
-            append(entry, EventKind::TerminalAttached);
             (
                 Arc::clone(&entry.screen),
                 entry.live.clone(),
                 entry.terminal_ending.subscribe(),
                 generation,
+                supersede,
                 superseded,
+                replaced,
+                commit,
             )
         };
-        self.flush(id).await;
+        let committed = commit.committed().await.map_err(store_failed)?;
+        {
+            let mut entries = self.entries.write().await;
+            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+            entry.session.geometry = committed.session.geometry;
+            entry.session.last_seq = committed.session.last_seq;
+            entry.attachments_issued = generation;
+            entry.attached = Some(Attachment {
+                generation,
+                supersede,
+            });
+        }
+        if let Some(replaced) = replaced {
+            // A send with no receiver means the holder has already gone, which
+            // is not a failure: it is the case takeover exists to rescue.
+            let _ = replaced.send(crate::lease::Detached::Superseded);
+            tracing::info!(session_id = %id, "the terminal attachment was taken over");
+        }
 
         // The relay applies and broadcasts while holding this same lock. Taking
         // it before subscribing makes the boundary atomic: a chunk is either in
