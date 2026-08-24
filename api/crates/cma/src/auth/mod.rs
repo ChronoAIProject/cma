@@ -8,14 +8,14 @@
 //! Endpoints are discovered from the provider's metadata document rather than
 //! hard-coded, so a provider that moves a route does not break this service.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::http::HeaderMap;
 pub mod profile;
 
 use layer2_core::{Authorization, SessionId, SubjectId};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use token::random_token;
 
@@ -81,7 +81,7 @@ pub struct AuthState {
     /// fresh one on every ask, and so the old one can be reclaimed once its
     /// replacement is in place. The owner is kept alongside because reclaiming
     /// a key needs their token, and by then the session may be gone.
-    issued: RwLock<HashMap<SessionId, Issued>>,
+    issued: Arc<RwLock<HashMap<SessionId, Issued>>>,
     /// Credentials no runtime will present, but which are not yet taken back.
     ///
     /// Usually a replaced credential: it is not safe to revoke the moment its
@@ -89,7 +89,18 @@ pub struct AuthState {
     /// Also carries an ended session's credential when its owner token is
     /// momentarily absent. In both cases the sweep waits until revocation can
     /// actually be attempted instead of forgetting a still-valid key.
-    superseded: RwLock<Vec<(String, SubjectId)>>,
+    superseded: Arc<RwLock<Vec<(String, SubjectId)>>>,
+    /// Replacement credentials whose provider mint completed but whose
+    /// runtime has not yet confirmed receiving the new value.
+    ///
+    /// Minting runs in a detached progress task. That task records its result
+    /// here even when the sweep awaiting it is cancelled, so the next sweep can
+    /// retry delivery without minting another no-expiry key. `retiring` routes
+    /// a mint that finishes after release directly onto revoke debt instead.
+    reissues: Arc<RwLock<ReissueProgress>>,
+    /// Serialises passes so cancellation keeps queued debt and overlapping
+    /// sweeps cannot attempt or account for the same key.
+    superseded_sweep: Mutex<()>,
     /// What the provider has said about bearer tokens, briefly.
     ///
     /// Separate from `sessions` because the two are different credentials with
@@ -123,6 +134,13 @@ pub struct Issued {
     pub minted_at: std::time::Instant,
 }
 
+#[derive(Default)]
+struct ReissueProgress {
+    pending: HashMap<SessionId, Issued>,
+    minting: HashSet<SessionId>,
+    retiring: HashSet<SessionId>,
+}
+
 /// Derive the PKCE challenge for a verifier, per S256.
 fn code_challenge(verifier: &str) -> String {
     use base64::Engine as _;
@@ -143,8 +161,10 @@ impl AuthState {
                 .expect("http client builds"),
             metadata: RwLock::new(None),
             issuer: RwLock::new(None),
-            issued: RwLock::new(HashMap::new()),
-            superseded: RwLock::new(Vec::new()),
+            issued: Arc::new(RwLock::new(HashMap::new())),
+            superseded: Arc::new(RwLock::new(Vec::new())),
+            reissues: Arc::new(RwLock::new(ReissueProgress::default())),
+            superseded_sweep: Mutex::new(()),
             sessions: RwLock::new(HashMap::new()),
             tokens: RwLock::new(HashMap::new()),
             authorizations: RwLock::new(HashMap::new()),
@@ -288,65 +308,162 @@ impl AuthState {
         lifetime: std::time::Duration,
     ) -> Vec<(SessionId, SubjectId)> {
         let now = std::time::Instant::now();
-        self.issued
-            .read()
-            .await
+        let issued = self.issued.read().await;
+        let progress = self.reissues.read().await;
+        let mut due: Vec<(SessionId, SubjectId)> = progress
+            .pending
             .iter()
-            .filter(|(_, h)| now.duration_since(h.minted_at) >= lifetime)
             .map(|(s, h)| (s.clone(), h.owner.clone()))
-            .collect()
+            .collect();
+        due.extend(
+            issued
+                .iter()
+                .filter(|&(session, held)| {
+                    !progress.pending.contains_key(session)
+                        && !progress.minting.contains(session)
+                        && !progress.retiring.contains(session)
+                        && now.duration_since(held.minted_at) >= lifetime
+                })
+                .map(|(session, held)| (session.clone(), held.owner.clone())),
+        );
+        due
     }
 
-    /// Mint a session a fresh credential, holding the old one for a sweep.
+    /// Mint, or resume delivering, a fresh credential for one session.
     ///
-    /// Returns the new value for the caller to push. The one being replaced
-    /// stays valid until [`Self::take_back_superseded`] runs, so the session
-    /// never holds a credential the provider has stopped accepting.
+    /// The provider request belongs to a detached task. Cancelling the caller
+    /// only stops it waiting: a successful mint is still recorded in `pending`
+    /// for the next sweep, rather than becoming an unowned no-expiry key. The
+    /// current credential remains issued until [`Self::confirm_reissue`] says
+    /// the runtime accepted this value.
     pub async fn reissue(
         &self,
         session: &SessionId,
         subject: &SubjectId,
         services: &[layer2_core::ServiceId],
     ) -> Option<String> {
+        if let Some(pending) = self.reissues.read().await.pending.get(session) {
+            return Some(pending.value.clone());
+        }
+
         let issuer = { self.issuer.read().await.clone() }?;
         let owner_token = self.access_token(subject).await?;
-        let minted = issuer
-            .mint(session, subject, &owner_token, services)
-            .await?;
 
-        let previous = self.issued.write().await.insert(
-            session.clone(),
-            Issued {
-                id: minted.id,
-                value: minted.full_key.clone(),
-                owner: subject.clone(),
-                minted_at: std::time::Instant::now(),
-            },
-        );
-        if let Some(old) = previous {
-            self.superseded.write().await.push((old.id, old.owner));
+        // Reserve while issued is still known to exist. Release and commit use
+        // the same issued -> superseded -> reissues order; the mint completion
+        // never waits for another lock while holding reissues.
+        {
+            let issued = self.issued.read().await;
+            let mut progress = self.reissues.write().await;
+            if let Some(pending) = progress.pending.get(session) {
+                return Some(pending.value.clone());
+            }
+            if !issued.contains_key(session)
+                || progress.retiring.contains(session)
+                || !progress.minting.insert(session.clone())
+            {
+                return None;
+            }
         }
-        Some(minted.full_key)
+
+        let reissues = Arc::clone(&self.reissues);
+        let superseded = Arc::clone(&self.superseded);
+        let minted_session = session.clone();
+        let minted_subject = subject.clone();
+        let minted_services = services.to_vec();
+        let mint = tokio::spawn(async move {
+            let minted = issuer
+                .mint(
+                    &minted_session,
+                    &minted_subject,
+                    &owner_token,
+                    &minted_services,
+                )
+                .await;
+            // Acquire in the global superseded -> reissues order. In
+            // particular, a mint completing after release must not clear its
+            // retiring marker before the replacement is visible as retry debt.
+            let mut superseded = superseded.write().await;
+            let mut progress = reissues.write().await;
+            progress.minting.remove(&minted_session);
+            let Some(minted) = minted else {
+                progress.retiring.remove(&minted_session);
+                return None;
+            };
+            let replacement = Issued {
+                id: minted.id,
+                value: minted.full_key,
+                owner: minted_subject,
+                minted_at: std::time::Instant::now(),
+            };
+            let value = replacement.value.clone();
+
+            if progress.retiring.remove(&minted_session) {
+                superseded.push((replacement.id, replacement.owner));
+                return None;
+            }
+
+            let displaced = progress.pending.insert(minted_session, replacement);
+            if let Some(displaced) = displaced {
+                superseded.push((displaced.id, displaced.owner));
+            }
+            Some(value)
+        });
+
+        match mint.await {
+            Ok(value) => value,
+            Err(error) => {
+                self.reissues.write().await.minting.remove(session);
+                tracing::error!(session_id = %session, %error, "credential replacement task failed");
+                None
+            }
+        }
+    }
+
+    /// Promote a pending replacement after its runtime accepted the new value.
+    ///
+    /// Every mutation happens after all three locks are held in the one global
+    /// order. Cancellation while acquiring them leaves the pending replacement
+    /// untouched for a later sweep; after acquisition there is no await in the
+    /// ownership transfer.
+    pub async fn confirm_reissue(&self, session: &SessionId) -> bool {
+        let mut issued = self.issued.write().await;
+        let mut superseded = self.superseded.write().await;
+        let mut progress = self.reissues.write().await;
+        let Some(replacement) = progress.pending.remove(session) else {
+            return false;
+        };
+        if progress.retiring.contains(session) || !issued.contains_key(session) {
+            superseded.push((replacement.id, replacement.owner));
+            return false;
+        }
+        let old = issued
+            .insert(session.clone(), replacement)
+            .expect("the issued credential was checked while its lock was held");
+        superseded.push((old.id, old.owner));
+        true
     }
 
     /// Take back credentials queued on an earlier pass or release.
     pub async fn take_back_superseded(&self) -> usize {
-        let pending: Vec<(String, SubjectId)> = std::mem::take(&mut *self.superseded.write().await);
+        let _sweep = self.superseded_sweep.lock().await;
         let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
-            self.superseded.write().await.extend(pending);
             return 0;
         };
+        let pending = self.superseded.read().await.clone();
         let mut taken = 0;
-        let mut deferred = Vec::new();
-        for (id, owner) in pending {
-            if let Some(token) = self.access_token(&owner).await {
-                issuer.revoke(&id, &token).await;
-                taken += 1;
-            } else {
-                deferred.push((id, owner));
+        for queued in pending {
+            let Some(token) = self.access_token(&queued.1).await else {
+                continue;
+            };
+            if issuer.revoke(&queued.0, &token).await {
+                let mut owed = self.superseded.write().await;
+                if let Some(index) = owed.iter().position(|owed| owed == &queued) {
+                    owed.remove(index);
+                    taken += 1;
+                }
             }
         }
-        self.superseded.write().await.extend(deferred);
         taken
     }
 
@@ -389,13 +506,30 @@ impl AuthState {
                 if service.session_claims_credential(&session).await {
                     continue;
                 }
-                // Held for a session this process is still tracking? Then it is
-                // being replaced, not orphaned, and the sweep owns it.
-                if self.issued.read().await.contains_key(&session) {
+                // Held, pending, or still being minted for a session this
+                // process is tracking? Then it is not orphaned. Acquire in the
+                // global issued -> reissues order so release cannot expose the
+                // interval between retiring an in-flight mint and queueing its
+                // eventual result.
+                let tracked = {
+                    let issued = self.issued.read().await;
+                    let progress = self.reissues.read().await;
+                    issued.contains_key(&session)
+                        || progress.pending.contains_key(&session)
+                        || progress.minting.contains(&session)
+                        || progress.retiring.contains(&session)
+                };
+                if tracked {
                     continue;
                 }
-                issuer.revoke(&id, &token).await;
-                reclaimed += 1;
+                // Explicit revocation debt has one owner. Letting this sweep
+                // delete it would leave its queue entry retrying a 404 forever.
+                if self.revoke_is_queued(&id).await {
+                    continue;
+                }
+                if issuer.revoke(&id, &token).await {
+                    reclaimed += 1;
+                }
             }
         }
         reclaimed
