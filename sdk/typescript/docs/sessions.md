@@ -31,7 +31,32 @@ console.log(listed.length, current.lifecycle);
 ```
 
 `listSessions` follows the server's opaque `Link: rel="next"` continuations and
-resolves only after every visible page has been validated.
+resolves only after every visible page has been validated. One `timeoutMs` covers
+the complete walk, including every response body. The compatibility walk refuses
+more than 100 pages or 20,000 retained rows by default; callers can choose smaller
+ceilings with `maxPages` and `maxItems`.
+
+Use the bounded API when a UI or worker should decide when to fetch more. Treat
+`next` as opaque and pass it back unchanged:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+let page = await cma.listSessionPage({ status: 'running', limit: 50 });
+console.log(page.items.map((session) => session.id));
+
+if (page.next !== undefined) {
+  page = await cma.listSessionPage({ next: page.next });
+  console.log(page.items.map((session) => session.id));
+}
+```
+
+Environment profiles expose the same manual shape through
+`listEnvironmentProfilesPage({ limit, cursor, next })`; profiles do not accept a
+session-status filter. Page limits are integers from 1 through 200. `cursor` and
+`next` are alternatives: a server-issued `next` already carries the original
+filters and cannot be combined with new ones.
 
 Creation can return while the lifecycle is still `provisioning`. Use the durable
 event stream for progress and `readSession` for the latest full projection.

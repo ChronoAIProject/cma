@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { Cma } from '../src/client.js';
 import { resolveConfig } from '../src/config.js';
-import { ApiError, ProtocolError, RequestAborted, ValidationError } from '../src/errors.js';
+import {
+  ApiError,
+  ProtocolError,
+  RequestAborted,
+  TimeoutError,
+  ValidationError,
+} from '../src/errors.js';
 import {
   STOP_REASONS,
   changePlane,
@@ -9,6 +16,7 @@ import {
   deleteSession,
   fetchTranscript,
   listKernels,
+  listSessionPage,
   listSessions,
   quoteSession,
   readAllowance,
@@ -172,6 +180,199 @@ describe('the shared session fixture', () => {
     ]);
   });
 
+  it('exposes bounded status pages whose opaque next target can be followed manually', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'sesn_running_newer' })]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/sessions?status=running&limit=1&cursor=opaque-next>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'sesn_running_older' })]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    const first = await listSessionPage(config, {
+      status: 'running',
+      limit: 1,
+      cursor: 'opaque start',
+    });
+    expect(first.items.map(({ id }) => id)).toEqual(['sesn_running_newer']);
+    const next = first.next;
+    expect(next).toBeDefined();
+    if (next === undefined) {
+      throw new Error('first page did not carry its continuation');
+    }
+    await expect(listSessionPage(config, { next, status: 'running' })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const second = await listSessionPage(config, { next });
+    expect(second.items.map(({ id }) => id)).toEqual(['sesn_running_older']);
+    expect(second.next).toBeUndefined();
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/sessions?status=running&limit=1&cursor=opaque+start',
+      '/api/v1/sessions?status=running&limit=1&cursor=opaque-next',
+    ]);
+  });
+
+  it('exposes bounded session pages through the configured client', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([sessionFixture({ id: 'sesn_configured' })]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const cma = new Cma({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    const page = await cma.listSessionPage({ limit: 1 });
+
+    expect(page.items.map(({ id }) => id)).toEqual(['sesn_configured']);
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/sessions?limit=1',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('rejects manual page bounds before making an HTTP request', async () => {
+    const fetch = vi.fn();
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    for (const limit of [0, 201, 1.5]) {
+      await expect(listSessionPage(config, { limit })).rejects.toBeInstanceOf(ValidationError);
+    }
+    await expect(listSessionPage(config, { cursor: '' })).rejects.toBeInstanceOf(ValidationError);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('bounds compatibility walks by both pages and retained items', async () => {
+    const continuing = () =>
+      new Response(JSON.stringify([sessionFixture({ id: 'sesn_one' })]), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          link: '</api/v1/sessions?cursor=another>; rel="next"',
+        },
+      });
+    const pageFetch = vi.fn().mockResolvedValue(continuing());
+    await expect(
+      listSessions(resolveConfig({ fetch: pageFetch as unknown as typeof globalThis.fetch }), {
+        maxPages: 1,
+      }),
+    ).rejects.toThrow(/1-page boundary/i);
+    expect(pageFetch).toHaveBeenCalledTimes(1);
+
+    const itemFetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify([sessionFixture({ id: 'sesn_one' }), sessionFixture({ id: 'sesn_two' })]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    await expect(
+      listSessions(resolveConfig({ fetch: itemFetch as unknown as typeof globalThis.fetch }), {
+        maxItems: 1,
+      }),
+    ).rejects.toThrow(/1-item boundary/i);
+
+    const loopFetch = vi.fn(() => Promise.resolve(continuing()));
+    await expect(
+      listSessions(resolveConfig({ fetch: loopFetch as unknown as typeof globalThis.fetch })),
+    ).rejects.toThrow(/repeated a continuation/i);
+    expect(loopFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects invalid compatibility-walk ceilings before making a request', async () => {
+    const fetch = vi.fn();
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    for (const options of [
+      { maxPages: 0 },
+      { maxPages: 1.5 },
+      { maxItems: 0 },
+      { maxItems: Number.POSITIVE_INFINITY },
+    ]) {
+      await expect(listSessions(config, options)).rejects.toBeInstanceOf(ValidationError);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the timeout active while a successful response body is stalled', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn().mockResolvedValue(
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+      const pending = listSessions(
+        resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }),
+        { timeoutMs: 25 },
+      );
+      const assertion = expect(pending).rejects.toBeInstanceOf(TimeoutError);
+      await vi.advanceTimersByTimeAsync(25);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps caller cancellation active after response headers arrive', async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const pending = listSessions(
+      resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }),
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    controller.abort('caller left');
+    await expect(pending).rejects.toBeInstanceOf(RequestAborted);
+  });
+
+  it('uses one aggregate deadline across every page request', async () => {
+    vi.useFakeTimers();
+    try {
+      let call = 0;
+      const fetch = vi.fn(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        call += 1;
+        return new Response(JSON.stringify([sessionFixture({ id: `sesn_${String(call)}` })]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            ...(call === 1 ? { link: '</api/v1/sessions?cursor=second>; rel="next"' } : {}),
+          },
+        });
+      });
+      const pending = listSessions(
+        resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }),
+        { timeoutMs: 15 },
+      );
+      const assertion = expect(pending).rejects.toBeInstanceOf(TimeoutError);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(5);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses a continuation that could redirect the caller credential', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(
       new Response(JSON.stringify([sessionFixture()]), {
@@ -179,6 +380,23 @@ describe('the shared session fixture', () => {
         headers: {
           'content-type': 'application/json',
           link: '<https://outside.example/api/v1/sessions?cursor=x>; rel="next"',
+        },
+      }),
+    );
+
+    await expect(
+      listSessions(resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch })),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a continuation that leaves the session route', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([sessionFixture()]), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          link: '</api/v1/environment-profiles?cursor=x>; rel="next"',
         },
       }),
     );
