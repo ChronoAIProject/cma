@@ -113,7 +113,7 @@ async fn prefer(
     let Json(body) = body?;
     let wanted = body.profile.map(EnvironmentProfileId);
     service.prefer(&caller, wanted.as_ref()).await?;
-    let profiles = complete_profile_collection(&service, &caller).await?;
+    let profiles = complete_profile_collection(&service, &caller, wanted.as_ref()).await?;
     Ok(Json(
         profiles
             .into_iter()
@@ -126,14 +126,22 @@ async fn prefer(
 async fn complete_profile_collection(
     service: &EnvironmentProfileService,
     caller: &Caller,
+    pinned_preferred: Option<&EnvironmentProfileId>,
 ) -> Result<Vec<EnvironmentProfile>, CoreError> {
     let mut profiles = Vec::new();
     let mut cursor: Option<PageCursor> = None;
     let mut seen = HashSet::new();
     loop {
-        let page = service
+        let mut page = service
             .list(caller, &PageRequest::new(MAX_PAGE_SIZE, cursor))
             .await?;
+        // Another preference write may land between pages. `/v1` promises the
+        // post-write answer for this request, so every page is normalized to
+        // the winner this request validated and wrote rather than whichever
+        // winner happened to be visible during that individual page read.
+        for profile in &mut page.items {
+            profile.preferred = pinned_preferred == Some(&profile.id);
+        }
         profiles.extend(page.items);
         match page.next {
             Some(next) if seen.insert(next.clone()) => cursor = Some(next),
