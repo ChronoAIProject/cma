@@ -85,7 +85,7 @@ impl SessionService {
             self.supply_credential(id, &caller.subject).await;
         }
 
-        let (screen, live, generation, superseded) = {
+        let (screen, live, ending, generation, superseded) = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
             // Attaching is acting, not observing, so ownership is required
@@ -120,6 +120,7 @@ impl SessionService {
             (
                 Arc::clone(&entry.screen),
                 entry.live.clone(),
+                entry.terminal_ending.subscribe(),
                 generation,
                 superseded,
             )
@@ -128,7 +129,16 @@ impl SessionService {
 
         // Subscribe before rendering the repaint: output produced between the
         // two is then buffered rather than lost.
-        let output = live.subscribe();
+        let output = match live {
+            Some(live) => live.subscribe(),
+            None => {
+                // The runtime channel already ended. A closed receiver lets the
+                // interface deliver the recorded ending after its repaint.
+                let (closed, output) = broadcast::channel(1);
+                drop(closed);
+                output
+            }
+        };
 
         let repaint = {
             let mut s = screen.lock().await;
@@ -152,6 +162,7 @@ impl SessionService {
             generation,
             output,
             superseded,
+            ending,
             repaint,
             geometry,
         })

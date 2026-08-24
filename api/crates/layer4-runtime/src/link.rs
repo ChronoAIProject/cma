@@ -33,7 +33,7 @@
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
+        ws::{close_code, CloseFrame, Message, WebSocket},
         Path, Query, State, WebSocketUpgrade,
     },
     response::IntoResponse,
@@ -137,6 +137,13 @@ pub(crate) const CONTROL_REPLIES: usize = 4;
 /// word, and a literal repeated in two crates is how they stop agreeing.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
 
+/// A process ending sent to the control plane after its terminal is drained.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum OutboundControl {
+    Exit { code: Option<i32> },
+}
+
 pub(crate) type Sink = SplitSink<WebSocket, Message>;
 
 pub(crate) async fn attach(
@@ -209,14 +216,15 @@ async fn relay_terminal(
     let rows = params.rows.unwrap_or(24).max(1);
     let framed = params.framed();
 
-    let session: std::sync::Arc<PtySession> = state
+    let (session, mut output): (
+        std::sync::Arc<PtySession>,
+        tokio::sync::broadcast::Receiver<Vec<u8>>,
+    ) = state
         .registry
         .get_or_start(&id, &state.agent_command(), cols, rows, PLACEHOLDER_KEY)
         .await?;
 
-    // Subscribe before the first resize so no output produced during startup
-    // is missed by this attachment.
-    let mut output = session.output.subscribe();
+    let mut exited = session.subscribe_exit();
     session.resize(cols, rows)?;
 
     // Answers to control frames share the one sink the output pump owns, so
@@ -224,8 +232,71 @@ async fn relay_terminal(
     let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
     let runtime = id.clone();
     let mut pump_out = tokio::spawn(async move {
+        // A short-lived process may have ended before this task was scheduled.
+        // The watch is latched precisely so that case cannot lose the status.
+        let mut reported = *exited.borrow_and_update();
         loop {
+            if let Some(exit) = reported {
+                // Exit is published only after the pty reader reaches EOF, so
+                // every remaining item was sent before it. Drain those bytes
+                // before putting the ending on the text control lane.
+                loop {
+                    match output.try_recv() {
+                        Ok(chunk) => {
+                            let payload = if framed {
+                                lanes::frame(LANE_TERMINAL, &chunk)
+                            } else {
+                                chunk
+                            };
+                            if sink.send(Message::Binary(payload.into())).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                            tracing::warn!(runtime = %runtime, skipped, "terminal consumer lagged");
+                        }
+                        Err(
+                            tokio::sync::broadcast::error::TryRecvError::Empty
+                            | tokio::sync::broadcast::error::TryRecvError::Closed,
+                        ) => break,
+                    }
+                }
+                let text = match serde_json::to_string(&OutboundControl::Exit { code: exit.code }) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        tracing::warn!(runtime = %runtime, %error, "process exit could not be rendered");
+                        return;
+                    }
+                };
+                if sink.send(Message::Text(text.into())).await.is_err() {
+                    return;
+                }
+                let _ = sink
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "".into(),
+                    })))
+                    .await;
+                break;
+            }
+
             let chunk = tokio::select! {
+                // Once the exit watch changes, all terminal sends have already
+                // happened. Preferring queued output makes the ordering explicit
+                // even before the drain above handles the final scheduling race.
+                biased;
+                chunk = output.recv() => Some(chunk),
+                changed = exited.changed() => {
+                    match changed {
+                        Ok(()) => {
+                            reported = *exited.borrow_and_update();
+                            continue;
+                        }
+                        // Waiting failed, so there is no status to report. The
+                        // link closes without inventing one.
+                        Err(_) => break,
+                    }
+                }
                 answer = answers.recv() => {
                     match answer {
                         Some(text) => {
@@ -237,9 +308,8 @@ async fn relay_terminal(
                         None => continue,
                     }
                 }
-                chunk = output.recv() => chunk,
             };
-            match chunk {
+            match chunk.expect("the output branch always carries a receive result") {
                 Ok(chunk) => {
                     let payload = if framed {
                         lanes::frame(LANE_TERMINAL, &chunk)

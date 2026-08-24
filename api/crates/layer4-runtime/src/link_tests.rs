@@ -241,12 +241,52 @@ async fn telemetry_link(address: std::net::SocketAddr, interval_ms: u64) -> Clie
         .0
 }
 
+async fn terminal_link(address: std::net::SocketAddr, id: &str) -> ClientSocket {
+    let url = format!("ws://{address}/runtime/{id}/terminal?wire=1&cols=120&rows=40");
+    tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the terminal link opens")
+        .0
+}
+
 async fn next_client_message(socket: &mut ClientSocket) -> tokio_tungstenite::tungstenite::Message {
     tokio::time::timeout(Duration::from_secs(5), socket.next())
         .await
-        .expect("the telemetry link answers in time")
-        .expect("the telemetry link remains open")
-        .expect("the telemetry frame is readable")
+        .expect("the runtime link answers in time")
+        .expect("the runtime link remains open")
+        .expect("the runtime frame is readable")
+}
+
+async fn terminal_output_until_exit(socket: &mut ClientSocket) -> (Vec<u8>, serde_json::Value) {
+    let mut output = Vec::new();
+    loop {
+        match next_client_message(socket).await {
+            tokio_tungstenite::tungstenite::Message::Binary(bytes) => {
+                let (lane, payload) = lanes::unframe(&bytes).expect("terminal output has a lane");
+                assert_eq!(lane, LANE_TERMINAL);
+                output.extend_from_slice(payload);
+            }
+            tokio_tungstenite::tungstenite::Message::Text(text) => {
+                let ending: serde_json::Value =
+                    serde_json::from_str(&text).expect("the process ending is JSON");
+                assert_eq!(ending["t"], "exit");
+                return (output, ending);
+            }
+            other => panic!("the process ended before reporting its status: {other:?}"),
+        }
+    }
+}
+
+async fn assert_normal_close(socket: &mut ClientSocket) {
+    let tokio_tungstenite::tungstenite::Message::Close(Some(close)) =
+        next_client_message(socket).await
+    else {
+        panic!("the exit report must be followed by a close frame");
+    };
+    assert_eq!(
+        close.code,
+        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal
+    );
 }
 
 fn assert_telemetry_frame(message: tokio_tungstenite::tungstenite::Message) {
@@ -257,6 +297,53 @@ fn assert_telemetry_frame(message: tokio_tungstenite::tungstenite::Message) {
     assert_eq!(lane, lanes::LANE_TELEMETRY);
     let frame: serde_json::Value = serde_json::from_slice(payload).expect("the sample is JSON");
     assert!(frame["uptimeMs"].is_number());
+}
+
+#[tokio::test]
+async fn process_output_precedes_its_success_status_and_normal_close() {
+    let state = AppState::for_test(&["/bin/echo final-output"]);
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_success").await;
+
+    let tokio_tungstenite::tungstenite::Message::Text(ready) =
+        next_client_message(&mut socket).await
+    else {
+        panic!("the lane declaration must be the first frame");
+    };
+    let ready: serde_json::Value = serde_json::from_str(&ready).expect("the declaration is JSON");
+    assert_eq!(ready["t"], "ready");
+
+    let (output, exit) = terminal_output_until_exit(&mut socket).await;
+    assert!(
+        String::from_utf8_lossy(&output).contains("final-output"),
+        "the process's final output must arrive before its exit report"
+    );
+    assert_eq!(exit["code"], 0);
+    assert_normal_close(&mut socket).await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn signal_termination_reports_no_numeric_status_before_normal_close() {
+    let state = AppState::for_test(&["/bin/sh"]);
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_signal").await;
+    assert!(matches!(
+        next_client_message(&mut socket).await,
+        tokio_tungstenite::tungstenite::Message::Text(_)
+    ));
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_TERMINAL, b"exec /bin/sh -c 'kill -TERM $$'\n"),
+        ))
+        .await
+        .expect("the signal command reaches the shell");
+
+    let (_output, exit) = terminal_output_until_exit(&mut socket).await;
+    assert_eq!(exit["code"], serde_json::Value::Null);
+    assert_normal_close(&mut socket).await;
+    server.abort();
 }
 
 #[tokio::test]

@@ -426,6 +426,30 @@ async fn an_unfamiliar_control_frame_is_not_read_as_a_declaration() {
 }
 
 #[test]
+fn a_runtime_exit_is_a_typed_terminal_ending() {
+    assert_eq!(
+        super::link::exit_report(r#"{"t":"exit","code":17}"#),
+        Some(crate::TerminalOutput::Exited { code: Some(17) })
+    );
+    assert_eq!(
+        super::link::exit_report(r#"{"t":"exit","code":null}"#),
+        Some(crate::TerminalOutput::Exited { code: None })
+    );
+}
+
+#[test]
+fn a_malformed_or_unrelated_control_frame_is_not_an_exit() {
+    for text in [
+        r#"{"t":"exit"}"#,
+        r#"{"t":"exit","code":"zero"}"#,
+        r#"{"t":"pong"}"#,
+        "not json",
+    ] {
+        assert_eq!(super::link::exit_report(text), None, "accepted {text}");
+    }
+}
+
+#[test]
 fn terminal_input_is_framed_only_on_the_wire_that_has_lanes() {
     // Control travels as text and is identical on both dialects, which is what
     // lets a credential reach a pod that predates lanes and one that does not
