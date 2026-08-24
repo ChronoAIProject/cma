@@ -92,6 +92,12 @@ impl PtySession {
         captured
     }
 
+    /// Publish terminal output directly at the link's fan-out boundary.
+    #[cfg(test)]
+    pub(crate) fn publish_output_for_test(&self, bytes: &[u8]) {
+        let _ = self.output.send(bytes.to_vec());
+    }
+
     /// Propagate a new window size to the process.
     ///
     /// This is what makes a full-screen application repaint at the client's
