@@ -288,24 +288,6 @@ impl SessionService {
             }
         }
 
-        /*
-         * The attachment goes with the sandbox it was made to, and its holder
-         * is told which handover took it: a terminal that ends saying nothing
-         * reads as broken, and one that ends claiming the owner opened it
-         * elsewhere sends them looking for a tab that does not exist.
-         */
-        if let Some(entry) = self.entries.write().await.remove(&id) {
-            if let Some(attached) = entry.attached.as_ref() {
-                let _ = attached.supersede.send(match &change {
-                    Handover::Version(_) => crate::lease::Detached::RuntimeReplaced,
-                    Handover::Plane { .. } => crate::lease::Detached::PlaneChanged,
-                });
-            }
-        }
-        if let Err(e) = adapter.terminate(&old).await {
-            tracing::warn!(session_id = %id, error = %e, "could not release the old runtime");
-        }
-
         let mut moved = rotating.clone();
         moved.runtime_id = None;
         match &change {
@@ -341,10 +323,32 @@ impl SessionService {
         };
         if let Err(e) = self.persist_durably(&mut moved, events).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
+            self.restore_after_failed_move(&record, &old).await;
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's move could not be recorded".into(),
             ));
+        }
+
+        /*
+         * The attachment goes with the sandbox it was made to, and its holder
+         * is told which handover took it: a terminal that ends saying nothing
+         * reads as broken, and one that ends claiming the owner opened it
+         * elsewhere sends them looking for a tab that does not exist.
+         *
+         * This happens only after the move is durable. Until that transaction
+         * succeeds, the old entry and runtime are the complete rollback path.
+         */
+        if let Some(entry) = self.entries.write().await.remove(&id) {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached.supersede.send(match &change {
+                    Handover::Version(_) => crate::lease::Detached::RuntimeReplaced,
+                    Handover::Plane { .. } => crate::lease::Detached::PlaneChanged,
+                });
+            }
+        }
+        if let Err(e) = adapter.terminate(&old).await {
+            tracing::warn!(session_id = %id, error = %e, "could not release the old runtime");
         }
 
         let geometry = moved.session.geometry;
@@ -372,6 +376,60 @@ impl SessionService {
                 .await;
         });
         Ok(moved.session)
+    }
+
+    /// Put a handover back on its original runtime after the final move failed.
+    ///
+    /// The old runtime and its entry have not been touched yet. Restoring the
+    /// status makes their existing channels usable again; if this compensating
+    /// write is also unavailable, leaving both sides `Rotating` is coherent and
+    /// recoverable, while tearing anything down would not be.
+    async fn restore_after_failed_move(&self, original: &SessionRecord, old: &RuntimeHandle) {
+        let id = &original.session.id;
+        let mut current = match self.store.get(id).await {
+            Ok(Some(record)) => record,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::error!(session_id = %id, %error, "cannot read the failed handover for recovery");
+                return;
+            }
+        };
+        if current.session.status != SessionStatus::Rotating
+            || current.runtime_id.as_deref() != Some(old.0.as_str())
+        {
+            return;
+        }
+
+        current.session.status = original.session.status;
+        current.session.stop_reason = original.session.stop_reason;
+        let mut restored = current;
+        let event = Event {
+            session_id: id.clone(),
+            seq: 0,
+            kind: EventKind::StatusChanged {
+                status: original.session.status,
+                stop_reason: original.session.stop_reason,
+                detail: Some(
+                    "the handover could not be completed; continuing on the existing runtime"
+                        .into(),
+                ),
+                capability: None,
+            },
+            appended_at: String::new(),
+        };
+        match self.persist_durably(&mut restored, vec![event]).await {
+            Ok(()) => {
+                self.mark_entry(id, original.session.status, restored.session.last_seq)
+                    .await;
+            }
+            Err(error) => {
+                tracing::error!(
+                    session_id = %id,
+                    %error,
+                    "cannot restore the handover status; leaving the old runtime intact"
+                );
+            }
+        }
     }
 
     /// Record that a session is mid-handover, and tell anyone watching.
