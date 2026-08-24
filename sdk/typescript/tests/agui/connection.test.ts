@@ -373,6 +373,38 @@ describe('the reconnect order', () => {
     expect(errors[0]).toBeInstanceOf(ProtocolError);
     expect(statuses).toContain('failed');
   });
+
+  it('fails once without reconnecting on an impossible unnumbered final', async () => {
+    const fake = new Fake();
+    fake.responses = [
+      [
+        {
+          type: 'TEXT_MESSAGE_END',
+          threadId: 'sesn_1',
+          runId: 'run_1',
+          seq: 0,
+          messageId: 'm_impossible',
+        },
+        text(1, 'must not be delivered'),
+      ],
+    ];
+    const { errors, seen, statuses, stop } = connect(fake);
+
+    await vi.waitFor(() =>
+      expect(statuses.filter((status) => status === 'failed')).toHaveLength(1),
+    );
+    await tick();
+    await tick();
+    stop();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(ProtocolError);
+    expect(errors[0]?.message).toContain('TEXT_MESSAGE_END');
+    expect(seen).toEqual([]);
+    expect(statuses).not.toContain('reconnecting');
+    expect(fake.opens).toBe(1);
+    expect(fake.historyReads).toEqual([0]);
+  });
 });
 
 describe('history and stream agree', () => {
