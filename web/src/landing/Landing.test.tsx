@@ -2,20 +2,38 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Landing } from './Landing';
 import { AuthContextProvider } from '../auth/context';
 import { createMockAuthProvider } from '../auth/mock';
 import { clearPendingTurn, consumePendingTurn } from '../auth/pendingTurn';
 import type { AuthProvider } from '../auth/types';
 
+const characterScene = vi.hoisted(() => ({ mount: vi.fn(), dispose: vi.fn() }));
+
+vi.mock('./characterScene', () => ({
+  mountCharacter: (
+    host: HTMLElement,
+    options: { readonly onReady?: () => void },
+  ): { readonly dispose: () => void } => {
+    characterScene.mount();
+    if (host instanceof HTMLButtonElement) {
+      host.disabled = false;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.className = 'landing__character-canvas';
+    host.appendChild(canvas);
+    options.onReady?.();
+    return { dispose: characterScene.dispose };
+  },
+}));
+
 /**
  * The signed-out surface — §20.
  *
- * What is worth asserting is not the mark: an <img> either has a src or the
- * build failed, and nothing here can see whether it animated. It is the two
- * behaviours the page exists for — it reaches sign-in, and it does not drop
- * what a visitor typed on the way there.
+ * The WebGL pixels are measured in a real browser. Here the scene is replaced
+ * by its lifecycle boundary so the two page behaviours stay deterministic: it
+ * reaches sign-in, and it does not drop what a visitor typed on the way there.
  *
  * The provider resolves identity in a microtask, so every render is flushed.
  * Without it React reports an unwrapped update and the assertions race it.
@@ -44,13 +62,36 @@ const css = () => readFileSync(resolve(process.cwd(), 'src/landing/Landing.css')
 
 describe('Landing', () => {
   beforeEach(() => {
+    vi.stubGlobal('WebGL2RenderingContext', class WebGL2RenderingContext {});
     clearPendingTurn();
+    characterScene.mount.mockClear();
+    characterScene.dispose.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('focuses the prompt on mount so a visitor can type immediately', async () => {
     const { provider } = providerSpy();
     await renderLanding(provider);
     expect(screen.getByLabelText(PROMPT)).toHaveFocus();
+  });
+
+  it('reserves the character stage while its deferred scene mounts', async () => {
+    const { provider } = providerSpy();
+    const result = await renderLanding(provider);
+    const character = screen.getByRole('button', { name: 'Spin CMA character' });
+
+    expect(character).toHaveAttribute('data-ready');
+    expect(character).toHaveAttribute('title', 'Spin CMA character');
+    expect(character).toBeEnabled();
+    expect(character.querySelector('.landing__character-fallback svg')).not.toBeNull();
+    expect(character.querySelector('canvas')).not.toBeNull();
+    expect(characterScene.mount).toHaveBeenCalledOnce();
+
+    result.unmount();
+    expect(characterScene.dispose).toHaveBeenCalledOnce();
   });
 
   it('holds the typed prompt across sign-in', async () => {
@@ -132,12 +173,19 @@ describe('the signed-out appearance', () => {
     expect(dark).toContain('background-size: 18px 18px');
   });
 
-  it('uses themed display weight and depth without changing the mark geometry', () => {
+  it('reserves a square character stage and themes its static fallback', () => {
     const sheet = css();
-    const mark = /\.landing__mark\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
-    expect(mark).toContain('filter: drop-shadow(var(--dsw-shadow-lv1-blur))');
+    const character = /\.landing__character\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(character).toContain('width: clamp(220px, 50vmin, 520px)');
+    expect(character).toContain('aspect-ratio: 1');
     expect(sheet).toMatch(
-      /body\[data-ds-dark-theme\] \.landing__mark\s*\{[^}]*filter: drop-shadow\(var\(--dsw-glow-accent\)\)/,
+      /\.landing__character-fallback\s*\{[^}]*box-sizing: border-box[^}]*color: var\(--dsw-alias-brand-primary\)[^}]*filter: drop-shadow\(var\(--dsw-shadow-lv1-blur\)\)/,
+    );
+    expect(sheet).toMatch(
+      /body\[data-ds-dark-theme\] \.landing__character-fallback\s*\{[^}]*filter: drop-shadow\(var\(--dsw-glow-accent\)\)/,
+    );
+    expect(sheet).toMatch(
+      /\.landing__character\[data-ready\] \.landing__character-fallback\s*\{[^}]*visibility: hidden/,
     );
 
     const word = /\.landing__word\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
@@ -155,55 +203,5 @@ describe('the signed-out appearance', () => {
     expect(sheet).toMatch(
       /\.landing__prompt:focus-visible\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
     );
-  });
-});
-
-describe('the mark bobs, and only once it is drawn', () => {
-  /*
-   * Asserted against the sheet rather than a rendered node: jsdom runs no
-   * animations and resolves no custom property, so a computed style here would
-   * report neither the timing nor the curve.
-   *
-   * `docs/Web_Style.md` §14a permits this and nothing else to loop, under
-   * stated terms. Each of those terms is one assertion below, so relaxing one
-   * is a decision somebody makes rather than a drift nobody notices.
-   */
-  it('waits for the drawing to finish before it starts', () => {
-    // The mark's own file fades the bridge in last, at 1.78s over 0.3s. A bob
-    // starting before 2.08s drags a half-drawn mark around.
-    const rule = /\.landing__mark\s*\{([^}]*)\}/.exec(css())?.[1] ?? '';
-    const delay = /animation:[^;]*?(\d+(?:\.\d+)?)s\s+infinite/.exec(rule);
-    expect(rule).toMatch(/animation:\s*landing-bob/);
-    expect(Number(delay?.[1] ?? 0)).toBeGreaterThanOrEqual(2.08);
-  });
-
-  it('moves up and down and does nothing else', () => {
-    // §14a: no rotation, no scale, no travelling shadow. A mark that tilts or
-    // swells reads as a toy.
-    const frames = /@keyframes landing-bob\s*\{([\s\S]*?)\n\}/.exec(css())?.[1] ?? '';
-    expect(frames).toMatch(/translateY/);
-    expect(frames).not.toMatch(/rotate|scale|skew|box-shadow|opacity/);
-  });
-
-  it('runs on the crop, never on the artwork inside it', () => {
-    /*
-     * The wrapper clips the square file to the mark's proportions. Animating
-     * the `svg` pushes the arc's apex into that clipped edge and shears the
-     * top off at the peak of every bounce; animating the wrapper takes the
-     * window and its contents together.
-     */
-    const svgRule = /\.landing__mark svg\s*\{([^}]*)\}/.exec(css())?.[1] ?? '';
-    expect(svgRule).not.toMatch(/animation/);
-  });
-
-  it('uses the one curve, and stops at rest for reduced motion', () => {
-    const sheet = css();
-    expect(sheet).toMatch(/animation:\s*landing-bob[^;]*var\(--ds-ease-in-out\)/);
-    expect(sheet).not.toMatch(/cubic-bezier/);
-    const reduced =
-      /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(sheet)?.[1] ?? '';
-    expect(reduced).toMatch(/\.landing__mark\s*\{[^}]*animation:\s*none/);
-    // At rest, not frozen mid-travel.
-    expect(reduced).toMatch(/\.landing__mark\s*\{[^}]*transform:\s*none/);
   });
 });
