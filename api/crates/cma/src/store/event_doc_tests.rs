@@ -40,6 +40,14 @@ fn a_written_event_reads_back_as_the_kind_it_was() {
 }
 
 #[test]
+fn an_event_sequence_above_bson_i64_is_refused_instead_of_wrapped() {
+    let oversized = event(i64::MAX as u64 + 1, EventKind::SessionCreated);
+
+    let error = to_document(&oversized).expect_err("the sequence cannot be stored faithfully");
+    assert!(error.to_string().contains("exceeds"));
+}
+
+#[test]
 fn every_current_variant_survives_the_round_trip() {
     let kinds = vec![
         EventKind::SessionCreated,

@@ -195,19 +195,12 @@ impl SessionService {
                     let mut moved = record.clone();
                     moved.session.options.mode = mode;
                     moved.session.capabilities = capabilities;
-                    moved.session.last_seq = self.sequences.take(id, moved.session.last_seq, 1);
-                    if let Err(e) = self.store.upsert(&moved).await {
-                        tracing::error!(session_id = %id, error = %e, "cannot record the in-place switch");
-                        return Err(CoreError::RuntimeUnavailable(
-                            "this session's move could not be recorded".into(),
-                        ));
-                    }
-                    if self
-                        .append_durably(
-                            id,
+                    if let Err(e) = self
+                        .persist_durably(
+                            &mut moved,
                             vec![Event {
                                 session_id: id.clone(),
-                                seq: moved.session.last_seq,
+                                seq: 0,
                                 kind: EventKind::PlaneChanged {
                                     from: record.session.options.mode,
                                     to: mode,
@@ -217,9 +210,11 @@ impl SessionService {
                             }],
                         )
                         .await
-                        .is_err()
                     {
-                        tracing::warn!(session_id = %id, "cannot record the plane change");
+                        tracing::error!(session_id = %id, error = %e, "cannot record the in-place switch");
+                        return Err(CoreError::RuntimeUnavailable(
+                            "this session's move could not be recorded".into(),
+                        ));
                     }
                     return Ok(moved.session);
                 }
@@ -380,41 +375,26 @@ impl SessionService {
         }
         moved.session.rotations = moved.session.rotations.saturating_add(1);
         moved.session.rotated_at = Some(taken_at.clone());
-        moved.session.last_seq = self.sequences.take(&id, moved.session.last_seq, 1);
-        if let Err(e) = self.store.upsert(&moved).await {
+        let events = if let Handover::Plane { mode, .. } = &change {
+            vec![Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::PlaneChanged {
+                    from: record.session.options.mode,
+                    to: *mode,
+                    snapshot_at: taken_at.clone(),
+                },
+                appended_at: String::new(),
+            }]
+        } else {
+            Vec::new()
+        };
+        if let Err(e) = self.persist_durably(&mut moved, events).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's move could not be recorded".into(),
             ));
-        }
-        if let Handover::Plane { mode, .. } = &change {
-            /*
-             * Durable, because the surface changed under its owner and the
-             * event log is what they read their session's history from. It
-             * carries both planes and the moment the conversation was taken,
-             * so somebody reading back knows what moved and what did not come
-             * with it.
-             */
-            if self
-                .append_durably(
-                    &id,
-                    vec![Event {
-                        session_id: id.clone(),
-                        seq: moved.session.last_seq,
-                        kind: EventKind::PlaneChanged {
-                            from: record.session.options.mode,
-                            to: *mode,
-                            snapshot_at: taken_at.clone(),
-                        },
-                        appended_at: String::new(),
-                    }],
-                )
-                .await
-                .is_err()
-            {
-                tracing::warn!(session_id = %id, "cannot record the plane change");
-            }
         }
 
         let geometry = moved.session.geometry;
@@ -454,19 +434,12 @@ impl SessionService {
         rotating.session.status = SessionStatus::Rotating;
         rotating.session.stop_reason = None;
         let id = rotating.session.id.clone();
-        let seq = self.sequences.take(&id, rotating.session.last_seq, 1);
-        rotating.session.last_seq = seq;
-
-        if let Err(e) = self.store.upsert(&rotating).await {
-            tracing::error!(session_id = %id, error = %e, "cannot record the handover");
-            return None;
-        }
-        if self
-            .append_durably(
-                &id,
+        if let Err(e) = self
+            .persist_durably(
+                &mut rotating,
                 vec![Event {
                     session_id: id.clone(),
-                    seq,
+                    seq: 0,
                     kind: EventKind::StatusChanged {
                         status: SessionStatus::Rotating,
                         stop_reason: None,
@@ -477,10 +450,11 @@ impl SessionService {
                 }],
             )
             .await
-            .is_err()
         {
-            tracing::warn!(session_id = %id, "cannot announce the handover");
+            tracing::error!(session_id = %id, error = %e, "cannot record the handover");
+            return None;
         }
+        let seq = rotating.session.last_seq;
         self.mark_entry(&id, SessionStatus::Rotating, seq).await;
         Some(rotating)
     }

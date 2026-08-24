@@ -119,14 +119,19 @@ async fn the_live_grant_is_rechecked_before_the_attachment_is_mutated() {
         Some(CoreError::CapabilityUnsupported("terminal".into()))
     );
 
-    let entries = svc.entries.read().await;
-    let entry = entries.get(&id).expect("session remains live");
-    assert_eq!(entry.session.geometry, TerminalGeometry::default());
-    assert!(entry.attached.is_none());
-    assert_eq!(entry.attachments_issued, 0);
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&id).expect("session remains live");
+        assert_eq!(entry.session.geometry, TerminalGeometry::default());
+        assert!(entry.attached.is_none());
+        assert_eq!(entry.attachments_issued, 0);
+    }
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
     assert!(
-        entry
-            .events
+        events
             .iter()
             .all(|event| !matches!(event.kind, crate::event::EventKind::TerminalAttached)),
         "the repeated gate must run before attachment state or events change"
