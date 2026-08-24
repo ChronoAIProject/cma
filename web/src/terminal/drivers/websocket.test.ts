@@ -229,6 +229,25 @@ describe('the websocket terminal driver', () => {
     expect(sockets).toHaveLength(1);
   });
 
+  it('discards input once the process has conclusively ended', () => {
+    const { current, sink, driver } = harness();
+    driver.attach(sink);
+    const socket = current();
+    socket.open();
+    socket.sent.length = 0;
+
+    // Input may legitimately be queued while an attachment is coming up, but
+    // neither that input nor anything typed after an exit belongs to a future
+    // ready generation.
+    driver.send('queued-before-exit');
+    socket.control({ t: 'exit', code: 0, reason: 'exited' });
+    driver.send('typed-after-exit');
+    socket.control({ t: 'ready', cols: 80, rows: 24 });
+
+    expect(socket.sent).toEqual([]);
+    expect(sink.finishes).toEqual(['process exited with code 0']);
+  });
+
   it('distinguishes signal termination from a numeric process exit', () => {
     const { current, sink, driver } = harness();
     driver.attach(sink);

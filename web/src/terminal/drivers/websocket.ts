@@ -112,6 +112,10 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
   let pending: { cols: number; rows: number } | null = null;
   let opened = false;
   let ready = false;
+  // A valid process report is conclusive for this attachment. It is distinct
+  // from a recoverable socket interruption: input may wait through the latter,
+  // but must never survive the former and reach a later attachment.
+  let ended = false;
   // Input typed before the relay is ready. Sending it early is a protocol
   // error, and dropping it would silently lose what someone typed.
   const queued: string[] = [];
@@ -160,6 +164,9 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
 
     switch (frame.t) {
       case 'ready': {
+        if (ended) {
+          return null;
+        }
         ready = true;
         // A successful attach is what proves the connection is good, so the
         // backoff resets here rather than merely on open.
@@ -242,7 +249,9 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
         const report = handleControl(event.data);
         if (report !== null && reportedExit === null) {
           reportedExit = report;
+          ended = true;
           ready = false;
+          queued.length = 0;
           // This describes only the supervised process and this attachment.
           // The durable session lifecycle changes independently over REST.
           sink?.finish(processExitReason(report));
@@ -295,11 +304,15 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
     attach(next: TerminalSink): void {
       sink = next;
       detached = false;
+      ended = false;
       attempts = 0;
       connect();
     },
 
     send(data: string): void {
+      if (ended) {
+        return;
+      }
       if (!ready) {
         // Held rather than sent: the relay rejects data before it is ready,
         // and losing a keystroke is worse than delivering it a moment late.
