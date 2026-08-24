@@ -127,23 +127,23 @@ impl SessionService {
         };
         self.flush(id).await;
 
-        // Subscribe before rendering the repaint: output produced between the
-        // two is then buffered rather than lost.
-        let output = match live {
-            Some(live) => live.subscribe(),
-            None => {
-                // The runtime channel already ended. A closed receiver lets the
-                // interface deliver the recorded ending after its repaint.
-                let (closed, output) = broadcast::channel(1);
-                drop(closed);
-                output
-            }
-        };
-
-        let repaint = {
+        // The relay applies and broadcasts while holding this same lock. Taking
+        // it before subscribing makes the boundary atomic: a chunk is either in
+        // the repaint or queued as live output, never both and never neither.
+        let (repaint, output) = {
             let mut s = screen.lock().await;
+            let output = match live.as_ref() {
+                Some(live) => live.subscribe(),
+                None => {
+                    // The runtime channel already ended. A closed receiver lets
+                    // the interface deliver the recorded ending after repaint.
+                    let (closed, output) = broadcast::channel(1);
+                    drop(closed);
+                    output
+                }
+            };
             s.resize(geometry);
-            s.repaint_bytes()
+            (s.repaint_bytes(), output)
         };
 
         self.forward_input(
