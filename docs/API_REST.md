@@ -260,17 +260,20 @@ Content-Type: application/json
 returns later sessions to the deployment's defaults. The selected profile is
 validated before the existing preference is changed.
 
-The `200 OK` body is a JSON array, but it is a **bounded change set rather than
-the profile collection**. It contains at most two rows: the previously visible
-preferred profile with `preferred: false` when it changed, followed by the
-selected profile with `preferred: true` when there is one. Selecting the row
-that already holds the preference returns that one row; clearing an existing
-choice returns its one changed row; clearing when none exists returns `[]`.
+The `200 OK` body is the complete post-write profile collection, newest first,
+with exactly the selected row carrying `preferred: true`. Clearing the choice
+returns the same complete collection with every row carrying `preferred: false`.
+This is the response released under `/v1`; existing clients replace their
+loaded collection with it, so narrowing it would make unchanged profiles
+disappear.
 
-Merge the returned rows by `id` into an already loaded collection. Use the
-paginated `GET /api/v1/environment-profiles` route when a fresh collection is
-needed. The action never walks or serializes every profile an owner has, and it
-does not impose a profile-count quota.
+The mutation itself remains bounded: it validates the selected profile, reads
+the previous winner, and asks the store to replace the preference without
+collecting the owner's profiles. After that succeeds, the compatibility
+response is assembled through the same owner-authorized list service as the
+GET route, walking newest-first store pages of at most 200 rows. The response
+is intentionally complete, but no individual persistence read is unbounded and
+there is no profile-count quota.
 
 ### Changing which plane a session is driven on
 
