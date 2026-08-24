@@ -389,10 +389,10 @@ async fn input_after_process_exit_cannot_cancel_its_reported_ending() {
         .expect("the process exits while its socket output is backed up")
         .expect("the exit watch remains open");
     assert_eq!(exited.borrow().expect("an exit was latched").code, Some(31));
-    assert!(
-        session.write_input(b"late").is_err(),
-        "the retained PTY master rejects input after its slave exits"
-    );
+    // Some kernels accept writes to a retained PTY master after the slave has
+    // gone while others return EIO. Inject the same failure on every platform
+    // so this exercises the input pump's failure branch deterministically.
+    let input_failed = session.fail_input_writes_for_test();
 
     socket
         .send(tokio_tungstenite::tungstenite::Message::Binary(
@@ -400,7 +400,10 @@ async fn input_after_process_exit_cannot_cancel_its_reported_ending() {
         ))
         .await
         .expect("the in-flight keystroke reaches the runtime link");
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::timeout(Duration::from_secs(1), input_failed)
+        .await
+        .expect("the runtime reads the late input in time")
+        .expect("the injected writer observes the late input");
 
     let (output, exit) = terminal_output_until_exit(&mut socket).await;
     assert!(

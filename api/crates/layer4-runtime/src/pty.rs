@@ -72,6 +72,17 @@ impl PtySession {
         w.flush()
     }
 
+    /// Replace this session's writer with one that reports an observed failure.
+    #[cfg(test)]
+    pub(crate) fn fail_input_writes_for_test(&self) -> tokio::sync::oneshot::Receiver<()> {
+        let (observed, failure_observed) = tokio::sync::oneshot::channel();
+        let mut writer = self.writer.lock().expect("the pty writer is healthy");
+        *writer = Box::new(FailingWriter {
+            observed: Some(observed),
+        });
+        failure_observed
+    }
+
     /// Propagate a new window size to the process.
     ///
     /// This is what makes a full-screen application repaint at the client's
@@ -95,6 +106,28 @@ impl PtySession {
             pixel_height: 0,
         })
         .map_err(std::io::Error::other)
+    }
+}
+
+#[cfg(test)]
+struct FailingWriter {
+    observed: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+#[cfg(test)]
+impl Write for FailingWriter {
+    fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+        if let Some(observed) = self.observed.take() {
+            let _ = observed.send(());
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "injected pty write failure",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
