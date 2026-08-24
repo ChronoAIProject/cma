@@ -152,6 +152,59 @@ jobs:
           manifest-path: api/Cargo.toml
           command: check advisories licenses bans sources
 
+  sdk-rust:
+    name: Rust SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/rust
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+          components: rustfmt, clippy, llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sdk/rust
+      - name: Server fixtures are byte-identical
+        run: diff -ru ../../api/crates/layer1-public/tests/fixtures/rest-sdk tests/fixtures
+      - name: No service crate dependency
+        run: |
+          if cargo tree --locked --prefix none | grep -Eq '^layer[0-9]'; then
+            echo "::error::the client SDK must not link a service layer crate"
+            exit 1
+          fi
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Build
+        run: cargo build --all-targets --locked
+      - uses: taiki-e/install-action@nextest
+      - name: Tests
+        run: cargo nextest run --locked
+      - name: Doctests
+        run: cargo test --doc --locked
+      - name: Scratch consumer
+        run: |
+          scratch=$(mktemp -d)
+          cargo new --quiet --bin "$scratch/consumer"
+          cargo add --quiet --manifest-path "$scratch/consumer/Cargo.toml" \
+            cma-sdk --path "$GITHUB_WORKSPACE/sdk/rust"
+          cargo add --quiet --manifest-path "$scratch/consumer/Cargo.toml" \
+            tokio --features macros,rt-multi-thread
+          cp examples/readme.rs "$scratch/consumer/src/main.rs"
+          CMA_SDK_EXAMPLE_DRY_RUN=1 \
+            cargo run --quiet --locked --manifest-path "$scratch/consumer/Cargo.toml"
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Coverage
+        run: cargo llvm-cov nextest --locked --fail-under-lines 80
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: sdk/rust/Cargo.toml
+          command: check advisories licenses bans sources
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
