@@ -16,6 +16,10 @@ It exists because the path spans seven files and nobody could see it. Work has a
 GET /api/v1/environment-profiles/services
 ```
 
+The request, response shape, mandatory identifiers, and no-catalogue behavior
+are documented in the REST interface's
+[Services catalogue](./API_REST.md#services-catalogue).
+
 `layer1-public/src/rest/environments.rs::services` → `EnvironmentProfileService::available_services` (`layer2-core/src/environment_service.rs`).
 
 Answered **as the caller**, with their own delegated credential, because which services exist is a fact about their account and this service's own identity would answer with a different list. The mandated entries travel alongside so a client can draw them as fixed rather than inferring which cannot be unticked.
@@ -24,7 +28,11 @@ A deployment with no catalogue configured answers `ServiceAvailability::NoCatalo
 
 ### 2. A profile records a selection
 
-`EnvironmentProfileSpec::services` and `EnvironmentProfile::services` (`layer2-core/src/environment.rs`). Authored in `web/src/environment/ServicePicker.tsx`, either in the profile editor or inline in the new-session dialog (`web/src/sessions/NewSessionDialog.tsx`), which saves a real profile rather than a one-off selection.
+`EnvironmentProfileSpec::services` and `EnvironmentProfile::services` (`layer2-core/src/environment.rs`). The wire shape is the
+[`nyxid.services` profile field](./API_REST.md#write-shape-profilerequest).
+It is authored in `web/src/environment/ServicePicker.tsx`, either in the profile
+editor or inline in the new-session dialog (`web/src/sessions/NewSessionDialog.tsx`),
+which saves a real profile rather than a one-off selection.
 
 A profile is a **named, reusable, auditable record**. That is why the selection lives there rather than on the session request: two sessions started from one profile must be the same session twice.
 
@@ -69,7 +77,7 @@ The `nyxid` CLI is a baseline package and a baseline skill (`cma/src/config.rs`,
 - **A credential is minted per session**, against that session's own list, and re-minted the same way for a replacement runtime.
 - **A session's reach is fixed when it is provisioned.** A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps what it was given. Reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one.
 - **A rotation changes nothing about reach.** A replaced runtime is the same session.
-- **The session reports its own answer.** `reach` on the session object over REST (`docs/API_REST.md` §2), and `CHRONO_SESSION_REACHES` inside the sandbox. Both carry identifiers and display names; neither carries a credential.
+- **The session reports its own answer.** `reach` on the session object over REST ([Sessions](./API_REST.md#3-sessions)), and `CHRONO_SESSION_REACHES` inside the sandbox. Both carry identifiers and display names; neither carries a credential.
 
 ---
 
@@ -134,6 +142,7 @@ The same reasoning runs through the rest of the path: the sandbox gets a placeho
 
 ## See also
 
-- `docs/API_REST.md` §2 — the `reach` field on a session, and the three refusals as REST renders them
+- [Environment Profiles](./API_REST.md#2-environment-profiles) — authoring the service selection and reading the catalogue
+- [Sessions](./API_REST.md#3-sessions) — the `reach` field on a session, and the three refusals as REST renders them
 - `docs/API_Overview.md` §6 — rule 6, "Identity is NyxID"
 - `CLAUDE.md` §4 — why a change to deployment surface changes `infra/` in the same pull request
