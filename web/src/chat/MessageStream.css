@@ -345,62 +345,6 @@
 }
 
 /*
- * The block's frame — §13.
- *
- * Named outside the `.agent` namespace deliberately. §13 forbids colour on
- * agent content, and a test enforces it by reading every `.agent*` rule; the
- * header is frame around the content rather than content, so it carries the
- * metadata ink every other label in the product carries. Calling it
- * `.agent__*` would have been the wrong name, and the test that caught it was
- * right to.
- *
- * The ground, the hairline and the radius move here from the `<pre>` so the
- * header shares them: one boundary, one hairline, per §5.
- */
-.codeblock {
-  overflow: hidden;
-  background: var(--dsw-alias-markdown-code-block);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
-}
-
-/*
- * The header stays put while a long listing scrolls beneath it — §13.
- *
- * Sticky against the stream's scrollport rather than the block's, which is
- * why it sits out here: the `<pre>` below owns the horizontal overflow, and a
- * sticky child of a horizontally scrolling box slides away sideways. It
- * carries the frame's own ground so the code passes under it rather than
- * through it.
- */
-.codeblock__head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 4px 4px 12px;
-  background: var(--dsw-alias-markdown-code-block-banner);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-/*
- * The fence's own info string, uppercased by type rather than by rewriting it.
- * Empty when the agent named no language, which draws nothing rather than a
- * label this client invented.
- */
-.codeblock__lang {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-/*
  * A code block scrolls inside itself; the stream never does. Content length
  * is not allowed to decide the width of the surface it sits in. §13: the
  * mono face at half a step under the terminal size, on the sunken ground.

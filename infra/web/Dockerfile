@@ -3,7 +3,9 @@ FROM node:26-alpine AS build
 WORKDIR /build/sdk/typescript
 COPY sdk/typescript/package.json sdk/typescript/package-lock.json ./
 RUN npm ci
-COPY sdk/typescript/ ./
+# The web bundle consumes both SDK documentation trees. Keep sdk/ as one build
+# input so a new guide cannot work locally and disappear from the image build.
+COPY sdk/ /build/sdk/
 RUN npm run build
 
 WORKDIR /build/web
