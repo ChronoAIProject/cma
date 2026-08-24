@@ -22,6 +22,8 @@ use crate::service::SessionService;
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
 use crate::terminal::TerminalGeometry;
 
+const AT_CAPACITY_REASON: &str = "This deployment has no room for a session this size right now. Nothing is wrong with your session or your request — stop a session, or ask for a smaller one, and try again.";
+
 /// Why a bring-up attempt failed, and whether another one could go differently.
 ///
 /// Most provisioning failures are nobody's decision and usually pass, which is
@@ -69,9 +71,10 @@ impl StartFailure {
 
     /// Classify what the provider said about bringing a runtime up.
     ///
-    /// An absent ability is the one answer retrying cannot change: the adapter
-    /// distinguishes it from a failure precisely so a caller need not read
-    /// error strings to tell "cannot" from "did not".
+    /// Two answers cannot change inside a retry loop: an absent ability and an
+    /// absent space. Four attempts over minutes do not add either one, so both
+    /// are distinguished from transient failures before a caller waits for a
+    /// backoff that cannot help.
     ///
     /// **Nothing is named here, deliberately.** `AdapterError::Unsupported`
     /// carries a sentence written for a person — "this kernel does not render
@@ -80,10 +83,14 @@ impl StartFailure {
     /// caller something it could act on and hand it prose to parse, which is
     /// worse than admitting there is no name to give.
     pub(crate) fn from_provisioning(error: AdapterError) -> Self {
-        let reason = format!("could not provision a runtime: {error}");
         match error {
-            AdapterError::Unsupported(_) => Self::permanent(reason),
-            AdapterError::Unavailable(_) | AdapterError::Rejected(_) => Self::transient(reason),
+            AdapterError::AtCapacity(_) => Self::permanent(AT_CAPACITY_REASON.to_string()),
+            AdapterError::Unsupported(_) => {
+                Self::permanent(format!("could not provision a runtime: {error}"))
+            }
+            AdapterError::Unavailable(_) | AdapterError::Rejected(_) => {
+                Self::transient(format!("could not provision a runtime: {error}"))
+            }
         }
     }
 }

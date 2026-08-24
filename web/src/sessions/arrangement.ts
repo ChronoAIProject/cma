@@ -20,12 +20,8 @@ export type Arrangement = 'list' | 'canvas';
 /** The list is the historical surface and stays the default for a new browser. */
 export const DEFAULT_ARRANGEMENT: Arrangement = 'list';
 
-/*
- * The stored key keeps its old name deliberately. Renaming it would discard
- * the preference of everybody who has already chosen one, which is a real cost
- * paid for a word nobody outside this file reads.
- */
-const KEY = 'chrono-bot:view-mode';
+const KEY = 'cma:view-mode';
+const LEGACY_KEY = 'chrono-bot:view-mode';
 
 function storage(): Storage | null {
   try {
@@ -40,6 +36,29 @@ function storage(): Storage | null {
 
 function isArrangement(value: unknown): value is Arrangement {
   return value === 'list' || value === 'canvas';
+}
+
+function canonicalArrangement(value: string | null): Arrangement | null {
+  if (value === 'tabs') {
+    return 'list';
+  }
+  return isArrangement(value) ? value : null;
+}
+
+function readArrangement(store: Storage, key: string): string | null {
+  try {
+    return store.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeArrangement(store: Storage, arrangement: Arrangement): void {
+  try {
+    store.setItem(KEY, arrangement);
+  } catch {
+    // Applying the arrangement does not depend on remembering it.
+  }
 }
 
 /**
@@ -57,29 +76,28 @@ export function loadArrangement(): Arrangement {
     return DEFAULT_ARRANGEMENT;
   }
 
-  let raw: string | null = null;
-  try {
-    raw = store.getItem(KEY);
-  } catch {
+  const rawCanonical = readArrangement(store, KEY);
+  const canonical = canonicalArrangement(rawCanonical);
+  if (canonical !== null) {
+    if (canonical !== rawCanonical) {
+      writeArrangement(store, canonical);
+    }
+    return canonical;
+  }
+
+  const historical = canonicalArrangement(readArrangement(store, LEGACY_KEY));
+  if (historical === null) {
     return DEFAULT_ARRANGEMENT;
   }
 
-  // Earlier builds called the list arrangement "tabs". The stored word is
-  // migrated on read rather than discarded: the preference is the same one,
-  // under the name §12 now uses.
-  if (raw === 'tabs') {
-    return 'list';
-  }
-
-  return isArrangement(raw) ? raw : DEFAULT_ARRANGEMENT;
+  writeArrangement(store, historical);
+  return historical;
 }
 
 /** Persist the preference. Never blocks the change on storage working. */
 export function saveArrangement(arrangement: Arrangement): void {
-  try {
-    storage()?.setItem(KEY, arrangement);
-  } catch {
-    // Quota or private-mode failure. The mode still changes for this visit; it
-    // simply will not be remembered.
+  const store = storage();
+  if (store !== null) {
+    writeArrangement(store, arrangement);
   }
 }

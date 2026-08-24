@@ -189,6 +189,9 @@ impl SessionStore for Miscounting {
     ) -> Result<Vec<crate::store::SessionRecord>, StoreError> {
         self.0.list_for(owner).await
     }
+    async fn reserved_capacity(&self) -> Result<crate::Reserved, StoreError> {
+        self.0.reserved_capacity().await
+    }
     async fn list_all(&self) -> Result<Vec<crate::store::SessionRecord>, StoreError> {
         self.0.list_all().await
     }

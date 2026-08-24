@@ -20,15 +20,15 @@
 apiVersion: networking.gke.io/v1
 kind: GCPBackendPolicy
 metadata:
-  name: chrono-bot-api
+  name: cma-api
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: chrono-bot-api
-    app.kubernetes.io/part-of: chrono-bot
+    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/part-of: cma
 spec:
   targetRef:
     group: ""
     kind: Service
-    name: chrono-bot-api
+    name: cma-api
   default:
     timeoutSec: 660

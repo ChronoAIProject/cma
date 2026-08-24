@@ -361,7 +361,7 @@ describe('a run that failed, §18.9', () => {
     // same frame as a failure, so this is the only thing keeping them apart.
     const state = failure({
       message: 'moving this session to the other plane',
-      'chrono:returns': true,
+      'cma:returns': true,
     });
     render(<MessageStream entries={state.entries} />);
 

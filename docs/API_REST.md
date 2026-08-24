@@ -22,7 +22,7 @@ A **server** presents a bearer token issued by the identity provider:
 Authorization: Bearer <access token>
 ```
 
-This is the form chrono-bot's own clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
+This is the form that CMA (ChronoAI Managed Agent) clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
 
 The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so revocation takes effect within that window rather than immediately.
 
@@ -34,7 +34,7 @@ A request with neither credential is `401`. A request whose credential is valid 
 | Concern | Rule |
 |---|---|
 | Base path | `/api/v1` |
-| Auth | NyxID bearer token, or the chrono-bot session cookie for browser clients |
+| Auth | NyxID bearer token, or the CMA session cookie for browser clients |
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
@@ -107,8 +107,8 @@ service does not send and spelled `recovery_state` as an object it does not use.
   "last_seq": 0,
   "created_at": "2026-08-19T11:38:12Z",
   "conforms_to": [
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/conversation"
   ],
   "reach": []
 }
@@ -558,7 +558,7 @@ The route has five distinguishable answers:
 | The caller cannot see the session | **404** `session-not-found`, indistinguishable from a missing id |
 
 A granted session declares
-`https://spec.chrono-ai.fun/chrono-bot/1.0/conf/resources` in its own
+`https://spec.chrono-ai.fun/cma/1.0/conf/resources` in its own
 `conforms_to` list. An older record whose resource grant was never written, or
 a session explicitly refused the grant, does not.
 
@@ -640,13 +640,13 @@ GET /api/v1/conformance
 
 ```json
 { "conformsTo": [
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/rest-core",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/events-replay",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/steering",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/interrupt",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
-  "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/usage"
+  "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/steering",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
+  "https://spec.chrono-ai.fun/cma/1.0/conf/usage"
 ] }
 ```
 
@@ -679,7 +679,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 
 ```json
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/turn-in-progress",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/turn-in-progress",
   "title": "A turn is already in progress",
   "status": 409,
   "detail": "Session sesn_01JD8Z3K7 has an active turn and its concurrent_input policy is 'reject'.",
@@ -731,7 +731,7 @@ See `docs/Services.md` for the whole path.
 
 ```json
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/price-changed",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/price-changed",
   "title": "price changed",
   "status": 409,
   "detail": "the price changed: quoted against rate card rate_old, now rate_new",
@@ -765,6 +765,43 @@ The refusal happens when a session is created, before an identifier or record ex
 
 These bounds apply only to a size the profile explicitly states. A profile with no `agent.size`, and a creation naming no profile, use this deployment's own sandbox reservation without being measured against the bounds. That reservation may lie outside the range an administrator has configured: the range governs what a caller may ask for, not the unnamed deployment default.
 
+### Deployment-capacity refusal
+
+`deployment_at_capacity` is a `503` response with problem type
+`deployment-at-capacity`. It is not a limit on this caller: the deployment's
+declared shared room is smaller than this request, and the caller may own none
+of the sessions occupying it. A smaller session may fit, or stopping a session
+may release enough room.
+
+```json
+{
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/deployment-at-capacity",
+  "title": "deployment at capacity",
+  "status": 503,
+  "detail": "no room for a session of 2000m CPU and 4096MiB: 750m CPU and 1536MiB free",
+  "code": "deployment_at_capacity",
+  "requested_cpu_millis": 2000,
+  "requested_memory_mib": 4096,
+  "free_cpu_millis": 750,
+  "free_memory_mib": 1536
+}
+```
+
+The four top-level integer fields let a client state what was requested and
+what is free without parsing `detail`. Retrying may succeed after some session
+stops, but no `Retry-After` is offered: elapsed time does not release a
+reservation. Creation is refused before an identifier is minted or a record is
+written.
+
+The capacity is declared in platform settings, not observed from the shared
+sandbox provider. Passing this preflight check therefore cannot prove a later
+provider create will succeed. The adapter contract can classify a provider's
+exact capacity response and avoid retrying it, but the production probe on
+2026-08-23 found that the current hosted provider exposes only a generic
+pending state and a create timeout. Those signals are deliberately not guessed
+to mean capacity, so this provider's late failure remains subject to its
+ordinary timeout until it exposes a specific contract.
+
 ### Live-session-limit refusal
 
 `session_limit_reached` is a `409` response with problem type
@@ -774,7 +811,7 @@ condition, so no honest `Retry-After` exists and automatic retry is not useful.
 
 ```json
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/session-limit-reached",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/session-limit-reached",
   "title": "session limit reached",
   "status": 409,
   "detail": "3 of 3 sessions are already running for this owner; stop one before starting another",
@@ -804,20 +841,20 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 
 | Permission | Capability | What it opens |
 |---|---|---|
-| `chrono-bot:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
-| `chrono-bot:admin:users` | read the user directory | `GET /api/v1/admin/users` |
-| `chrono-bot:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
-| `chrono-bot:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
-| `chrono-bot:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
-| `chrono-bot:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
+| `cma:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
+| `cma:admin:users` | read the user directory | `GET /api/v1/admin/users` |
+| `cma:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
+| `cma:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
+| `cma:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
+| `cma:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
 
-`chrono-bot:admin:events` opens the durable event log of a session the caller does not own (`GET /api/v1/sessions/{id}/events`). It is not implied by `chrono-bot:admin:sessions`: knowing which sessions exist and reading everything one of them has ever done are different questions, and the second is the one the log answers.
+`cma:admin:events` opens the durable event log of a session the caller does not own (`GET /api/v1/sessions/{id}/events`). It is not implied by `cma:admin:sessions`: knowing which sessions exist and reading everything one of them has ever done are different questions, and the second is the one the log answers.
 
 Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the two controls — a caller ending their own session does that at `/api/v1/sessions/{id}/terminate`. That is what lets the whole segment be restricted in front of the service without the gateway and the application disagreeing about who may call it.
 
-**Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `chrono-bot:admin:sessions`. A caller who also holds `chrono-bot:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
+**Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `cma:admin:sessions`. A caller who also holds `cma:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
 
 **No read is unbounded.** `GET /api/v1/admin/users` and `GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default to 100.
 
@@ -832,8 +869,8 @@ PATCH /api/v1/admin/settings
 POST  /api/v1/admin/settings/reset
 ```
 
-All four routes require `chrono-bot:admin:settings`, which appears to clients
-as the `configure_platform` capability. The product wildcard `chrono-bot:*`
+All four routes require `cma:admin:settings`, which appears to clients as the
+`configure_platform` capability. The product wildcard `cma:*`
 grants it. A signed-in caller without it receives `403` with a problem type
 ending `/not-an-operator`; these routes name no protected identifier, so they
 never disguise that refusal as `404`.
@@ -857,6 +894,11 @@ exists:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "deployment_capacity": {
+      "cpu_millis": 20000,
+      "memory_mib": 40960,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -874,6 +916,11 @@ exists:
       "reach_close": "Other services remain unavailable.",
       "reach_none": "No services are available to this session.",
       "after": []
+    },
+    "deployment_capacity": {
+      "cpu_millis": null,
+      "memory_mib": null,
+      "assumed_session_size": null
     },
     "pricing": { "cards": [] },
     "size_bounds": {
@@ -914,6 +961,11 @@ Content-Type: application/json
       "reach_close": "Calls to every other service are refused.",
       "reach_none": "No services were granted to this session.",
       "after": []
+    },
+    "deployment_capacity": {
+      "cpu_millis": 20000,
+      "memory_mib": 40960,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
     },
     "pricing": {
       "cards": [
@@ -969,6 +1021,11 @@ Content-Type: application/json
     "reach_none": "No services were granted to this session.",
     "after": ["Continue with the owner's standing instructions."]
   },
+  "deployment_capacity": {
+    "cpu_millis": 20000,
+    "memory_mib": 40960,
+    "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+  },
   "size_bounds": {
     "min_cpu_millis": 250,
     "max_cpu_millis": 4000,
@@ -997,6 +1054,11 @@ as `GET`. The object it replaced becomes `previous`:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "deployment_capacity": {
+      "cpu_millis": 20000,
+      "memory_mib": 40960,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -1018,6 +1080,11 @@ as `GET`. The object it replaced becomes `previous`:
       "reach_none": "No services were granted to this session.",
       "after": ["Continue with the owner's standing instructions."]
     },
+    "deployment_capacity": {
+      "cpu_millis": 16000,
+      "memory_mib": 32768,
+      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -1030,17 +1097,26 @@ as `GET`. The object it replaced becomes `previous`:
 }
 ```
 
-The three settings accepted by `PATCH` have distinct replacement rules.
+The four settings accepted by `PATCH` have distinct replacement rules.
 `pricing` is accepted only inside the complete document sent to `PUT`:
 
-| Setting         | PATCH rule                                                                                                                                                                                                                                                                       |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `briefing`      | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose.                                  |
-| `size_bounds`   | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
-| `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation.                                      |
+| Setting | PATCH rule |
+|---|---|
+| `briefing` | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose. |
+| `deployment_capacity` | The object replaces the whole declaration. `cpu_millis` and `memory_mib` are nullable non-negative `u64` totals; `null` leaves that dimension undeclared, while zero is an explicit ceiling. `assumed_session_size` is either `null` or a non-zero CPU/memory pair. The setting itself cannot be `null`. |
+| `size_bounds` | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
+| `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation. |
+
+Deployment capacity is a ledger over durable records whose desired state wants
+a runtime. Pausing a session releases its reservation. Existing work is never
+stopped when the declaration is lowered, and reconciliation and rotation are
+never refused by it. If the new request names no size, or any counted record
+has no size, and `assumed_session_size` is `null`, the sum cannot be computed
+honestly: the entire capacity check is skipped and creation proceeds with an
+operator warning. An unsized session is never counted as zero.
 
 For example, this removes only the live-session limit and preserves the
-briefing and size bounds:
+briefing, deployment capacity, and size bounds:
 
 ```json
 { "expected_revision": 13, "live_sessions": null }
@@ -1075,7 +1151,7 @@ HTTP/1.1 409 Conflict
 Content-Type: application/problem+json
 
 {
-  "type": "https://spec.chrono-ai.fun/chrono-bot/1.0/problems/settings-conflict",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-conflict",
   "title": "settings conflict",
   "status": 409,
   "detail": "the platform's settings changed since they were read: these settings were changed by somebody else since you read them",
@@ -1155,7 +1231,7 @@ copy a rate, a monetary amount, or any administrator-authored briefing prose.
 
 **`detail` never contains a secret.** What may be recorded is an allowlist in the core, and there is no key in it for an environment variable's value, a credential, a token, a cookie or a header. A bundle of variables is described by how many it carried, never by what they were. Newest first; `limit` is clamped by the service. Entries expire on a schedule the deployment sets (`CHRONO_ACTIVITY_RETENTION_DAYS`, ninety days by default).
 
-Reading requires `chrono-bot:admin:activity`. There is no per-caller view: an ordinary caller cannot read the log at all, not even their own entries. What happened to their own session is in that session's event stream, which is theirs.
+Reading requires `cma:admin:activity`. There is no per-caller view: an ordinary caller cannot read the log at all, not even their own entries. What happened to their own session is in that session's event stream, which is theirs.
 
 ### Live runtimes
 

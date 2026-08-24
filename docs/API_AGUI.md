@@ -2,7 +2,7 @@
 
 **Priority 1 — for frontend clients.**
 
-AG-UI is how a chat frontend renders a chrono-bot session as a conversation: assistant prose, tool calls, reasoning, and approval prompts, streamed as they happen. It is the highest-priority interface because NyxID Chat and FKST Chat are the primary consumers.
+AG-UI is how a chat frontend renders a CMA (ChronoAI Managed Agent) session as a conversation: assistant prose, tool calls, reasoning, and approval prompts, streamed as they happen. It is the highest-priority interface because NyxID Chat and FKST Chat are the primary consumers.
 
 See [API_Overview.md](./API_Overview.md) for the core operation set and session model.
 
@@ -20,7 +20,7 @@ It projects **conversation sessions**. A session created in terminal mode carrie
 
 ### The conformance table
 
-One row per core operation, for a **conversation session**. It is the claim behind "a chat client can drive a chrono-bot session", and it is narrower than that sentence sounds: two operations are terminal facts this protocol does not carry, and three depend on what the kernel behind the session offers.
+One row per core operation, for a **conversation session**. It is the claim behind "a chat client can drive a CMA session", and it is narrower than that sentence sounds: two operations are terminal facts this protocol does not carry, and three depend on what the kernel behind the session offers.
 
 | Operation | On a conversation session | If not |
 |---|---|---|
@@ -74,7 +74,7 @@ Content-Type: application/json
 }
 ```
 
-| Field | Meaning in chrono-bot |
+| Field | Meaning in CMA |
 |---|---|
 | `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected. The new session gets an identifier chosen by the service, not the one you sent, and every event on the run carries it: read `threadId` off the first event and use that from then on |
 | `runId` | Client-generated id for this turn; echoed on every event |
@@ -86,7 +86,7 @@ Content-Type: application/json
 
 `environmentProfile` is the one property in it this service reads. `kernel` is accepted and ignored, as the table above says; `llmSource` was named here as though it were honoured and frozen, and has never existed anywhere in the service — the same phantom `docs/API_REST.md` carried as `llm_source`. Both are gone from the example above, so it now shows only what sending actually does something.
 
-Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is chrono-bot's own, so an unknown field there is refused by name.
+Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is CMA's own, so an unknown field there is refused by name.
 
 One consequence worth stating, because a client cannot discover it here: **this interface never reports which kernel a session ended up on.** No event and no state patch carries it. Over REST the created session echoes its `kernel` back, so a caller could notice; here there is nothing to notice, which is what makes the declaration above the only signal there is. `GET /api/v1/sessions/{id}` is where to look.
 
@@ -94,7 +94,7 @@ One consequence worth stating, because a client cannot discover it here: **this 
 
 ## 3. Events emitted
 
-chrono-bot emits a **subset** of the AG-UI event vocabulary. The authoritative list is the `events` map in the capability document; this table is its documented form.
+CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is the `events` map in the capability document; this table is its documented form.
 
 | Group | Emitted | Carries |
 |---|---|---|
@@ -148,13 +148,13 @@ The run stream also carries a **live** lane — what is happening right now. Tho
   "type":         "TEXT_MESSAGE_CONTENT",
   "messageId":    "msg_live",
   "delta":        "Hel",
-  "chrono:live":  true
+  "cma:live":  true
 }
 ```
 
 **Never resume from one.** It has no place in the log, so a cursor taken from it points at a position the log has never held, and everything between there and the real position is skipped on the next reconnect.
 
-The marker is sent because you cannot otherwise see the absence. `EventSource` reports `lastEventId` as the last id it was *given*, so a frame sent without one is indistinguishable from a frame repeating the previous id — and a client deduplicating on that drops every live frame in silence. **A client must exclude `chrono:live` frames from whatever it deduplicates and cursors on**, and only from that.
+The marker is sent because you cannot otherwise see the absence. `EventSource` reports `lastEventId` as the last id it was *given*, so a frame sent without one is indistinguishable from a frame repeating the previous id — and a client deduplicating on that drops every live frame in silence. **A client must exclude `cma:live` frames from whatever it deduplicates and cursors on**, and only from that.
 
 The lane also carries the agent's reasoning:
 
@@ -163,7 +163,7 @@ The lane also carries the agent's reasoning:
   "type":         "REASONING_MESSAGE_CONTENT",
   "messageId":    "reasoning_live",
   "delta":        "the file is probably under src/",
-  "chrono:live":  true
+  "cma:live":  true
 }
 ```
 
@@ -173,13 +173,13 @@ The lane also carries the agent's reasoning:
 
 `msg_live` is the in-flight message's identity, and it is deliberately not the committed message's. The committed one arrives under `msg_<seq>`, and a client **replaces** the in-flight message with it rather than appending — otherwise the turn is drawn twice, once as it was typed and once as it was recorded.
 
-Declared as `chrono:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
+Declared as `cma:liveFrames` in the capability document. Where it is false, or where a session's kernel offers no liveness, the durable lane is unaffected and the section below is the whole of what a client sees.
 
 Resource readings are cursorless state on this lane too. Each reading is one
 whole-object replace, never a set of field patches:
 
 ```json
-{ "type": "STATE_DELTA", "chrono:live": true, "delta": [{
+{ "type": "STATE_DELTA", "cma:live": true, "delta": [{
   "op": "replace", "path": "/resources", "value": {
     "cpuMillisUsed": 340, "cpuMillisLimit": 1000,
     "memoryBytesUsed": 892211200, "memoryBytesLimit": 1073741824,
@@ -264,7 +264,7 @@ The protocol has one event for a run ending badly, and two things end one: the a
   "message":         "this session's runtime can no longer be what it is",
   "code":            "error",
   "capability":      "conversation",
-  "chrono:returns":  false
+  "cma:returns":  false
 }
 ```
 
@@ -273,13 +273,13 @@ The protocol has one event for a run ending badly, and two things end one: the a
 | `message` | what happened, in the kernel's own words. Always present. |
 | `code` | the stop reason as this API spells it. Absent where the session did not stop for a reason it names. |
 | `capability` | **the ability the session lacked**, present only when the failure was a refusal. Named rather than described: rule 4 of `API_Overview.md` asks errors to name what is missing, and a sentence that happens to contain the word does not satisfy that, because nothing downstream can read a sentence. Most failures lack nothing and carry no `capability` — a provider that was unreachable is not a session missing an ability. |
-| `chrono:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
+| `cma:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
 
-A client that ignores `chrono:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
+A client that ignores `cma:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
 
 ### Tool kinds are the runtime's own word
 
-`TOOL_CALL_START` carries `chrono:toolKind`, and `TOOL_CALL_END` carries `chrono:status`, both verbatim from the kernel. They are not mapped onto a fixed set: the vocabularies differ between kernels and grow without warning, and a session must not fail because one invented a category. Render what you recognise.
+`TOOL_CALL_START` carries `cma:toolKind`, and `TOOL_CALL_END` carries `cma:status`, both verbatim from the kernel. They are not mapped onto a fixed set: the vocabularies differ between kernels and grow without warning, and a session must not fail because one invented a category. Render what you recognise.
 
 **`STATE_DELTA` is where `get_usage` lands.** Token counts and cost arrive as state patches rather than a separate call, so a chat UI can show spend without polling.
 
@@ -291,14 +291,14 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 
 ```
 1. Codex requests permission to run a command
-2. chrono-bot ends the run:
+2. CMA ends the run:
 
    RUN_FINISHED {
      outcome: {
        type: "interrupt",
        interrupts: [{
          id: "apr_7Q2",
-         reason: "chrono:command_execution",
+         reason: "cma:command_execution",
          message: "Run `rm -rf build/`?",
          responseSchema: { … },
          expiresAt: "2026-08-12T09:20:00Z"
@@ -316,7 +316,7 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 5. The session resumes and streams the continuation
 ```
 
-`reason` is `confirmation` where the runtime offered no description of what it wants, and `chrono:<what the runtime called it>` where it did — `chrono:command_execution`, `chrono:file_write`, `chrono:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
+`reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
 
 `payload.decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions, and a client that meant the second and sent the first watches the agent try something else instead of stopping. **A decision or status this service does not recognise is read as a refusal** — the one direction this can safely fail in, because the alternative is granting on a word it did not understand.
 
@@ -330,7 +330,7 @@ Between step 2 and step 4 the session is `idle` with `stop_reason: requires_acti
 
 - **Interrupt** — `POST /api/v1/sessions/{threadId}/interrupt`.
 
-  **A dropped stream does not cancel anything.** This was specified the other way round — "abort the HTTP request and chrono-bot cancels the turn" — and that is wrong for two reasons that only became clear once the stream existed.
+  **A dropped stream does not cancel anything.** This was specified the other way round — "abort the HTTP request and CMA cancels the turn" — and that is wrong for two reasons that only became clear once the stream existed.
 
   A connection that drops because a laptop slept is indistinguishable from one a person closed on purpose. Reading the first as a cancellation ends somebody's turn because their network blinked, which §5 of `CLAUDE.md` forbids in the strongest terms it has: a session is not interrupted by anything its owner did not ask for. And it contradicts §7 of this document, which tells a client to recover a dropped stream by reading the durable log — advice that only makes sense if the work is still running.
 
@@ -366,13 +366,13 @@ GET /api/v1/agui/capabilities
     "humanInTheLoop": { "supported": true, "approvals": true, "interrupts": true,
                         "approveWithEdits": false, "interventions": false },
     "execution":      { "codeExecution": true, "sandboxed": true },
-    "custom":         { "chrono:terminal": false, "chrono:usage": true,
-                        "chrono:resources": true,
-                        "chrono:changePlane": false, "chrono:planeChangeObserved": true }
+    "custom":         { "cma:terminal": false, "cma:usage": true,
+                        "cma:resources": true,
+                        "cma:changePlane": false, "cma:planeChangeObserved": true }
   },
   "conformsTo": [
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/agui-core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/approvals"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
   ]
 }
 ```
@@ -395,6 +395,6 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 
 ## 8. Stability
 
-AG-UI is pre-1.0 and single-vendor, with no protocol version distinct from its package semver. chrono-bot therefore versions **its own** projection through the `conformsTo` URIs above, and never claims conformance to an AG-UI version — no such version exists to cite.
+AG-UI is pre-1.0 and single-vendor, with no protocol version distinct from its package semver. CMA therefore versions **its own** projection through the `conformsTo` URIs above, and never claims conformance to an AG-UI version — no such version exists to cite.
 
 If AG-UI makes a breaking change, this interface's `conformsTo` URIs change and the core session model does not.

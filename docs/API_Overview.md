@@ -1,6 +1,6 @@
 # API Overview
 
-chrono-bot exposes five public interfaces. Each is a **projection** of one core session model — never a separate product with its own semantics.
+CMA (ChronoAI Managed Agent) exposes five public interfaces. Each is a **projection** of one core session model — never a separate product with its own semantics.
 
 This document defines the shared vocabulary. The five interface documents define how each protocol expresses it:
 
@@ -92,7 +92,7 @@ provisioning ──► ready ──► running ⇄ idle ──► terminated
 A session carries the runtime version serving it, how many times it has been carried onto a newer one, and the moment of the snapshot the current runtime resumed from:
 
 ```json
-{ "runtime_version": "…/chrono-bot-runtime:8dbd315", "rotations": 1, "rotated_at": "2026-08-14T00:31:10Z" }
+{ "runtime_version": "…/cma-runtime:8dbd315", "rotations": 1, "rotated_at": "2026-08-14T00:31:10Z" }
 ```
 
 `rotated_at` is the honest part and clients should show it. Anything the agent did after that moment did not travel, so an owner who can see the boundary can recognise a gap rather than puzzle over one.
@@ -164,17 +164,17 @@ There is no separate approvals resource. Approvals ride the event stream, so the
 
 ## 5. Capability declaration
 
-No specification defines a named conformance profile for agent services. chrono-bot therefore declares its own, and publishes it through each protocol's **native** mechanism rather than inventing a parallel one:
+No specification defines a named conformance profile for agent services. CMA therefore declares its own, and publishes it through each protocol's **native** mechanism rather than inventing a parallel one:
 
 | Interface | Declaration surface |
 |---|---|
 | REST | `GET /conformance` returning `conformsTo[]` of class URIs |
 | AG-UI | `GET /agui/capabilities`, plus `AgentCapabilities` on the SDK object |
-| A2A | Agent Card `capabilities`, with chrono-specific operations in one extension |
+| A2A | Agent Card `capabilities`, with CMA-specific operations in one extension |
 | MCP | `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
 | PTY | the `ready` control frame |
 
-The same class URIs appear in every surface, so one vocabulary is visible everywhere. If a standard later emerges, the URIs change and the architecture does not.
+The same class URIs appear in every surface, so one vocabulary is visible everywhere. If a standard later emerges, a new major contract version may adopt it without changing this version's identifiers in place.
 
 The classes:
 
@@ -206,3 +206,25 @@ A capability is declared only where it has been demonstrated against the kernel 
 4. **Errors are typed and name what is missing.** Never a bare status code.
 5. **Concurrent input has one answer.** A second turn arriving while one is in flight resolves identically on every interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
 6. **Identity is NyxID.** Every interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.
+
+---
+
+## 7. Literal identifier stability
+
+The conformance and problem URIs under `https://spec.chrono-ai.fun/cma/1.0/` and the AG-UI extension vocabulary under `cma:*` are protocol identifiers, not display names. Clients compare them literally. Their spelling is frozen for the 1.0 contract; changing either family requires a new major contract version and a compatibility plan.
+
+Clients must still tolerate identifiers they do not recognise. Freezing existing names prevents an old meaning from moving, while accepting unknown names lets the vocabulary grow without making a newer server unreadable to an older client.
+
+NyxID grants issued for this product use the canonical `cma:*` permission vocabulary. During the compatibility window, the control plane accepts each exact historical `chrono-bot:*` grant as an alias for its `cma:*` counterpart, including the product wildcard. This is an exact translation table, not prefix matching: an unknown or nearly matching grant still confers nothing. New roles and integrations must use `cma:*`; the old aliases remain only until provider inventory proves that no stored role or active authorization depends on them.
+
+New per-session credential names use `cma:{deployment}:{session}` as their ownership record. Reclamation reads that form first and the historical `chrono-bot:{deployment}:{session}` form second because those credentials have no expiry backstop. `CHRONO_DEPLOYMENT_ID` is a state identity inside both forms, not a display name: existing deployments keep their explicit value unchanged, while the fallback for a new deployment is `cma`. The old prefix remains readable until complete provider listings for every session owner show that no matching key survives.
+
+New browser sign-ins write only the `cma_session` cookie. During the compatibility window, authentication checks `cma_session` first and the historical `chrono_bot_session` second regardless of browser header order. Logout revokes every presented generation and expires both cookie names, so clearing the new cookie cannot expose a still-live old cookie on the next request. The old reader remains for one measured deployment cycle and is retired separately only after the maximum legacy-cookie lifetime and production observations show that it is no longer used.
+
+New sandboxes carry the canonical correlation keys `cma/control-plane`, `cma/session`, and `cma/kernel`, alongside the exact historical `chrono-bot/*` counterparts with identical values. Reconciliation resolves the canonical session and control-plane values first and falls back independently to the historical values, so an old-only sandbox remains owned and cannot be mistaken for an orphan during the migration. The old readers remain until a complete, paginated provider inventory proves that no live pre-rename sandbox depends on them; runtime rotation supplies new sandboxes but is not itself that proof.
+
+Tracing targets follow Rust source module paths rather than a wire identifier. The source rename therefore adopts `cma::*` for the control-plane crate without a `chrono_bot::*` alias. A repository-wide sweep found no explicit historical target in tracing calls, manifests, workflows, documentation, or runbooks: the deployment uses the broad `RUST_LOG=info` directive, and both binaries read `RUST_LOG` with an `info` fallback. No manifest transition or dual-read path is required. Any future target-specific filter must use the emitted canonical module target and be updated deliberately alongside a future source rename.
+
+Browser-owned state writes only the canonical keys `cma:appearance`, `cma:terminal-theme`, `cma:view-mode`, `cma:pending-turn`, and `cma:rail-collapsed`. Persistent preferences read the canonical value first, fall back only to valid data under the corresponding historical `chrono-bot:*` key, and copy that value forward; the product terminal-theme ids similarly migrate from `chronobot-dark` and `chronobot-light` to `cma-dark` and `cma-light`. Pending turns remain per-tab in `sessionStorage`: consumption prefers valid canonical content and clears both names together, including when it falls back to historical content, so an old prompt is neither lost nor replayed. The historical readers remain separately gated until the browser compatibility window has been measured.
+
+The A2A Agent Card name is `cma`, and CMA-specific task metadata is keyed by the permanent extension URI `https://w3id.org/chrono/a2a/cma/v1`. Both spellings are frozen before the interface is implemented. The earlier `chrono-bot` card name and extension URI existed only in an unserved design document, so no client or external state can depend on them and no compatibility alias is emitted. Any breaking extension change mints a new versioned URI.
