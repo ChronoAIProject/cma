@@ -14,8 +14,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    ApprovalDecision, CreateSessionRequest, Error, EventStream, Result, ScreenSnapshot, Session,
-    SessionId, SessionInput, TerminalGeometry, Usage,
+    ApprovalDecision, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
+    PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session, SessionId, SessionInput,
+    SessionPageRequest, TerminalGeometry, Usage,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -290,31 +291,87 @@ impl Client {
         session.validate()
     }
 
+    /// Read one bounded session page.
+    pub async fn list_session_page(&self, page: SessionPageRequest) -> Result<Page<Session>> {
+        let url = match page.continuation() {
+            Some(continuation) => self.session_page_url(continuation.as_str())?,
+            None => {
+                let mut url = self.endpoint(&["sessions"])?;
+                if page.status().is_some() || page.limit().is_some() || page.cursor().is_some() {
+                    let mut query = url.query_pairs_mut();
+                    if let Some(status) = page.status() {
+                        query.append_pair("status", status.query_value());
+                    }
+                    if let Some(limit) = page.limit() {
+                        query.append_pair("limit", &limit.to_string());
+                    }
+                    if let Some(cursor) = page.cursor() {
+                        query.append_pair("cursor", cursor);
+                    }
+                }
+                url
+            }
+        };
+        let request = RequestSpec::new(Method::GET, url, None, false);
+        let (items, next): (Vec<Session>, Option<String>) = self
+            .execute(request, |response| async move {
+                decode_json_page(response, StatusCode::OK).await
+            })
+            .await?;
+        if items.len() > usize::from(MAX_PAGE_SIZE) {
+            return Err(Error::protocol(format!(
+                "session page exceeded the {MAX_PAGE_SIZE}-item server boundary"
+            )));
+        }
+        let items = items
+            .into_iter()
+            .map(Session::validate)
+            .collect::<Result<Vec<_>>>()?;
+        let next = match next {
+            Some(target) => {
+                self.session_page_url(&target)?;
+                Some(PageContinuation::new(target))
+            }
+            None => None,
+        };
+        Ok(Page { items, next })
+    }
+
     /// List every session visible to the current caller.
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
-        let mut url = self.endpoint(&["sessions"])?;
+        self.list_sessions_with_limits(PageWalkLimits::default())
+            .await
+    }
+
+    /// List every visible session within explicit page and retained-item ceilings.
+    pub async fn list_sessions_with_limits(&self, limits: PageWalkLimits) -> Result<Vec<Session>> {
+        let mut request = SessionPageRequest::new();
         let mut visited = HashSet::new();
         let mut sessions = Vec::new();
-        loop {
-            if !visited.insert(url.to_string()) {
-                return Err(Error::protocol("pagination repeated a continuation link"));
+        for page_number in 1..=limits.max_pages() {
+            let page = self.list_session_page(request).await?;
+            if page.items.len() > limits.max_items().saturating_sub(sessions.len()) {
+                return Err(Error::protocol(format!(
+                    "pagination exceeded its {}-item boundary",
+                    limits.max_items()
+                )));
             }
-            let request = RequestSpec::new(Method::GET, url, None, false);
-            let (page, next): (Vec<Session>, Option<String>) = self
-                .execute(request, |response| async move {
-                    decode_json_page(response, StatusCode::OK).await
-                })
-                .await?;
-            sessions.extend(
-                page.into_iter()
-                    .map(Session::validate)
-                    .collect::<Result<Vec<_>>>()?,
-            );
-            let Some(next) = next else {
+            sessions.extend(page.items);
+            let Some(next) = page.next else {
                 return Ok(sessions);
             };
-            url = self.session_page_url(&next)?;
+            if page_number == limits.max_pages() {
+                return Err(Error::protocol(format!(
+                    "pagination exceeded its {}-page boundary",
+                    limits.max_pages()
+                )));
+            }
+            if !visited.insert(next.as_str().to_owned()) {
+                return Err(Error::protocol("pagination repeated a continuation link"));
+            }
+            request = SessionPageRequest::continuing(next);
         }
+        Err(Error::protocol("pagination exhausted its page boundary"))
     }
 
     /// Read one session.

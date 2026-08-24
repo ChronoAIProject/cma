@@ -2,7 +2,17 @@
 
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError, ValidationError } from './errors.js';
-import { request, requestPages, requestVoid, type OperationOptions } from './http.js';
+import {
+  pageTarget,
+  request,
+  requestPage,
+  requestPages,
+  requestVoid,
+  type OperationOptions,
+  type Page,
+  type PageRequest,
+  type PageWalkOptions,
+} from './http.js';
 import type { CredentialMode, PermissionMode, ReasoningEffort, SessionPlane } from './types.js';
 
 const BASE = '/api/v1/environment-profiles';
@@ -115,10 +125,29 @@ export interface ServiceCatalogue {
   readonly mandatory: readonly string[];
 }
 
+/** Position within one bounded environment-profile page. */
+export type EnvironmentProfilePageRequest = PageRequest;
+
+/** Read one bounded page of profiles owned by the authenticated subject. */
+export async function listEnvironmentProfilesPage(
+  config: ResolvedConfig,
+  page: EnvironmentProfilePageRequest = {},
+  options: OperationOptions = {},
+): Promise<Page<EnvironmentProfile>> {
+  const target = pageTarget(BASE, page);
+  return requestPage(
+    config,
+    BASE,
+    target,
+    (body) => profileList(body, 'environment profile list'),
+    options,
+  );
+}
+
 /** Every profile owned by the authenticated subject. */
 export async function listEnvironmentProfiles(
   config: ResolvedConfig,
-  options: OperationOptions = {},
+  options: PageWalkOptions = {},
 ): Promise<readonly EnvironmentProfile[]> {
   return requestPages(
     config,

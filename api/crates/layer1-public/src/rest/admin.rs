@@ -35,7 +35,7 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
-use crate::rest::pagination::SessionPageParams;
+use crate::rest::pagination::AdminSessionPageParams;
 use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
 
 mod settings;
@@ -420,7 +420,7 @@ async fn runtimes(
 async fn sessions(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    params: Result<Query<SessionPageParams>, axum::extract::rejection::QueryRejection>,
+    params: Result<Query<AdminSessionPageParams>, axum::extract::rejection::QueryRejection>,
 ) -> Result<(axum::http::HeaderMap, Json<Vec<AdminSessionView>>), AdminRequestFailure> {
     let Query(params) = params?;
     // Two core calls, each answering for its own capability. Reading everyone's
