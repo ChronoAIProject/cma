@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 /// A variable as this interface reads and writes it.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct VariableBody {
     /// Variable name.
     pub key: String,
@@ -28,6 +29,7 @@ pub struct VariableBody {
 
 /// A package as this interface reads and writes it.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageBody {
     /// Package name.
     pub name: String,
@@ -37,7 +39,8 @@ pub struct PackageBody {
 }
 
 /// Request body for creating or replacing a profile.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileRequest {
     /// Name the owner recognises it by.
     pub name: String,
@@ -64,7 +67,8 @@ pub struct ProfileRequest {
 }
 
 /// The platform-access half of a profile, as a caller supplies it.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NyxIdBody {
     /// Identifiers of the services to allow.
     #[serde(default)]
@@ -75,7 +79,8 @@ pub struct NyxIdBody {
 ///
 /// Every field defaults, so a client that cares about none of them sends a
 /// name and gets a profile that behaves the way the deployment says it should.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentBody {
     /// Which runtime implementation backs the session.
     #[serde(default)]
@@ -111,7 +116,8 @@ pub struct AgentBody {
 /// Two integers with their units in their names. A field called `cpu` carrying
 /// `1` is ambiguous between one core and one millicore, and the two differ by a
 /// factor of a thousand.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SizeBody {
     pub cpu_millis: u32,
     pub memory_mib: u32,
@@ -182,6 +188,7 @@ pub struct AgentView {
     credential: CredentialMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     size: Option<SessionSize>,
+    record_tool_bodies: bool,
     skills: Vec<String>,
 }
 
@@ -262,6 +269,7 @@ impl ProfileView {
                 permission: profile.agent.permission,
                 credential: profile.agent.credential,
                 size: profile.agent.size,
+                record_tool_bodies: profile.agent.record_tool_bodies,
                 skills: profile.agent.skills.into_iter().map(|s| s.0).collect(),
             },
             nyxid: NyxIdView {

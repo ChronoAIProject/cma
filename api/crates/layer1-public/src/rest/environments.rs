@@ -60,6 +60,10 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
         .with_state(service)
 }
 
+#[cfg(test)]
+#[path = "environments_tests.rs"]
+mod route_tests;
+
 async fn create(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
