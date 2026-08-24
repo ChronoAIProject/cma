@@ -241,6 +241,8 @@ async fn main() {
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
+    let ticket_store =
+        Arc::new(stores.tickets) as Arc<dyn layer1_public::tickets::TerminalTicketStore>;
     // The account of what this service is asked to do, and of who asks. Both
     // are opened with everything else rather than lazily: a control plane that
     // served traffic it could not account for would be discovered by somebody
@@ -430,7 +432,7 @@ async fn main() {
     // this process as well as inside it.
     // Minted where a credential can be carried and redeemed where one cannot,
     // so both surfaces are handed the same store.
-    let tickets = layer1_public::tickets::TerminalTickets::new();
+    let tickets = layer1_public::tickets::TerminalTickets::new(ticket_store);
 
     let public_state = layer1_public::rest::SessionsState {
         sessions: Arc::clone(&service),
