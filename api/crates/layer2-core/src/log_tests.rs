@@ -949,6 +949,40 @@ async fn a_rejected_resize_returns_failure_without_changing_the_runtime() {
         ),
         "a rejected proposal is never forwarded to the runtime"
     );
+
+    let retry_geometry = TerminalGeometry::new(120, 42).expect("valid retry geometry");
+    service
+        .resize_terminal(&owner, &created.id, retry_geometry)
+        .await
+        .expect("a later resize is compared with durable state, not the rejected proposal");
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, retry_geometry);
+    assert_eq!(durable.session.last_seq, before_tail + 1);
+    assert_eq!(
+        service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("live entry")
+            .session
+            .geometry,
+        retry_geometry
+    );
+    assert_eq!(
+        service
+            .screen_snapshot(&owner, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        retry_geometry
+    );
+    assert!(matches!(
+        runtime_input.try_recv(),
+        Ok(layer3_adapter::TerminalInput::Resize(_))
+    ));
 }
 
 #[tokio::test]
