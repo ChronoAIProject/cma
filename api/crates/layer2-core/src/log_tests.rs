@@ -4,11 +4,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
+
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
-use crate::session::{RecoveryState, Session, SessionStatus};
+use crate::options::SessionMode;
+use crate::session::{RecoveryState, Session, SessionStatus, StopReason};
 use crate::store::{SessionRecord, SessionStore, StoreError};
-use crate::test_support::{service_over, FakeAdapter, FakeStore};
+use crate::test_support::{await_settled, service_over, spec, user, FakeAdapter, FakeStore};
 use crate::{AgentOptions, KernelId, Reserved, TerminalGeometry};
 
 fn id() -> SessionId {
@@ -39,8 +42,12 @@ fn record() -> SessionRecord {
 }
 
 fn said(seq: u64, content: &str) -> Event {
+    said_for(&id(), seq, content)
+}
+
+fn said_for(id: &SessionId, seq: u64, content: &str) -> Event {
     Event {
-        session_id: id(),
+        session_id: id.clone(),
         seq,
         kind: EventKind::MessageCommitted {
             content: content.into(),
@@ -56,6 +63,9 @@ struct FaultStore {
     failures_after_first_write: AtomicUsize,
     calls: AtomicUsize,
     lose_next_response: AtomicBool,
+    pause_next_write: AtomicBool,
+    write_started: Notify,
+    release_write: Notify,
 }
 
 impl FaultStore {
@@ -69,6 +79,10 @@ impl FaultStore {
 
     async fn before_write(&self) -> Result<(), StoreError> {
         let earlier_calls = self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.pause_next_write.swap(false, Ordering::SeqCst) {
+            self.write_started.notify_one();
+            self.release_write.notified().await;
+        }
         if Self::consume_failure(&self.failures)
             || (earlier_calls > 0 && Self::consume_failure(&self.failures_after_first_write))
         {
@@ -159,10 +173,14 @@ impl SessionStore for FaultStore {
 }
 
 async fn wait_for_event(store: &FakeStore) -> StoredEvent {
+    wait_for_event_for(store, &id()).await
+}
+
+async fn wait_for_event_for(store: &FakeStore, id: &SessionId) -> StoredEvent {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if let Some(event) = store
-                .events_since(&id(), 0)
+                .events_since(id, 0)
                 .await
                 .expect("store readable")
                 .into_iter()
@@ -175,6 +193,94 @@ async fn wait_for_event(store: &FakeStore) -> StoredEvent {
     })
     .await
     .expect("the autonomous worker committed its retained event")
+}
+
+async fn wait_for_lane_idle(lane: &Arc<super::SessionLog>) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the durable lane drains");
+}
+
+async fn collide_with_newer_record(
+    base: SessionRecord,
+    mut stale: SessionRecord,
+    event: Event,
+    newer: SessionRecord,
+) -> (StoreError, SessionRecord, Vec<StoredEvent>) {
+    let store = Arc::new(FaultStore::default());
+    store.inner.upsert(&base).await.expect("seed record");
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+
+    let task_service = Arc::clone(&service);
+    let stale_write =
+        tokio::spawn(async move { task_service.persist_durably(&mut stale, vec![event]).await });
+    store.write_started.notified().await;
+    store
+        .inner
+        .commit_session_idempotent("newer-competing-record", &newer, &[])
+        .await
+        .expect("the competing replica commits first");
+    store.release_write.notify_one();
+
+    let error = stale_write
+        .await
+        .expect("the stale writer task completes")
+        .expect_err("the stale state change is refused");
+    let durable = store
+        .inner
+        .get(&id())
+        .await
+        .expect("store remains readable")
+        .expect("session remains present");
+    let events = store.inner.events_since(&id(), 0).await.unwrap();
+    (error, durable, events)
+}
+
+#[test]
+fn an_informational_event_does_not_claim_a_pending_status_change() {
+    let base = record();
+    let mut intended = base.clone();
+    intended.session.status = SessionStatus::Running;
+    let message_change = super::RecordChange {
+        before: Box::new(base.clone()),
+        fields: super::RecordFields::for_events(&[said(1, "owner-message")]),
+    };
+    let mut rival = base;
+    rival.context_ref = Some("rival-state".into());
+    rival.revision = 1;
+
+    let after_message = message_change
+        .apply(&intended, rival)
+        .expect("the informational event preserves the rival record");
+    assert_eq!(after_message.session.status, SessionStatus::Ready);
+    assert_eq!(after_message.context_ref.as_deref(), Some("rival-state"));
+    let status_base = message_change.next_local_tail(&intended);
+    assert_eq!(status_base.session.status, SessionStatus::Ready);
+
+    let status_change = super::RecordChange {
+        before: Box::new(status_base),
+        fields: super::RecordFields::for_events(&[Event {
+            session_id: id(),
+            seq: 2,
+            kind: EventKind::StatusChanged {
+                status: SessionStatus::Running,
+                stop_reason: None,
+                detail: None,
+                capability: None,
+            },
+            appended_at: String::new(),
+        }]),
+    };
+    let after_status = status_change
+        .apply(&intended, after_message)
+        .expect("the semantic event owns the status change");
+    assert_eq!(after_status.session.status, SessionStatus::Running);
+    assert_eq!(after_status.context_ref.as_deref(), Some("rival-state"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -316,6 +422,232 @@ async fn an_error_delivered_to_the_waiter_ends_the_operation_permanently() {
 }
 
 #[tokio::test]
+async fn queued_successor_and_record_barrier_shift_with_an_abandoned_reservation() {
+    let store = Arc::new(FaultStore::default());
+    let base = record();
+    store.inner.upsert(&base).await.expect("seed record");
+    store.failures.store(4, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.observe_record(&base);
+    wait_for_lane_idle(&lane).await;
+
+    let abandoned = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        base.clone(),
+        vec![said(0, "abandoned")],
+    );
+    let successor = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        base.clone(),
+        vec![said(0, "already-queued-successor")],
+    );
+    let mut live_snapshot = base;
+    live_snapshot.session.last_seq = 2;
+    let barrier = lane.enqueue_commit(
+        super::CommitMode::UpdateInheriting,
+        live_snapshot,
+        Vec::new(),
+    );
+
+    assert!(matches!(
+        abandoned
+            .complete
+            .await
+            .expect("worker reports")
+            .expect_err("the first operation is abandoned"),
+        StoreError::Unavailable(_)
+    ));
+    successor
+        .complete
+        .await
+        .expect("worker remains")
+        .expect("the queued successor closes the reservation");
+    let barrier_record = barrier
+        .complete
+        .await
+        .expect("worker remains")
+        .expect("the queued record-only barrier uses the corrected tail");
+
+    assert_eq!(store.calls.load(Ordering::SeqCst), 6);
+    assert_eq!(barrier_record.session.last_seq, 1);
+    assert_eq!(service.sequences.current(&id()), Some(1));
+    let events = store.inner.events_since(&id(), 0).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].seq, 1);
+    assert!(format!("{:?}", events[0].kind).contains("already-queued-successor"));
+}
+
+#[tokio::test]
+async fn cancelling_after_error_delivery_but_before_observation_retains_the_write() {
+    let store = Arc::new(FaultStore::default());
+    let seeded = record();
+    store.inner.upsert(&seeded).await.expect("seed record");
+    store.failures.store(4, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    let pending = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        seeded,
+        vec![said(0, "unobserved-error-keeps-ownership")],
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), lane.failure_delivered.notified())
+        .await
+        .expect("the fourth outage response is delivered");
+    assert!(store.inner.events_since(&id(), 0).await.unwrap().is_empty());
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+
+    // The completion receiver still exists, so delivery succeeded, but it has
+    // never been polled and therefore has not acknowledged the error.
+    drop(pending.complete);
+
+    let event = wait_for_event(&store.inner).await;
+    assert!(format!("{:?}", event.kind).contains("unobserved-error-keeps-ownership"));
+    assert_eq!(store.calls.load(Ordering::SeqCst), 5);
+}
+
+#[tokio::test]
+async fn a_failed_generated_creation_releases_its_allocator_key() {
+    let store = Arc::new(FaultStore::default());
+    store.failures.store(4, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+
+    let error = service
+        .create_session(&user("failed-create-owner"), spec())
+        .await
+        .expect_err("the fourth store outage response fails creation");
+
+    assert!(matches!(error, crate::CoreError::RuntimeUnavailable(_)));
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        service.sequences.len(),
+        0,
+        "a generated identifier that never became a session must not remain strongly held"
+    );
+}
+
+#[tokio::test]
+async fn an_abandoned_gap_converges_the_allocator_live_entry_and_record_flush() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("gap-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(
+            &entries
+                .get(&created.id)
+                .expect("the settled session has a live entry")
+                .event_log,
+        )
+    };
+    wait_for_lane_idle(&lane).await;
+
+    let before = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_tail = before.session.last_seq;
+    let calls_before_failure = store.calls.load(Ordering::SeqCst);
+    store.failures.store(4, Ordering::SeqCst);
+    let mut abandoned = before;
+    let error = service
+        .persist_durably(
+            &mut abandoned,
+            vec![said_for(&created.id, 0, "abandoned-gap-event")],
+        )
+        .await
+        .expect_err("the fourth outage response abandons this operation");
+    assert!(matches!(error, StoreError::Unavailable(_)));
+    assert_eq!(store.calls.load(Ordering::SeqCst) - calls_before_failure, 4);
+
+    {
+        let mut entries = service.entries.write().await;
+        let entry = entries
+            .get_mut(&created.id)
+            .expect("the session remains live");
+        entry.context_ref = Some("record-only-after-gap".into());
+        super::append(
+            entry,
+            EventKind::MessageCommitted {
+                content: "successor-closes-gap".into(),
+            },
+        );
+    }
+    let calls_before_successor = store.calls.load(Ordering::SeqCst);
+    service.flush(&created.id).await;
+    assert_eq!(
+        store.calls.load(Ordering::SeqCst) - calls_before_successor,
+        2,
+        "the successor and record-only flush each commit once without a rejected gap transaction"
+    );
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.last_seq, before_tail + 1);
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some("record-only-after-gap")
+    );
+    let events = store
+        .inner
+        .events_since(&created.id, before_tail)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].seq, before_tail + 1);
+    assert!(format!("{:?}", events[0].kind).contains("successor-closes-gap"));
+    assert_eq!(
+        service.sequences.current(&created.id),
+        Some(before_tail + 1)
+    );
+    assert_eq!(
+        service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("entry remains installed")
+            .session
+            .last_seq,
+        before_tail + 1,
+        "the live entry is corrected when the record-only barrier completes"
+    );
+
+    {
+        let mut entries = service.entries.write().await;
+        super::append(
+            entries.get_mut(&created.id).unwrap(),
+            EventKind::MessageCommitted {
+                content: "allocator-stays-converged".into(),
+            },
+        );
+    }
+    let calls_before_followup = store.calls.load(Ordering::SeqCst);
+    service.flush(&created.id).await;
+    assert_eq!(
+        store.calls.load(Ordering::SeqCst) - calls_before_followup,
+        2,
+        "later events remain on the contiguous fast path"
+    );
+    let events = store
+        .inner
+        .events_since(&created.id, before_tail)
+        .await
+        .unwrap();
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        [before_tail + 1, before_tail + 2]
+    );
+}
+
+#[tokio::test]
 async fn a_revision_rebase_does_not_spend_the_unavailable_retry_budget() {
     let store = Arc::new(FaultStore::default());
     let mut durable = record();
@@ -438,6 +770,322 @@ async fn a_cross_replica_revision_change_rebases_the_semantic_write() {
 }
 
 #[tokio::test]
+async fn a_public_resize_and_its_queued_flush_preserve_a_rival_record_field() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("resize-rebase-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    };
+    wait_for_lane_idle(&lane).await;
+    let before = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_tail = before.session.last_seq;
+    let resized = TerminalGeometry::new(117, 39).expect("valid geometry");
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let resize_service = Arc::clone(&service);
+    let resize_id = created.id.clone();
+    let resize = tokio::spawn(async move {
+        resize_service
+            .resize_terminal(&owner, &resize_id, resized)
+            .await
+    });
+    store.write_started.notified().await;
+
+    let mut rival = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("rival reads the record");
+    rival.context_ref = Some("rival-context".into());
+    store
+        .inner
+        .commit_session_idempotent("rival-during-resize", &rival, &[])
+        .await
+        .expect("the rival record-only change commits first");
+    store.release_write.notify_one();
+
+    resize
+        .await
+        .expect("resize task completes")
+        .expect("public resize completes after its durable barrier");
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, resized);
+    assert_eq!(durable.context_ref.as_deref(), Some("rival-context"));
+    let events = store
+        .inner
+        .events_since(&created.id, before_tail)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].seq, before_tail + 1);
+    assert!(matches!(
+        &events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalResized {
+            columns: 117,
+            rows: 39
+        })
+    ));
+    assert_eq!(durable.session.last_seq, before_tail + 1);
+}
+
+#[tokio::test]
+async fn a_rejected_resize_cannot_leak_through_its_queued_record_barrier() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("resize-conflict-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    };
+    wait_for_lane_idle(&lane).await;
+    let before = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_tail = before.session.last_seq;
+    let local_geometry = TerminalGeometry::new(118, 40).expect("valid geometry");
+    let rival_geometry = TerminalGeometry::new(119, 41).expect("valid geometry");
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let resize_service = Arc::clone(&service);
+    let resize_id = created.id.clone();
+    let resize = tokio::spawn(async move {
+        resize_service
+            .resize_terminal(&owner, &resize_id, local_geometry)
+            .await
+    });
+    store.write_started.notified().await;
+
+    let mut rival = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("rival reads the record");
+    rival.session.geometry = rival_geometry;
+    store
+        .inner
+        .commit_session_idempotent("rival-resize", &rival, &[])
+        .await
+        .expect("the rival geometry commits first");
+    store.release_write.notify_one();
+
+    resize
+        .await
+        .expect("resize task completes")
+        .expect("the public operation reaches its record barrier");
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, rival_geometry);
+    assert_eq!(durable.session.last_seq, before_tail);
+    assert!(store
+        .inner
+        .events_since(&created.id, before_tail)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn stale_runtime_loss_cannot_clear_a_replacement_runtime() {
+    let mut base = record();
+    base.runtime_id = Some("runtime-old".into());
+    let mut stale = base.clone();
+    stale.runtime_id = None;
+    stale.session.recovery_state = RecoveryState::Recovering;
+    let mut newer = base.clone();
+    newer.runtime_id = Some("runtime-new".into());
+
+    let (error, durable, events) = collide_with_newer_record(
+        base,
+        stale,
+        Event {
+            session_id: id(),
+            seq: 0,
+            kind: EventKind::RuntimeLost {
+                runtime_id: "runtime-old".into(),
+                cause: None,
+            },
+            appended_at: String::new(),
+        },
+        newer,
+    )
+    .await;
+
+    assert!(matches!(
+        error,
+        StoreError::RevisionConflict {
+            expected: 0,
+            actual: 1
+        }
+    ));
+    assert_eq!(durable.runtime_id.as_deref(), Some("runtime-new"));
+    assert_eq!(durable.session.recovery_state, RecoveryState::Normal);
+    assert!(events.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_loss_rebases_when_the_observed_runtime_is_still_current() {
+    let store = Arc::new(FaultStore::default());
+    let mut base = record();
+    base.runtime_id = Some("runtime-old".into());
+    store.inner.upsert(&base).await.expect("seed record");
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+
+    let task_service = Arc::clone(&service);
+    let mut stale = base.clone();
+    stale.runtime_id = None;
+    stale.session.recovery_state = RecoveryState::Recovering;
+    let stale_write = tokio::spawn(async move {
+        task_service
+            .persist_durably(
+                &mut stale,
+                vec![Event {
+                    session_id: id(),
+                    seq: 0,
+                    kind: EventKind::RuntimeLost {
+                        runtime_id: "runtime-old".into(),
+                        cause: None,
+                    },
+                    appended_at: String::new(),
+                }],
+            )
+            .await
+    });
+    store.write_started.notified().await;
+    let mut newer = base;
+    newer.context_ref = Some("newer-unrelated-state".into());
+    store
+        .inner
+        .commit_session_idempotent("newer-unrelated-record", &newer, &[])
+        .await
+        .expect("the unrelated record update commits first");
+    store.release_write.notify_one();
+
+    stale_write
+        .await
+        .expect("the stale writer task completes")
+        .expect("the runtime identity still satisfies the loss precondition");
+    let durable = store.inner.get(&id()).await.unwrap().unwrap();
+    assert!(durable.runtime_id.is_none());
+    assert_eq!(durable.session.recovery_state, RecoveryState::Recovering);
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some("newer-unrelated-state")
+    );
+    let events = store.inner.events_since(&id(), 0).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        &events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::RuntimeLost { runtime_id, .. })
+            if runtime_id == "runtime-old"
+    ));
+}
+
+#[tokio::test]
+async fn stale_status_change_cannot_restore_a_newer_lifecycle_state() {
+    let base = record();
+    let mut stale = base.clone();
+    stale.session.status = SessionStatus::Running;
+    let mut newer = base.clone();
+    newer.session.status = SessionStatus::Idle;
+    newer.session.stop_reason = Some(StopReason::UserTerminated);
+    newer.session.recovery_state = RecoveryState::Idle;
+
+    let (error, durable, events) = collide_with_newer_record(
+        base,
+        stale,
+        Event {
+            session_id: id(),
+            seq: 0,
+            kind: EventKind::StatusChanged {
+                status: SessionStatus::Running,
+                stop_reason: None,
+                detail: None,
+                capability: None,
+            },
+            appended_at: String::new(),
+        },
+        newer,
+    )
+    .await;
+
+    assert!(matches!(error, StoreError::RevisionConflict { .. }));
+    assert_eq!(durable.session.status, SessionStatus::Idle);
+    assert_eq!(
+        durable.session.stop_reason,
+        Some(StopReason::UserTerminated)
+    );
+    assert_eq!(durable.session.recovery_state, RecoveryState::Idle);
+    assert!(events.is_empty());
+}
+
+#[tokio::test]
+async fn stale_plane_change_cannot_erase_a_newer_runtime_decision() {
+    let mut base = record();
+    base.session.options.mode = SessionMode::Terminal;
+    base.runtime_id = Some("runtime-old".into());
+    let mut stale = base.clone();
+    stale.session.options.mode = SessionMode::Conversation;
+    stale.runtime_id = None;
+    stale.session.rotations = 1;
+    let mut newer = base.clone();
+    newer.runtime_id = Some("runtime-new".into());
+    newer.session.runtime_version = Some("runtime-version-new".into());
+
+    let (error, durable, events) = collide_with_newer_record(
+        base,
+        stale,
+        Event {
+            session_id: id(),
+            seq: 0,
+            kind: EventKind::PlaneChanged {
+                from: SessionMode::Terminal,
+                to: SessionMode::Conversation,
+                snapshot_at: "2026-08-24T01:00:00Z".into(),
+            },
+            appended_at: String::new(),
+        },
+        newer,
+    )
+    .await;
+
+    assert!(matches!(error, StoreError::RevisionConflict { .. }));
+    assert_eq!(durable.session.options.mode, SessionMode::Terminal);
+    assert_eq!(durable.runtime_id.as_deref(), Some("runtime-new"));
+    assert_eq!(
+        durable.session.runtime_version.as_deref(),
+        Some("runtime-version-new")
+    );
+    assert_eq!(durable.session.rotations, 0);
+    assert!(events.is_empty());
+}
+
+#[tokio::test]
 async fn two_services_keep_both_semantic_writes_after_a_revision_collision() {
     let store = Arc::new(FakeStore::default());
     let base = record();
@@ -492,6 +1140,107 @@ async fn a_newer_lane_revision_cannot_authorize_a_stale_store_snapshot() {
     ));
     let durable = store.get(&id()).await.unwrap().unwrap();
     assert_eq!(durable.context_ref.as_deref(), Some("newer-state"));
+}
+
+#[tokio::test]
+async fn observing_only_a_revision_never_authorizes_an_inheriting_snapshot() {
+    let store = Arc::new(FakeStore::default());
+    let base = record();
+    store.upsert(&base).await.expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.observe_record(&base);
+    wait_for_lane_idle(&lane).await;
+
+    let mut rival = base.clone();
+    rival.context_ref = Some("rival-state".into());
+    let rival_revision = store
+        .commit_session_idempotent("rival-before-observation", &rival, &[])
+        .await
+        .expect("rival commits");
+    lane.observe_revision(rival_revision);
+
+    let event = lane.enqueue_commit(
+        super::CommitMode::UpdateInheriting,
+        base.clone(),
+        vec![said(0, "after-revision-observation")],
+    );
+    let barrier = lane.enqueue_commit(super::CommitMode::UpdateInheriting, base, Vec::new());
+    event
+        .complete
+        .await
+        .expect("worker remains")
+        .expect("event rebases from the record, not the revision");
+    barrier
+        .complete
+        .await
+        .expect("worker remains")
+        .expect("record-only successor preserves the rebase");
+
+    let durable = store.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.context_ref.as_deref(), Some("rival-state"));
+    let events = store.events_since(&id(), 0).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(format!("{:?}", events[0].kind).contains("after-revision-observation"));
+}
+
+#[tokio::test]
+async fn an_exact_store_snapshot_does_not_redefine_the_live_snapshot_lineage() {
+    let store = Arc::new(FakeStore::default());
+    let base = record();
+    store.upsert(&base).await.expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.observe_record(&base);
+    wait_for_lane_idle(&lane).await;
+
+    let mut exact = base.clone();
+    exact.context_ref = Some("exact-record-state".into());
+    lane.enqueue_commit(super::CommitMode::UpdateExact, exact, Vec::new())
+        .complete
+        .await
+        .expect("worker remains")
+        .expect("exact record commits");
+    lane.enqueue_commit(super::CommitMode::UpdateInheriting, base, Vec::new())
+        .complete
+        .await
+        .expect("worker remains")
+        .expect("unchanged live state rebases onto the exact record");
+
+    let durable = store.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.context_ref.as_deref(), Some("exact-record-state"));
+}
+
+#[tokio::test]
+async fn a_queued_delete_cannot_be_followed_by_an_inheriting_resurrection() {
+    let store = Arc::new(FakeStore::default());
+    let base = record();
+    store.upsert(&base).await.expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.observe_record(&base);
+    wait_for_lane_idle(&lane).await;
+
+    let deletion = lane.enqueue_delete();
+    let successor = lane.enqueue_commit(
+        super::CommitMode::UpdateInheriting,
+        base,
+        vec![said(0, "must-not-resurrect")],
+    );
+    deletion
+        .await
+        .expect("delete worker remains")
+        .expect("delete commits");
+    assert!(matches!(
+        successor
+            .complete
+            .await
+            .expect("write worker remains")
+            .expect_err("the deleted record cannot be inherited"),
+        StoreError::SessionDeleted { id: deleted } if deleted == id()
+    ));
+    assert!(store.get(&id()).await.unwrap().is_none());
+    assert!(store.events_since(&id(), 0).await.unwrap().is_empty());
 }
 
 #[tokio::test]
