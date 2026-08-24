@@ -1262,7 +1262,12 @@ async fn conformance() -> Json<serde_json::Value> {
 /// pairing where the person is still choosing, rather than submitting it and
 /// rendering the refusal that comes back. Both come from the same core answer,
 /// so an interface cannot offer a combination the core would decline.
-async fn kernels(State(service): State<Arc<SessionService>>) -> Json<serde_json::Value> {
+async fn kernels(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(_caller): AuthenticatedCaller,
+) -> Json<serde_json::Value> {
+    // Any authenticated caller may plan a session. Discovery needs no
+    // capability check beyond refusing anonymous deployment reconnaissance.
     let offerings: Vec<serde_json::Value> = service
         .available_kernels()
         .into_iter()
