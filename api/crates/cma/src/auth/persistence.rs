@@ -276,7 +276,7 @@ impl MemoryAuthStore {
 }
 
 fn next_revision(current: u64, next: u64, record: &str) -> Result<(), StoreError> {
-    if next != current.saturating_add(1) {
+    if current.checked_add(1) != Some(next) {
         return Err(StoreError::Malformed(format!(
             "{record} revision must advance exactly once: {current} -> {next}"
         )));
