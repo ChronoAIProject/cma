@@ -112,7 +112,7 @@ describe('the resource status point read', () => {
       transport.drop();
     });
     await act(async () => {
-      // The 500 ms reconnect delay carries up to 20% jitter.
+      // Full jitter keeps the 500 ms reconnect delay below this bound.
       await vi.advanceTimersByTimeAsync(600);
     });
     await settle();

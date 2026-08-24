@@ -134,6 +134,11 @@ describe('the rail row', () => {
     expect(container.textContent).not.toContain('Stopped —');
   });
 
+  it('reads requires_action directly before its approval event is folded', () => {
+    const waiting = session('waiting', 'idle', { stopReason: 'requires_action' });
+    expect(lastActivity(waiting)).toBe('Waiting for your answer');
+  });
+
   it('never lets the activity line wrap', () => {
     // A row that grows with its longest sentence makes the list a different
     // height every time it reloads.

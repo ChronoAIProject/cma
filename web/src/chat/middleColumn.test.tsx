@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { Console } from '../Console';
 import { ConversationSurface } from './ConversationSurface';
 import {
+  ApiError,
   NO_CAPABILITIES,
   type AguiTransport,
   type OperationTransport,
@@ -119,5 +120,33 @@ describe('runtime loss in the reading column', () => {
 
     expect(loss.compareDocumentPosition(refusal) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(loss.compareDocumentPosition(stream) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+});
+
+describe('a permanent event-stream refusal', () => {
+  it('names the service answer instead of claiming it will reconnect forever', async () => {
+    const session = conversationSession('sesn_gone');
+    const transport: AguiTransport = {
+      open: () => () => {},
+      history: () =>
+        Promise.reject(new ApiError(404, 'this session no longer exists', 'not_found')),
+    };
+    const operations: OperationTransport = {
+      send: () => Promise.resolve(new Response(null, { status: 202 })),
+    };
+
+    render(
+      <ConversationSurface
+        session={session}
+        capabilities={session.capabilities}
+        transport={transport}
+        operations={operations}
+      />,
+    );
+
+    const failure = await screen.findByRole('alert');
+    expect(failure).toHaveTextContent(/HTTP 404/i);
+    expect(failure).toHaveTextContent(/session no longer exists/i);
+    expect(failure).not.toHaveTextContent(/reconnect/i);
   });
 });

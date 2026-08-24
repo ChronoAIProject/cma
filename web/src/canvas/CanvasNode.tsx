@@ -137,7 +137,7 @@ export function CanvasNode({
   }
 
   const started = tabLabel(session.createdAt);
-  const state = labelFor(session.lifecycle);
+  const state = labelFor(session.lifecycle, session.reportedStatus);
   const dot = stateDotFor(toneFor(session.lifecycle));
   const name = `Session ${started} on ${session.kernel}, ${state}`;
 

@@ -167,15 +167,15 @@ describe('a turn', () => {
     expect(doneHtml).not.toContain('turn__caret');
   });
 
-  it('draws a rotation as a boundary in the stream', async () => {
+  it('draws a counted conversation gap as a boundary in the stream', async () => {
     // §18.6: not a status chip. An owner who can see the boundary recognises a
     // gap rather than puzzling over one.
     const { conversation } = await conversationFrom('rotates');
     render(<MessageStream entries={conversation.entries} />);
 
     expect(screen.getByRole('separator')).toBeInTheDocument();
-    expect(screen.getByText(/carried forward from/i)).toBeInTheDocument();
-    expect(screen.getByText(/did not travel/i)).toBeInTheDocument();
+    expect(screen.getByText(/12 frames were not recorded/i)).toBeInTheDocument();
+    expect(screen.getByText(/surrounding conversation remains available/i)).toBeInTheDocument();
   });
 
   it('shows an event kind it does not know rather than hiding it', async () => {
@@ -310,13 +310,19 @@ describe('the plane-change boundary', () => {
   it('still draws a boundary nobody asked for', () => {
     // A stretch the runtime had to drop is the same kind of fact and is drawn
     // the same way, minus a destination there is none of.
-    render(
-      <MessageStream entries={[{ kind: 'gap', id: 'gap-4', rotatedAt: undefined, seq: 4 }]} />,
-    );
+    render(<MessageStream entries={[{ kind: 'gap', id: 'gap-4', frames: 7, seq: 4 }]} />);
 
     const boundary = screen.getByRole('separator');
-    expect(boundary).toHaveTextContent(/carried forward/i);
+    expect(boundary).toHaveTextContent(/7 frames were not recorded/i);
     expect(boundary).not.toHaveTextContent(/moved to/i);
+  });
+
+  it('keeps a malformed gap visible without printing an invented count', () => {
+    render(<MessageStream entries={[{ kind: 'gap', id: 'gap-4', seq: 4 }]} />);
+
+    const boundary = screen.getByRole('separator');
+    expect(boundary).toHaveTextContent(/part of this conversation was not recorded/i);
+    expect(boundary).not.toHaveTextContent(/NaN/);
   });
 });
 

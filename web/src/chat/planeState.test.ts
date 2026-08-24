@@ -30,6 +30,7 @@ const EVERY_STATE: readonly SessionLifecycle[] = [
   'rotating',
   'idle',
   'terminated',
+  'unknown',
 ];
 
 describe('rotating', () => {
@@ -60,7 +61,8 @@ describe('idle and recovering', () => {
     // `runtime_absent` is normal during an idle-to-revive cycle. Drawing
     // either as an error trains owners to ignore real ones.
     expect(planeStateFor(session('idle')).failed).toBe(false);
-    expect(planeStateFor(session('terminated')).failed).toBe(false);
+    expect(planeStateFor(session('running', { recoveryState: 'recovering' })).failed).toBe(false);
+    expect(planeStateFor(session('running', { recoveryState: 'unknown' })).failed).toBe(false);
   });
 
   it('draws a session that ended by failing as one', () => {
@@ -74,6 +76,9 @@ describe('idle and recovering', () => {
     // offer.
     expect(isWaitingForAnswer(session('idle'), true)).toBe(true);
     expect(isWaitingForAnswer(session('idle'), false)).toBe(false);
+    expect(isWaitingForAnswer(session('idle', { stopReason: 'requires_action' }), false)).toBe(
+      true,
+    );
     expect(isWaitingForAnswer(session('running'), true)).toBe(false);
   });
 
@@ -82,10 +87,11 @@ describe('idle and recovering', () => {
     // `requires_action` is `idle`, and the composer used to say "This session
     // is paused. Resume it to carry on." while an answerable approval sat
     // directly above it.
-    const parked = planeStateFor(session('idle'), true);
+    const parked = planeStateFor(session('idle', { stopReason: 'requires_action' }));
     expect(parked.waiting).toBe(true);
     expect(parked.interactive).toBe(false);
     expect(parked.reason).toMatch(/waiting for your answer/i);
+    expect(parked.reason).not.toMatch(/above/i);
     // It never claims the session is set aside, and never offers to resume it.
     expect(parked.reason).not.toMatch(/session is paused/i);
     expect(parked.reason).not.toMatch(/resume/i);

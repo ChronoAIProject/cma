@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { abilitiesFor, creationAbilityFor, listable } from './availability';
-import type { Session, SessionLifecycle } from './types';
+import type { Session, SessionLifecycle, StopReason } from './types';
 import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 /**
@@ -12,7 +12,7 @@ import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
  * plausible refactor could quietly break.
  */
 
-function session(lifecycle: SessionLifecycle, stopReason?: 'error' | 'other'): Session {
+function session(lifecycle: SessionLifecycle, stopReason?: StopReason): Session {
   return {
     id: `sesn_${lifecycle}`,
     kernel: 'codex',
@@ -30,6 +30,7 @@ const ALL: readonly SessionLifecycle[] = [
   'rotating',
   'idle',
   'terminated',
+  'unknown',
 ];
 
 describe('what a session allows', () => {
@@ -51,6 +52,14 @@ describe('what a session allows', () => {
     // Stopping is not deleting. Someone who stopped a session to save money
     // still has the session.
     expect(abilitiesFor(session('idle')).listed).toBe(true);
+  });
+
+  it('treats requires_action as waiting on the client, never as paused', () => {
+    const can = abilitiesFor(session('idle', 'requires_action'));
+    expect(can.interactive).toBe(false);
+    expect(can.canRevive).toBe(false);
+    expect(can.reason).toMatch(/waiting for you/i);
+    expect(can.reason).not.toMatch(/paused|resume/i);
   });
 
   it('offers revive only where there is something to revive', () => {
