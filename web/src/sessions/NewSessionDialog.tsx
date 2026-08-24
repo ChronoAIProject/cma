@@ -14,7 +14,7 @@ import type {
 import { kernelLabel, planeRefusal, PLANES } from './kernels';
 import './NewSessionDialog.css';
 import type { KernelOffer, SessionPlane } from './types';
-import { ApiError, DeploymentAtCapacity, type PricingQuote } from '../sdk';
+import { ApiError, DeploymentAtCapacity, type PricingQuote } from '@chronoai/cma-sdk';
 
 /**
  * The choice made when a session starts.

@@ -7,23 +7,23 @@ import { Context } from './Context';
 import { Usage } from './Usage';
 import { MemoryPressureNotice, Resources } from './Resources';
 import { RuntimeLoss } from './RuntimeLoss';
-import { EMPTY, reduce, type Conversation } from './conversation';
+import { EMPTY, reduce, type Conversation } from '@chronoai/cma-sdk';
 import { planeStateFor } from './planeState';
 import {
   AguiConnection,
   AguiOperations,
-  AguiRefusal,
+  CapabilityRefused,
   fetchTransport,
   wireTransport,
   type AguiTransport,
   type LinkStatus,
   type OperationTransport,
   type SessionCapabilities,
-} from '../agui';
+} from '@chronoai/cma-sdk';
 import type { Session } from '../sessions/types';
 import { readSessionResources, type SessionResourceStatus } from '../api/client';
 import './ConversationSurface.css';
-import type { ToolCallEntry } from './conversation';
+import type { ToolCallEntry } from '@chronoai/cma-sdk';
 
 /**
  * A session drawn as a conversation — `Web_Style.md` §18.
@@ -215,7 +215,7 @@ export function ConversationSurface({
       return true;
     } catch (cause) {
       setRefusal(
-        cause instanceof AguiRefusal && cause.capability !== undefined
+        cause instanceof CapabilityRefused
           ? `This session cannot ${cause.capability}: ${cause.message}`
           : cause instanceof Error
             ? cause.message

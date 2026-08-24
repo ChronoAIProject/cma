@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { isWaitingForAnswer, planeStateFor } from './planeState';
 import { abilitiesFor } from '../sessions/availability';
 import type { Session, SessionLifecycle } from '../sessions/types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 /**
  * Session states on the conversation plane — `Web_Style.md` §11 and §18.6.
@@ -138,6 +138,7 @@ describe('the table and the implementation agree', () => {
       rotating: false,
       idle: false,
       terminated: false,
+      unknown: false,
     };
     for (const lifecycle of EVERY_STATE) {
       expect(planeStateFor(session(lifecycle)).interactive, lifecycle).toBe(allowed[lifecycle]);

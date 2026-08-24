@@ -7,7 +7,7 @@
  */
 
 /** How much deliberation to ask of the model. */
-export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'x_high';
 
 /** How much the agent may do without asking. */
 export type PermissionMode = 'guarded' | 'autonomous' | 'unrestricted';
@@ -39,7 +39,7 @@ export const EFFORTS: readonly { id: ReasoningEffort; label: string; hint: strin
   { id: 'low', label: 'Low', hint: '' },
   { id: 'medium', label: 'Medium', hint: '' },
   { id: 'high', label: 'High', hint: 'Default' },
-  { id: 'xhigh', label: 'Extra high', hint: 'Slowest, for the hardest problems' },
+  { id: 'x_high', label: 'Extra high', hint: 'Slowest, for the hardest problems' },
 ];
 
 export const PERMISSIONS: readonly {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { abilitiesFor, creationAbilityFor, listable } from './availability';
 import type { Session, SessionLifecycle } from './types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 /**
  * The promise a session owner is given, as assertions.

@@ -8,14 +8,19 @@ import { MessageStream } from './MessageStream';
 import { AgentContent } from './AgentContent';
 import { blocksOf } from './blocks';
 import { summaryOf } from './Thinking';
-import { EMPTY, fold, reduce, type Conversation, type Entry } from './conversation';
-import { AguiConnection, MockSession, toEvent, transcriptNamed, type AguiEvent } from '../agui';
+import { EMPTY, fold, reduce, type Conversation, type Entry } from '@chronoai/cma-sdk';
+import { AguiConnection, toEvent as parseEvent, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * The message stream — `Web_Style.md` §18.1.
  */
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Parse a frame in the session/run envelope shared by the focused fixtures. */
+const toEvent = (frame: Record<string, unknown>): AguiEvent =>
+  parseEvent({ threadId: 'sesn_1', runId: 'run_1', ...frame });
 
 /** Drive a transcript through the real client and fold what comes out. */
 async function conversationFrom(name: string, options: { dropAfter?: number } = {}) {

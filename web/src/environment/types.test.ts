@@ -8,7 +8,12 @@ const PROFILE: EnvironmentProfile = {
   name: 'build tools',
   variables: [{ key: 'BUILD_MODE', value: 'release' }],
   packages: [{ name: 'nyxid' }, { name: 'ripgrep', version: '14' }],
-  agent: { ...DEFAULT_AGENT, skills: ['nyxid', 'chosen'] },
+  agent: {
+    ...DEFAULT_AGENT,
+    size: { cpuMillis: 1500, memoryMib: 3072 },
+    recordToolBodies: true,
+    skills: ['nyxid', 'chosen'],
+  },
   nyxid: { services: [] },
   agentNotes: '',
   mandatory: { packages: ['nyxid'], skills: ['nyxid'] },
@@ -82,6 +87,8 @@ describe('draftOf', () => {
     expect(draft.name).toBe('build tools');
     expect(draft.variables).toEqual(PROFILE.variables);
     expect(draft.agent.skills).toEqual(PROFILE.agent.skills);
+    expect(draft.agent.size).toEqual(PROFILE.agent.size);
+    expect(draft.agent.recordToolBodies).toBe(true);
   });
 
   it('copies rather than aliases, so editing a draft cannot mutate the profile', () => {

@@ -4,7 +4,7 @@ import { CopyKey } from './CopyKey';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
 import { formatTokens } from './Usage';
-import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from './conversation';
+import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from '@chronoai/cma-sdk';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 import { IconChevronDownOutline14 } from '../ui/icons';
