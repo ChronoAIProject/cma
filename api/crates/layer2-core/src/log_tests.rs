@@ -107,10 +107,6 @@ impl SessionStore for FaultStore {
         self.inner.ping().await
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.inner.upsert(record).await
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.inner.get(id).await
     }
@@ -212,7 +208,7 @@ async fn collide_with_newer_record(
     newer: SessionRecord,
 ) -> (StoreError, SessionRecord, Vec<StoredEvent>) {
     let store = Arc::new(FaultStore::default());
-    store.inner.upsert(&base).await.expect("seed record");
+    store.inner.seed(&base).await.expect("seed record");
     store.pause_next_write.store(true, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
@@ -287,7 +283,7 @@ fn an_informational_event_does_not_claim_a_pending_status_change() {
 async fn sequence_allocation_cannot_be_inverted_before_lane_insertion() {
     let store = Arc::new(FakeStore::default());
     let base = record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lane = service.event_logs.lane(&id());
     let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
@@ -360,7 +356,7 @@ async fn sequence_allocation_cannot_be_inverted_before_lane_insertion() {
 async fn cancelling_a_waiter_does_not_cancel_its_retained_write() {
     let store = Arc::new(FaultStore::default());
     let seeded = record();
-    store.inner.upsert(&seeded).await.expect("seed record");
+    store.inner.seed(&seeded).await.expect("seed record");
     store.failures.store(3, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
@@ -390,7 +386,7 @@ async fn cancelling_a_waiter_does_not_cancel_its_retained_write() {
 async fn an_error_delivered_to_the_waiter_ends_the_operation_permanently() {
     let store = Arc::new(FaultStore::default());
     let mut update = record();
-    store.inner.upsert(&update).await.expect("seed record");
+    store.inner.seed(&update).await.expect("seed record");
     store.failures.store(4, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
@@ -425,7 +421,7 @@ async fn an_error_delivered_to_the_waiter_ends_the_operation_permanently() {
 async fn queued_successor_and_record_barrier_shift_with_an_abandoned_reservation() {
     let store = Arc::new(FaultStore::default());
     let base = record();
-    store.inner.upsert(&base).await.expect("seed record");
+    store.inner.seed(&base).await.expect("seed record");
     store.failures.store(4, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lane = service.event_logs.lane(&id());
@@ -482,7 +478,7 @@ async fn queued_successor_and_record_barrier_shift_with_an_abandoned_reservation
 async fn cancelling_after_error_delivery_but_before_observation_retains_the_write() {
     let store = Arc::new(FaultStore::default());
     let seeded = record();
-    store.inner.upsert(&seeded).await.expect("seed record");
+    store.inner.seed(&seeded).await.expect("seed record");
     store.failures.store(4, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lane = service.event_logs.lane(&id());
@@ -654,7 +650,7 @@ async fn a_revision_rebase_does_not_spend_the_unavailable_retry_budget() {
     durable.revision = 1;
     store
         .inner
-        .upsert(&durable)
+        .seed(&durable)
         .await
         .expect("seed a newer durable revision");
     store.failures_after_first_write.store(4, Ordering::SeqCst);
@@ -682,10 +678,7 @@ async fn a_revision_rebase_does_not_spend_the_unavailable_retry_budget() {
 async fn create_conflicts_are_not_rebased_as_updates() {
     let store = Arc::new(FakeStore::default());
     let mut duplicate = record();
-    store
-        .upsert(&duplicate)
-        .await
-        .expect("seed existing record");
+    store.seed(&duplicate).await.expect("seed existing record");
     let service = service_over(store, Arc::new(FakeAdapter::default()));
 
     let result = tokio::time::timeout(
@@ -708,7 +701,7 @@ async fn create_conflicts_are_not_rebased_as_updates() {
 async fn a_lost_commit_response_is_reconciled_by_the_whole_write_receipt() {
     let store = Arc::new(FaultStore::default());
     let mut update = record();
-    store.inner.upsert(&update).await.expect("seed record");
+    store.inner.seed(&update).await.expect("seed record");
     store.lose_next_response.store(true, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
@@ -726,7 +719,7 @@ async fn a_lost_commit_response_is_reconciled_by_the_whole_write_receipt() {
 async fn a_cross_replica_revision_change_rebases_the_semantic_write() {
     let store = Arc::new(FaultStore::default());
     let base = record();
-    store.inner.upsert(&base).await.expect("seed record");
+    store.inner.seed(&base).await.expect("seed record");
     store.failures.store(1, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
@@ -1028,7 +1021,7 @@ async fn runtime_loss_rebases_when_the_observed_runtime_is_still_current() {
     let store = Arc::new(FaultStore::default());
     let mut base = record();
     base.runtime_id = Some("runtime-old".into());
-    store.inner.upsert(&base).await.expect("seed record");
+    store.inner.seed(&base).await.expect("seed record");
     store.pause_next_write.store(true, Ordering::SeqCst);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
@@ -1244,7 +1237,7 @@ async fn stale_plane_change_cannot_erase_a_newer_runtime_decision() {
 async fn two_services_keep_both_semantic_writes_after_a_revision_collision() {
     let store = Arc::new(FakeStore::default());
     let base = record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
     let first_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let second_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let mut first_record = base.clone();
@@ -1274,7 +1267,7 @@ async fn two_services_keep_both_semantic_writes_after_a_revision_collision() {
 async fn a_newer_lane_revision_cannot_authorize_a_stale_store_snapshot() {
     let store = Arc::new(FakeStore::default());
     let base = record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
 
     let mut newer = base.clone();
@@ -1301,7 +1294,7 @@ async fn a_newer_lane_revision_cannot_authorize_a_stale_store_snapshot() {
 async fn observing_only_a_revision_never_authorizes_an_inheriting_snapshot() {
     let store = Arc::new(FakeStore::default());
     let base = record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lane = service.event_logs.lane(&id());
     lane.observe_record(&base);
@@ -1343,7 +1336,7 @@ async fn observing_only_a_revision_never_authorizes_an_inheriting_snapshot() {
 async fn an_exact_store_snapshot_does_not_redefine_the_live_snapshot_lineage() {
     let store = Arc::new(FakeStore::default());
     let base = record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lane = service.event_logs.lane(&id());
     lane.observe_record(&base);
@@ -1370,7 +1363,7 @@ async fn an_exact_store_snapshot_does_not_redefine_the_live_snapshot_lineage() {
 async fn a_queued_delete_cannot_be_followed_by_an_inheriting_resurrection() {
     let store = Arc::new(FakeStore::default());
     let base = record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lane = service.event_logs.lane(&id());
     lane.observe_record(&base);
@@ -1402,7 +1395,7 @@ async fn a_queued_delete_cannot_be_followed_by_an_inheriting_resurrection() {
 async fn an_old_receipt_never_replays_its_record_over_a_newer_record_only_write() {
     let store = FakeStore::default();
     let base = record();
-    store.upsert(&base).await.expect("seed record");
+    store.seed(&base).await.expect("seed record");
 
     let mut event_record = base.clone();
     event_record.session.last_seq = 1;
@@ -1441,7 +1434,7 @@ async fn an_old_receipt_never_replays_its_record_over_a_newer_record_only_write(
 async fn an_empty_idempotent_commit_updates_the_fake_like_mongo() {
     let store = FakeStore::default();
     let mut update = record();
-    store.upsert(&update).await.expect("seed record");
+    store.seed(&update).await.expect("seed record");
     update.context_ref = Some("record-only".into());
 
     let revision = store
@@ -1456,6 +1449,42 @@ async fn an_empty_idempotent_commit_updates_the_fake_like_mongo() {
 }
 
 #[tokio::test]
+async fn stale_state_can_only_attempt_cas_and_cannot_reset_the_revision() {
+    let store = FakeStore::default();
+    let base = record();
+    store.seed(&base).await.expect("seed record");
+
+    let mut winner = base.clone();
+    winner.context_ref = Some("newer-context".into());
+    let revision = store
+        .commit_session_idempotent("newer-cas", &winner, &[])
+        .await
+        .expect("newer writer commits");
+    assert_eq!(revision, 1);
+
+    let mut stale = base;
+    stale.session.status = SessionStatus::Idle;
+    stale.session.recovery_state = RecoveryState::Idle;
+    stale.session.stop_reason = Some(StopReason::UserTerminated);
+    let error = store
+        .commit_session_idempotent("stale-cas", &stale, &[])
+        .await
+        .expect_err("stale state cannot replace the durable record");
+    assert!(matches!(
+        error,
+        StoreError::RevisionConflict {
+            expected: 0,
+            actual: 1
+        }
+    ));
+
+    let durable = store.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.revision, 1);
+    assert_eq!(durable.context_ref.as_deref(), Some("newer-context"));
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+}
+
+#[tokio::test]
 async fn a_legacy_record_tail_remains_the_floor_for_new_atomic_writes() {
     let store = FakeStore::default();
     store
@@ -1465,7 +1494,7 @@ async fn a_legacy_record_tail_remains_the_floor_for_new_atomic_writes() {
     let mut legacy = record();
     legacy.session.last_seq = 3;
     store
-        .upsert(&legacy)
+        .seed(&legacy)
         .await
         .expect("seed a tail advertised by the old two-step writer");
 
@@ -1517,7 +1546,7 @@ async fn a_terminal_fake_record_cannot_be_written_back_as_live() {
     let store = FakeStore::default();
     let mut terminal = record();
     terminal.session.status = SessionStatus::Terminated;
-    store.upsert(&terminal).await.expect("seed terminal record");
+    store.seed(&terminal).await.expect("seed terminal record");
 
     let mut stale = terminal.clone();
     stale.session.status = SessionStatus::Provisioning;

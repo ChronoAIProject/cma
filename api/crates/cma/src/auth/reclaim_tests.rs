@@ -124,10 +124,6 @@ impl SessionStore for NoSessions {
         Ok(())
     }
 
-    async fn upsert(&self, _record: &SessionRecord) -> Result<(), StoreError> {
-        Ok(())
-    }
-
     async fn get(&self, _id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         if let Some(gate) = self.claim_gate.as_ref() {
             // Reclamation reaches the store only after it has fetched and
