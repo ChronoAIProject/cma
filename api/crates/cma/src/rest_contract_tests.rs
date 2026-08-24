@@ -827,7 +827,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     let public_state = layer1_public::rest::SessionsState {
         sessions: Arc::clone(&sessions),
         users: Arc::clone(&users),
-        tickets: TerminalTickets::new(),
+        tickets: TerminalTickets::in_memory(),
         environments: Arc::clone(&environments),
     };
     let rest = rest_api_router(
