@@ -384,6 +384,74 @@ async fn cancelling_a_waiter_does_not_cancel_its_retained_write() {
 }
 
 #[tokio::test]
+async fn dropping_a_success_delivered_before_poll_runs_its_cleanup() {
+    let cleaned = Arc::new(AtomicBool::new(false));
+    let cleanup_flag = Arc::clone(&cleaned);
+    let delivery = super::CommitDelivery::retained(
+        "delivered-output",
+        "retained-ownership",
+        move |output, ownership| async move {
+            assert_eq!(output, "delivered-output");
+            assert_eq!(ownership, "retained-ownership");
+            cleanup_flag.store(true, Ordering::SeqCst);
+        },
+    );
+    let (send, receive) = tokio::sync::oneshot::channel();
+
+    assert!(
+        send.send(delivery).is_ok(),
+        "the success is placed in the unpolled receiver"
+    );
+    drop(receive);
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !cleaned.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dropping an unpolled success launches its retained cleanup");
+}
+
+#[tokio::test]
+async fn a_retained_continuation_survives_fourth_error_delivery_without_polling() {
+    let store = Arc::new(FaultStore::default());
+    let seeded = record();
+    store.inner.seed(&seeded).await.expect("seed record");
+    store.failures.store(4, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    let continued = Arc::new(AtomicBool::new(false));
+    let continuation_flag = Arc::clone(&continued);
+    let pending = service.persist_durably_with(
+        seeded,
+        vec![said(0, "retained-after-unpolled-report")],
+        move |_committed| async move {
+            continuation_flag.store(true, Ordering::SeqCst);
+            ((), ())
+        },
+        super::ignore_rejected,
+        super::drop_undelivered,
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), lane.failure_delivered.notified())
+        .await
+        .expect("the fourth outage response is delivered");
+    drop(pending);
+
+    let event = wait_for_event(&store.inner).await;
+    assert!(format!("{:?}", event.kind).contains("retained-after-unpolled-report"));
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !continued.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("eventual success runs the retained continuation");
+    assert_eq!(store.calls.load(Ordering::SeqCst), 5);
+}
+
+#[tokio::test]
 async fn an_error_delivered_to_the_waiter_ends_the_operation_permanently() {
     let store = Arc::new(FaultStore::default());
     let mut update = record();
@@ -764,6 +832,112 @@ async fn a_cross_replica_revision_change_rebases_the_semantic_write() {
 }
 
 #[tokio::test]
+async fn terminal_detach_rebases_after_a_competing_termination() {
+    let store = Arc::new(FaultStore::default());
+    let base = record();
+    store.inner.seed(&base).await.expect("seed record");
+    let mut attached = base;
+    attached.session.last_seq = 1;
+    store
+        .inner
+        .commit_session_idempotent(
+            "terminal-attached",
+            &attached,
+            &[Event {
+                session_id: id(),
+                seq: 1,
+                kind: EventKind::TerminalAttached,
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .expect("seed a durable attachment");
+    let attached = store
+        .inner
+        .get(&id())
+        .await
+        .unwrap()
+        .expect("attached record exists");
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+
+    let task_service = Arc::clone(&service);
+    let detach = tokio::spawn(async move {
+        let mut detached = attached;
+        let result = task_service
+            .persist_durably(
+                &mut detached,
+                vec![Event {
+                    session_id: id(),
+                    seq: 0,
+                    kind: EventKind::TerminalDetached,
+                    appended_at: String::new(),
+                }],
+            )
+            .await;
+        (result, detached)
+    });
+    store.write_started.notified().await;
+
+    let mut terminated = store
+        .inner
+        .get(&id())
+        .await
+        .unwrap()
+        .expect("the competing replica reads the attachment");
+    terminated.session.status = SessionStatus::Terminated;
+    terminated.session.stop_reason = Some(StopReason::UserTerminated);
+    terminated.session.last_seq = 2;
+    store
+        .inner
+        .commit_session_idempotent(
+            "competing-termination",
+            &terminated,
+            &[Event {
+                session_id: id(),
+                seq: 2,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Terminated,
+                    stop_reason: Some(StopReason::UserTerminated),
+                    detail: None,
+                    capability: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .expect("the competing termination commits first");
+    store.release_write.notify_one();
+
+    let (result, detached) = detach.await.expect("detach task completes");
+    result.expect("cleanup-only detach rebases onto terminal state");
+    assert_eq!(detached.session.status, SessionStatus::Terminated);
+    assert_eq!(detached.session.last_seq, 3);
+
+    let durable = store.inner.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert_eq!(durable.session.last_seq, 3);
+    assert_eq!(durable.revision, 3);
+    let events = store.inner.events_since(&id(), 0).await.unwrap();
+    assert_eq!(events.len(), 3);
+    assert!(matches!(
+        events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::StatusChanged {
+            status: SessionStatus::Terminated,
+            ..
+        })
+    ));
+    assert!(matches!(
+        events[2].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+    ));
+}
+
+#[tokio::test]
 async fn a_public_resize_and_its_queued_flush_preserve_a_rival_record_field() {
     let store = Arc::new(FaultStore::default());
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
@@ -977,6 +1151,300 @@ async fn a_rejected_resize_returns_failure_without_changing_the_runtime() {
         runtime_input.try_recv(),
         Ok(layer3_adapter::TerminalInput::Resize(_))
     ));
+}
+
+#[tokio::test]
+async fn cancelling_a_resize_retains_its_live_screen_and_runtime_continuation() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("cancelled-resize-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    };
+    wait_for_lane_idle(&lane).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let (input, mut runtime_input) = tokio::sync::mpsc::channel(4);
+    service
+        .entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("live entry")
+        .input = Some(input);
+    let resized = TerminalGeometry::new(121, 43).expect("valid geometry");
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let resize = tokio::spawn({
+        let service = Arc::clone(&service);
+        let owner = owner.clone();
+        let id = created.id.clone();
+        async move { service.resize_terminal(&owner, &id, resized).await }
+    });
+    store.write_started.notified().await;
+    resize.abort();
+    let _ = resize.await;
+    store.release_write.notify_one();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let installed = service
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .is_some_and(|entry| entry.session.geometry == resized);
+            if installed {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the retained resize installs after its waiter is cancelled");
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, resized);
+    assert_eq!(durable.session.last_seq, before.session.last_seq + 1);
+    assert_eq!(
+        service
+            .screen_snapshot(&owner, &created.id)
+            .await
+            .expect("screen is readable")
+            .geometry,
+        resized
+    );
+    assert!(matches!(
+        runtime_input.recv().await,
+        Some(layer3_adapter::TerminalInput::Resize(size))
+            if size.cols == resized.columns() && size.rows == resized.rows()
+    ));
+
+    let later = TerminalGeometry::new(122, 44).expect("valid later geometry");
+    service
+        .resize_terminal(&owner, &created.id, later)
+        .await
+        .expect("a later resize follows the retained one");
+    wait_for_lane_idle(&lane).await;
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, later);
+    assert_eq!(durable.session.last_seq, before.session.last_seq + 2);
+    assert!(matches!(
+        runtime_input.recv().await,
+        Some(layer3_adapter::TerminalInput::Resize(size))
+            if size.cols == later.columns() && size.rows == later.rows()
+    ));
+}
+
+#[tokio::test]
+async fn four_observed_store_outages_leave_a_resize_entirely_unpublished() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("resize-outage-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    };
+    wait_for_lane_idle(&lane).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let before_screen = service
+        .screen_snapshot(&owner, &created.id)
+        .await
+        .expect("screen is readable");
+    let (input, mut runtime_input) = tokio::sync::mpsc::channel(1);
+    service
+        .entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("live entry")
+        .input = Some(input);
+    store.calls.store(0, Ordering::SeqCst);
+    store.failures.store(4, Ordering::SeqCst);
+
+    let error = service
+        .resize_terminal(
+            &owner,
+            &created.id,
+            TerminalGeometry::new(123, 45).expect("valid geometry"),
+        )
+        .await
+        .expect_err("the fourth observed outage is reported");
+    assert!(matches!(error, crate::CoreError::RuntimeUnavailable(_)));
+    let gate = service.lifecycle_gates.gate(&created.id);
+    drop(gate.lock().await);
+    wait_for_lane_idle(&lane).await;
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, before.session.geometry);
+    assert_eq!(durable.session.last_seq, before.session.last_seq);
+    let entry_geometry = service
+        .entries
+        .read()
+        .await
+        .get(&created.id)
+        .expect("live entry")
+        .session
+        .geometry;
+    assert_eq!(entry_geometry, before.session.geometry);
+    assert_eq!(
+        service
+            .screen_snapshot(&owner, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry
+    );
+    assert!(matches!(
+        runtime_input.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    assert!(store
+        .inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn a_resize_success_does_not_regress_a_queued_successor_cursor() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("resize-successor-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = service.event_logs.lane(&created.id);
+    wait_for_lane_idle(&lane).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let resized = TerminalGeometry::new(124, 46).expect("valid geometry");
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let resize = tokio::spawn({
+        let service = Arc::clone(&service);
+        let owner = owner.clone();
+        let id = created.id.clone();
+        async move { service.resize_terminal(&owner, &id, resized).await }
+    });
+    store.write_started.notified().await;
+    {
+        let mut entries = service.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("live entry");
+        super::append(
+            entry,
+            EventKind::MessageCommitted {
+                content: "queued-after-resize".into(),
+            },
+        );
+    }
+    store.release_write.notify_one();
+    resize
+        .await
+        .expect("resize task completes")
+        .expect("resize commits");
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, resized);
+    assert_eq!(durable.session.last_seq, before.session.last_seq + 2);
+    assert_eq!(
+        service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("live entry")
+            .session
+            .last_seq,
+        durable.session.last_seq
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_resize_rebuilds_a_queued_successor_cursor() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("resize-rejected-successor-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = service.event_logs.lane(&created.id);
+    wait_for_lane_idle(&lane).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let local = TerminalGeometry::new(125, 47).expect("valid geometry");
+    let rival_geometry = TerminalGeometry::new(126, 48).expect("valid geometry");
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let resize = tokio::spawn({
+        let service = Arc::clone(&service);
+        let owner = owner.clone();
+        let id = created.id.clone();
+        async move { service.resize_terminal(&owner, &id, local).await }
+    });
+    store.write_started.notified().await;
+    {
+        let mut entries = service.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("live entry");
+        super::append(
+            entry,
+            EventKind::MessageCommitted {
+                content: "survives-rejected-resize".into(),
+            },
+        );
+    }
+    let mut rival = store.inner.get(&created.id).await.unwrap().unwrap();
+    rival.session.geometry = rival_geometry;
+    store
+        .inner
+        .commit_session_idempotent("rival-rejects-resize-with-successor", &rival, &[])
+        .await
+        .expect("rival geometry commits");
+    store.release_write.notify_one();
+    assert!(resize.await.expect("resize task completes").is_err());
+    let gate = service.lifecycle_gates.gate(&created.id);
+    drop(gate.lock().await);
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, rival_geometry);
+    assert_eq!(durable.session.last_seq, before.session.last_seq + 1);
+    let events = store
+        .inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(format!("{:?}", events[0].kind).contains("survives-rejected-resize"));
+    assert_eq!(
+        service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("live entry")
+            .session
+            .last_seq,
+        durable.session.last_seq
+    );
 }
 
 #[tokio::test]

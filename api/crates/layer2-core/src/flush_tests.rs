@@ -396,6 +396,214 @@ async fn a_live_terminate_ends_after_four_observed_store_failures() {
     assert_live_lifecycle_unavailable_stops(true).await;
 }
 
+async fn assert_cancelled_live_lifecycle_finishes(terminate: bool) {
+    let store = Arc::new(PairingStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let (service, owner, id, runtime, before) =
+        settled_live_session(store.clone(), adapter.clone()).await;
+    let lane = service.event_logs.lane(&id);
+
+    store.arm();
+    let operation = tokio::spawn({
+        let service = Arc::clone(&service);
+        let owner = owner.clone();
+        let id = id.clone();
+        async move {
+            if terminate {
+                service.terminate_session(&owner, &id).await
+            } else {
+                service.stop_session(&owner, &id).await
+            }
+        }
+    });
+    store.wait_until_held().await;
+    operation.abort();
+    let _ = operation.await;
+    store.release.notify_one();
+
+    let expected = if terminate {
+        SessionStatus::Terminated
+    } else {
+        SessionStatus::Idle
+    };
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let durable = store.inner.get(&id).await.unwrap().unwrap();
+            let torn_down = adapter.terminated.lock().await.contains(&runtime);
+            let installed = if terminate {
+                service.entries.read().await.get(&id).is_some_and(|entry| {
+                    entry.session.status == expected && entry.runtime.is_none()
+                })
+            } else {
+                !service.entries.read().await.contains_key(&id)
+            };
+            if durable.session.status == expected
+                && durable.runtime_id.is_none()
+                && torn_down
+                && installed
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the cancelled live lifecycle continuation finishes");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the retained lifecycle lane drains");
+
+    let durable = store.inner.get(&id).await.unwrap().unwrap();
+    assert_eq!(durable.session.last_seq, before.session.last_seq + 1);
+    assert!(!adapter.running.lock().await.contains_key(&runtime));
+    assert_eq!(
+        adapter
+            .terminated
+            .lock()
+            .await
+            .iter()
+            .filter(|handle| *handle == &runtime)
+            .count(),
+        1
+    );
+
+    service
+        .terminate_session(&owner, &id)
+        .await
+        .expect("a later termination observes or advances the retained result");
+    assert_eq!(
+        adapter
+            .terminated
+            .lock()
+            .await
+            .iter()
+            .filter(|handle| *handle == &runtime)
+            .count(),
+        1,
+        "later lifecycle work does not tear the same runtime down twice"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_a_live_stop_retains_entry_removal_and_runtime_teardown() {
+    assert_cancelled_live_lifecycle_finishes(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_a_live_terminate_retains_entry_installation_and_runtime_teardown() {
+    assert_cancelled_live_lifecycle_finishes(true).await;
+}
+
+async fn assert_cancelled_no_entry_lifecycle_finishes(terminate: bool) {
+    let store = Arc::new(PairingStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let mut base = base_record();
+    let runtime = if terminate {
+        "runtime-cancelled-no-entry-terminate"
+    } else {
+        "runtime-cancelled-no-entry-stop"
+    }
+    .to_string();
+    base.runtime_id = Some(runtime.clone());
+    store.inner.seed(&base).await.expect("seed record");
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(runtime.clone(), Some(id().0));
+    let service = service_over(store.clone(), adapter.clone());
+    let lane = service.event_logs.lane(&id());
+
+    store.arm();
+    let operation = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move {
+            if terminate {
+                service
+                    .terminate_session(&user("subject-fifo"), &id())
+                    .await
+            } else {
+                service.stop_session(&user("subject-fifo"), &id()).await
+            }
+        }
+    });
+    store.wait_until_held().await;
+    operation.abort();
+    let _ = operation.await;
+    store.release.notify_one();
+
+    let expected = if terminate {
+        SessionStatus::Terminated
+    } else {
+        SessionStatus::Idle
+    };
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let durable = store.inner.get(&id()).await.unwrap().unwrap();
+            if durable.session.status == expected
+                && durable.runtime_id.is_none()
+                && adapter.terminated.lock().await.contains(&runtime)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the cancelled no-entry lifecycle continuation finishes");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the retained no-entry lifecycle lane drains");
+
+    let durable = store.inner.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.session.last_seq, base.session.last_seq + 1);
+    assert!(!service.entries.read().await.contains_key(&id()));
+    assert!(!adapter.running.lock().await.contains_key(&runtime));
+    assert_eq!(
+        adapter
+            .terminated
+            .lock()
+            .await
+            .iter()
+            .filter(|handle| *handle == &runtime)
+            .count(),
+        1
+    );
+
+    service
+        .terminate_session(&user("subject-fifo"), &id())
+        .await
+        .expect("later lifecycle work observes or advances the retained result");
+    assert_eq!(
+        adapter
+            .terminated
+            .lock()
+            .await
+            .iter()
+            .filter(|handle| *handle == &runtime)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_a_no_entry_stop_retains_its_original_runtime_handle() {
+    assert_cancelled_no_entry_lifecycle_finishes(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_a_no_entry_terminate_retains_its_original_runtime_handle() {
+    assert_cancelled_no_entry_lifecycle_finishes(true).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_cursor_waits_for_a_lower_runtime_event_racing_send_prompt() {
     let store = Arc::new(PairingStore::default());
@@ -698,12 +906,16 @@ async fn a_no_entry_stop_blocks_only_its_session_while_the_store_call_is_pending
     );
 }
 
-#[tokio::test]
-async fn a_failed_no_entry_stop_cannot_commit_later_or_tear_down_the_runtime() {
+async fn assert_failed_no_entry_lifecycle_stops_permanently(terminate: bool) {
     let store = Arc::new(PairingStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let mut base = base_record();
-    let handle = "runtime-that-must-stay-live".to_string();
+    let handle = if terminate {
+        "runtime-failed-no-entry-terminate"
+    } else {
+        "runtime-failed-no-entry-stop"
+    }
+    .to_string();
     base.runtime_id = Some(handle.clone());
     store.inner.seed(&base).await.expect("seed record");
     adapter
@@ -714,13 +926,14 @@ async fn a_failed_no_entry_stop_cannot_commit_later_or_tear_down_the_runtime() {
     store.fail_next(4);
     let service = service_over(store.clone(), adapter.clone());
 
-    assert!(
+    let result = if terminate {
         service
-            .stop_session(&user("subject-fifo"), &id())
+            .terminate_session(&user("subject-fifo"), &id())
             .await
-            .is_err(),
-        "the fourth store failure is reported"
-    );
+    } else {
+        service.stop_session(&user("subject-fifo"), &id()).await
+    };
+    assert!(result.is_err(), "the fourth store failure is reported");
     assert_eq!(store.calls.load(Ordering::SeqCst), 4);
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -735,6 +948,16 @@ async fn a_failed_no_entry_stop_cannot_commit_later_or_tear_down_the_runtime() {
     assert!(adapter.terminated.lock().await.is_empty());
     assert!(adapter.running.lock().await.contains_key(&handle));
     assert!(store.inner.events_since(&id(), 0).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_no_entry_stop_cannot_commit_later_or_tear_down_the_runtime() {
+    assert_failed_no_entry_lifecycle_stops_permanently(false).await;
+}
+
+#[tokio::test]
+async fn a_failed_no_entry_terminate_cannot_commit_later_or_tear_down_the_runtime() {
+    assert_failed_no_entry_lifecycle_stops_permanently(true).await;
 }
 
 #[tokio::test]
