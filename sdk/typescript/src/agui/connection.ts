@@ -68,6 +68,16 @@ const DEFAULT_MAX_BACKOFF = 15_000;
 const DEFAULT_JITTER_RATIO = 1;
 const TERMINAL_HTTP_STATUSES = new Set([401, 403, 404, 410, 422]);
 
+interface ProjectionPrefix {
+  readonly identity: string;
+  readonly frame: string;
+}
+
+interface OpenProjection {
+  readonly identity: string;
+  readonly frames: Set<string>;
+}
+
 /** Where the link is, for a surface that has to say so. */
 export type LinkStatus = 'live' | 'reconnecting' | 'failed' | 'closed';
 
@@ -104,10 +114,13 @@ export class AguiConnection {
    * a client can least afford to drop something it does not understand.
    */
   #seen = new Set<string>();
-  /** Identity keys from the last completed multi-frame projection. */
-  #completedProjectionFrames = new Set<string>();
-  /** Identity keys seen before the next projection's final stamped frame. */
-  #openProjectionFrames = new Set<string>();
+  /**
+   * The one projection whose prefix was delivered but whose stamped final
+   * frame has not arrived. Durable projections are contiguous, so retaining
+   * one identity is sufficient across reconnects and bounds this state to the
+   * protocol's largest prefix rather than the session's lifetime.
+   */
+  #openProjection: OpenProjection | undefined;
   #closed = false;
   /** The one terminal notification this one-shot connection has emitted. */
   #terminal: 'failed' | 'closed' | undefined;
@@ -222,6 +235,9 @@ export class AguiConnection {
          * history and opening a connection.
          */
         const pending: unknown[] = [];
+        // Completed prefixes are needed only until the history/stream overlap
+        // has drained. Keeping this local makes that lifetime explicit.
+        const overlapProjectionFrames = new Set<string>();
         let live = false;
         let dropped = false;
         let dropCause: unknown;
@@ -255,8 +271,8 @@ export class AguiConnection {
           this.options,
         );
 
-        // Then history, from the cursor. Then deduplicate — which the delivery
-        // below does on `seq`, so a frame seen twice is delivered once.
+        // Then history, from the cursor. Stamped frames deduplicate on sequence
+        // and kind; unnumbered prefixes use their projection identity.
         try {
           const history = await this.transport.history(this.session, this.#cursor, this.options);
           if (this.#closed) {
@@ -266,7 +282,7 @@ export class AguiConnection {
             if (this.#closed) {
               return;
             }
-            this.#deliver(raw, onEvent);
+            this.#deliver(raw, onEvent, overlapProjectionFrames);
           }
         } catch (cause) {
           this.#stopStream?.();
@@ -301,17 +317,19 @@ export class AguiConnection {
           continue;
         }
 
-        live = true;
         try {
-          for (const raw of pending.splice(0)) {
+          while (pending.length > 0) {
             if (this.#closed) {
               return;
             }
-            this.#deliver(raw, onEvent);
+            const raw = pending.shift();
+            this.#deliver(raw, onEvent, overlapProjectionFrames);
           }
         } catch (cause) {
           drop(cause);
         }
+        overlapProjectionFrames.clear();
+        live = true;
         if (!dropped) {
           onStatus?.('live');
           backoff = this.options.backoffMs ?? DEFAULT_BACKOFF;
@@ -410,7 +428,11 @@ export class AguiConnection {
    * overlap, and this is what makes the overlap harmless without discarding
    * the siblings of a frame already seen.
    */
-  #deliver(raw: unknown, onEvent: (event: AguiEvent) => void) {
+  #deliver(
+    raw: unknown,
+    onEvent: (event: AguiEvent) => void,
+    overlapProjectionFrames?: Set<string>,
+  ) {
     if (this.#closed) {
       return;
     }
@@ -432,23 +454,41 @@ export class AguiConnection {
      * A leading durable projection frame deliberately has no SSE id. It can
      * repeat after a drop, while the cursor still names the preceding durable
      * event, so deduplicate it by the message or tool-call identity carried in
-     * the protocol. Two bounded sets retain only the open projection and the
-     * last completed one, which is enough for live/history overlap without
-     * growing for the session's lifetime.
+     * the protocol. Completed identities live only for the active
+     * history/stream overlap; an actually interrupted projection is retained
+     * separately until its final frame arrives after reconnect.
      */
     if (event.seq === 0) {
-      const key = projectionFrameKey(event);
-      if (
-        key !== undefined &&
-        (this.#completedProjectionFrames.has(key) || this.#openProjectionFrames.has(key))
-      ) {
+      const prefix = projectionPrefix(event);
+      if (prefix === undefined) {
+        throw new ProtocolError(`AG-UI ${wireKind} cannot be an unnumbered durable frame`);
+      }
+      if (overlapProjectionFrames?.has(prefix.frame) === true) {
         return;
       }
-      if (key !== undefined) {
-        this.#openProjectionFrames.add(key);
+      if (this.#openProjection !== undefined && this.#openProjection.identity !== prefix.identity) {
+        throw new ProtocolError('AG-UI durable projections were interleaved before completion');
       }
+      this.#openProjection ??= { identity: prefix.identity, frames: new Set<string>() };
+      if (this.#openProjection.frames.has(prefix.frame)) {
+        return;
+      }
+      this.#openProjection.frames.add(prefix.frame);
       onEvent(event);
       return;
+    }
+
+    // A final closes the open prefix even when history has already advanced
+    // beyond its sequence. Returning stale frames before this cleanup would
+    // retain their identities for the rest of the session.
+    if (this.#openProjection !== undefined) {
+      const completed = completedProjectionIdentity(event);
+      if (completed === this.#openProjection.identity) {
+        for (const frame of this.#openProjection.frames) {
+          overlapProjectionFrames?.add(frame);
+        }
+      }
+      this.#openProjection = undefined;
     }
     if (event.seq < this.#cursor) {
       return;
@@ -459,8 +499,6 @@ export class AguiConnection {
       // at the current sequence can overlap now, so older keys retain no value
       // and would otherwise grow for the session's entire lifetime.
       this.#seen.clear();
-      this.#completedProjectionFrames = this.#openProjectionFrames;
-      this.#openProjectionFrames = new Set<string>();
     }
     const delivered = frameKey(event.seq, wireKind);
     if (this.#seen.has(delivered)) {
@@ -471,25 +509,47 @@ export class AguiConnection {
   }
 }
 
-/** A stable identity for every currently multi-frame durable projection. */
-function projectionFrameKey(event: AguiEvent): string | undefined {
-  const scope = `${event.runId}\u0000${event.type}\u0000`;
+/** The projection and frame identities carried by an unnumbered prefix. */
+function projectionPrefix(event: AguiEvent): ProjectionPrefix | undefined {
   switch (event.type) {
     case 'TEXT_MESSAGE_START':
-    case 'TEXT_MESSAGE_CONTENT':
-    case 'TEXT_MESSAGE_END':
-      return `${scope}${event.messageId}`;
-    case 'TOOL_CALL_START':
-      return `${scope}${event.toolCallId}`;
-    case 'TOOL_CALL_ARGS':
-      return `${scope}${event.toolCallId}\u0000${event.delta}\u0000${String(event.truncated)}`;
-    case 'TOOL_CALL_END':
-      return `${scope}${event.toolCallId}\u0000${event.status}`;
-    case 'TOOL_CALL_RESULT':
-      return `${scope}${event.toolCallId}\u0000${event.content}\u0000${String(event.truncated)}`;
+    case 'TEXT_MESSAGE_CONTENT': {
+      const identity = projectionIdentity(event.runId, 'message', event.messageId);
+      return { identity, frame: projectionFrame(identity, event.type) };
+    }
+    case 'TOOL_CALL_START': {
+      const identity = projectionIdentity(event.runId, 'tool-start', event.toolCallId);
+      return { identity, frame: projectionFrame(identity, event.type) };
+    }
+    case 'TOOL_CALL_END': {
+      const identity = projectionIdentity(event.runId, 'tool-update', event.toolCallId);
+      return { identity, frame: projectionFrame(identity, event.type) };
+    }
     default:
       return undefined;
   }
+}
+
+/** The prefix identity a positive frame completes, where it completes one. */
+function completedProjectionIdentity(event: AguiEvent): string | undefined {
+  switch (event.type) {
+    case 'TEXT_MESSAGE_END':
+      return projectionIdentity(event.runId, 'message', event.messageId);
+    case 'TOOL_CALL_ARGS':
+      return projectionIdentity(event.runId, 'tool-start', event.toolCallId);
+    case 'TOOL_CALL_RESULT':
+      return projectionIdentity(event.runId, 'tool-update', event.toolCallId);
+    default:
+      return undefined;
+  }
+}
+
+function projectionIdentity(runId: string, family: string, entityId: string): string {
+  return `${runId}\u0000${family}\u0000${entityId}`;
+}
+
+function projectionFrame(identity: string, type: string): string {
+  return `${identity}\u0000${type}`;
 }
 
 function validateOptions(
