@@ -23,7 +23,7 @@ The release page carries three things:
 2. **The source archives** — `Source code (zip)` and `Source code (tar.gz)`. GitHub generates these from the tag and attaches them to every release, so nothing uploads them and there is no second copy to go stale.
 3. **The images** — every reference in a block you can copy, and a link to each package in GHCR.
 
-No tag is ever moved and no tag is ever reused. There is deliberately no `latest`: a moving tag is something a manifest can be pointed at by accident, and §5 forbids a session sitting on an image whose contents can change underneath it.
+No tag is ever moved and no tag is ever reused. There is deliberately no `latest`: a moving tag is something a manifest can be pointed at by accident, and [CLAUDE.md](../CLAUDE.md) §5 forbids a session sitting on an image whose contents can change underneath it.
 
 The version lives in the tag and nowhere else. `api/Cargo.toml` and `web/package.json` stay where they are — a bot committing a bump to `main` would put it ahead of `develop` and buy nothing, since the number in those files is not what anything deploys.
 
@@ -142,13 +142,31 @@ Only `web` is published for arm64 as well as amd64. `api` and `runtime` are amd6
 
 **It does not deploy, and it does not touch `infra/`.** The manifests keep naming whatever image they already name. A release makes a version available; someone still has to decide to run it.
 
-**It especially does not move `CHRONO_SANDBOX_IMAGE`.** Under §5 that value *is* the runtime version, and every session running a different one is rotated onto it — transcript snapshotted, sandbox replaced, agent resumed. Editing it is a rollout of every live session, which is why publishing a runtime image and adopting it are separate acts. Adopt one by editing `infra/api/configmap.yaml` in its own pull request, deliberately, when a rotation is what you want.
+**It especially does not move `CHRONO_SANDBOX_IMAGE`.** Under [CLAUDE.md](../CLAUDE.md) §5 that value *is* the runtime version, and every session running a different one is rotated onto it — transcript snapshotted, sandbox replaced, agent resumed. Editing it is a rollout of every live session, which is why publishing a runtime image and adopting it are separate acts. Adopt one by editing `infra/api/configmap.yaml` in its own pull request, deliberately, when a rotation is what you want.
 
 Changing an image reference in `infra/` is a deployment-surface change and belongs in the same pull request as anything else that changes with it (§4).
 
 ---
 
-## 5. When it goes wrong
+## 5. One-time MongoDB session namespace cutover
+
+The release that introduces `sessions_v2` and `session_events_v2` cannot be rolled out alongside a CMA version that still mutates `sessions` and `session_events`. MongoDB validators can reject old inserts and replacements, but they do not fence deletes. `CHRONO_MONGODB_LEGACY_CUTOVER=drained` is therefore an operator assertion, not a condition CMA can discover or prove.
+
+Run this once for a database whose legacy names are still writable collections:
+
+1. Establish a recovery baseline: take the deployment's normal MongoDB backup or snapshot, record the current collection types for `sessions` and `session_events`, and confirm the old deployment is healthy before stopping it.
+2. Stop every CMA replica that can run the legacy writer. Wait for all pods/processes to terminate and for their outstanding MongoDB operations to finish. Do not start the replacement while any old replica can still receive work.
+3. Set `CHRONO_MONGODB_LEGACY_CUTOVER` to the exact value `drained`.
+4. Start exactly one new CMA replica and let startup finish. Do not overlap this step with an old binary or start a second migration candidate.
+5. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2` and `session_events` is a read-only view of `session_events_v2`, then verify that the replacement's `/ready` endpoint returns `200`.
+6. Leave that verified migration replica running and unset `CHRONO_MONGODB_LEGACY_CUTOVER` in the deployment configuration (the empty value in `infra/api/configmap.yaml`). Do not restart the replica merely to reread a flag that a completed pair of compatibility views no longer needs.
+7. Start the remaining and all future replicas without the acknowledgement. Resume the ordinary rollout or replica count only after an unflagged replica is Ready.
+
+Default startup refuses a writable or unproven partial legacy state before renaming, dropping, or otherwise mutating either legacy namespace. Before the first action on a genuinely empty database, or after the explicit drain acknowledgement, CMA records durable in-progress provenance so a crash can resume that exact migration. Once both views are installed, it majority-writes completion with the authoritative collection UUIDs. Later startup refuses a missing or replacement namespace instead of treating post-completion data loss as a fresh database. A generic partial state without that provenance is not inferred to be safe.
+
+---
+
+## 6. When it goes wrong
 
 **The publish run failed before the images pushed.** Nothing was released — no tag exists, so nothing consumed the version. Fix the cause and re-run the workflow; it computes the same number again.
 
