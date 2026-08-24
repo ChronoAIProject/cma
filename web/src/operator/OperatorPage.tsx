@@ -20,8 +20,8 @@ import './OperatorPage.css';
  * are a tablist in the page's second band, beneath the head band every column
  * shares.
  *
- * It is the second of §1's two views, not a third and not a route. There is no
- * router and no URL: the app bar's switch chooses it, and the choice does not
+ * It is §1's capability-gated view, not a route. There is no router and no URL:
+ * the account-menu action chooses it, and the choice does not
  * survive a reload, because a view is where somebody is rather than something
  * they configured.
  *
@@ -176,7 +176,7 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
     <section className="operator" aria-label="Operations">
       {/*
        * The centre column's header, in the same idiom as a session's: a crumb
-       * saying which of the two views is showing. §9 gave every column its
+       * saying which of the three views is showing. §9 gave every column its
        * own proportions, so this lines up with the session header it replaces
        * rather than with a band that no longer exists.
        */}
