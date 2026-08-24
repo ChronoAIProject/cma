@@ -326,6 +326,8 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
 #[derive(Default)]
 struct MemoryProfiles {
     records: Mutex<HashMap<String, EnvironmentProfile>>,
+    list_calls: AtomicUsize,
+    preference_writes: AtomicUsize,
 }
 
 #[async_trait::async_trait]
@@ -350,6 +352,7 @@ impl EnvironmentProfileStore for MemoryProfiles {
         owner: &SubjectId,
         page: &PageRequest,
     ) -> Result<Page<EnvironmentProfile>, StoreError> {
+        self.list_calls.fetch_add(1, Ordering::SeqCst);
         Ok(page_profiles(
             self.records
                 .lock()
@@ -360,6 +363,48 @@ impl EnvironmentProfileStore for MemoryProfiles {
                 .collect(),
             page,
         ))
+    }
+
+    async fn set_preferred(
+        &self,
+        owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        let mut records = self.records.lock().await;
+        if let Some(id) = chosen {
+            let selected = records.get(&id.0).filter(|profile| &profile.owner == owner);
+            if selected.is_none() {
+                return Err(StoreError::Malformed(
+                    "selected environment profile is not owned by the subject".into(),
+                ));
+            }
+        }
+        for profile in records
+            .values_mut()
+            .filter(|profile| &profile.owner == owner)
+        {
+            profile.preferred = chosen.is_some_and(|id| profile.id == *id);
+        }
+        self.preference_writes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn preferred_for(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(self
+            .records
+            .lock()
+            .await
+            .values()
+            .filter(|profile| &profile.owner == owner && profile.preferred)
+            .max_by(|a, b| {
+                a.updated_at
+                    .cmp(&b.updated_at)
+                    .then_with(|| a.id.0.cmp(&b.id.0))
+            })
+            .cloned())
     }
 
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError> {
@@ -1757,6 +1802,72 @@ async fn admin_sessions_and_environment_profiles_use_the_same_page_contract() {
         assert_eq!(last.len(), 1, "for {path}");
         assert!(next_link(&headers).is_none(), "for {path}");
     }
+}
+
+#[tokio::test]
+async fn preferred_profile_action_is_bounded_past_a_profile_page() {
+    let TestSurface {
+        app,
+        profiles,
+        caller,
+        ..
+    } = test_surface(true);
+    seed_profiles(&profiles, &caller.subject, 51).await;
+
+    let first = assert_json(
+        app.clone()
+            .oneshot(json_request(
+                Method::PUT,
+                "/api/v1/environment-profiles/preferred",
+                r#"{"profile":"envp_page_0050"}"#,
+            ))
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(first.as_array().map(Vec::len), Some(1));
+
+    let changed = assert_json(
+        app.clone()
+            .oneshot(json_request(
+                Method::PUT,
+                "/api/v1/environment-profiles/preferred",
+                r#"{"profile":"envp_page_0000"}"#,
+            ))
+            .await
+            .expect("router answers"),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(changed.as_array().map(Vec::len), Some(2));
+    assert_eq!(changed[0]["id"], "envp_page_0050");
+    assert_eq!(changed[0]["preferred"], false);
+    assert_eq!(changed[1]["id"], "envp_page_0000");
+    assert_eq!(changed[1]["preferred"], true);
+    assert_eq!(profiles.list_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 2);
+
+    let stored = profiles.records.lock().await;
+    let held: Vec<_> = stored
+        .values()
+        .filter(|profile| profile.preferred)
+        .map(|profile| profile.id.0.clone())
+        .collect();
+    assert_eq!(held, vec!["envp_page_0000"]);
+    drop(stored);
+
+    let (first_page, headers) = get_collection(&app, "/api/v1/environment-profiles").await;
+    assert_eq!(first_page.len(), 50);
+    assert!(first_page.iter().all(|profile| !profile["preferred"]
+        .as_bool()
+        .expect("preferred is boolean")));
+    let next = next_link(&headers).expect("the fifty-first profile is on another page");
+    let (last_page, headers) = get_collection(&app, &next).await;
+    assert_eq!(last_page.len(), 1);
+    assert_eq!(last_page[0]["id"], "envp_page_0000");
+    assert_eq!(last_page[0]["preferred"], true);
+    assert!(next_link(&headers).is_none());
 }
 
 #[tokio::test]

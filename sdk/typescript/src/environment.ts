@@ -17,6 +17,7 @@ import type { CredentialMode, PermissionMode, ReasoningEffort, SessionPlane } fr
 
 const BASE = '/api/v1/environment-profiles';
 const UINT32_MAX = 4_294_967_295;
+const MAX_PREFERENCE_CHANGES = 2;
 
 const PLANES: readonly SessionPlane[] = ['terminal', 'conversation'];
 const EFFORTS: readonly ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'x_high'];
@@ -214,7 +215,12 @@ export async function deleteEnvironmentProfile(
   });
 }
 
-/** Choose the default profile, or clear the choice with `null`. */
+/**
+ * Choose the default profile, or clear the choice with `null`.
+ *
+ * The returned array is a bounded change set, not the profile collection. It
+ * contains at most the previously preferred row and the newly preferred row.
+ */
 export async function preferEnvironmentProfile(
   config: ResolvedConfig,
   id: string | null,
@@ -223,7 +229,7 @@ export async function preferEnvironmentProfile(
   if (id !== null) {
     requireIdentifier(id, 'environment profile id');
   }
-  return profileList(
+  const changed = profileList(
     await request(config, `${BASE}/preferred`, {
       ...options,
       method: 'PUT',
@@ -232,6 +238,12 @@ export async function preferEnvironmentProfile(
     }),
     'preferred profile response',
   );
+  if (changed.length > MAX_PREFERENCE_CHANGES) {
+    throw new ProtocolError(
+      `preferred profile response exceeded its ${String(MAX_PREFERENCE_CHANGES)}-row boundary`,
+    );
+  }
+  return changed;
 }
 
 /** Skills the subject may select and the entries a profile cannot remove. */

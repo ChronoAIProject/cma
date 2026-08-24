@@ -238,6 +238,32 @@ describe('the environment profile routes', () => {
     ]);
   });
 
+  it('reads preference changes as a bounded change set rather than another list walk', async () => {
+    const previous = { ...PROFILE, preferred: false };
+    const selected = { ...PROFILE, id: 'envp_51', preferred: true };
+    const fetch = vi.fn().mockResolvedValue(json([previous, selected]));
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    const changed = await preferEnvironmentProfile(config, selected.id);
+
+    expect(changed.map(({ id, preferred }) => ({ id, preferred }))).toEqual([
+      { id: 'envp_1', preferred: false },
+      { id: 'envp_51', preferred: true },
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a preference response that exceeds the two-row action boundary', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(
+        json([PROFILE, { ...PROFILE, id: 'envp_2' }, { ...PROFILE, id: 'envp_3' }]),
+      );
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    await expect(preferEnvironmentProfile(config, null)).rejects.toThrow(ProtocolError);
+  });
+
   it('covers list, read, create, replace, delete, prefer, and both catalogues', async () => {
     const { calls, config } = service();
 
