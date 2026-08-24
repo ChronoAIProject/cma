@@ -40,7 +40,7 @@ on that code and the status, never on its prose.
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
-| Idempotency | **Not implemented.** No route reads `Idempotency-Key`; sending one is harmless and does nothing. This row previously said it was required on every side-effecting `POST`, which was never true — §9 asks for an absence to be declared rather than discovered |
+| Idempotency | **Not implemented.** No route reads `Idempotency-Key`; sending one is harmless and does nothing. This row previously said it was required on every side-effecting `POST`, which was never true — §10 asks for an absence to be declared rather than discovered |
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
@@ -48,7 +48,393 @@ Every response carries `X-Request-Id`. Include it in any support report.
 
 ---
 
-## 2. Sessions
+## 2. Environment Profiles
+
+An environment profile is the named, reusable description from which sessions
+are created: variables, software, runtime and model choices, resource size,
+skills, service reach, and the owner's standing instructions. A session request
+selects the profile by `id`; it does not repeat these fields.
+
+Profiles are private to their owner. Collection reads contain only the caller's
+profiles, and read, replace, delete, and preference operations deliberately
+answer `404 environment_profile_not_found` for both an unknown identifier and a
+profile owned by somebody else. There is no operator cross-owner read for a
+resource whose variable values may contain credentials.
+
+### Write shape: `ProfileRequest`
+
+`POST` creates a profile and `PUT /{id}` fully replaces its writable contents.
+This field-complete create example is the canonical request shape:
+
+```http
+POST /api/v1/environment-profiles
+Content-Type: application/json
+```
+
+<!-- profile-request-example -->
+```json
+{
+  "name": "field-complete profile",
+  "variables": [
+    { "key": "PROFILE_MODE", "value": "round-trip" }
+  ],
+  "packages": [
+    { "name": "platform-cli", "version": "2.4.1" },
+    { "name": "ripgrep", "version": "14.1.1" }
+  ],
+  "agent": {
+    "kernel": "profile-kernel",
+    "mode": "conversation",
+    "model": "model-for-round-trip",
+    "reasoning_effort": "x_high",
+    "permission": "unrestricted",
+    "credential": "own",
+    "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+    "record_tool_bodies": true,
+    "skills": ["mandatory-skill", "chosen-skill"]
+  },
+  "nyxid": {
+    "services": ["mandatory-service", "calendar"]
+  },
+  "agent_notes": "Keep the caller's standing instructions byte for byte."
+}
+```
+
+Top-level fields:
+
+| Field | Required | Default and meaning |
+|---|---:|---|
+| `name` | yes | Owner-visible name. Whitespace is trimmed; an empty name is refused |
+| `variables` | no | `[]`. Each entry requires string `key` and `value`. Values are opaque, stored, and returned so an editor can round-trip them |
+| `packages` | no | `[]`, before mandatory packages are merged. Each entry requires `name`; `version` is optional and is omitted from a response when unpinned |
+| `agent` | no | `{}`. The nested defaults are listed below |
+| `nyxid` | no | `{ "services": [] }`, before mandatory services are merged |
+| `agent_notes` | no | `""`. Owner-authored standing instructions, separate from non-editable platform instructions |
+
+`agent` fields:
+
+| Field | Required | Default and meaning |
+|---|---:|---|
+| `kernel` | no | On create, the deployment's configured kernel. On full replacement, omission does not preserve the current explicit selection; echo the value from GET to retain it |
+| `mode` | no | `"terminal"`; the other value is `"conversation"` |
+| `model` | no | No pinned model. It is omitted from the response when absent |
+| `reasoning_effort` | no | `"high"`; accepted values are `minimal`, `low`, `medium`, `high`, and `x_high` |
+| `permission` | no | `"guarded"`; the other values are `autonomous` and `unrestricted` |
+| `credential` | no | `"delegated"`; `"own"` means the agent uses the owner's model-vendor account. This is a mode, never credential material |
+| `size` | no | The deployment's reservation. When present, both positive integer fields `cpu_millis` and `memory_mib` are required; absent size is omitted from the response |
+| `record_tool_bodies` | no | `false`. Whether tool arguments and results are written to the durable conversation log. The response always carries this boolean |
+| `skills` | no | `[]`, before mandatory skills are merged. Entries are skill identifiers |
+
+Every object in this request is closed: unknown fields are refused at the top
+level and inside `variables`, `packages`, `agent`, `agent.size`, and `nyxid`.
+Create and replace both return `422 invalid_request` rather than silently
+discarding a misspelling. Rejection detail is fixed by error class and does not
+reflect the submitted key or value. For example, this is invalid:
+
+<!-- profile-invalid-request-example -->
+```json
+{
+  "name": "misspelled profile",
+  "agent": { "reasoningEffort": "x_high" }
+}
+```
+
+### Read shape: `ProfileView`
+
+Create, read, replace, list, and preference responses use one profile shape.
+Every accepted write field is rendered back. Server-owned fields are added:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable profile identifier |
+| `name`, `variables`, `packages`, `agent`, `nyxid`, `agent_notes` | The writable contents after mandatory entries have been applied |
+| `mandatory.packages` | Package names the deployment puts back on every write |
+| `mandatory.skills` | Skill identifiers the deployment puts back on every write |
+| `created_at` | Creation time, retained across replacement |
+| `updated_at` | Last replacement time |
+| `preferred` | Whether sessions that name no profile start from this one |
+
+`agent.kernel`, `mode`, `reasoning_effort`, `permission`, `credential`,
+`record_tool_bodies`, and `skills` are always present. `agent.model` and
+`agent.size` are omitted when no value was selected. `packages[].version` is
+likewise omitted for an unpinned package. A boolean such as
+`record_tool_bodies` is never made ambiguous by omission.
+
+**`mandatory` marks entries, not a special profile.** Omitting a mandatory
+package or skill from a replacement does not remove it; the service merges it
+back and reports its identifier under `mandatory` so a client can render the
+entry as fixed. An owned profile containing mandatory entries can still be
+deleted with `204`; deleting the profile does not revoke the deployment's
+baseline from other profiles or sessions.
+
+**`201 Created`** returns a complete `ProfileView`:
+
+<!-- profile-view-example -->
+```json
+{
+  "id": "envp_example",
+  "name": "field-complete profile",
+  "variables": [
+    { "key": "PROFILE_MODE", "value": "round-trip" }
+  ],
+  "packages": [
+    { "name": "platform-cli", "version": "2.4.1" },
+    { "name": "ripgrep", "version": "14.1.1" }
+  ],
+  "agent": {
+    "kernel": "profile-kernel",
+    "mode": "conversation",
+    "model": "model-for-round-trip",
+    "reasoning_effort": "x_high",
+    "permission": "unrestricted",
+    "credential": "own",
+    "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+    "record_tool_bodies": true,
+    "skills": ["mandatory-skill", "chosen-skill"]
+  },
+  "nyxid": {
+    "services": ["mandatory-service", "calendar"]
+  },
+  "agent_notes": "Keep the caller's standing instructions byte for byte.",
+  "mandatory": {
+    "packages": ["platform-cli"],
+    "skills": ["mandatory-skill"]
+  },
+  "created_at": "2026-08-25T09:00:00Z",
+  "updated_at": "2026-08-25T09:30:00Z",
+  "preferred": false
+}
+```
+
+### List
+
+```http
+GET /api/v1/environment-profiles?limit=50
+```
+
+**`200 OK`** is a newest-first array of complete `ProfileView` rows:
+
+<!-- profile-list-response-example -->
+```json
+[
+  {
+    "id": "envp_example",
+    "name": "field-complete profile",
+    "variables": [
+      { "key": "PROFILE_MODE", "value": "round-trip" }
+    ],
+    "packages": [
+      { "name": "platform-cli", "version": "2.4.1" },
+      { "name": "ripgrep", "version": "14.1.1" }
+    ],
+    "agent": {
+      "kernel": "profile-kernel",
+      "mode": "conversation",
+      "model": "model-for-round-trip",
+      "reasoning_effort": "x_high",
+      "permission": "unrestricted",
+      "credential": "own",
+      "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+      "record_tool_bodies": true,
+      "skills": ["mandatory-skill", "chosen-skill"]
+    },
+    "nyxid": {
+      "services": ["mandatory-service", "calendar"]
+    },
+    "agent_notes": "Keep the caller's standing instructions byte for byte.",
+    "mandatory": {
+      "packages": ["platform-cli"],
+      "skills": ["mandatory-skill"]
+    },
+    "created_at": "2026-08-25T09:00:00Z",
+    "updated_at": "2026-08-25T09:30:00Z",
+    "preferred": false
+  }
+]
+```
+
+`limit` defaults to `50` and is clamped to `1..=200`. `cursor` is the opaque
+value from `Link: <...>; rel="next"`; the final page has no next link. Profiles
+do not accept the session-only `status` filter. Unknown parameters, malformed
+cursors, or a cursor issued for another collection return `400 invalid_query`.
+
+### Read, replace, and delete
+
+```http
+GET /api/v1/environment-profiles/{id}
+```
+
+**`200 OK`** returns the complete `ProfileView` shown above. Unknown and foreign
+identifiers both return `404 environment_profile_not_found`.
+
+Replacement is a full-document PUT, not a patch:
+
+```http
+PUT /api/v1/environment-profiles/{id}
+Content-Type: application/json
+```
+
+<!-- profile-request-example -->
+```json
+{
+  "name": "replacement profile",
+  "agent": {
+    "kernel": "profile-kernel",
+    "record_tool_bodies": false
+  }
+}
+```
+
+**`200 OK`** returns the replaced `ProfileView`. Omitted writable fields reset
+to their documented defaults, after which mandatory entries are merged back.
+The profile keeps its `id`, `created_at`, and `preferred` value. A malformed or
+unknown field returns `400` or `422`; an unknown or foreign id returns `404`.
+
+```http
+DELETE /api/v1/environment-profiles/{id}
+```
+
+**`204 No Content`** deletes an owned profile, including one that contains
+mandatory entries. Unknown and foreign ids return `404
+environment_profile_not_found`.
+
+### Skills catalogue
+
+```http
+GET /api/v1/environment-profiles/skills
+```
+
+**`200 OK`** returns selectable skills and the mandatory package/skill markers
+needed before the first profile exists:
+
+<!-- skill-catalog-response-example -->
+```json
+{
+  "skills": [
+    {
+      "id": "chosen-skill",
+      "name": "Repository review",
+      "description": "Review a repository without changing it",
+      "access": "owner"
+    }
+  ],
+  "mandatory": {
+    "packages": ["platform-cli"],
+    "skills": ["mandatory-skill"]
+  }
+}
+```
+
+`access` is optional display text supplied by the catalogue. A deployment with
+no skill catalogue returns the same shape with an empty `skills` array; profile
+writes remain available.
+
+### Services catalogue
+
+```http
+GET /api/v1/environment-profiles/services
+```
+
+**`200 OK`** returns services visible to this caller and the identifiers the
+deployment mandates:
+
+<!-- service-catalog-response-example -->
+```json
+{
+  "services": [
+    {
+      "id": "calendar",
+      "name": "Calendar",
+      "description": "Read and manage calendar events"
+    }
+  ],
+  "mandatory": ["mandatory-service"]
+}
+```
+
+`description` is optional. The catalogue is queried as the caller because its
+answer depends on their grants. With no service catalogue configured, the
+route returns `200` with an empty `services` array; profiles still store service
+selections and sessions still honour them.
+
+### Preferred profile
+
+Preference is a collection-level PUT because selecting one profile also clears
+the previous winner. It is not a writable flag on an individual profile.
+
+```http
+PUT /api/v1/environment-profiles/preferred
+Content-Type: application/json
+```
+
+<!-- preferred-request-example -->
+```json
+{ "profile": "envp_example" }
+```
+
+`profile` must identify one profile the caller owns. The selected profile is
+validated before the previous preference is changed. Unknown and foreign ids
+both return `404 environment_profile_not_found`; a malformed or unknown body
+field returns `400` or `422`.
+
+**`200 OK`** is the complete post-write profile collection, newest first, with
+exactly the selected row carrying `preferred: true`:
+
+<!-- preferred-response-example -->
+```json
+[
+  {
+    "id": "envp_example",
+    "name": "field-complete profile",
+    "variables": [
+      { "key": "PROFILE_MODE", "value": "round-trip" }
+    ],
+    "packages": [
+      { "name": "platform-cli", "version": "2.4.1" },
+      { "name": "ripgrep", "version": "14.1.1" }
+    ],
+    "agent": {
+      "kernel": "profile-kernel",
+      "mode": "conversation",
+      "model": "model-for-round-trip",
+      "reasoning_effort": "x_high",
+      "permission": "unrestricted",
+      "credential": "own",
+      "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+      "record_tool_bodies": true,
+      "skills": ["mandatory-skill", "chosen-skill"]
+    },
+    "nyxid": {
+      "services": ["mandatory-service", "calendar"]
+    },
+    "agent_notes": "Keep the caller's standing instructions byte for byte.",
+    "mandatory": {
+      "packages": ["platform-cli"],
+      "skills": ["mandatory-skill"]
+    },
+    "created_at": "2026-08-25T09:00:00Z",
+    "updated_at": "2026-08-25T09:30:00Z",
+    "preferred": true
+  }
+]
+```
+
+Clearing is expressed with an explicit `null` value:
+
+<!-- preferred-request-example -->
+```json
+{ "profile": null }
+```
+
+It returns the same complete collection with every row carrying
+`preferred: false`, and sessions that name no profile return to the deployment's
+defaults. The `/v1` response is intentionally complete for clients that replace
+their loaded collection with it; it is assembled through bounded owner-list
+pages even though the final JSON array has no profile-count limit.
+
+---
+
+## 3. Sessions
 
 ### Create
 
@@ -68,7 +454,7 @@ Content-Type: application/json
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
 | `rows`                | no       | Initial terminal height                                                                                                                         |
-| `environment_profile` | no       | Id of a profile from `GET /api/v1/environment-profiles`. **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
+| `environment_profile` | no       | Id from [Environment Profiles](#2-environment-profiles). **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
 | `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
 
 **These four are the whole body.** An earlier version of this section
@@ -86,9 +472,20 @@ and memory it reserves — so nothing else about the agent is sent here. The siz
 is the profile's: omitting `agent.size` takes the deployment's reservation, and
 the answer is frozen for the life of the session, including across a rotation.
 
-**A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
+**A caller does not choose a kernel here.** Which one a session runs on comes
+from the [environment profile](#2-environment-profiles) it names, or from what
+the deployment configured when it names none. There is no session-create field
+for it, and that is deliberate: the reusable profile is the one place that
+states the complete agent configuration.
 
-**A field this endpoint does not know is refused, not ignored.** Sending `"kernel"` is the obvious thing to try, because `GET /api/v1/kernels` enumerates them — so it answers `422` with `invalid_request`. Rejection details are fixed by error class rather than copied from Serde because other request bodies can carry credentials. It used to be discarded, and the session came back `201` on whichever kernel the profile actually resolved to, which is a request answered differently from how it was asked. To choose a kernel, name an environment profile whose `agent.kernel` is the one you want; `GET /api/v1/environment-profiles` shows each profile's.
+**A field this endpoint does not know is refused, not ignored.** Sending
+`"kernel"` is the obvious thing to try, because `GET /api/v1/kernels`
+enumerates them — so it answers `422` with `invalid_request`. Rejection details
+are fixed by error class rather than copied from Serde because other request
+bodies can carry credentials. It used to be discarded, and the session came
+back `201` on whichever kernel the profile actually resolved to. To choose a
+kernel, create or replace an [environment profile](#2-environment-profiles)
+whose `agent.kernel` is the one you want, then name its `id` here.
 
 A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
 
@@ -104,6 +501,11 @@ service does not send and spelled `recovery_state` as an object it does not use.
   "status": "provisioning",
   "recovery_state": "normal",
   "kernel": "codex",
+  "agent": {
+    "permission": "guarded",
+    "reasoning_effort": "high",
+    "credential": "delegated"
+  },
   "cols": 120,
   "rows": 32,
   "last_seq": 0,
@@ -323,7 +725,8 @@ A read carries `reach`: the services this session's credential may call on its o
 
 This is the other half of a fact whose first half is `capabilities`. Capabilities are what a session can **do**; `reach` is what it can **touch**. A client showing one and not the other is describing half a session.
 
-The whole path — catalogue, profile, grant, credential, sandbox — is `docs/Services.md`.
+The whole path — catalogue, profile, grant, credential, sandbox — is documented
+in [Services](./Services.md).
 
 **It is the session's answer, not its profile's.** A session's reach is decided when it is provisioned and recorded on the session. A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps the scope it was provisioned with, so reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one. It survives a rotation for the same reason: a replaced runtime is the same session.
 
@@ -335,7 +738,7 @@ The whole path — catalogue, profile, grant, credential, sandbox — is `docs/S
 
 ---
 
-## 3. Input, interrupt, steer
+## 4. Input, interrupt, steer
 
 ### One route, two planes
 
@@ -366,7 +769,7 @@ POST /api/v1/sessions/{id}/input
 
 `bytes_b64` is refused on a conversation session: a conversation takes words, and decoding bytes into a prompt would send something nobody typed. Sending both fields on a terminal session uses the bytes — a caller who supplied them meant something the text could not express.
 
-**On the terminal plane, input is how approvals are answered and how a turn is steered.** That kernel asks on its own screen, and the answer is a keypress. There is no separate operation for it, and §5 says so where a client would look.
+**On the terminal plane, input is how approvals are answered and how a turn is steered.** That kernel asks on its own screen, and the answer is a keypress. There is no separate operation for it, and §6 says so where a client would look.
 
 ### Interrupt
 
@@ -405,7 +808,7 @@ With no attachment live, all three operate the terminal directly.
 
 ---
 
-## 4. Events
+## 5. Events
 
 ### Replay
 
@@ -474,7 +877,7 @@ closes an episode.
 
 ---
 
-## 5. Approvals
+## 6. Approvals
 
 ```http
 POST /api/v1/sessions/{id}/approvals/{request_id}
@@ -483,13 +886,13 @@ POST /api/v1/sessions/{id}/approvals/{request_id}
 
 `decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions: `deny` refuses this and the turn carries on without it, `abort` refuses it and stops the turn. A client that meant the second and sent the first watches the agent try something else instead of stopping.
 
-**Conversation sessions only.** On a terminal session this returns the typed capability error naming `conversation`: that kernel asks on its own screen and its answer is a keypress, so the operation to use is `POST /input` with the bytes the prompt is waiting for (§3). Inventing an approval route there would be a second way to say something the session cannot hear.
+**Conversation sessions only.** On a terminal session this returns the typed capability error naming `conversation`: that kernel asks on its own screen and its answer is a keypress, so the operation to use is `POST /input` with the bytes the prompt is waiting for (§4). Inventing an approval route there would be a second way to say something the session cannot hear.
 
 While an approval is pending the session is `idle` with `stop_reason: requires_action`, and the pending request ids are listed on the session object. That state survives a client disconnect and a control plane restart — a request waiting when you reconnect is still answerable. Answering one nothing is waiting for is refused rather than forwarded.
 
 ---
 
-## 6. Terminal
+## 7. Terminal
 
 ```http
 GET  /api/v1/sessions/{id}/screen          → current rendered screen
@@ -517,7 +920,7 @@ A session with no terminal capability is refused here with `capability_unsupport
 
 ---
 
-## 7. Pricing and usage
+## 8. Pricing and usage
 
 ### Quote a new session
 
@@ -714,7 +1117,7 @@ decimal strings, never binary floating-point numbers.
 
 ---
 
-## 8. Capability declaration
+## 9. Capability declaration
 
 ```http
 GET /api/v1/conformance
@@ -759,7 +1162,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 
 ---
 
-## 9. Errors
+## 10. Errors
 
 ```json
 {
@@ -921,12 +1324,12 @@ Creation is refused before an identifier is minted or a record is written.
 Revive is refused before the paused record changes, so its history remains
 readable and its state remains `idle`. The limit applies only where an owner is
 asking for another runtime; reconciliation and rotation never reach it. See
-the advisory allowance route in §2 for counting, non-retroactivity, and the
+the advisory allowance route in §3 for counting, non-retroactivity, and the
 cross-replica enforcement boundary.
 
 ---
 
-## 10. Administration
+## 11. Administration
 
 Everything an operator can see and do lives under `/api/v1/admin/`, one segment so the whole surface can be restricted in front of the service as well as inside it. Each endpoint is gated on its own capability, and no capability is implied by another.
 
@@ -1362,7 +1765,7 @@ Both are recorded in the activity log with the operator as `actor` and the sessi
 
 ---
 
-## 11. What the caller may do
+## 12. What the caller may do
 
 A browser client asks who it is at `GET /auth/session`, and the answer says what that identity may do:
 
