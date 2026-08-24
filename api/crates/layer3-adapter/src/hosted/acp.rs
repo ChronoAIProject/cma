@@ -175,6 +175,11 @@ impl Bridge {
             session: Mutex::new(None),
             blocked: Mutex::new(HashMap::new()),
         });
+        // This sender's channel identity is the generation of this socket.
+        // Keep it beside the reader so a late answer from this socket cannot
+        // settle a waiter installed by a replacement connection.
+        let control = super::control_lane(Arc::clone(&bridge.sink));
+        let control_for_reader = control.clone();
 
         let writer = Arc::clone(&bridge);
         let writer_updates = updates_tx.clone();
@@ -212,7 +217,7 @@ impl Bridge {
                         if let (Some(accepted), Some((waiters, runtime))) =
                             (super::link::switch_answer(&text), switches.as_ref())
                         {
-                            waiters.settle(runtime, accepted).await;
+                            waiters.settle(runtime, &control_for_reader, accepted).await;
                         }
                     }
                     Ok(Message::Close(_)) => break,
@@ -234,6 +239,9 @@ impl Bridge {
              * and it has to be delivered as one.
              */
             reader.pending.lock().await.clear();
+            if let Some((waiters, runtime)) = switches.as_ref() {
+                waiters.forget(runtime, &control_for_reader).await;
+            }
             input_task.abort();
             tracing::info!("conversation link ended");
         });
@@ -246,8 +254,6 @@ impl Bridge {
             .handshake(rejoin, resuming, cwd, mode, own_credential)
             .await?;
         let conversation_id = bridge.session.lock().await.clone();
-
-        let control = super::control_lane(Arc::clone(&bridge.sink));
 
         Ok((
             ConversationChannel {

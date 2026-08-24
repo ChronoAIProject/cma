@@ -69,7 +69,7 @@ pub(crate) fn exit_report(text: &str) -> Option<TerminalOutput> {
 }
 
 /// Forget a link only while it is still the one registered for this runtime.
-async fn forget_current_link(
+pub(super) async fn forget_link_generation(
     links: &tokio::sync::Mutex<std::collections::BTreeMap<String, mpsc::Sender<TerminalInput>>>,
     answers: &super::SwitchWaiters,
     sandbox: &str,
@@ -83,9 +83,10 @@ async fn forget_current_link(
         links.remove(sandbox);
     }
     drop(links);
-    if still_current {
-        answers.forget(sandbox).await;
-    }
+    // The registry may already hold a successor, but this generation can
+    // still own the old waiter. The identity check inside `forget` removes
+    // that waiter without disturbing one the successor has since installed.
+    answers.forget(sandbox, link).await;
 }
 
 /// Read a runtime's answer to a plane switch, if that is what this frame is.
@@ -210,7 +211,7 @@ impl HostedKernel {
             // first, because it is the top of somebody's screen.
             if let Some(bytes) = early {
                 if out_tx.send(TerminalOutput::Bytes(bytes)).await.is_err() {
-                    forget_current_link(&links, &answers, &sandbox, &link_for_cleanup).await;
+                    forget_link_generation(&links, &answers, &sandbox, &link_for_cleanup).await;
                     return;
                 }
             }
@@ -238,11 +239,11 @@ impl HostedKernel {
                     }
                     Ok(Message::Text(text)) => {
                         if let Some(accepted) = switch_answer(&text) {
-                            answers.settle(&sandbox, accepted).await;
+                            answers.settle(&sandbox, &link_for_cleanup, accepted).await;
                         } else if let Some(ending) = exit_report(&text) {
-                            // The supervisor sends this only after it has read
-                            // the pty to EOF. Sharing the output queue preserves
-                            // that order all the way into the session core.
+                            // The supervisor sends this only after it has
+                            // stopped forwarding pty bytes. Sharing the output
+                            // queue preserves that order into the session core.
                             let _ = out_tx.send(ending).await;
                             break;
                         }
@@ -257,7 +258,7 @@ impl HostedKernel {
             }
             // Remove only this link. A reconnect can install its successor
             // before the old reader notices that its socket ended.
-            forget_current_link(&links, &answers, &sandbox, &link_for_cleanup).await;
+            forget_link_generation(&links, &answers, &sandbox, &link_for_cleanup).await;
             tracing::info!(%sandbox, "sandbox output relay ended");
         });
 
@@ -306,7 +307,7 @@ impl HostedKernel {
             // The link died since it was recorded. Forgotten rather than
             // retried: the next attachment records a live one, and keeping a
             // dead sender would make every renewal fail the same way forever.
-            self.forget_link(&handle.0).await;
+            forget_link_generation(&self.links, &self.switch_waiters, &handle.0, &link).await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the credential reached it",
                 handle.0
@@ -325,16 +326,27 @@ impl HostedKernel {
         handle: &RuntimeHandle,
         command: &str,
     ) -> Result<(), AdapterError> {
-        let link = self.link_to(&handle.0).await;
-        let Some(link) = link else {
+        // Select the current generation and install its waiter while holding
+        // the link registry lock. A replacement therefore happens wholly
+        // before or after registration; an obsolete operation cannot pause
+        // between the two and overwrite its successor's waiter.
+        let link_and_answer = {
+            let links = self.links.lock().await;
+            match links.get(&handle.0) {
+                Some(link) => {
+                    let link = link.clone();
+                    let answer = self.switch_waiters.expect(&handle.0, &link).await;
+                    Some((link, answer))
+                }
+                None => None,
+            }
+        };
+        let Some((link, answer)) = link_and_answer else {
             return Err(AdapterError::Unavailable(format!(
                 "runtime {} has no open link to switch plane",
                 handle.0
             )));
         };
-        // Registered before the frame goes out, so an answer that arrives
-        // immediately has somebody to reach.
-        let answer = self.switch_waiters().expect(&handle.0).await;
         if link
             .send(TerminalInput::SwitchPlane {
                 command: command.to_string(),
@@ -342,7 +354,7 @@ impl HostedKernel {
             .await
             .is_err()
         {
-            self.forget_link(&handle.0).await;
+            forget_link_generation(&self.links, &self.switch_waiters, &handle.0, &link).await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the switch reached it",
                 handle.0
@@ -368,7 +380,7 @@ impl HostedKernel {
                 handle.0
             ))),
             Err(_) => {
-                self.switch_waiters().forget(&handle.0).await;
+                self.switch_waiters().forget(&handle.0, &link).await;
                 Err(AdapterError::Unavailable(format!(
                     "runtime {} did not answer the switch",
                     handle.0
