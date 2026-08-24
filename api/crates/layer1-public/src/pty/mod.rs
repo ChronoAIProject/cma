@@ -11,7 +11,10 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{ws::Message, FromRef, Path, Query, State, WebSocketUpgrade},
+    extract::{
+        ws::{close_code, CloseFrame, Message},
+        FromRef, Path, Query, State, WebSocketUpgrade,
+    },
     response::IntoResponse,
     routing::get,
     Router,
@@ -81,13 +84,29 @@ const PLANE_CHANGED_CLOSE_CODE: u16 = 4001;
 /// come back in a moment.
 const RUNTIME_REPLACED_CLOSE_CODE: u16 = 4002;
 
+/// The one reason currently carried by a process exit frame.
+const EXIT_REASON: &str = "exited";
+
 /// Why this terminal ended, in a code and a sentence.
 ///
 /// Every path through here says something. A terminal that closes with nothing
 /// is one whose owner reloads and takes the attachment back, which is the
 /// fight the reasons exist to prevent.
-fn ending(detached: Option<layer2_core::Detached>) -> (u16, &'static str) {
-    match detached {
+fn ending(detached: Option<layer2_core::Detached>) -> Vec<Message> {
+    let (code, reason) = match detached {
+        Some(layer2_core::Detached::ProcessExited { code }) => {
+            return vec![
+                ServerControl::Exit {
+                    code,
+                    reason: EXIT_REASON,
+                }
+                .to_message(),
+                Message::Close(Some(CloseFrame {
+                    code: close_code::NORMAL,
+                    reason: "".into(),
+                })),
+            ];
+        }
         Some(layer2_core::Detached::PlaneChanged) => (
             PLANE_CHANGED_CLOSE_CODE,
             "this session moved to the conversation plane and no longer has a terminal",
@@ -103,7 +122,16 @@ fn ending(detached: Option<layer2_core::Detached>) -> (u16, &'static str) {
             SUPERSEDED_CLOSE_CODE,
             "the owner attached this terminal from somewhere else",
         ),
-    }
+    };
+    vec![Message::Close(Some(CloseFrame {
+        code,
+        reason: reason.into(),
+    }))]
+}
+
+/// Frames for a runtime channel ending, if it carried a process report.
+fn reported_ending(detached: Option<layer2_core::Detached>) -> Vec<Message> {
+    detached.map_or_else(Vec::new, |detached| ending(Some(detached)))
 }
 
 /// How often the server proves the connection is still there.
@@ -150,6 +178,10 @@ enum ServerControl {
     Error {
         code: &'static str,
         detail: String,
+    },
+    Exit {
+        code: Option<i32>,
+        reason: &'static str,
     },
     Pong,
     Resources {

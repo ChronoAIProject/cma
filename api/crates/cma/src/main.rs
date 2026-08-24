@@ -16,6 +16,9 @@ mod skills;
 mod store;
 mod sweep;
 
+#[cfg(test)]
+mod pty_integration_tests;
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{

@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use layer3_adapter::TerminalOutput;
+
 use crate::attach::AttachmentClaim;
 use crate::error::CoreError;
 use crate::terminal::TerminalGeometry;
@@ -148,6 +150,109 @@ async fn a_terminal_attachment_carries_its_repaint_and_requested_geometry() {
 
     assert_eq!(attachment.geometry, geometry);
     assert_eq!(attachment.repaint, b"work already on screen\r\n");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn output_crossing_attach_is_in_the_repaint_or_live_stream_exactly_once() {
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_on_version(
+        Arc::new(FakeStore::default()),
+        Arc::clone(&adapter),
+        "runtime:test",
+    );
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let (screen, live) = {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("session is live");
+        (
+            Arc::clone(&entry.screen),
+            entry.live.clone().expect("runtime output is live"),
+        )
+    };
+    assert_eq!(live.receiver_count(), 0);
+
+    // Hold the screen, then put the relay first in the mutex's FIFO. The
+    // attachment arrives second, which is the exact interleaving that used to
+    // subscribe before the relay both painted and broadcast the same bytes.
+    let screen_guard = screen.lock().await;
+    let runtime = adapter
+        .senders
+        .lock()
+        .await
+        .last()
+        .cloned()
+        .expect("runtime output sender");
+    runtime
+        .send(TerminalOutput::Bytes(b"one crossing chunk".to_vec()))
+        .await
+        .expect("runtime sends output");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while runtime.capacity() != runtime.max_capacity() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("relay consumes the chunk and waits for the screen");
+
+    let attach = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(
+                &alice,
+                &id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if svc
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .is_some_and(|entry| entry.attached.is_some())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("attachment reaches the snapshot boundary");
+
+    // A subscriber appearing while the screen is locked is the old, broken
+    // ordering. Give the spawned attach ample time to expose that ordering.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            while live.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_err(),
+        "the attachment must take the screen boundary before subscribing"
+    );
+
+    drop(screen_guard);
+    let mut attachment = tokio::time::timeout(std::time::Duration::from_secs(2), attach)
+        .await
+        .expect("attachment completes")
+        .expect("attachment task stays alive")
+        .expect("terminal attaches");
+    assert_eq!(attachment.repaint, b"one crossing chunk");
+    assert_eq!(
+        attachment.output.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty),
+        "bytes already present in the repaint must not be queued again"
+    );
 }
 
 #[tokio::test]
@@ -378,4 +483,93 @@ async fn a_stranger_may_not_ask_whether_somebody_elses_terminal_is_held() {
     let (svc, _alice, id) = attached_session().await;
     let mallory = user("mallory");
     assert!(svc.terminal_is_held(&mallory, &id).await.is_err());
+}
+
+#[tokio::test]
+async fn process_exit_is_recorded_after_final_output_without_changing_lifecycle() {
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::new(FakeStore::default()), Arc::clone(&adapter));
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let mut held = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("attaches");
+
+    let runtime = adapter.senders.lock().await[0].clone();
+    runtime
+        .send(layer3_adapter::TerminalOutput::Bytes(
+            b"last paint".to_vec(),
+        ))
+        .await
+        .expect("output reaches the core");
+    runtime
+        .send(layer3_adapter::TerminalOutput::Exited { code: Some(23) })
+        .await
+        .expect("the ending reaches the core");
+
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), held.output.recv())
+            .await
+            .expect("output arrives in time")
+            .expect("the final output is readable"),
+        b"last paint"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), held.output.recv())
+            .await
+            .expect("the live lane closes in time")
+            .is_err(),
+        "the live lane closes after its final byte"
+    );
+    assert_eq!(
+        *held.ending.borrow(),
+        Some(crate::lease::Detached::ProcessExited { code: Some(23) })
+    );
+    assert_eq!(
+        svc.get_session(&alice, &created.id)
+            .await
+            .expect("the session remains readable")
+            .status,
+        crate::session::SessionStatus::Ready,
+        "reporting a process ending must not decide session lifecycle"
+    );
+}
+
+#[tokio::test]
+async fn a_terminal_channel_lost_without_a_report_closes_without_fabricating_exit() {
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::new(FakeStore::default()), Arc::clone(&adapter));
+    let alice = user("alice");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let mut held = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("attaches");
+
+    adapter.senders.lock().await.clear();
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), held.output.recv())
+            .await
+            .expect("the lost lane is noticed")
+            .is_err()
+    );
+    assert_eq!(
+        *held.ending.borrow(),
+        None,
+        "a closed transport is not evidence that the process exited"
+    );
 }
