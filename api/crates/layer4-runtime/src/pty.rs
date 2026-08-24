@@ -8,6 +8,8 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::sync::{Arc, Mutex as StdMutex};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
@@ -220,10 +222,16 @@ fn start_process(
     // dedicated thread supervises both rather than occupying an async worker.
     let out = output.clone();
     #[cfg(unix)]
-    let terminal_fd = pair
-        .master
-        .as_raw_fd()
-        .ok_or_else(|| std::io::Error::other("native pty exposes no pollable descriptor"))?;
+    let terminal_fd = {
+        let raw = pair
+            .master
+            .as_raw_fd()
+            .ok_or_else(|| std::io::Error::other("native pty exposes no pollable descriptor"))?;
+        // `MasterPty` exposes only a borrowed integer. Duplicate it while the
+        // owner is still alive so the supervisor never polls a descriptor that
+        // a removed session has closed and the process has since reused.
+        unsafe { BorrowedFd::borrow_raw(raw) }.try_clone_to_owned()?
+    };
     std::thread::spawn(move || {
         #[cfg(unix)]
         supervise_process(child, &mut reader, terminal_fd, &out, exit_tx);
@@ -262,7 +270,7 @@ fn process_exit(status: &portable_pty::ExitStatus) -> ProcessExit {
 fn supervise_process(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     reader: &mut Box<dyn Read + Send>,
-    terminal_fd: std::os::fd::RawFd,
+    terminal_fd: OwnedFd,
     output: &broadcast::Sender<Vec<u8>>,
     exit: watch::Sender<Option<ProcessExit>>,
 ) {
@@ -277,7 +285,7 @@ fn supervise_process(
                 // draining; an escaped descendant is handled by the deadline.
                 terminate_process_group(process_group);
                 if terminal_open {
-                    drain_after_exit(reader, terminal_fd, output);
+                    drain_after_exit(reader, terminal_fd.as_fd(), output);
                 }
                 tracing::info!(?status, "runtime process exited");
                 exit.send_replace(Some(process_exit(&status)));
@@ -295,7 +303,7 @@ fn supervise_process(
             continue;
         }
 
-        match poll_terminal(terminal_fd, PROCESS_POLL_INTERVAL) {
+        match poll_terminal(terminal_fd.as_fd(), PROCESS_POLL_INTERVAL) {
             Ok(true) => terminal_open = forward_one_chunk(reader, output),
             Ok(false) => {}
             Err(error) => {
@@ -309,7 +317,7 @@ fn supervise_process(
 #[cfg(unix)]
 fn drain_after_exit(
     reader: &mut Box<dyn Read + Send>,
-    terminal_fd: std::os::fd::RawFd,
+    terminal_fd: BorrowedFd<'_>,
     output: &broadcast::Sender<Vec<u8>>,
 ) {
     let deadline = Instant::now() + EXIT_DRAIN_DEADLINE;
@@ -327,17 +335,32 @@ fn drain_after_exit(
 }
 
 #[cfg(unix)]
-fn poll_terminal(fd: std::os::fd::RawFd, timeout: Duration) -> std::io::Result<bool> {
+fn poll_terminal(fd: BorrowedFd<'_>, timeout: Duration) -> std::io::Result<bool> {
     let timeout_ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
     loop {
         let mut descriptor = libc::pollfd {
-            fd,
+            fd: fd.as_raw_fd(),
             events: libc::POLLIN | libc::POLLHUP | libc::POLLERR,
             revents: 0,
         };
         let result = unsafe { libc::poll(&mut descriptor, 1, timeout_ms) };
-        if result >= 0 {
-            return Ok(result > 0);
+        if result == 0 {
+            return Ok(false);
+        }
+        if result > 0 {
+            if descriptor.revents & libc::POLLNVAL != 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "poll reported an invalid pty descriptor",
+                ));
+            }
+            if descriptor.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                return Ok(true);
+            }
+            return Err(std::io::Error::other(format!(
+                "poll reported unexpected pty events: {}",
+                descriptor.revents
+            )));
         }
 
         let error = std::io::Error::last_os_error();
@@ -520,6 +543,52 @@ mod tests {
             String::from_utf8_lossy(&terminal).contains("primary-final-output"),
             "the primary's final output is drained before its status: {terminal:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn removing_a_silent_live_session_does_not_strand_its_supervisor() {
+        let reg = PtyRegistry::new();
+        let (session, _output) = reg
+            .get_or_start("silent", "/bin/sleep 1", 80, 24, "k")
+            .await
+            .expect("the silent process starts");
+        let original_master = session
+            .master
+            .lock()
+            .expect("the master lock is healthy")
+            .as_raw_fd()
+            .expect("the native pty has a descriptor");
+        let mut exited = session.subscribe_exit();
+
+        reg.remove("silent").await;
+        drop(session);
+
+        // Reuse the session owner's descriptor while the silent child is still
+        // alive. The supervisor must keep polling its own duplicate, rather
+        // than mistake this unrelated readable file for terminal output and
+        // block forever on the real reader.
+        let mut replacements = Vec::new();
+        while replacements.len() < 64 {
+            let file = std::fs::File::open("/dev/null").expect("/dev/null opens");
+            let reused = file.as_raw_fd() == original_master;
+            replacements.push(file);
+            if reused {
+                break;
+            }
+        }
+        assert!(
+            replacements
+                .iter()
+                .any(|file| file.as_raw_fd() == original_master),
+            "the removed session's descriptor is reused for the regression"
+        );
+
+        tokio::time::timeout(Duration::from_secs(3), exited.changed())
+            .await
+            .expect("supervision is not stranded on a reused descriptor")
+            .expect("the exit watch remains open");
+        assert_eq!(*exited.borrow(), Some(ProcessExit { code: Some(0) }));
     }
 
     #[tokio::test]
