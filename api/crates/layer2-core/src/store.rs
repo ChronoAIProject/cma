@@ -77,6 +77,13 @@ pub enum StoreError {
 /// Durable session records and their event history.
 #[async_trait::async_trait]
 pub trait SessionStore: Send + Sync {
+    /// Verify that the store can answer a readiness probe.
+    ///
+    /// This exists only for the process readiness endpoint. Business paths use
+    /// their purpose-specific operations so a health check cannot become an
+    /// accidental substitute for handling a real store failure.
+    async fn ping(&self) -> Result<(), StoreError>;
+
     /// Create or replace a session record.
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError>;
 
