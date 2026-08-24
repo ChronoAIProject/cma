@@ -182,20 +182,14 @@ export function createMockProfileStore(options: MockProfileOptions = {}): Enviro
       if (id !== null && !stored.some((p) => p.id === id)) {
         throw new Error('That profile no longer exists.');
       }
-      const changed: EnvironmentProfile[] = [];
-      // Exactly one, mirroring the core: only the rows that move come back.
+      // Exactly one, mirroring the core: the others give it up in the same call.
       for (let i = 0; i < stored.length; i += 1) {
         const profile = stored[i];
         if (profile !== undefined) {
-          const preferred = profile.id === id;
-          if (profile.preferred !== preferred) {
-            const replacement = { ...profile, preferred };
-            stored[i] = replacement;
-            changed.push(replacement);
-          }
+          stored[i] = { ...profile, preferred: profile.id === id };
         }
       }
-      return changed;
+      return [...stored];
     },
 
     async services() {

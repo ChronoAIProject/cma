@@ -1,16 +1,17 @@
 //! REST projection of environment profiles.
 //!
 //! A plain resource collection: create, read, replace, remove, plus the
-//! catalogue a client picks skills from. Every handler is a thin translation
-//! onto one core call — the ownership rule, the validation and the
+//! catalogue a client picks skills from. Ownership, validation and the
 //! non-revocable baseline all live in Layer 2, so no interface can apply a
-//! different version of them.
+//! different version of them. The preference action also rebuilds its released
+//! `/v1` collection response from bounded Layer 2 list pages after the core
+//! mutation succeeds.
 //!
 //! Variable values travel in and out because a client that could not read back
 //! what it stored could not offer an edit form. They are never logged here,
 //! and the core's own `Debug` keeps them out of a log elsewhere.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{
     extract::{Path, Query, State},
@@ -18,7 +19,10 @@ use axum::{
     routing::{get, put},
     Json, Router,
 };
-use layer2_core::{EnvironmentProfileId, EnvironmentProfileService};
+use layer2_core::{
+    Caller, CoreError, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
+    PageCursor, PageRequest, MAX_PAGE_SIZE,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
@@ -48,8 +52,9 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
          * A collection rather than a flag on one profile, because setting it
          * changes two records — the one taking it and the one giving it up —
          * and a `PUT` on a single profile would describe only half of that.
-         * The answer is the bounded change set, so a client can update both
-         * rows without this mutation becoming another unbounded listing.
+         * The released /v1 answer is the complete post-write collection, so a
+         * client never has to guess which other rows moved. It is assembled
+         * through bounded list pages after the mutation succeeds.
          */
         .route("/api/v1/environment-profiles/preferred", put(prefer))
         .with_state(service)
@@ -107,13 +112,39 @@ async fn prefer(
 ) -> Result<Json<Vec<ProfileView>>, RequestFailure> {
     let Json(body) = body?;
     let wanted = body.profile.map(EnvironmentProfileId);
-    let changed = service.prefer(&caller, wanted.as_ref()).await?;
+    service.prefer(&caller, wanted.as_ref()).await?;
+    let profiles = complete_profile_collection(&service, &caller).await?;
     Ok(Json(
-        changed
+        profiles
             .into_iter()
             .map(|p| ProfileView::render(p, &service))
             .collect(),
     ))
+}
+
+/// Rebuild the released `/v1` action response without an unbounded store read.
+async fn complete_profile_collection(
+    service: &EnvironmentProfileService,
+    caller: &Caller,
+) -> Result<Vec<EnvironmentProfile>, CoreError> {
+    let mut profiles = Vec::new();
+    let mut cursor: Option<PageCursor> = None;
+    let mut seen = HashSet::new();
+    loop {
+        let page = service
+            .list(caller, &PageRequest::new(MAX_PAGE_SIZE, cursor))
+            .await?;
+        profiles.extend(page.items);
+        match page.next {
+            Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+            Some(_) => {
+                return Err(CoreError::RuntimeUnavailable(
+                    "environment profile listing repeated its continuation cursor".into(),
+                ))
+            }
+            None => return Ok(profiles),
+        }
+    }
 }
 
 async fn read(
@@ -216,6 +247,8 @@ async fn skills(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use layer2_core::{
         CredentialMode, EnvironmentProfile, EnvironmentProfileSpec, EnvironmentVariable,
         PermissionMode, ReasoningEffort, SessionSize, SkillId, SoftwarePackage,
@@ -317,6 +350,109 @@ mod tests {
         // Building the router is what proves the two can coexist, and a
         // conflict would otherwise surface as a panic at startup.
         let _ = router(service());
+    }
+
+    #[tokio::test]
+    async fn the_compatibility_walk_rejects_a_longer_cursor_cycle() {
+        #[derive(Default)]
+        struct CyclingStore {
+            lists: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl EnvironmentProfileStore for CyclingStore {
+            async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
+                Ok(())
+            }
+
+            async fn get(
+                &self,
+                _id: &EnvironmentProfileId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn list_for(
+                &self,
+                _owner: &SubjectId,
+                page: &PageRequest,
+            ) -> Result<Page<EnvironmentProfile>, StoreError> {
+                self.lists.fetch_add(1, Ordering::SeqCst);
+                let id = match page.cursor().map(|cursor| cursor.id.as_str()) {
+                    None => "cursor-a",
+                    Some("cursor-a") => "cursor-b",
+                    Some("cursor-b") => "cursor-a",
+                    Some(_) => {
+                        return Err(StoreError::Malformed(
+                            "the test received an unexpected cursor".into(),
+                        ))
+                    }
+                };
+                Ok(Page {
+                    items: Vec::new(),
+                    next: Some(PageCursor::new("2026-08-25T00:00:00Z", id)),
+                })
+            }
+
+            async fn set_preferred(
+                &self,
+                _owner: &SubjectId,
+                chosen: Option<&EnvironmentProfileId>,
+            ) -> Result<(), StoreError> {
+                if chosen.is_some() {
+                    return Err(StoreError::Malformed(
+                        "the cycling store has no selectable profile".into(),
+                    ));
+                }
+                Ok(())
+            }
+
+            async fn preferred_for(
+                &self,
+                _owner: &SubjectId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+                Ok(())
+            }
+        }
+
+        let store = Arc::new(CyclingStore::default());
+        let service = EnvironmentProfileService::new(
+            Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
+            Baseline::default(),
+            None,
+            None,
+            Default::default(),
+            Arc::new(layer2_core::PlatformSettingsService::unconfigured()),
+        );
+        let caller = layer2_core::Caller::new(
+            SubjectId("subject-a".into()),
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ManageOwnEnvironmentProfiles,
+            ]),
+        );
+
+        let failure = match prefer(
+            State(service),
+            AuthenticatedCaller(caller),
+            Ok(Json(PreferredRequest { profile: None })),
+        )
+        .await
+        {
+            Err(failure) => failure,
+            Ok(_) => panic!("a repeated cursor must not produce a partial collection"),
+        };
+
+        match failure {
+            RequestFailure::Refused(Problem(CoreError::RuntimeUnavailable(detail))) => {
+                assert!(detail.contains("repeated its continuation cursor"));
+            }
+            _ => panic!("a cursor cycle must be reported as store unavailability"),
+        }
+        assert_eq!(store.lists.load(Ordering::SeqCst), 3);
     }
 
     #[test]

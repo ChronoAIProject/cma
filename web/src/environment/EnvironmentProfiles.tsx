@@ -12,7 +12,7 @@ import type {
   ServiceCatalogue,
   SkillCatalogue,
 } from './types';
-import { draftOf, emptyDraft, mergeProfileChanges, validate } from './types';
+import { draftOf, emptyDraft, validate } from './types';
 import type { KernelOffer } from '../sessions/types';
 import './EnvironmentProfiles.css';
 
@@ -166,15 +166,14 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
   /**
    * Choose which profile this owner's sessions start from, or none.
    *
-   * The server returns only the rows that moved. Merge them into the loaded
-   * collection so a later-page profile is not lost merely because the action
-   * response is deliberately bounded.
+   * The whole list comes back, because setting it moves two rows — the one
+   * taking it and the one giving it up — and reloading instead would show a
+   * moment where both or neither held it.
    */
   async function choose(id: string | null): Promise<void> {
     setChoosing(true);
     try {
-      const changed = await store.prefer(id);
-      setProfiles((loaded) => (loaded === null ? loaded : mergeProfileChanges(loaded, changed)));
+      setProfiles(await store.prefer(id));
       setError(undefined);
     } catch (cause: unknown) {
       setError(message(cause, 'That profile could not be made the default.'));
