@@ -719,6 +719,8 @@ pub enum RequestFailure {
     Query(QueryProblem),
     /// The body was fine and the core would not do it.
     Refused(Problem),
+    /// Durable state could not be read or written.
+    Store(crate::auth::StoreUnavailable),
 }
 
 impl From<CoreError> for RequestFailure {
@@ -730,6 +732,12 @@ impl From<CoreError> for RequestFailure {
 impl From<Problem> for RequestFailure {
     fn from(problem: Problem) -> Self {
         Self::Refused(problem)
+    }
+}
+
+impl From<layer2_core::store::StoreError> for RequestFailure {
+    fn from(_: layer2_core::store::StoreError) -> Self {
+        Self::Store(crate::auth::StoreUnavailable)
     }
 }
 
@@ -757,6 +765,7 @@ impl IntoResponse for RequestFailure {
             Self::Body(e) => e.into_response(),
             Self::Query(e) => e.into_response(),
             Self::Refused(e) => e.into_response(),
+            Self::Store(e) => e.into_response(),
         }
     }
 }

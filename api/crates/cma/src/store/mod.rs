@@ -11,6 +11,7 @@ pub mod environment;
 mod event_doc;
 pub mod mongo;
 pub mod settings;
+pub mod tickets;
 pub mod token;
 
 use std::time::Duration;
@@ -24,6 +25,7 @@ pub use directory::MongoUserDirectoryStore;
 pub use environment::MongoEnvironmentProfileStore;
 pub use mongo::MongoSessionStore;
 pub use settings::MongoPlatformSettingsStore;
+pub use tickets::MongoTerminalTicketStore;
 
 /// Everything this deployment keeps in MongoDB.
 ///
@@ -41,6 +43,8 @@ pub struct MongoStores {
     pub users: MongoUserDirectoryStore,
     /// Deployment-wide settings changed by administrators.
     pub settings: MongoPlatformSettingsStore,
+    /// One-time grants used to authenticate terminal upgrades.
+    pub tickets: MongoTerminalTicketStore,
 }
 
 /// Open every MongoDB-backed store over one connection.
@@ -68,5 +72,6 @@ pub async fn connect(
         activity: MongoActivityStore::open(&client, database, activity_retention).await?,
         users: MongoUserDirectoryStore::open(&client, database).await?,
         settings: MongoPlatformSettingsStore::open(&client, database).await?,
+        tickets: MongoTerminalTicketStore::open(&client, database).await?,
     })
 }

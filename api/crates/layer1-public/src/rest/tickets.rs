@@ -78,7 +78,7 @@ pub(super) async fn terminal_ticket(
                 AttachmentClaim::Exclusive
             },
         )
-        .await;
+        .await?;
     Ok(Json(TicketView {
         ticket: issued.value,
         expires_at: issued.expires_at,
