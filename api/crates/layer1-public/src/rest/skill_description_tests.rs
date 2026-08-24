@@ -61,6 +61,16 @@ impl UserDirectoryStore for EmptyDirectory {
 #[derive(Default)]
 struct TargetedDescriptions {
     calls: Mutex<Vec<(Option<String>, Vec<String>)>>,
+    returned: Option<usize>,
+}
+
+impl TargetedDescriptions {
+    fn returning_at_most(returned: usize) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            returned: Some(returned),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -85,8 +95,12 @@ impl SkillCatalog for TargetedDescriptions {
         ));
         // Return in a different order to prove projection matches by identity,
         // while the request order itself remains deterministic.
-        Ok(skills
+        let selected: Vec<&SkillId> = skills
             .iter()
+            .take(self.returned.unwrap_or(usize::MAX))
+            .collect();
+        Ok(selected
+            .into_iter()
             .rev()
             .map(|skill| CatalogSkill {
                 id: SkillId::new(format!("guid-{}", skill.0)),
@@ -187,4 +201,51 @@ async fn out_of_page_grants_gain_descriptions_through_one_deduplicated_targeted_
         second[1].description.as_deref(),
         Some("Description for second-skill")
     );
+}
+
+#[tokio::test]
+async fn undescribed_overflow_keeps_every_recorded_skill_in_stable_order() {
+    let catalog = Arc::new(TargetedDescriptions::returning_at_most(2));
+    let environments = service(Arc::clone(&catalog));
+    let sessions = vec![
+        session("sesn_one", &["first", "second", "overflow-one"]),
+        session("sesn_two", &["first", "overflow-two"]),
+    ];
+
+    let views = viewed(
+        &environments,
+        &UserDirectory::new(Arc::new(EmptyDirectory)),
+        &caller(),
+        Some("delegated-token"),
+        sessions,
+    )
+    .await;
+
+    assert_eq!(
+        catalog.calls.lock().await[0].1,
+        ["first", "second", "overflow-one", "overflow-two"],
+        "the page is deduplicated in first-seen order before the adapter selects"
+    );
+
+    let first = views[0].agent.skills.as_ref().expect("recorded skills");
+    assert_eq!(
+        first
+            .iter()
+            .map(|skill| skill.id.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second", "overflow-one"],
+        "partial enrichment must not drop or reorder durable grants"
+    );
+    assert_eq!(first[0].name.as_deref(), Some("first"));
+    assert_eq!(first[1].name.as_deref(), Some("second"));
+    assert_eq!(first[2].name, None);
+    assert_eq!(first[2].description, None);
+    assert_eq!(first[2].version.as_deref(), Some("0.5"));
+
+    let second = views[1].agent.skills.as_ref().expect("recorded skills");
+    assert_eq!(second[0].name.as_deref(), Some("first"));
+    assert_eq!(second[1].id, "overflow-two");
+    assert_eq!(second[1].name, None);
+    assert_eq!(second[1].description, None);
+    assert_eq!(second[1].version.as_deref(), Some("0.5"));
 }
