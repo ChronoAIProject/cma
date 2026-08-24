@@ -30,41 +30,24 @@ pub(super) struct AguiEvent {
     /// is what a reconnecting client hands back. Skipped in the body so a
     /// client is never tempted to read it as protocol.
     ///
-    /// **`None` for a liveness frame, and the option is the guard.** What is
-    /// happening on a session — a message being typed — is not in the durable
-    /// log and cannot be resumed from. A frame like that given an id becomes a
-    /// cursor: a client that reconnects on it asks the log to continue from a
-    /// number the log has never heard of, and everything between there and the
-    /// real position is skipped. Making the field an `Option` is what stops
-    /// that being a rule somebody has to remember.
-    ///
-    /// Its **absence** is stated on the wire as `cma:live`, because a
-    /// client cannot otherwise see it. `EventSource` reports `lastEventId` as
-    /// the last id it was *given*, so a frame sent without one is
-    /// indistinguishable from a frame repeating the previous id — and a client
-    /// deduplicating on that would silently drop every liveness frame.
-    ///
-    /// This is not the thing the paragraph above forbids. A cursor is a
-    /// position a client could wrongly resume from; this says there is no
-    /// position, which is the opposite hazard. It is written from this one
-    /// field, so the two cannot come to disagree.
-    #[serde(
-        rename = "cma:live",
-        serialize_with = "mark_live",
-        skip_serializing_if = "Option::is_some"
-    )]
+    /// `None` for every liveness frame and for every leading frame of a
+    /// multi-frame durable projection. Only the projection's final frame is a
+    /// safe resume point: receiving an earlier one does not mean the durable
+    /// event arrived whole.
+    #[serde(skip)]
     pub seq: Option<u64>,
+    /// Whether this is liveness rather than a projection of durable history.
+    ///
+    /// Kept separate from `seq`: a leading durable projection frame also has
+    /// no SSE id, but it must not be mistaken for the live lane. In particular,
+    /// committed message content remains history even though its closing frame
+    /// is the only one that advances the cursor.
+    #[serde(rename = "cma:live", skip_serializing_if = "is_false")]
+    pub live: bool,
 }
 
-/// Write the marker that says this frame carries no cursor.
-///
-/// Only ever reached for a frame whose sequence is `None` — the field is
-/// skipped otherwise — so it writes the one value it can mean.
-fn mark_live<S>(_seq: &Option<u64>, out: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    out.serialize_bool(true)
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// Render one event as the frame that goes on the wire.
@@ -88,9 +71,8 @@ pub(super) fn sse_frame(event: &AguiEvent) -> axum::response::sse::Event {
         // here would take a live stream down; a client reading a run error it
         // did not expect is survivable and says something went wrong.
         .unwrap_or_else(|_| axum::response::sse::Event::default().data(r#"{"type":"RUN_ERROR"}"#));
-    // Only where there is one. A liveness frame carries no cursor, and
-    // stamping it with an id would make a client reconnect from a position the
-    // log has never held.
+    // Only where there is one. Liveness and leading durable projection frames
+    // carry no cursor: neither is a point after which replay may safely begin.
     match event.cursor() {
         Some(id) => frame.id(id),
         None => frame,
