@@ -94,9 +94,16 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
             continue;
         };
         if service.push_session_credential(&session, value).await {
-            tracing::info!(session_id = %session, "session credential replaced");
+            if auth.confirm_reissue(&session).await {
+                tracing::info!(session_id = %session, "session credential replaced");
+            } else {
+                // Release may have won the race after delivery. Its transfer
+                // owns both values in that case, so there is nothing here to
+                // promote or forget.
+                tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
+            }
         } else {
-            tracing::warn!(session_id = %session, "minted a replacement nothing could receive");
+            tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
         }
     }
 

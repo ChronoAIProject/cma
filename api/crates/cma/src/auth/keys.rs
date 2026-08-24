@@ -327,20 +327,27 @@ impl KeyIssuer {
     /// Failure is logged and not retried **here**, which is a statement about
     /// this function and not about the consequence: these keys carry no
     /// expiry, so a reclaim that did not happen costs an open credential
-    /// rather than a row in a list. The retry belongs to the sweep that calls
-    /// this, which sees the key again on its next pass; what must not happen
-    /// is this returning quietly as though nothing were owed.
-    pub async fn revoke(&self, id: &str, owner_token: &str) {
+    /// rather than a row in a list. The orphan sweep sees a surviving key again
+    /// by re-listing it; the superseded sweep sees it again because it remains
+    /// queued until this returns success. Every non-success response remains a
+    /// failure: this client has no verified provider contract under which a 404
+    /// proves that the intended credential was deleted. What must not happen is
+    /// this returning quietly as though a possibly live credential were no
+    /// longer owed.
+    pub async fn revoke(&self, id: &str, owner_token: &str) -> bool {
         let url = format!("{}{KEYS_PATH}/{id}", self.base_url);
         match self.http.delete(&url).bearer_auth(owner_token).send().await {
             Ok(resp) if resp.status().is_success() => {
-                tracing::info!(key_id = %id, "reclaimed a session credential")
+                tracing::info!(key_id = %id, "reclaimed a session credential");
+                true
             }
             Ok(resp) => {
-                tracing::warn!(key_id = %id, status = %resp.status(), "could not reclaim a session credential")
+                tracing::warn!(key_id = %id, status = %resp.status(), "could not reclaim a session credential");
+                false
             }
             Err(e) => {
-                tracing::warn!(key_id = %id, error = %e, "could not reach the platform to reclaim")
+                tracing::warn!(key_id = %id, error = %e, "could not reach the platform to reclaim");
+                false
             }
         }
     }
@@ -494,10 +501,10 @@ mod tests {
     use std::sync::Arc;
 
     use axum::{
-        extract::State,
+        extract::{Path, State},
         http::{header::AUTHORIZATION, HeaderMap, StatusCode},
         response::IntoResponse,
-        routing::get,
+        routing::{delete, get},
         Json, Router,
     };
 
@@ -544,8 +551,82 @@ mod tests {
         (base, server)
     }
 
+    async fn delete_key(
+        State(status): State<StatusCode>,
+        Path(id): Path<String>,
+        headers: HeaderMap,
+    ) -> StatusCode {
+        assert_eq!(id, "key-under-test");
+        assert_eq!(
+            headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        status
+    }
+
+    async fn revocation_platform(status: StatusCode) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/api/v1/api-keys/{id}", delete(delete_key))
+            .with_state(status);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock identity platform");
+        let base = format!("http://{}", listener.local_addr().expect("mock address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock identity platform");
+        });
+        (base, server)
+    }
+
+    async fn closed_local_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("reserve a local address");
+        let url = format!(
+            "http://{}",
+            listener.local_addr().expect("reserved address")
+        );
+        drop(listener);
+        url
+    }
+
     fn issuer(base: &str) -> KeyIssuer {
         KeyIssuer::new(reqwest::Client::new(), base, "production")
+    }
+
+    #[tokio::test]
+    async fn a_successful_revoke_reports_success() {
+        let (base, server) = revocation_platform(StatusCode::NO_CONTENT).await;
+
+        assert!(issuer(&base).revoke("key-under-test", "owner-access").await);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_not_found_revoke_reports_failure() {
+        let (base, server) = revocation_platform(StatusCode::NOT_FOUND).await;
+
+        assert!(!issuer(&base).revoke("key-under-test", "owner-access").await);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_refused_revoke_reports_failure() {
+        let (base, server) = revocation_platform(StatusCode::SERVICE_UNAVAILABLE).await;
+
+        assert!(!issuer(&base).revoke("key-under-test", "owner-access").await);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_revoke_reports_failure() {
+        let base = closed_local_url().await;
+
+        assert!(!issuer(&base).revoke("key-under-test", "owner-access").await);
     }
 
     #[test]
