@@ -106,7 +106,6 @@ impl RegistrySkill {
 
 #[derive(Debug, serde::Deserialize)]
 struct SearchPage {
-    #[serde(default)]
     items: Vec<RegistrySkill>,
     #[serde(default)]
     meta: Option<SearchMeta>,
