@@ -376,7 +376,7 @@ async fn input_after_process_exit_cannot_cancel_its_reported_ending() {
         .send(tokio_tungstenite::tungstenite::Message::Binary(
             lanes::frame(
                 LANE_TERMINAL,
-                b"head -c 16777216 /dev/zero; printf late-final-output; exit 31\n",
+                b"head -c 16777216 /dev/zero; printf late-; printf final-output; exit 31\n",
             ),
         ))
         .await
