@@ -32,12 +32,20 @@ const PROFILES = [
   agent: {
     kernel: 'codex',
     mode: 'conversation',
+    model: null,
     reasoning_effort: 'high',
     permission: 'guarded',
     credential: 'delegated',
+    size: { cpu_millis: 1000, memory_mib: 2048 },
+    record_tool_bodies: false,
+    skills: [],
   },
+  nyxid: { services: [] },
+  agent_notes: '',
+  mandatory: { packages: [], skills: [] },
   created_at: '2026-08-19T18:45:39Z',
   updated_at: '2026-08-19T18:45:39Z',
+  preferred: false,
 }));
 
 /** Two sessions, so the rail has rows to choose between. */
@@ -89,7 +97,7 @@ async function stub(page) {
     if (path === '/api/v1/kernels') {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
     }
-    if (path === '/api/v1/environment-profiles') return void json({ profiles: PROFILES });
+    if (path === '/api/v1/environment-profiles') return void json(PROFILES);
     if (path.endsWith('/events')) {
       return void request.respond({ status: 200, contentType: 'text/event-stream', body: ':\n\n' });
     }
