@@ -403,8 +403,13 @@ impl SessionLog {
                         )
                         .await
                         .map(|()| *record);
-                    if result.is_err() && !events.is_empty() {
-                        self.abandon_sequence_reservation(events.len());
+                    if result.is_err() {
+                        if !events.is_empty() {
+                            self.abandon_sequence_reservation(events.len());
+                        }
+                        if matches!(mode, CommitMode::UpdateInheriting) {
+                            self.rebuild_local_lineage();
+                        }
                     }
                     if let Some(complete) = reporter.complete.take() {
                         if let Err(Err(error)) = complete.send(result) {
@@ -662,6 +667,49 @@ impl SessionLog {
         {
             local_tail.session.last_seq = tail;
         }
+    }
+
+    /// Remove a failed inheriting proposal from every queued predecessor.
+    ///
+    /// `local_tail` advances when work is enqueued so successors can describe
+    /// their changes without waiting for I/O. If one of those writes is
+    /// explicitly rejected, retaining its intended record would make later
+    /// proposals conflict with state that never existed. Rebuild the queued
+    /// lineage from the latest durable record while holding the same lane lock
+    /// used for enqueueing.
+    fn rebuild_local_lineage(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut local_tail = state.durable.clone();
+        for operation in &mut state.queued {
+            match operation {
+                PendingOperation::Commit {
+                    mode: CommitMode::UpdateInheriting,
+                    record,
+                    change,
+                    events,
+                    ..
+                } => {
+                    let Some(before) = local_tail.take() else {
+                        *change = None;
+                        local_tail = Some(record.clone());
+                        continue;
+                    };
+                    let fields = change
+                        .as_deref()
+                        .map_or_else(|| RecordFields::for_events(events), |change| change.fields);
+                    let rebuilt = Box::new(RecordChange { before, fields });
+                    local_tail = Some(Box::new(rebuilt.next_local_tail(record)));
+                    *change = Some(rebuilt);
+                }
+                PendingOperation::ObserveRecord(record) => {
+                    local_tail = Some(record.clone());
+                }
+                PendingOperation::Commit { .. } | PendingOperation::Delete { .. } => {}
+                #[cfg(test)]
+                PendingOperation::ObserveRevision(_) => {}
+            }
+        }
+        state.local_tail = local_tail;
     }
 
     async fn rebase_conflicted_write(
