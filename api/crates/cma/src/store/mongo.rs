@@ -5,6 +5,8 @@
 //! is what makes the per-session sequence a guarantee rather than a hope: a
 //! duplicate sequence is rejected by the database, not merely unlikely.
 
+use std::{future::Future, time::Duration};
+
 use futures_util::TryStreamExt;
 use layer2_core::{
     store::{SessionRecord, SessionStore, StoreError},
@@ -13,13 +15,14 @@ use layer2_core::{
 };
 use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReplaceOptions};
-use mongodb::{Client, Collection, IndexModel};
+use mongodb::{Client, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
 
 use super::event_doc;
 
 const SESSIONS: &str = "sessions";
 const EVENTS: &str = "session_events";
+const STORE_PING_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A granted skill as it is stored.
 ///
@@ -163,6 +166,7 @@ struct SessionDoc {
 /// and telling a newer vocabulary apart from real corruption is exactly the
 /// decision `event_doc` exists to make.
 pub struct MongoSessionStore {
+    database: Database,
     sessions: Collection<SessionDoc>,
     events: Collection<Document>,
 }
@@ -178,6 +182,7 @@ impl MongoSessionStore {
         let store = Self {
             sessions: db.collection(SESSIONS),
             events: db.collection(EVENTS),
+            database: db,
         };
         store.ensure_indexes().await?;
         tracing::info!(database, "session store ready");
@@ -214,6 +219,26 @@ impl MongoSessionStore {
             .await
             .map_err(|e| StoreError::Unavailable(format!("session status index: {e}")))?;
         Ok(())
+    }
+}
+
+async fn bounded_ping(
+    ping: impl Future<Output = mongodb::error::Result<Document>> + Send + 'static,
+    timeout: Duration,
+) -> Result<(), StoreError> {
+    // MongoDB driver futures must be polled to completion. Timing out the
+    // JoinHandle detaches the task instead of cancelling the driver operation.
+    let ping = tokio::spawn(ping);
+    match tokio::time::timeout(timeout, ping).await {
+        Ok(Ok(Ok(_))) => Ok(()),
+        Ok(Ok(Err(error))) => Err(StoreError::Unavailable(format!("ping: {error}"))),
+        Ok(Err(error)) => Err(StoreError::Unavailable(format!(
+            "ping task failed: {error}"
+        ))),
+        Err(_) => Err(StoreError::Unavailable(format!(
+            "ping timed out after {} ms",
+            timeout.as_millis()
+        ))),
     }
 }
 
@@ -473,6 +498,15 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
 
 #[async_trait::async_trait]
 impl SessionStore for MongoSessionStore {
+    async fn ping(&self) -> Result<(), StoreError> {
+        let database = self.database.clone();
+        bounded_ping(
+            async move { database.run_command(doc! { "ping": 1_i32 }).await },
+            STORE_PING_TIMEOUT,
+        )
+        .await
+    }
+
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         let doc = to_doc(record)?;
         self.sessions
