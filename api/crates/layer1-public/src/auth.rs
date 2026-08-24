@@ -140,6 +140,27 @@ impl IntoResponse for NotAuthenticated {
     }
 }
 
+/// The service could not establish identity because its durable store failed.
+///
+/// Deliberately distinct from [`NotAuthenticated`]: retrying a bad credential
+/// does not help, while retrying after a store outage is exactly the remedy.
+#[derive(Debug)]
+pub struct StoreUnavailable;
+
+impl IntoResponse for StoreUnavailable {
+    fn into_response(self) -> Response {
+        let status = StatusCode::SERVICE_UNAVAILABLE;
+        let mut body = problem_document(
+            status,
+            "store-failed",
+            "The service could not read or write its durable authentication state.",
+            "store_failed",
+        );
+        body["title"] = "Store unavailable".into();
+        problem_response(status, body)
+    }
+}
+
 impl<S> FromRequestParts<S> for AuthenticatedSubject
 where
     S: Send + Sync,
@@ -215,5 +236,26 @@ mod tests {
         )
         .expect("the problem document is json");
         assert_eq!(body["code"], "not_authenticated");
+    }
+
+    #[tokio::test]
+    async fn a_store_outage_is_a_retryable_typed_503() {
+        let response = StoreUnavailable.into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                "application/problem+json"
+            ))
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("problem documents are small"),
+        )
+        .expect("the problem document is json");
+        assert_eq!(body["status"], 503);
+        assert_eq!(body["code"], "store_failed");
+        assert!(body["type"].as_str().unwrap().ends_with("/store-failed"));
     }
 }
