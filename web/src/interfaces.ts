@@ -1,4 +1,4 @@
-/** A public interface exposed by the chrono-bot control plane. */
+/** A public interface exposed by the CMA control plane. */
 export interface PublicInterface {
   readonly id: string;
   readonly priority: number;

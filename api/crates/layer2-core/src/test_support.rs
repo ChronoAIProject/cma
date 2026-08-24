@@ -19,6 +19,7 @@ use crate::service::{ScreenFactory, SessionService};
 use crate::session::SessionSpec;
 use crate::store::{SessionRecord, SessionStore, StoreError};
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
+use crate::Reserved;
 
 /// A store held in memory, shared between service instances by `Arc`.
 ///
@@ -82,6 +83,17 @@ impl SessionStore for FakeStore {
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
         self.guard().await?;
         Ok(self.sessions.lock().await.values().cloned().collect())
+    }
+
+    async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
+        self.guard().await?;
+        let mut reserved = Reserved::default();
+        for record in self.sessions.lock().await.values() {
+            if record.session.status.wants_runtime() {
+                reserved.include(record.session.options.size);
+            }
+        }
+        Ok(reserved)
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {

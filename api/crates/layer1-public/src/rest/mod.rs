@@ -21,6 +21,7 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 
 mod allowance;
+mod deployment_capacity;
 mod events;
 mod operate;
 mod problems;
@@ -34,16 +35,16 @@ use crate::tickets::TerminalTickets;
 use crate::{InterfaceProfile, Operation};
 
 /// Base URI for problem types this interface returns.
-pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/problems";
+pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/problems";
 
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core",
-    "https://spec.chrono-ai.fun/chrono-bot/1.0/conf/terminal",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
 ];
 
 /// Where every conformance class this service declares is rooted.
-const CONF_BASE: &str = "https://spec.chrono-ai.fun/chrono-bot/1.0/conf";
+const CONF_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/conf";
 
 /// The classes one session satisfies, given what it was granted.
 ///
@@ -310,6 +311,14 @@ pub struct SessionView {
     /// omitted rather than inviting a client to draw a free session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pricing: Option<SessionPricingView>,
+}
+
+/// A rendered terminal screen on the REST wire.
+#[derive(Debug, Serialize)]
+struct ScreenView {
+    cols: u16,
+    rows: u16,
+    lines: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1064,13 +1073,13 @@ async fn screen(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, Problem> {
+) -> Result<Json<ScreenView>, Problem> {
     let snapshot = service.screen_snapshot(&caller, &SessionId(id)).await?;
-    Ok(Json(serde_json::json!({
-        "cols": snapshot.geometry.columns(),
-        "rows": snapshot.geometry.rows(),
-        "lines": snapshot.rows,
-    })))
+    Ok(Json(ScreenView {
+        cols: snapshot.geometry.columns(),
+        rows: snapshot.geometry.rows(),
+        lines: snapshot.rows,
+    }))
 }
 
 async fn conformance() -> Json<serde_json::Value> {

@@ -137,9 +137,9 @@ describe('reading what a session was granted', () => {
     // this session steer" instead of trying and handling a refusal.
     const capabilities = toCapabilities({
       conforms_to: [
-        'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/core',
-        'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/conversation',
-        'https://spec.chrono-ai.fun/chrono-bot/1.0/conf/usage',
+        'https://spec.chrono-ai.fun/cma/1.0/conf/core',
+        'https://spec.chrono-ai.fun/cma/1.0/conf/conversation',
+        'https://spec.chrono-ai.fun/cma/1.0/conf/usage',
       ],
       concurrent_input: 'enqueue',
     });
@@ -179,8 +179,8 @@ describe('reading what a session was granted', () => {
       ?.name;
 
     expect(className).toBe('resources');
-    const conformsTo = `https://spec.chrono-ai.fun/chrono-bot/1.0/conf/${String(className)}`;
-    expect(conformsTo).toBe('https://spec.chrono-ai.fun/chrono-bot/1.0/conf/resources');
+    const conformsTo = `https://spec.chrono-ai.fun/cma/1.0/conf/${String(className)}`;
+    expect(conformsTo).toBe('https://spec.chrono-ai.fun/cma/1.0/conf/resources');
     expect(toCapabilities({ conforms_to: [conformsTo] }).resources).toBe(true);
   });
 });

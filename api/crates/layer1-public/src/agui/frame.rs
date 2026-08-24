@@ -38,7 +38,7 @@ pub(super) struct AguiEvent {
     /// real position is skipped. Making the field an `Option` is what stops
     /// that being a rule somebody has to remember.
     ///
-    /// Its **absence** is stated on the wire as `chrono:live`, because a
+    /// Its **absence** is stated on the wire as `cma:live`, because a
     /// client cannot otherwise see it. `EventSource` reports `lastEventId` as
     /// the last id it was *given*, so a frame sent without one is
     /// indistinguishable from a frame repeating the previous id — and a client
@@ -49,7 +49,7 @@ pub(super) struct AguiEvent {
     /// position, which is the opposite hazard. It is written from this one
     /// field, so the two cannot come to disagree.
     #[serde(
-        rename = "chrono:live",
+        rename = "cma:live",
         serialize_with = "mark_live",
         skip_serializing_if = "Option::is_some"
     )]

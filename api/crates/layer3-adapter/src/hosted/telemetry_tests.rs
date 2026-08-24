@@ -25,6 +25,23 @@ fn frame(uptime_ms: u64) -> supervisor::ResourceFrame {
     }
 }
 
+fn empty_frame(uptime_ms: u64) -> supervisor::ResourceFrame {
+    supervisor::ResourceFrame {
+        uptime_ms,
+        cpu_usage_usec: None,
+        cpu_millis_limit: None,
+        memory_bytes_used: None,
+        memory_bytes_limit: None,
+        memory_bytes_peak: None,
+        stall_permille: None,
+        ceiling_hits: None,
+        allocation_failures: None,
+        kills: None,
+        received_bytes: None,
+        sent_bytes: None,
+    }
+}
+
 #[test]
 fn a_first_frame_carries_levels_and_no_rates() {
     let now = frame(2_000);
@@ -353,8 +370,9 @@ async fn readiness_without_resources_is_refused_before_an_upgrade() {
 }
 
 #[tokio::test]
-async fn a_watch_uses_only_its_query_and_skips_frames_it_cannot_read() {
+async fn a_watch_uses_only_its_query_and_skips_frames_it_cannot_use() {
     let first = frame(1_000);
+    let empty = empty_frame(2_000);
     let mut second = frame(3_000);
     second.cpu_usage_usec = Some(first.cpu_usage_usec.expect("cpu") + 1_000_000);
     second.received_bytes = Some(first.received_bytes.expect("received") + 4_000);
@@ -368,6 +386,7 @@ async fn a_watch_uses_only_its_query_and_skips_frames_it_cannot_read() {
         Message::Binary(supervisor::frame(supervisor::LANE_TERMINAL, b"screen")),
         Message::Binary(supervisor::frame(supervisor::LANE_TELEMETRY, b"not-json")),
         reading(&first),
+        reading(&empty),
         reading(&second),
         reading(&third),
         reading(&fourth),
@@ -421,6 +440,25 @@ async fn a_watch_uses_only_its_query_and_skips_frames_it_cannot_read() {
         runtime.disconnected,
         "dropping the receiver ended the relay"
     );
+}
+
+#[tokio::test]
+async fn an_uptime_only_first_frame_settles_the_runtime_as_unreported() {
+    let fixture = fixture(
+        serde_json::json!({ "resources": true }),
+        LinkScript::Messages(vec![declaration(), reading(&empty_frame(1_000))]),
+    )
+    .await;
+    let kernel = hosted(&fixture.provider_base, Some(2_000));
+    let error = kernel
+        .watch_resources(&RuntimeHandle("sbx-1".into()), mpsc::channel(1).0)
+        .await
+        .expect_err("an empty reading is not a resource capability");
+    assert!(matches!(error, AdapterError::Unsupported(_)));
+
+    let (_, runtime) = fixture.finish().await;
+    assert!(runtime.link_uri.is_some());
+    assert!(runtime.disconnected, "the misleading link was closed");
 }
 
 #[tokio::test]

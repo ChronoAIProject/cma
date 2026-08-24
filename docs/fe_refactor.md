@@ -344,7 +344,7 @@ Issues 2 and PR 2 touch every surface. Land them early and alone.
 
 # Web Style
 
-**This document is the single source of truth for all chrono-bot frontend design and style.**
+**This document is the single source of truth for all CMA (ChronoAI Managed Agent) frontend design and style.**
 
 No colour, spacing value, type scale step, radius, component pattern, or interaction rule may be
 introduced in `web/` unless it appears here. If a design need is not covered, extend this document
@@ -906,7 +906,7 @@ SVG and no asset, survives a 16px favicon, and prints in one colour. The gap sca
 8px at 96, 4px at 40, 2px at 18, 1px at 16. The quiet cells take `--rule-3` and the lit cell takes
 `--accent`.
 
-The wordmark is Figtree 600 at `--track-tight`, lowercase. `chrono-bot` in mono stays for anything
+The wordmark is Figtree 600 at `--track-tight`, lowercase. `cma` in mono stays for anything
 naming the repository or the API.
 
 ---
@@ -921,7 +921,7 @@ been drawn as scrollback has thrown away the thing this plane was built to obtai
 **A reading column, 760px, centred**, with `--space-8` between turns. The two roles are told apart by
 shape as well as ink, which is the change from the previous revision's undifferentiated bands:
 
-- **The agent's turn is full width and unboxed.** An eyebrow — a `--live` dot, then `CHRONOBOT ·
+- **The agent's turn is full width and unboxed.** An eyebrow — a `--live` dot, then `CMA ·
   <kernel>` in mono `--text-label` uppercase — then its words at `--text-read` in `--ink` at
   `--leading-read`. The agent's words are the ones being read, and they get the whole column.
 - **The owner's turn is a block, right-aligned**, at `--text-body` in `--ink` on `--inset`, max 78% of

@@ -12,7 +12,7 @@
  */
 
 import { headersFor, urlOf, type ResolvedConfig } from './config';
-import { ApiError, CapabilityRefused, SessionLimitReached } from './errors';
+import { ApiError, CapabilityRefused, DeploymentAtCapacity, SessionLimitReached } from './errors';
 
 /** What a caller may vary about one request. */
 export interface RequestOptions {
@@ -72,6 +72,7 @@ export async function request(
  */
 const CAPABILITY_UNSUPPORTED = 'capability_unsupported';
 const SESSION_LIMIT_REACHED = 'session_limit_reached';
+const DEPLOYMENT_AT_CAPACITY = 'deployment_at_capacity';
 
 /**
  * Turn a failed response into the most specific error it justifies.
@@ -88,6 +89,10 @@ async function failureOf(response: Response): Promise<ApiError> {
   let capability: string | undefined;
   let limit: number | undefined;
   let live: number | undefined;
+  let requestedCpuMillis: number | undefined;
+  let requestedMemoryMib: number | undefined;
+  let freeCpuMillis: number | undefined;
+  let freeMemoryMib: number | undefined;
   try {
     const body = (await response.json()) as {
       detail?: unknown;
@@ -96,6 +101,10 @@ async function failureOf(response: Response): Promise<ApiError> {
       capability?: unknown;
       limit?: unknown;
       live?: unknown;
+      requested_cpu_millis?: unknown;
+      requested_memory_mib?: unknown;
+      free_cpu_millis?: unknown;
+      free_memory_mib?: unknown;
     };
     const text = body?.detail ?? body?.title;
     if (typeof text === 'string' && text !== '') {
@@ -113,6 +122,18 @@ async function failureOf(response: Response): Promise<ApiError> {
     if (isNonNegativeInteger(body?.live)) {
       live = body.live;
     }
+    if (isNonNegativeInteger(body?.requested_cpu_millis)) {
+      requestedCpuMillis = body.requested_cpu_millis;
+    }
+    if (isNonNegativeInteger(body?.requested_memory_mib)) {
+      requestedMemoryMib = body.requested_memory_mib;
+    }
+    if (isNonNegativeInteger(body?.free_cpu_millis)) {
+      freeCpuMillis = body.free_cpu_millis;
+    }
+    if (isNonNegativeInteger(body?.free_memory_mib)) {
+      freeMemoryMib = body.free_memory_mib;
+    }
   } catch {
     // A body that is not a problem document tells us nothing the status line
     // did not already, and failing to parse it is not itself worth reporting.
@@ -122,6 +143,16 @@ async function failureOf(response: Response): Promise<ApiError> {
   }
   if (code === SESSION_LIMIT_REACHED) {
     return new SessionLimitReached(response.status, detail, limit, live);
+  }
+  if (code === DEPLOYMENT_AT_CAPACITY) {
+    return new DeploymentAtCapacity(
+      response.status,
+      detail,
+      requestedCpuMillis,
+      requestedMemoryMib,
+      freeCpuMillis,
+      freeMemoryMib,
+    );
   }
   return new ApiError(response.status, detail, code);
 }
