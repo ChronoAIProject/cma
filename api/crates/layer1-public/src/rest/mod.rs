@@ -622,9 +622,10 @@ async fn reached(
 
 /// Name the skills each session was given, as far as the catalogue can say.
 ///
-/// One lookup for the whole page, for the reason its neighbours give. A
-/// catalogue that cannot be reached costs the names and not the answer: the
-/// identifiers were already on the view, and they are still true.
+/// One targeted lookup per distinct grant on the whole page, rather than one
+/// full catalogue walk per row. A catalogue that cannot be reached costs the
+/// names and not the answer: the identifiers were already on the view, and
+/// they are still true.
 ///
 /// Nothing here is asked unless some session actually carries a skill, so the
 /// common case of a page of sessions with none costs no registry call at all.
@@ -641,6 +642,22 @@ async fn skilled(
         return;
     }
 
+    // Preserve first-seen order while deduplicating the whole rendered page.
+    // The adapter may issue one bounded detail read per entry, so duplicates
+    // here would otherwise become duplicate upstream calls.
+    let mut seen = std::collections::HashSet::new();
+    let mut requested = Vec::new();
+    for view in views.iter() {
+        let Some(skills) = view.agent.skills.as_ref() else {
+            continue;
+        };
+        for skill in skills {
+            if seen.insert(skill.id.clone()) {
+                requested.push(layer2_core::SkillId::new(skill.id.clone()));
+            }
+        }
+    }
+
     /*
      * Keyed by identifier AND by name, because a profile stores neither
      * consistently: the registry's own id is a GUID and what a profile holds
@@ -651,7 +668,7 @@ async fn skilled(
     let mut named: std::collections::HashMap<String, layer2_core::CatalogSkill> =
         std::collections::HashMap::new();
     for skill in environments
-        .available_skills(caller, credential)
+        .describe_skills(caller, credential, &requested)
         .await
         .unwrap_or_default()
     {
@@ -1459,3 +1476,7 @@ async fn kernels(
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "skill_description_tests.rs"]
+mod skill_description_tests;
