@@ -517,6 +517,202 @@ fn protocol_validators_require_the_current_marker_and_session_revision() {
     }
 }
 
+fn test_collection_uuid(value: u8) -> Binary {
+    Binary {
+        subtype: mongodb::bson::spec::BinarySubtype::Generic,
+        bytes: vec![value],
+    }
+}
+
+fn exact_collection_contract(collection: &str, uuid: Binary) -> CollectionContract {
+    CollectionContract {
+        kind: NamespaceKind::Collection,
+        validator: expected_validator(collection),
+        validation_level: Some(ValidationLevel::Strict),
+        validation_action: Some(ValidationAction::Error),
+        uuid: Some(uuid),
+    }
+}
+
+#[test]
+fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types() {
+    let reordered = doc! {
+        "$jsonSchema": {
+            "properties": {
+                "revision": { "bsonType": "long" },
+                WRITE_PROTOCOL_FIELD: {
+                    "enum": [WRITE_PROTOCOL],
+                    "bsonType": "int",
+                },
+            },
+            "required": [WRITE_PROTOCOL_FIELD, "revision"],
+            "bsonType": "object",
+        }
+    };
+    assert!(documents_equivalent(
+        &session_protocol_validator(),
+        &reordered
+    ));
+    let uuid = test_collection_uuid(0);
+    let mut contract = exact_collection_contract(SESSIONS, uuid.clone());
+    contract.validator = Some(reordered);
+    validate_collection_contract(SESSIONS, &contract, Some(&uuid))
+        .expect("document ordering does not weaken an exact validator");
+
+    let reversed_array = doc! {
+        "$jsonSchema": {
+            "properties": {
+                WRITE_PROTOCOL_FIELD: {
+                    "bsonType": "int",
+                    "enum": [WRITE_PROTOCOL],
+                },
+                "revision": { "bsonType": "long" },
+            },
+            "required": ["revision", WRITE_PROTOCOL_FIELD],
+            "bsonType": "object",
+        }
+    };
+    assert!(!documents_equivalent(
+        &session_protocol_validator(),
+        &reversed_array
+    ));
+
+    let wrong_bson_type = doc! {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [WRITE_PROTOCOL_FIELD, "revision"],
+            "properties": {
+                WRITE_PROTOCOL_FIELD: {
+                    "bsonType": "int",
+                    "enum": [i64::from(WRITE_PROTOCOL)],
+                },
+                "revision": { "bsonType": "long" },
+            },
+        }
+    };
+    assert!(!documents_equivalent(
+        &session_protocol_validator(),
+        &wrong_bson_type
+    ));
+}
+
+#[test]
+fn validator_contract_rejects_missing_and_additional_clauses() {
+    let uuid = test_collection_uuid(1);
+    let mut missing = session_protocol_validator();
+    missing
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .remove("required");
+    let mut contract = exact_collection_contract(SESSIONS, uuid.clone());
+    contract.validator = Some(missing);
+    assert!(validate_collection_contract(SESSIONS, &contract, Some(&uuid)).is_err());
+
+    let mut additional = session_protocol_validator();
+    additional
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .insert("additionalProperties", false);
+    contract.validator = Some(additional);
+    assert!(validate_collection_contract(SESSIONS, &contract, Some(&uuid)).is_err());
+}
+
+#[test]
+fn validator_contract_rejects_level_and_action_weakening() {
+    let uuid = test_collection_uuid(2);
+    let mut contract = exact_collection_contract(EVENTS, uuid.clone());
+    contract.validation_level = Some(ValidationLevel::Moderate);
+    assert!(validate_collection_contract(EVENTS, &contract, Some(&uuid)).is_err());
+
+    contract = exact_collection_contract(EVENTS, uuid.clone());
+    contract.validation_action = Some(ValidationAction::Warn);
+    assert!(validate_collection_contract(EVENTS, &contract, Some(&uuid)).is_err());
+}
+
+#[test]
+fn collection_uuid_replacement_is_rejected_even_with_the_exact_contract() {
+    let original = test_collection_uuid(3);
+    let replacement = test_collection_uuid(4);
+    let contract = exact_collection_contract(WRITES, replacement);
+    let error = validate_collection_contract(WRITES, &contract, Some(&original))
+        .expect_err("a recreated authoritative collection is not the startup collection");
+    assert!(error.to_string().contains("replaced after startup"));
+}
+
+fn required_event_index() -> RequiredIndex {
+    required_indexes()
+        .into_iter()
+        .find(|required| required.collection == EVENTS)
+        .expect("the event sequence index is required")
+}
+
+#[test]
+fn exact_required_index_is_accepted_but_a_missing_one_is_rejected() {
+    let required = required_event_index();
+    let exact = required_index_model(&required);
+    validate_required_index(&required, &[exact]).expect("the exact index is ready");
+    assert!(validate_required_index(&required, &[]).is_err());
+}
+
+#[test]
+fn event_sequence_index_cannot_be_changed_to_nonunique() {
+    let required = required_event_index();
+    let mut nonunique = required_index_model(&required);
+    nonunique.options.as_mut().unwrap().unique = Some(false);
+    let error = validate_required_index(&required, &[nonunique])
+        .expect_err("duplicate sequence positions would become possible");
+    assert!(error.to_string().contains("exact key and constraint"));
+}
+
+#[test]
+fn required_indexes_reject_sparse_partial_hidden_ttl_and_collated_variants() {
+    let required = required_event_index();
+
+    let mut sparse = required_index_model(&required);
+    sparse.options.as_mut().unwrap().sparse = Some(true);
+    let mut partial = required_index_model(&required);
+    partial.options.as_mut().unwrap().partial_filter_expression =
+        Some(doc! { "seq": { "$gt": 0 } });
+    let mut hidden = required_index_model(&required);
+    hidden.options.as_mut().unwrap().hidden = Some(true);
+    let mut ttl = required_index_model(&required);
+    ttl.options.as_mut().unwrap().expire_after = Some(Duration::from_secs(60));
+    let mut collated = required_index_model(&required);
+    collated.options = Some(
+        mongodb::bson::deserialize_from_document(doc! {
+            "name": required.name,
+            "unique": true,
+            "collation": { "locale": "en" },
+        })
+        .expect("the driver's index options decode a collation"),
+    );
+
+    for weakened in [sparse, partial, hidden, ttl, collated] {
+        assert!(validate_required_index(&required, &[weakened]).is_err());
+    }
+}
+
+#[test]
+fn required_index_name_and_compound_key_order_are_exact() {
+    let required = required_event_index();
+    let mut wrong_name = required_index_model(&required);
+    wrong_name.options.as_mut().unwrap().name = Some("events_by_position".into());
+    assert!(validate_required_index(&required, &[wrong_name]).is_err());
+
+    let mut wrong_order = required_index_model(&required);
+    wrong_order.keys = doc! { "seq": 1, "session_id": 1 };
+    assert!(validate_required_index(&required, &[wrong_order]).is_err());
+}
+
+#[test]
+fn namespace_mutation_authorization_requires_a_transaction_qualification_token() {
+    let qualification = TransactionQualified;
+    assert_eq!(
+        qualification.authorize(NamespaceAction::RenameLegacy),
+        NamespaceAction::RenameLegacy
+    );
+}
+
 #[test]
 fn current_session_documents_carry_the_write_protocol() {
     let stored = to_doc(&record_with(None)).expect("record encodes");
@@ -596,6 +792,80 @@ fn post_fence_event_validation_detects_internal_and_initial_gaps() {
 }
 
 #[test]
+fn history_snapshots_reject_tail_regression_and_untombstoned_deletion() {
+    let previous = HistorySnapshot {
+        tombstones: HashSet::new(),
+        session_tails: BTreeMap::from([("s-1".into(), 3)]),
+        event_tails: BTreeMap::from([("s-1".into(), 3)]),
+    };
+
+    let lower_record = HistorySnapshot {
+        session_tails: BTreeMap::from([("s-1".into(), 2)]),
+        ..previous.clone()
+    };
+    assert!(validate_history_progress(&previous, &lower_record).is_err());
+
+    let lower_events = HistorySnapshot {
+        event_tails: BTreeMap::from([("s-1".into(), 2)]),
+        ..previous.clone()
+    };
+    assert!(validate_history_progress(&previous, &lower_events).is_err());
+
+    assert!(validate_history_progress(&previous, &HistorySnapshot::default()).is_err());
+}
+
+#[test]
+fn history_snapshots_allow_only_tombstoned_deletion_and_never_tombstone_loss() {
+    let previous = HistorySnapshot {
+        tombstones: HashSet::from(["already-deleted".into()]),
+        session_tails: BTreeMap::from([("s-1".into(), 3)]),
+        event_tails: BTreeMap::from([("s-1".into(), 3)]),
+    };
+    let deleted = HistorySnapshot {
+        tombstones: HashSet::from(["already-deleted".into(), "s-1".into()]),
+        ..HistorySnapshot::default()
+    };
+    validate_history_progress(&previous, &deleted)
+        .expect("a permanent tombstone authorizes removing the record and history");
+
+    let lost_tombstone = HistorySnapshot {
+        tombstones: HashSet::from(["s-1".into()]),
+        ..HistorySnapshot::default()
+    };
+    assert!(validate_history_progress(&previous, &lost_tombstone).is_err());
+}
+
+#[test]
+fn cached_audit_failure_keeps_readiness_closed_until_a_successful_reaudit() {
+    let checked_at = Instant::now();
+    let mut audit = IntegrityAudit::default();
+    audit.record_success(checked_at, HistorySnapshot::default());
+    audit.record_failure(
+        checked_at + Duration::from_secs(1),
+        StoreError::Malformed("first audit failure".into()),
+    );
+    audit.record_failure(
+        checked_at + Duration::from_secs(2),
+        StoreError::Malformed("later audit failure".into()),
+    );
+
+    let cached = audit
+        .cached_result(checked_at + Duration::from_secs(3))
+        .expect("the failed audit is still fresh")
+        .expect_err("readiness remains closed");
+    assert!(cached.to_string().contains("first audit failure"));
+
+    audit.record_success(
+        checked_at + Duration::from_secs(4),
+        HistorySnapshot::default(),
+    );
+    audit
+        .cached_result(checked_at + Duration::from_secs(5))
+        .expect("the successful re-audit is cached")
+        .expect("a successful re-audit reopens readiness");
+}
+
+#[test]
 fn post_fence_session_validation_allows_legacy_revision_zero_but_not_bad_tails() {
     let stored = to_doc(&record_with(None)).unwrap();
     let mut legacy = mongodb::bson::serialize_to_document(&stored).unwrap();
@@ -612,7 +882,11 @@ fn post_fence_session_validation_allows_legacy_revision_zero_but_not_bad_tails()
 
 #[test]
 fn reservation_query_has_a_status_index() {
-    let index = reservation_status_index();
+    let required = required_indexes()
+        .into_iter()
+        .find(|required| required.name == "status_1")
+        .expect("the reservation status index is required");
+    let index = required_index_model(&required);
     assert_eq!(index.keys, doc! { "status": 1 });
     assert_eq!(
         index.options.and_then(|options| options.name),
