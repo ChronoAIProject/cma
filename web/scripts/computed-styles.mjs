@@ -15,7 +15,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { open, settle, visit } from './browser.mjs';
+import { open, ready, visit } from './browser.mjs';
 
 const PORT = 4318;
 const DIST = 'dist/assets';
@@ -194,96 +194,143 @@ async function errorSurface(page, port) {
   return problems;
 }
 
-/**
- * Is the brand mark whole, and does it fit the box that crops it?
- *
- * Two defects shipped here in one day, and neither was visible to jsdom or to
- * any of the checks above.
- *
- * The mark carries its own `prefers-reduced-motion` block. Loaded through an
- * `<img>` that block does not take effect, and the base rules stay frozen —
- * the strokes at `stroke-dashoffset: 100`, the lenses at `opacity: 0` — so a
- * visitor who asked for less motion was shown the arc alone.
- *
- * The crop was then written from `getBoundingClientRect`, which reports fill
- * bounds and excludes stroke, so it sheared six units off an eleven-unit
- * stroke and left the crown of the arc a flat line.
- *
- * Both are geometry and paint, which is why they need a browser to see.
- */
-async function brandMark(page, port) {
+/** The live character must paint real transparent WebGL pixels at every layout and appearance. */
+async function characterScene(page, port) {
   const problems = [];
-  for (const reduce of [false, true]) {
+  const colours = new Map();
+  const modes = [
+    { label: 'desktop light', width: 1440, height: 900, dark: false, reduce: false },
+    { label: 'desktop dark', width: 1440, height: 900, dark: true, reduce: false },
+    { label: 'phone light', width: 390, height: 844, dark: false, reduce: false },
+    { label: 'phone dark', width: 390, height: 844, dark: true, reduce: false },
+    { label: 'reduced motion', width: 1440, height: 900, dark: false, reduce: true },
+  ];
+
+  for (const mode of modes) {
+    await page.setViewport({ width: mode.width, height: mode.height });
     await page.emulateMediaFeatures([
-      { name: 'prefers-reduced-motion', value: reduce ? 'reduce' : 'no-preference' },
+      { name: 'prefers-reduced-motion', value: mode.reduce ? 'reduce' : 'no-preference' },
     ]);
     await visit(page, port, 'networkidle0');
-    // Long enough for the entrance to finish when it is allowed to run at all.
-    await settle(2400);
-    const seen = await page.evaluate(() => {
-      const wrapper = document.querySelector('.landing__mark');
-      if (!wrapper) {
+    await ready(page, '.landing__character[data-ready] canvas', {
+      label: `${mode.label} character canvas`,
+    });
+    const seen = await page.evaluate(async (dark) => {
+      document.body.toggleAttribute('data-ds-dark-theme', dark);
+      const stage = document.querySelector('.landing__character');
+      const canvas = stage?.querySelector('canvas');
+      const fallback = stage?.querySelector('.landing__character-fallback');
+      const word = document.querySelector('.landing__word');
+      if (!(stage instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
         return { absent: true };
       }
-      /*
-       * Inline, not an <img>. The mark's own reduced-motion rules only take
-       * effect in the page's document — through an <img> they are inert and
-       * the mark renders as its arc alone. Nothing below can see inside an
-       * image either, so this must fail loudly rather than quietly pass.
-       */
-      const svg = wrapper.matches('svg') ? wrapper : wrapper.querySelector('svg');
-      if (!svg) {
-        return { notInline: wrapper.tagName.toLowerCase() };
+
+      const gl = canvas.getContext('webgl2');
+      if (gl === null) {
+        return { noContext: true };
       }
-      const parts = [...svg.querySelectorAll('.cma-arc, .cma-teeth, .cma-lens, .cma-bridge')];
-      const invisible = parts
-        .filter((el) => {
-          const style = getComputedStyle(el);
-          // A stroke fully offset draws nothing, and neither does zero opacity.
-          const offset = Number.parseFloat(style.strokeDashoffset) || 0;
-          return Number(style.opacity) < 0.5 || Math.abs(offset) > 1;
-        })
-        .map((el) => el.getAttribute('class'));
-      const wrap = wrapper.getBoundingClientRect();
-      const svgBox = svg.getBoundingClientRect();
-      // The viewBox is 100 units wide, so this maps units to CSS pixels. Half
-      // the widest stroke is added back because client rects exclude it.
-      const unit = svgBox.width / 100;
-      const arc = svg.querySelector('.cma-arc').getBoundingClientRect();
-      const paintedTop = arc.top - 5.5 * unit;
-      const paintedBottom = svgBox.top + 76.5 * unit;
+
+      const width = gl.drawingBufferWidth;
+      const height = gl.drawingBufferHeight;
+      const pixels = await new Promise((resolve) => {
+        // The scene's resize listener queues its render first. Sampling in the
+        // following callback reads that frame before the compositor clears a
+        // non-preserved WebGL buffer, including under reduced motion where the
+        // scene deliberately does not request another frame.
+        window.dispatchEvent(new Event('resize'));
+        requestAnimationFrame(() => {
+          const frame = new Uint8Array(width * height * 4);
+          gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+          resolve(frame);
+        });
+      });
+      let painted = 0;
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        const alpha = pixels[index + 3] ?? 0;
+        if (alpha <= 8) continue;
+        painted += 1;
+        red += pixels[index] ?? 0;
+        green += pixels[index + 1] ?? 0;
+        blue += pixels[index + 2] ?? 0;
+      }
+      const stageBox = stage.getBoundingClientRect();
+      const canvasBox = canvas.getBoundingClientRect();
+      const wordBox = word?.getBoundingClientRect();
+      const total = width * height;
       return {
-        missing: false,
-        invisible,
-        overflowTop: Math.round(wrap.top - paintedTop),
-        overflowBottom: Math.round(paintedBottom - wrap.bottom),
-        markWidth: Math.round(wrap.width),
+        absent: false,
+        paintedRatio: painted / total,
+        transparentRatio: (total - painted) / total,
+        colour: painted === 0 ? [0, 0, 0] : [red / painted, green / painted, blue / painted],
+        stageWidth: Math.round(stageBox.width),
+        stageHeight: Math.round(stageBox.height),
+        canvasWidth: Math.round(canvasBox.width),
+        canvasHeight: Math.round(canvasBox.height),
+        overlapsWord: wordBox === undefined ? true : stageBox.bottom > wordBox.top,
+        fallbackVisible:
+          fallback === null ? true : getComputedStyle(fallback).visibility !== 'hidden',
+        motion: stage.hasAttribute('data-motion'),
+        disabled: stage instanceof HTMLButtonElement && stage.disabled,
       };
-    });
-    const mode = reduce ? 'reduced motion' : 'normal motion';
+    }, mode.dark);
+
     if (seen.absent) {
-      problems.push(`${mode}: the landing has no brand mark`);
+      problems.push(`${mode.label}: the landing has no character canvas`);
       continue;
     }
-    if (seen.notInline !== undefined) {
-      problems.push(
-        `${mode}: the mark is a <${seen.notInline}> rather than inline SVG, so its ` +
-          `reduced-motion rules cannot take effect`,
-      );
+    if (seen.noContext) {
+      problems.push(`${mode.label}: the canvas has no WebGL2 context`);
       continue;
     }
-    if (seen.invisible.length > 0) {
-      problems.push(`${mode}: the mark is missing ${seen.invisible.join(', ')}`);
-    }
-    if (seen.overflowTop > 0) {
-      problems.push(`${mode}: the crop cuts ${String(seen.overflowTop)}px off the top of the mark`);
-    }
-    if (seen.overflowBottom > 0) {
+    if (seen.paintedRatio < 0.05) {
       problems.push(
-        `${mode}: the crop cuts ${String(seen.overflowBottom)}px off the bottom of the mark`,
+        `${mode.label}: only ${(seen.paintedRatio * 100).toFixed(1)}% of canvas pixels are painted`,
       );
     }
+    if (seen.transparentRatio < 0.25) {
+      problems.push(`${mode.label}: the character canvas is not meaningfully transparent`);
+    }
+    if (
+      Math.abs(seen.stageWidth - seen.stageHeight) > 1 ||
+      seen.stageWidth !== seen.canvasWidth ||
+      seen.stageHeight !== seen.canvasHeight
+    ) {
+      problems.push(
+        `${mode.label}: stage ${String(seen.stageWidth)}x${String(seen.stageHeight)} and canvas ` +
+          `${String(seen.canvasWidth)}x${String(seen.canvasHeight)} do not share one square`,
+      );
+    }
+    if (seen.overlapsWord) problems.push(`${mode.label}: the character overlaps the CMA wordmark`);
+    if (seen.fallbackVisible)
+      problems.push(`${mode.label}: the fallback remains over the live scene`);
+    if (mode.reduce && seen.motion) {
+      problems.push('reduced motion: the character still advertises an animated interaction');
+    }
+    if (mode.reduce && !seen.disabled) {
+      problems.push('reduced motion: the spin control remains enabled');
+    }
+    if (!mode.reduce && !seen.motion) {
+      problems.push(`${mode.label}: the live character lost its motion state`);
+    }
+    if (!mode.reduce && seen.disabled) {
+      problems.push(`${mode.label}: the live character spin control remains disabled`);
+    }
+    if (!mode.reduce && mode.width === 1440) colours.set(mode.dark ? 'dark' : 'light', seen.colour);
   }
+
+  const light = colours.get('light');
+  const dark = colours.get('dark');
+  if (light === undefined || dark === undefined) {
+    problems.push('character: the desktop appearance colours were not measured');
+  } else {
+    const distance = Math.hypot(light[0] - dark[0], light[1] - dark[1], light[2] - dark[2]);
+    if (distance < 30) problems.push('character: light and dark paint resolve to the same palette');
+  }
+
+  await page.setViewport({ width: 1440, height: 900 });
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
   return problems;
 }
@@ -357,7 +404,7 @@ async function main() {
 
     problems.push(...(await fills(page)));
     problems.push(...(await oneIndicator(page)));
-    problems.push(...(await brandMark(page, PORT)));
+    problems.push(...(await characterScene(page, PORT)));
     identity = 'unreachable';
     problems.push(...(await errorSurface(page, PORT)));
     identity = 'signedOut';
