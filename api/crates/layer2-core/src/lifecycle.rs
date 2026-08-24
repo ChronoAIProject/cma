@@ -5,13 +5,15 @@
 //! stops the runtime and leaves the session readable, deleting is the owner
 //! saying they are finished with it.
 
+use std::sync::Arc;
+
 use layer3_adapter::RuntimeHandle;
 
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{SessionId, SubjectId};
-use crate::log::append_with;
+use crate::log::{append_with, drop_undelivered, ignore_rejected};
 use crate::service::{store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::SessionRecord;
@@ -56,7 +58,7 @@ impl SessionService {
     /// the record is read, and entitlement to end *this* one once its owner is
     /// known.
     pub async fn terminate_session(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
     ) -> Result<(), CoreError> {
@@ -76,7 +78,7 @@ impl SessionService {
     /// Returns the subject whose work was ended, which the caller needs in
     /// order to write down whose it was.
     pub async fn terminate_any_session(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
     ) -> Result<SubjectId, CoreError> {
@@ -86,9 +88,13 @@ impl SessionService {
         self.end_session(caller, id).await
     }
 
-    async fn end_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
+    async fn end_session(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SubjectId, CoreError> {
         let lifecycle_gate = self.lifecycle_gates.gate(id);
-        let _lifecycle = lifecycle_gate.lock().await;
+        let lifecycle = lifecycle_gate.lock_owned().await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "terminate")?;
         let owner = record.session.owner.clone();
@@ -100,77 +106,88 @@ impl SessionService {
         // A live entry is the fast path; a record alone is the post-restart
         // path. Both must reach the same end state. The live proposal changes
         // no process state until its exact record/event unit is durable.
-        let live_commit = {
-            let mut entries = self.entries.write().await;
-            entries.get_mut(id).map(|entry| {
-                append_with(
-                    entry,
-                    EventKind::StatusChanged {
-                        status: SessionStatus::Terminated,
-                        stop_reason: Some(StopReason::UserTerminated),
-                        detail: None,
-                        capability: None,
-                    },
-                    |intended| {
-                        intended.session.status = SessionStatus::Terminated;
-                        intended.session.stop_reason = Some(StopReason::UserTerminated);
-                        intended.session.recovery_state = RecoveryState::Retired;
-                        intended.runtime_id = None;
-                    },
-                )
-            })
-        };
-
-        let runtime = match live_commit {
-            Some(commit) => {
-                let committed = match commit.committed().await {
-                    Ok(committed) => committed,
-                    Err(error) => {
-                        self.synchronize_live_tail(id).await;
-                        return Err(store_failed(error));
+        let mut entries = self.entries.write().await;
+        if let Some(entry) = entries.get_mut(id) {
+            let service = Arc::clone(self);
+            let session_id = id.clone();
+            let live_owner = owner.clone();
+            let live_adapter = adapter.clone();
+            let fallback_runtime = entry.runtime.clone();
+            let entry_screen = Arc::clone(&entry.screen);
+            let rejected_service = Arc::clone(self);
+            let rejected_id = id.clone();
+            let rejected_screen = Arc::clone(&entry_screen);
+            let commit = append_with(
+                entry,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Terminated,
+                    stop_reason: Some(StopReason::UserTerminated),
+                    detail: None,
+                    capability: None,
+                },
+                |intended| {
+                    intended.session.status = SessionStatus::Terminated;
+                    intended.session.stop_reason = Some(StopReason::UserTerminated);
+                    intended.session.recovery_state = RecoveryState::Retired;
+                    intended.runtime_id = None;
+                },
+                move |committed| async move {
+                    let current_runtime = {
+                        let mut entries = service.entries.write().await;
+                        entries
+                            .get_mut(&session_id)
+                            .filter(|entry| Arc::ptr_eq(&entry.screen, &entry_screen))
+                            .map(|entry| {
+                                entry.session.status = committed.session.status;
+                                entry.session.stop_reason = committed.session.stop_reason;
+                                entry.session.recovery_state = committed.session.recovery_state;
+                                entry.session.last_seq = committed.session.last_seq;
+                                let event_log = Arc::clone(&entry.event_log);
+                                event_log.synchronize_tail(&mut entry.session.last_seq);
+                                entry.input = None;
+                                entry.conversation = None;
+                                entry.runtime.take()
+                            })
+                    };
+                    let installed = current_runtime.is_some();
+                    let mut runtimes: Vec<RuntimeHandle> = fallback_runtime.into_iter().collect();
+                    if let Some(Some(current)) = current_runtime {
+                        if !runtimes.iter().any(|runtime| runtime.0 == current.0) {
+                            runtimes.push(current);
+                        }
                     }
-                };
-                let mut entries = self.entries.write().await;
-                let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
-                entry.session.status = committed.session.status;
-                entry.session.stop_reason = committed.session.stop_reason;
-                entry.session.recovery_state = committed.session.recovery_state;
-                entry.session.last_seq = committed.session.last_seq;
-                entry.input = None;
-                entry.conversation = None;
-                entry.runtime.take()
-            }
-            None => {
-                // No live entry: write the terminal state straight through, and
-                // reconstruct the runtime handle from what was persisted. The
-                // per-session lifecycle gate keeps a provisioner out of this
-                // installation boundary without blocking unrelated entries.
-                self.retire_record(&record).await?;
-                record.runtime_id.clone().map(RuntimeHandle)
-            }
-        };
-
-        if let (Some(adapter), Some(handle)) = (adapter, runtime) {
-            if let Err(e) = adapter.terminate(&handle).await {
-                // The session is already marked terminated; a runtime that
-                // refuses teardown is logged, never silently swallowed.
-                tracing::warn!(session_id = %id, error = %e, "runtime teardown failed");
-            }
+                    if let Some(adapter) = live_adapter {
+                        for handle in runtimes {
+                            if let Err(error) = adapter.terminate(&handle).await {
+                                tracing::warn!(session_id = %session_id, error = %error, "runtime teardown failed");
+                            }
+                        }
+                    }
+                    if let Some(source) = service.credentials.as_ref() {
+                        source.release(&session_id).await;
+                    }
+                    tracing::info!(session_id = %session_id, "session terminated");
+                    (
+                        installed
+                            .then_some(live_owner)
+                            .ok_or(CoreError::SessionNotFound),
+                        lifecycle,
+                    )
+                },
+                move |_error| async move {
+                    rejected_service
+                        .synchronize_live_tail_for(&rejected_id, &rejected_screen)
+                        .await;
+                },
+                drop_undelivered,
+            );
+            drop(entries);
+            return commit.committed().await.map_err(store_failed)?;
         }
-        // The credential goes with the session. Nothing will present it
-        // again, and one nobody is watching is the kind worth taking back.
-        if let Some(source) = self.credentials.as_ref() {
-            source.release(id).await;
-        }
-        tracing::info!(session_id = %id, "session terminated");
-        Ok(owner)
-    }
+        drop(entries);
 
-    /// Write a session straight to its terminal state in the store.
-    ///
-    /// The path for a session with no live entry, where `flush` has no live
-    /// record to read.
-    async fn retire_record(&self, record: &SessionRecord) -> Result<(), CoreError> {
+        // No live entry: retain the persisted runtime handle separately from
+        // the proposal that clears it, then tear it down on eventual success.
         let mut retired = record.clone();
         retired.session.status = SessionStatus::Terminated;
         retired.session.stop_reason = Some(StopReason::UserTerminated);
@@ -178,11 +195,13 @@ impl SessionService {
         // The runtime is being torn down, so the record must stop pointing at
         // it or a later sweep would try to reclaim a sandbox that is gone.
         retired.runtime_id = None;
-        let id = retired.session.id.clone();
-        self.persist_durably(
-            &mut retired,
+        let runtime = record.runtime_id.clone().map(RuntimeHandle);
+        let service = Arc::clone(self);
+        let session_id = id.clone();
+        self.persist_durably_with(
+            retired,
             vec![Event {
-                session_id: id,
+                session_id: session_id.clone(),
                 seq: 0,
                 kind: EventKind::StatusChanged {
                     status: SessionStatus::Terminated,
@@ -192,10 +211,24 @@ impl SessionService {
                 },
                 appended_at: String::new(),
             }],
+            move |_committed| async move {
+                if let (Some(adapter), Some(handle)) = (adapter, runtime) {
+                    if let Err(error) = adapter.terminate(&handle).await {
+                        tracing::warn!(session_id = %session_id, error = %error, "runtime teardown failed");
+                    }
+                }
+                if let Some(source) = service.credentials.as_ref() {
+                    source.release(&session_id).await;
+                }
+                tracing::info!(session_id = %session_id, "session terminated");
+                (owner, lifecycle)
+            },
+            ignore_rejected,
+            drop_undelivered,
         )
+        .committed()
         .await
-        .map_err(store_failed)?;
-        Ok(())
+        .map_err(store_failed)
     }
 
     /// Stop a session's runtime, keeping the session.
@@ -204,7 +237,11 @@ impl SessionService {
     /// is being paid for and nothing is running, while the session stays
     /// listed and can be picked up again — which is the difference between
     /// putting work down and throwing it away.
-    pub async fn stop_session(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+    pub async fn stop_session(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<(), CoreError> {
         caller.require_any_control()?;
         self.rest_session(caller, id).await.map(|_| ())
     }
@@ -215,7 +252,7 @@ impl SessionService {
     /// [`Self::terminate_any_session`]: the everyday grant does not open it,
     /// and it reports whose work was stopped.
     pub async fn stop_any_session(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
     ) -> Result<SubjectId, CoreError> {
@@ -225,9 +262,13 @@ impl SessionService {
         self.rest_session(caller, id).await
     }
 
-    async fn rest_session(&self, caller: &Caller, id: &SessionId) -> Result<SubjectId, CoreError> {
+    async fn rest_session(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SubjectId, CoreError> {
         let lifecycle_gate = self.lifecycle_gates.gate(id);
-        let _lifecycle = lifecycle_gate.lock().await;
+        let lifecycle = lifecycle_gate.lock_owned().await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "stop")?;
         if record.session.status.is_terminal() {
@@ -242,85 +283,99 @@ impl SessionService {
         if self.entries.read().await.contains_key(id) {
             self.capture_transcript(id).await;
         }
-        let live_commit = {
-            let mut entries = self.entries.write().await;
-            entries.get_mut(id).map(|entry| {
-                append_with(
-                    entry,
-                    EventKind::StatusChanged {
-                        status: SessionStatus::Idle,
-                        stop_reason: Some(StopReason::UserTerminated),
-                        detail: None,
-                        capability: None,
-                    },
-                    |intended| {
-                        intended.session.status = SessionStatus::Idle;
-                        intended.session.stop_reason = Some(StopReason::UserTerminated);
-                        intended.session.recovery_state = RecoveryState::Idle;
-                        intended.runtime_id = None;
-                    },
-                )
-            })
-        };
-
-        let handle = match live_commit {
-            Some(commit) => {
-                let committed = match commit.committed().await {
-                    Ok(committed) => committed,
-                    Err(error) => {
-                        self.synchronize_live_tail(id).await;
-                        return Err(store_failed(error));
+        let mut entries = self.entries.write().await;
+        if let Some(entry) = entries.get_mut(id) {
+            let service = Arc::clone(self);
+            let session_id = id.clone();
+            let live_owner = owner.clone();
+            let live_adapter = adapter.clone();
+            let fallback_runtime = entry.runtime.clone();
+            let entry_screen = Arc::clone(&entry.screen);
+            let rejected_service = Arc::clone(self);
+            let rejected_id = id.clone();
+            let rejected_screen = Arc::clone(&entry_screen);
+            let commit = append_with(
+                entry,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Idle,
+                    stop_reason: Some(StopReason::UserTerminated),
+                    detail: None,
+                    capability: None,
+                },
+                |intended| {
+                    intended.session.status = SessionStatus::Idle;
+                    intended.session.stop_reason = Some(StopReason::UserTerminated);
+                    intended.session.recovery_state = RecoveryState::Idle;
+                    intended.runtime_id = None;
+                },
+                move |committed| async move {
+                    // The attachment goes with the runtime. Removal follows
+                    // durability, while the retained task owns teardown even
+                    // if the original request is gone.
+                    let removed = {
+                        let mut entries = service.entries.write().await;
+                        let is_original = entries
+                            .get(&session_id)
+                            .is_some_and(|entry| Arc::ptr_eq(&entry.screen, &entry_screen));
+                        is_original.then(|| entries.remove(&session_id)).flatten()
+                    };
+                    let installed = removed.is_some();
+                    let current_runtime = removed.and_then(|mut entry| {
+                        entry.session.status = committed.session.status;
+                        entry.session.stop_reason = committed.session.stop_reason;
+                        entry.session.recovery_state = committed.session.recovery_state;
+                        entry.session.last_seq = committed.session.last_seq;
+                        entry.input = None;
+                        entry.conversation = None;
+                        entry.runtime.take()
+                    });
+                    let mut runtimes: Vec<RuntimeHandle> = fallback_runtime.into_iter().collect();
+                    if let Some(current) = current_runtime {
+                        if !runtimes.iter().any(|runtime| runtime.0 == current.0) {
+                            runtimes.push(current);
+                        }
                     }
-                };
-                // The attachment goes with the runtime: a live entry pointing
-                // at a torn-down sandbox would accept input that reaches
-                // nothing. Removal follows durability, so a rejected proposal
-                // leaves every live channel and the process handle intact.
-                let mut entry = self
-                    .entries
-                    .write()
-                    .await
-                    .remove(id)
-                    .ok_or(CoreError::SessionNotFound)?;
-                entry.session.status = committed.session.status;
-                entry.session.stop_reason = committed.session.stop_reason;
-                entry.session.recovery_state = committed.session.recovery_state;
-                entry.session.last_seq = committed.session.last_seq;
-                entry.input = None;
-                entry.conversation = None;
-                entry.runtime.take()
-            }
-            None => {
-                // Match termination's installation boundary: an in-flight
-                // provisioner must observe the durable idle state before it can
-                // publish a live entry.
-                self.rest_record(&record).await?;
-                record.runtime_id.clone().map(RuntimeHandle)
-            }
-        };
-
-        if let (Some(adapter), Some(handle)) = (adapter, handle) {
-            if let Err(e) = adapter.terminate(&handle).await {
-                tracing::warn!(session_id = %id, error = %e, "runtime teardown failed");
-            }
+                    if let Some(adapter) = live_adapter {
+                        for handle in runtimes {
+                            if let Err(error) = adapter.terminate(&handle).await {
+                                tracing::warn!(session_id = %session_id, error = %error, "runtime teardown failed");
+                            }
+                        }
+                    }
+                    tracing::info!(session_id = %session_id, "session stopped");
+                    (
+                        installed
+                            .then_some(live_owner)
+                            .ok_or(CoreError::SessionNotFound),
+                        lifecycle,
+                    )
+                },
+                move |_error| async move {
+                    rejected_service
+                        .synchronize_live_tail_for(&rejected_id, &rejected_screen)
+                        .await;
+                },
+                drop_undelivered,
+            );
+            drop(entries);
+            return commit.committed().await.map_err(store_failed)?;
         }
-        tracing::info!(session_id = %id, "session stopped");
-        Ok(owner)
-    }
+        drop(entries);
 
-    /// Write a session to its stopped state in the store.
-    async fn rest_record(&self, record: &SessionRecord) -> Result<(), CoreError> {
+        // Match termination's installation boundary for a post-restart
+        // session and retain its handle before the record clears it.
         let mut resting = record.clone();
         resting.session.status = SessionStatus::Idle;
         resting.session.stop_reason = Some(StopReason::UserTerminated);
         resting.session.recovery_state = RecoveryState::Idle;
         // Nothing is running for it any more, so nothing should claim to be.
         resting.runtime_id = None;
-        let id = resting.session.id.clone();
-        self.persist_durably(
-            &mut resting,
+        let runtime = record.runtime_id.clone().map(RuntimeHandle);
+        let session_id = id.clone();
+        self.persist_durably_with(
+            resting,
             vec![Event {
-                session_id: id,
+                session_id: session_id.clone(),
                 seq: 0,
                 kind: EventKind::StatusChanged {
                     status: SessionStatus::Idle,
@@ -330,27 +385,21 @@ impl SessionService {
                 },
                 appended_at: String::new(),
             }],
+            move |_committed| async move {
+                if let (Some(adapter), Some(handle)) = (adapter, runtime) {
+                    if let Err(error) = adapter.terminate(&handle).await {
+                        tracing::warn!(session_id = %session_id, error = %error, "runtime teardown failed");
+                    }
+                }
+                tracing::info!(session_id = %session_id, "session stopped");
+                (owner, lifecycle)
+            },
+            ignore_rejected,
+            drop_undelivered,
         )
+        .committed()
         .await
-        .map_err(store_failed)?;
-        Ok(())
-    }
-
-    async fn synchronize_live_tail(&self, id: &SessionId) {
-        let event_log = self
-            .entries
-            .read()
-            .await
-            .get(id)
-            .map(|entry| entry.event_log.clone());
-        if let Some(event_log) = event_log.as_ref() {
-            event_log.fence().await;
-        }
-        let mut entries = self.entries.write().await;
-        if let Some(entry) = entries.get_mut(id) {
-            let event_log = entry.event_log.clone();
-            event_log.synchronize_tail(&mut entry.session.last_seq);
-        }
+        .map_err(store_failed)
     }
 
     /// Remove a session permanently.
@@ -368,7 +417,7 @@ impl SessionService {
     /// stopping is reversible; destroying somebody else's history is not, and
     /// nothing about running the service requires it.
     pub async fn delete_session(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
     ) -> Result<Option<String>, CoreError> {

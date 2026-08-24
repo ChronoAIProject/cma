@@ -44,8 +44,9 @@ enum PendingOperation {
         record: Box<SessionRecord>,
         change: Option<Box<RecordChange>>,
         events: Vec<Event>,
-        complete: oneshot::Sender<Result<SessionRecord, StoreError>>,
+        complete: oneshot::Sender<Result<CommitDelivery<SessionRecord>, StoreError>>,
         observed: oneshot::Receiver<()>,
+        retained_outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
     },
     Delete {
         complete: oneshot::Sender<Result<(), StoreError>>,
@@ -87,38 +88,217 @@ struct EnqueuedCommit {
     last_seq: u64,
 }
 
-/// Reports that an explicit failure was actually observed in the caller's
-/// poll, rather than merely placed in a channel it canceled without reading.
-pub(crate) struct CommitReceiver {
-    complete: oneshot::Receiver<Result<SessionRecord, StoreError>>,
-    acknowledge_error: Option<oneshot::Sender<()>>,
+type DeliveryCleanupFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+type DeliveryCleanup<T> = Box<dyn FnOnce(T) -> DeliveryCleanupFuture + Send>;
+
+/// A successful result that still owns its cancellation cleanup until polled.
+///
+/// Sending through a oneshot is not observation: the receiver can be canceled
+/// after `send` succeeds but before it polls the value. Keeping cleanup in the
+/// value itself closes that window. Polling extracts the output and disarms the
+/// cleanup; dropping an unread delivery launches it.
+struct CommitDelivery<T> {
+    output: Option<T>,
+    cleanup: Option<DeliveryCleanup<T>>,
 }
 
-impl Future for CommitReceiver {
-    type Output = Result<Result<SessionRecord, StoreError>, oneshot::error::RecvError>;
-
-    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        let result = Pin::new(&mut self.complete).poll(context);
-        if matches!(result, Poll::Ready(Ok(Err(_)))) {
-            if let Some(acknowledge) = self.acknowledge_error.take() {
-                let _ = acknowledge.send(());
-            }
+impl<T> CommitDelivery<T> {
+    fn plain(output: T) -> Self {
+        Self {
+            output: Some(output),
+            cleanup: None,
         }
-        result
+    }
+
+    fn retained<H, U, UFut>(output: T, ownership: H, cleanup: U) -> Self
+    where
+        T: Send + 'static,
+        H: Send + 'static,
+        U: FnOnce(T, H) -> UFut + Send + 'static,
+        UFut: Future<Output = ()> + Send + 'static,
+    {
+        Self {
+            output: Some(output),
+            cleanup: Some(Box::new(move |output| Box::pin(cleanup(output, ownership)))),
+        }
+    }
+
+    fn observed(mut self) -> T {
+        let output = self
+            .output
+            .take()
+            .expect("a successful commit delivery is observed at most once");
+        drop(self.cleanup.take());
+        output
     }
 }
 
-impl CommitReceiver {
-    pub(crate) async fn committed(self) -> Result<SessionRecord, StoreError> {
+impl<T> Drop for CommitDelivery<T> {
+    fn drop(&mut self) {
+        let (Some(output), Some(cleanup)) = (self.output.take(), self.cleanup.take()) else {
+            return;
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(cleanup(output));
+            }
+            Err(error) => {
+                tracing::error!(%error, "cannot run cleanup for an unobserved commit delivery");
+            }
+        }
+    }
+}
+
+/// Reports that an explicit failure was actually observed in the caller's
+/// poll, rather than merely placed in a channel it canceled without reading.
+pub(crate) struct CommitReceiver<T = SessionRecord> {
+    complete: oneshot::Receiver<Result<CommitDelivery<T>, StoreError>>,
+    acknowledge_error: Option<oneshot::Sender<()>>,
+}
+
+impl<T> Future for CommitReceiver<T> {
+    type Output = Result<Result<T, StoreError>, oneshot::error::RecvError>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        match Pin::new(&mut self.complete).poll(context) {
+            Poll::Ready(Ok(Ok(delivery))) => Poll::Ready(Ok(Ok(delivery.observed()))),
+            Poll::Ready(Ok(Err(error))) => {
+                if let Some(acknowledge) = self.acknowledge_error.take() {
+                    let _ = acknowledge.send(());
+                }
+                Poll::Ready(Ok(Err(error)))
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<T> CommitReceiver<T> {
+    pub(crate) async fn committed(self) -> Result<T, StoreError> {
         self.await
             .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))?
     }
 }
 
+/// Keep a proposal's post-commit work alive independently of its waiter.
+///
+/// The ordinary completion channel may report an outage after four attempts,
+/// but only its external receiver is allowed to acknowledge that report. If
+/// the receiver is cancelled, the lane retains the write and this task keeps
+/// both the continuation and its ownership guard until eventual success.
+fn retain_commit<T, H, F, Fut, R, RFut, U, UFut>(
+    id: SessionId,
+    commit: CommitReceiver,
+    retained_outcome: oneshot::Receiver<Result<SessionRecord, StoreError>>,
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) -> UFut + Send + 'static,
+    UFut: Future<Output = ()> + Send + 'static,
+{
+    let CommitReceiver {
+        complete: durable,
+        acknowledge_error: acknowledge_durable_error,
+    } = commit;
+    let (report, complete) = oneshot::channel();
+    let (acknowledge_error, error_observed) = oneshot::channel();
+    tokio::spawn(async move {
+        let mut report = Some(report);
+        let mut error_was_observed = false;
+        match durable.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                let delivered = report
+                    .take()
+                    .expect("a retained commit reports at most once")
+                    .send(Err(error))
+                    .is_ok();
+                if delivered && error_observed.await.is_ok() {
+                    error_was_observed = true;
+                    if let Some(acknowledge) = acknowledge_durable_error {
+                        let _ = acknowledge.send(());
+                    }
+                } else {
+                    // Dropping this sender is the signal that the report was not
+                    // externally observed. The lane then keeps retrying.
+                    drop(acknowledge_durable_error);
+                }
+            }
+            Err(_) => {
+                let error = StoreError::Unavailable("session write worker stopped".into());
+                let _ = report
+                    .take()
+                    .expect("a retained commit reports at most once")
+                    .send(Err(error.clone()));
+                on_rejected(error).await;
+                return;
+            }
+        }
+
+        match retained_outcome.await {
+            Ok(Ok(record)) => {
+                let (output, ownership) = continuation(record).await;
+                if let Some(report) = report {
+                    let _ = report.send(Ok(CommitDelivery::retained(
+                        output,
+                        ownership,
+                        on_undelivered,
+                    )));
+                } else {
+                    on_undelivered(output, ownership).await;
+                }
+            }
+            Ok(Err(error)) => {
+                on_rejected(error.clone()).await;
+                if let Some(report) = report {
+                    let _ = report.send(Err(error));
+                } else if !error_was_observed {
+                    tracing::error!(
+                        session_id = %id,
+                        error = %error,
+                        "a detached durable session proposal failed"
+                    );
+                }
+            }
+            Err(_) => {
+                let error = StoreError::Unavailable("session write worker stopped".into());
+                on_rejected(error.clone()).await;
+                if let Some(report) = report {
+                    let _ = report.send(Err(error));
+                } else if !error_was_observed {
+                    tracing::error!(
+                        session_id = %id,
+                        error = %error,
+                        "a detached durable session proposal stopped without an outcome"
+                    );
+                }
+            }
+        }
+    });
+    CommitReceiver {
+        complete,
+        acknowledge_error: Some(acknowledge_error),
+    }
+}
+
+pub(crate) async fn ignore_rejected(_error: StoreError) {}
+
+pub(crate) async fn drop_undelivered<T, H>(_output: T, _ownership: H) {}
+
 struct CommitReporter {
-    complete: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
+    complete: Option<oneshot::Sender<Result<CommitDelivery<SessionRecord>, StoreError>>>,
     observed: Option<oneshot::Receiver<()>>,
     retain_after_cancellation: bool,
+    retained_outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
 }
 
 #[derive(Default)]
@@ -230,9 +410,52 @@ impl SessionLog {
     fn enqueue_commit_with<F>(
         self: &Arc<Self>,
         mode: CommitMode,
+        record: SessionRecord,
+        events: Vec<Event>,
+        owned_fields: Option<RecordFields>,
+        after_allocation: F,
+    ) -> EnqueuedCommit
+    where
+        F: FnOnce(u64),
+    {
+        self.enqueue_commit_inner(mode, record, events, owned_fields, None, after_allocation)
+    }
+
+    fn enqueue_retained_commit<F>(
+        self: &Arc<Self>,
+        mode: CommitMode,
+        record: SessionRecord,
+        events: Vec<Event>,
+        owned_fields: Option<RecordFields>,
+        after_allocation: F,
+    ) -> (
+        EnqueuedCommit,
+        oneshot::Receiver<Result<SessionRecord, StoreError>>,
+    )
+    where
+        F: FnOnce(u64),
+    {
+        let (retained_outcome, outcome) = oneshot::channel();
+        (
+            self.enqueue_commit_inner(
+                mode,
+                record,
+                events,
+                owned_fields,
+                Some(retained_outcome),
+                after_allocation,
+            ),
+            outcome,
+        )
+    }
+
+    fn enqueue_commit_inner<F>(
+        self: &Arc<Self>,
+        mode: CommitMode,
         mut record: SessionRecord,
         mut events: Vec<Event>,
         owned_fields: Option<RecordFields>,
+        retained_outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
         after_allocation: F,
     ) -> EnqueuedCommit
     where
@@ -331,6 +554,7 @@ impl SessionLog {
                 events,
                 complete,
                 observed,
+                retained_outcome,
             });
             let start = if state.running {
                 false
@@ -359,7 +583,7 @@ impl SessionLog {
         receiver
     }
 
-    /// Wait behind the operation currently owned by this lane without writing.
+    /// Wait behind every operation already in this lane.
     pub(crate) async fn fence(self: &Arc<Self>) {
         let (complete, receiver) = oneshot::channel();
         self.enqueue(PendingOperation::Fence { complete });
@@ -405,11 +629,13 @@ impl SessionLog {
                     mut events,
                     complete,
                     observed,
+                    retained_outcome,
                 } => {
                     let mut reporter = CommitReporter {
                         complete: Some(complete),
                         observed: Some(observed),
                         retain_after_cancellation: !matches!(mode, CommitMode::Create),
+                        retained_outcome,
                     };
                     let result = self
                         .commit(
@@ -430,8 +656,11 @@ impl SessionLog {
                             self.rebuild_local_lineage();
                         }
                     }
+                    if let Some(retained_outcome) = reporter.retained_outcome.take() {
+                        let _ = retained_outcome.send(result.clone());
+                    }
                     if let Some(complete) = reporter.complete.take() {
-                        if let Err(Err(error)) = complete.send(result) {
+                        if let Err(Err(error)) = complete.send(result.map(CommitDelivery::plain)) {
                             tracing::error!(
                                 session_id = %self.id,
                                 error = %error,
@@ -503,7 +732,7 @@ impl SessionLog {
                     return Ok(());
                 }
                 Err(StoreError::SequenceTaken { expected, .. }) if !events.is_empty() => {
-                    if self.durably_terminated().await {
+                    if self.durably_terminated().await && !only_terminal_detach(events) {
                         return Err(StoreError::SessionTerminated {
                             id: self.id.clone(),
                         });
@@ -517,7 +746,7 @@ impl SessionLog {
                     );
                 }
                 Err(StoreError::NonContiguousAppend { expected, .. }) if !events.is_empty() => {
-                    if self.durably_terminated().await {
+                    if self.durably_terminated().await && !only_terminal_detach(events) {
                         return Err(StoreError::SessionTerminated {
                             id: self.id.clone(),
                         });
@@ -752,7 +981,7 @@ impl SessionLog {
                 .ok_or_else(|| StoreError::SessionDeleted {
                     id: self.id.clone(),
                 })?;
-        if durable.session.status.is_terminal() {
+        if durable.session.status.is_terminal() && !only_terminal_detach(events) {
             return Err(StoreError::SessionTerminated {
                 id: self.id.clone(),
             });
@@ -931,6 +1160,39 @@ impl SessionService {
         Ok(())
     }
 
+    /// Persist an exact proposal whose required side effects outlive its waiter.
+    pub(crate) fn persist_durably_with<T, H, F, Fut, R, RFut, U, UFut>(
+        &self,
+        record: SessionRecord,
+        events: Vec<Event>,
+        continuation: F,
+        on_rejected: R,
+        on_undelivered: U,
+    ) -> CommitReceiver<T>
+    where
+        T: Send + 'static,
+        H: Send + 'static,
+        F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+        Fut: Future<Output = (T, H)> + Send + 'static,
+        R: FnOnce(StoreError) -> RFut + Send + 'static,
+        RFut: Future<Output = ()> + Send + 'static,
+        U: FnOnce(T, H) -> UFut + Send + 'static,
+        UFut: Future<Output = ()> + Send + 'static,
+    {
+        let id = record.session.id.clone();
+        let lane = self.event_logs.lane(&id);
+        let (enqueued, retained_outcome) =
+            lane.enqueue_retained_commit(CommitMode::UpdateExact, record, events, None, |_| {});
+        retain_commit(
+            id,
+            enqueued.complete,
+            retained_outcome,
+            continuation,
+            on_rejected,
+            on_undelivered,
+        )
+    }
+
     /// Delete a session and its history behind every local write already queued.
     pub(crate) async fn delete_durably(&self, id: &SessionId) -> Result<(), StoreError> {
         self.event_logs
@@ -938,6 +1200,37 @@ impl SessionService {
             .enqueue_delete()
             .await
             .map_err(|_| StoreError::Unavailable("session delete worker stopped".into()))?
+    }
+
+    /// Repair one still-current live entry after its retained proposal is rejected.
+    ///
+    /// The fence lets every successor that was already behind the rejected unit
+    /// finish any resequencing before its lane tail is copied back. The screen
+    /// identity prevents a delayed repair from touching a replacement entry that
+    /// happens to use the same session id.
+    pub(crate) async fn synchronize_live_tail_for(
+        &self,
+        id: &SessionId,
+        screen: &Arc<tokio::sync::Mutex<Box<dyn crate::terminal::ScreenModel>>>,
+    ) {
+        let event_log = {
+            let entries = self.entries.read().await;
+            entries.get(id).and_then(|entry| {
+                Arc::ptr_eq(&entry.screen, screen).then(|| Arc::clone(&entry.event_log))
+            })
+        };
+        let Some(event_log) = event_log else {
+            return;
+        };
+        event_log.fence().await;
+
+        let mut entries = self.entries.write().await;
+        let Some(entry) = entries.get_mut(id) else {
+            return;
+        };
+        if Arc::ptr_eq(&entry.screen, screen) {
+            event_log.synchronize_tail(&mut entry.session.last_seq);
+        }
     }
 
     /// Wait for every earlier event snapshot and synchronize the live event tail.
@@ -1371,6 +1664,13 @@ fn rebase_semantic_record(
     Ok(durable)
 }
 
+fn only_terminal_detach(events: &[Event]) -> bool {
+    !events.is_empty()
+        && events
+            .iter()
+            .all(|event| matches!(event.kind, EventKind::TerminalDetached))
+}
+
 fn renumber(id: &SessionId, events: &mut [Event], first: u64) -> Result<(), StoreError> {
     for (offset, event) in events.iter_mut().enumerate() {
         event.seq = first
@@ -1393,7 +1693,21 @@ async fn retry_delay(attempt: usize) {
 
 /// Record an event and immediately hand its exact state snapshot to the lane.
 pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
-    drop(append_with(entry, kind, |_| {}));
+    let event = Event {
+        session_id: entry.session.id.clone(),
+        seq: 0,
+        kind,
+        appended_at: String::new(),
+    };
+    let record = record_from_entry(entry);
+    let enqueued =
+        entry
+            .event_log
+            .enqueue_commit(CommitMode::UpdateInheriting, record, vec![event]);
+    // Fire-and-forget events describe state that is already live, so their
+    // allocated cursor is live immediately as well.
+    entry.session.last_seq = enqueued.last_seq;
+    drop(enqueued.complete);
 }
 
 /// Queue a semantic event whose intended record is not live state until commit.
@@ -1402,11 +1716,24 @@ pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
 /// conflict can be reported before the runtime is changed. The ordinary
 /// [`append`] path has already observed its state change and therefore leaves
 /// the detached lane responsible for persistence after the caller moves on.
-pub(crate) fn append_with(
+pub(crate) fn append_with<T, H, F, Fut, R, RFut, U, UFut>(
     entry: &mut SessionEntry,
     kind: EventKind,
     change: impl FnOnce(&mut SessionRecord),
-) -> CommitReceiver {
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) -> UFut + Send + 'static,
+    UFut: Future<Output = ()> + Send + 'static,
+{
     let event = Event {
         session_id: entry.session.id.clone(),
         seq: 0,
@@ -1415,12 +1742,29 @@ pub(crate) fn append_with(
     };
     let mut record = record_from_entry(entry);
     change(&mut record);
-    let enqueued =
-        entry
-            .event_log
-            .enqueue_commit(CommitMode::UpdateInheriting, record, vec![event]);
-    entry.session.last_seq = enqueued.last_seq;
-    enqueued.complete
+    let id = entry.session.id.clone();
+    let event_log = Arc::clone(&entry.event_log);
+    let mut live_tail = None;
+    let (enqueued, retained_outcome) = event_log.enqueue_retained_commit(
+        CommitMode::UpdateInheriting,
+        record,
+        vec![event],
+        None,
+        |last_seq| live_tail = Some(last_seq.saturating_sub(1)),
+    );
+    // A proposal is not live until its continuation installs the committed
+    // record. Publish only the lane tail that preceded its reservation.
+    if let Some(live_tail) = live_tail {
+        entry.session.last_seq = live_tail;
+    }
+    retain_commit(
+        id,
+        enqueued.complete,
+        retained_outcome,
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
 }
 
 #[cfg(test)]
