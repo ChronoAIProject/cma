@@ -14,7 +14,7 @@ import { StateDot } from '../ui/StateDot';
 import { CreatorFace, Fact, Facts, ReachList, Section, SkillList, Unknown } from './SessionFacts';
 import './SessionDrawer.css';
 import { IconCloseOutline16 } from '../ui/icons';
-import type { SessionSpend } from '../sdk';
+import type { SessionSpend } from '@chronoai/cma-sdk';
 
 /**
  * What is known about the open session — `docs/Web_Style.md` §17.
@@ -139,7 +139,9 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
         <header className="drawer__band" data-tone={tone}>
           <p className="drawer__state">
             {dot === undefined ? null : <StateDot state={dot} placement="drawer__dot" />}
-            <span className="drawer__statename">{labelFor(session.lifecycle)}</span>
+            <span className="drawer__statename">
+              {labelFor(session.lifecycle, session.reportedStatus)}
+            </span>
           </p>
           <p className="drawer__started">Started {fullTimestamp(session.createdAt)}</p>
           {/*

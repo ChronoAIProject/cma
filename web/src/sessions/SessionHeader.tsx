@@ -68,7 +68,7 @@ export function SessionHeader({ session, waiting = false, actions }: SessionHead
       ) : (
         <Pill>
           {dot === undefined ? null : <StateDot state={dot} />}
-          {labelFor(session.lifecycle)}
+          {labelFor(session.lifecycle, session.reportedStatus)}
         </Pill>
       )}
 

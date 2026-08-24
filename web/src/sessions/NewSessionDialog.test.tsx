@@ -7,7 +7,7 @@ import type { EnvironmentProfile, EnvironmentProfileStore } from '../environment
 import { DEFAULT_AGENT } from '../environment/types';
 import type { KernelOffer } from './types';
 import { chooseOption, chosenOption, openedOptions } from '../test/select';
-import { ApiError, DeploymentAtCapacity, type PricingQuote } from '../sdk';
+import { ApiError, DeploymentAtCapacity, type PricingQuote } from '@chronoai/cma-sdk';
 
 /**
  * The dialog makes two decisions and both are fixed for the session's life:

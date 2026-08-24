@@ -31,6 +31,7 @@ export function groupOf(lifecycle: SessionLifecycle): GroupId {
     case 'ready':
     case 'running':
     case 'rotating':
+    case 'unknown':
       return 'active';
     default: {
       const exhaustive: never = lifecycle;

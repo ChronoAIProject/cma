@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { resizeObserved } from '../test/setup';
 import { Composer } from './Composer';
-import { toCapabilities, type ConcurrentInput, type SessionCapabilities } from '../agui';
+import { NO_CAPABILITIES, type ConcurrentInput, type SessionCapabilities } from '@chronoai/cma-sdk';
 
 /**
  * The composer, and interrupt — `Web_Style.md` §18.4.
@@ -11,7 +11,8 @@ import { toCapabilities, type ConcurrentInput, type SessionCapabilities } from '
 
 function capabilities(overrides: Partial<SessionCapabilities> = {}): SessionCapabilities {
   return {
-    ...toCapabilities({ conforms_to: ['…/conf/conversation'], concurrent_input: 'reject' }),
+    ...NO_CAPABILITIES,
+    conversation: true,
     ...overrides,
   };
 }
