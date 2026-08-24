@@ -154,6 +154,7 @@ async fn main() {
         &config.mongodb_uri,
         &config.mongodb_database,
         config.activity_retention,
+        config.mongodb_legacy_cutover,
     )
     .await
     {
