@@ -136,6 +136,16 @@ describe('the session header', () => {
     expect(css).not.toMatch(/\.sessionheader \.pill\s*\{/);
   });
 
+  it('shows an unfamiliar lifecycle under the word the server reported', () => {
+    const current = session('unknown', { reportedStatus: 'hibernating' });
+    const header = render(<SessionHeader session={current} />);
+    expect(header.getByText('hibernating')).toBeInTheDocument();
+    header.unmount();
+
+    renderDrawer('unknown', { reportedStatus: 'hibernating' });
+    expect(screen.getByText('hibernating')).toBeInTheDocument();
+  });
+
   it('pauses the session from the lifecycle menu', async () => {
     const user = userEvent.setup();
     const onStop = vi.fn();

@@ -165,6 +165,7 @@ export type {
   StopReason,
 } from './types.js';
 export {
+  GAP_VALUE_FRAMES,
   KNOWN_EVENTS,
   LIVE_MARKER,
   PATHS,
@@ -195,6 +196,7 @@ export {
   type ConnectionOptions,
   type Interrupt,
   type InterruptOption,
+  type LinkFailure,
   type LinkStatus,
   type OperationTransport,
   type SessionCapabilities,

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AguiConnection, type AguiTransport } from '../../src/agui/connection.js';
+import { AguiConnection, type AguiTransport, type LinkFailure } from '../../src/agui/connection.js';
 import type { AguiEvent } from '../../src/agui/events.js';
-import { ProtocolError } from '../../src/errors.js';
+import { ApiError, ProtocolError, RequestAborted, ValidationError } from '../../src/errors.js';
 
 /**
  * The AG-UI connection — `docs/API_Overview.md` §3.
@@ -66,6 +66,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 function connect(fake: Fake) {
   const seen: AguiEvent[] = [];
   const statuses: string[] = [];
+  const failures: LinkFailure[] = [];
   const errors: Error[] = [];
   const connection = new AguiConnection(fake, 'sesn_1', {
     backoffMs: 0,
@@ -74,10 +75,15 @@ function connect(fake: Fake) {
   });
   const stop = connection.subscribe(
     (event) => seen.push(event),
-    (status) => statuses.push(status),
+    (status, failure) => {
+      statuses.push(status);
+      if (failure !== undefined) {
+        failures.push(failure);
+      }
+    },
     (error) => errors.push(error),
   );
-  return { connection, errors, seen, statuses, stop };
+  return { connection, errors, failures, seen, statuses, stop };
 }
 
 describe('the reconnect order', () => {
@@ -186,6 +192,97 @@ describe('the reconnect order', () => {
     expect(seen.map((e) => e.seq)).toEqual([1]);
   });
 
+  it.each([401, 403, 404, 410, 422])(
+    'ends on permanent HTTP %i and retains its status',
+    async (status) => {
+      const fake = new Fake();
+      fake.responses = [new ApiError(status, 'this session is unavailable', 'session_unavailable')];
+
+      const { errors, failures, statuses, stop } = connect(fake);
+      await vi.waitFor(() => expect(statuses).toContain('failed'));
+
+      expect(fake.opens).toBe(1);
+      expect(fake.historyReads).toEqual([0]);
+      expect(errors[0]).toBeInstanceOf(ApiError);
+      expect(failures).toEqual([{ status, message: 'this session is unavailable' }]);
+      stop();
+      expect(statuses.filter((entry) => entry === 'failed')).toHaveLength(1);
+      expect(statuses.at(-1)).toBe('failed');
+    },
+  );
+
+  it.each([408, 429, 503])('still retries nonterminal HTTP %i', async (status) => {
+    const fake = new Fake();
+    fake.responses = [new ApiError(status, 'temporarily unavailable'), [text(1, 'back')]];
+
+    const { seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    stop();
+
+    expect(fake.opens).toBe(2);
+    expect(statuses).toContain('reconnecting');
+    expect(seen.map((event) => event.seq)).toEqual([1]);
+  });
+
+  it('ignores frames after the transport has declared the stream dropped', async () => {
+    const fake = new Fake();
+    fake.responses = [[]];
+    const { seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('live'));
+
+    fake.drop?.(new ApiError(404, 'this session no longer exists'));
+    fake.frames?.(text(1, 'arrived after the drop'));
+    await vi.waitFor(() => expect(statuses).toContain('failed'));
+    stop();
+
+    expect(seen).toEqual([]);
+    expect(statuses.at(-1)).toBe('failed');
+  });
+
+  it('uses full jitter while exponential backoff climbs to its ceiling', async () => {
+    const fake = new Fake();
+    fake.responses = [new Error('offline'), new Error('still offline'), []];
+    const delays: number[] = [];
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 10,
+      maxBackoffMs: 20,
+      jitterRatio: 1,
+      random: () => 0.5,
+      sleep: (milliseconds) => {
+        delays.push(milliseconds);
+        return Promise.resolve();
+      },
+    });
+    const stop = connection.subscribe(() => undefined);
+
+    await vi.waitFor(() => expect(fake.opens).toBe(3));
+    stop();
+
+    expect(delays).toEqual([5, 10]);
+  });
+
+  it('fails on an invalid random source instead of retrying unsafely', async () => {
+    const fake = new Fake();
+    fake.responses = [new Error('offline')];
+    const errors: Error[] = [];
+    const statuses: string[] = [];
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 10,
+      random: () => 1,
+      sleep: () => Promise.resolve(),
+    });
+    const stop = connection.subscribe(
+      () => undefined,
+      (status) => statuses.push(status),
+      (error) => errors.push(error),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('failed'));
+    stop();
+
+    expect(errors[0]).toBeInstanceOf(ValidationError);
+  });
+
   it('reports where the link is, so a surface can say so', async () => {
     const fake = new Fake();
     fake.responses = [[], []];
@@ -227,7 +324,7 @@ describe('the reconnect order', () => {
 
     expect(seen.map((e) => e.type)).toEqual(['TEXT_MESSAGE_CONTENT']);
     expect(errors[0]).toBeInstanceOf(ProtocolError);
-    expect(statuses).toContain('closed');
+    expect(statuses).toContain('failed');
   });
 });
 
@@ -258,15 +355,62 @@ describe('history and stream agree', () => {
 });
 
 describe('closing', () => {
-  it('is safe to call twice', async () => {
+  it('is safe to call twice and reports one terminal transition', async () => {
     const fake = new Fake();
     fake.responses = [[]];
-    const { stop } = connect(fake);
+    const { statuses, stop } = connect(fake);
     await tick();
     stop();
     expect(() => {
       stop();
     }).not.toThrow();
+    expect(statuses.filter((status) => status === 'closed')).toHaveLength(1);
+  });
+
+  it('delivers nothing after closing during a history read', async () => {
+    const fake = new Fake();
+    let resolveHistory: (frames: readonly unknown[]) => void = () => {};
+    fake.history = (_session: string, cursor: number) => {
+      fake.historyReads.push(cursor);
+      return new Promise((resolve) => {
+        resolveHistory = resolve;
+      });
+    };
+
+    const { seen, statuses, stop } = connect(fake);
+    stop();
+    resolveHistory([text(1, 'too late')]);
+    await tick();
+
+    expect(seen).toEqual([]);
+    expect(statuses).toEqual(['closed']);
+  });
+
+  it('reports caller abort once and ignores later cleanup', async () => {
+    const fake = new Fake();
+    fake.responses = [[]];
+    const controller = new AbortController();
+    const statuses: string[] = [];
+    const errors: Error[] = [];
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      signal: controller.signal,
+      backoffMs: 0,
+      maxBackoffMs: 0,
+    });
+    const stop = connection.subscribe(
+      () => undefined,
+      (status) => statuses.push(status),
+      (error) => errors.push(error),
+    );
+    await tick();
+
+    controller.abort('test cancellation');
+    stop();
+    await tick();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(RequestAborted);
+    expect(statuses.filter((status) => status === 'closed')).toHaveLength(1);
   });
 
   it('does not need a DOM', () => {
@@ -407,5 +551,34 @@ describe('a durable event that projects to several frames', () => {
     stop();
 
     expect(seen).toHaveLength(1);
+  });
+
+  it('ignores frames behind the cursor while retaining current-sequence siblings', async () => {
+    const fake = new Fake();
+    fake.responses = [
+      [
+        text(1, 'first'),
+        text(2, 'second'),
+        text(1, 'stale replay'),
+        {
+          type: 'TEXT_MESSAGE_END',
+          threadId: 'sesn_1',
+          runId: 'run_1',
+          seq: 2,
+          messageId: 'm_2',
+        },
+      ],
+    ];
+
+    const { connection, seen, stop } = connect(fake);
+    await tick();
+    stop();
+
+    expect(connection.cursor).toBe(2);
+    expect(seen.map((event) => [event.seq, event.type])).toEqual([
+      [1, 'TEXT_MESSAGE_CONTENT'],
+      [2, 'TEXT_MESSAGE_CONTENT'],
+      [2, 'TEXT_MESSAGE_END'],
+    ]);
   });
 });

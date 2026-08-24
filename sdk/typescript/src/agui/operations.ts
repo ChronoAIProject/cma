@@ -84,7 +84,13 @@ export function toCapabilities(raw: unknown): SessionCapabilities {
   };
 }
 
-/** How the operations reach the control plane. Swapped out by the mock driver. */
+/**
+ * How operations reach the control plane. Swapped out by the mock driver.
+ *
+ * The caller consumes a failed response as a problem document and cancels a
+ * successful run response after validating its headers. Custom transports must
+ * therefore return a real `Response` with either a null or cancellable body.
+ */
 export interface OperationTransport {
   send(path: string, body: unknown, options?: RequestOptions): Promise<Response>;
 }
@@ -201,21 +207,29 @@ export class AguiOperations {
     if (!response.ok) {
       throw await errorFromResponse(response);
     }
-    if (response.status !== expectedStatus) {
-      throw new ProtocolError(
-        `AG-UI operation expected HTTP ${String(expectedStatus)} but received ${String(response.status)}`,
-      );
-    }
-    if (expectedContentType !== undefined) {
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType.split(';', 1)[0]?.trim().toLowerCase() !== expectedContentType) {
-        throw new ProtocolError(`AG-UI run returned content type '${contentType}'`);
+    try {
+      if (response.status !== expectedStatus) {
+        throw new ProtocolError(
+          `AG-UI operation expected HTTP ${String(expectedStatus)} but received ${String(response.status)}`,
+        );
+      }
+      if (expectedContentType !== undefined) {
+        const contentType = response.headers.get('content-type') ?? '';
+        if (contentType.split(';', 1)[0]?.trim().toLowerCase() !== expectedContentType) {
+          throw new ProtocolError(`AG-UI run returned content type '${contentType}'`);
+        }
+      }
+    } finally {
+      // API_AGUI.md §7 makes the durable session stream the watcher, and §5
+      // says dropping this redundant run stream does not cancel the turn. Every
+      // successful HTTP response is released, including a malformed success.
+      try {
+        await response.body?.cancel();
+      } catch {
+        // A body that cannot be cancelled is already unusable, which releases
+        // it just as surely as cancellation. An accepted run remains active.
       }
     }
-    // The durable session stream is the watcher. Closing this redundant run
-    // response does not cancel the turn; the server contract explicitly keeps
-    // the work running when a response stream is dropped.
-    await response.body?.cancel();
   }
 }
 

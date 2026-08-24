@@ -100,6 +100,7 @@ export function ConversationSurface({
    * threshold is named, and then once.
    */
   const [linkLost, setLinkLost] = useState(false);
+  const [linkFailure, setLinkFailure] = useState<string | undefined>(undefined);
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
   const [lossDismissed, setLossDismissed] = useState(false);
   const [resourcesUnreported, setResourcesUnreported] = useState(false);
@@ -131,7 +132,7 @@ export function ConversationSurface({
   }
 
   useEffect(() => {
-    if (link === 'live') {
+    if (link !== 'reconnecting') {
       return;
     }
     const timer = setTimeout(() => {
@@ -174,9 +175,18 @@ export function ConversationSurface({
       (event) => {
         setConversation((state) => reduce(state, event));
       },
-      (status) => {
+      (status, failure) => {
         setLink(status);
+        if (status === 'failed') {
+          const detail = failure?.message ?? 'the control plane gave no reason';
+          setLinkFailure(
+            failure?.status === undefined
+              ? `The session event stream failed: ${detail}`
+              : `The session event stream was refused (HTTP ${String(failure.status)}): ${detail}`,
+          );
+        }
         if (status === 'live') {
+          setLinkFailure(undefined);
           // The first live edge belongs to the mount read above. Every later
           // one follows a real drop and gets one fresh answer, never a poll.
           if (hasBeenLive && capabilities.resources) {
@@ -248,7 +258,10 @@ export function ConversationSurface({
   const reason =
     state.reason ??
     (link === 'reconnecting' ? 'Reconnecting to this session.' : undefined) ??
+    linkFailure ??
     refusal;
+
+  const visibleFailure = linkFailure ?? refusal;
 
   return (
     <section className="conversation" aria-label="Conversation">
@@ -261,9 +274,9 @@ export function ConversationSurface({
 
       <MemoryPressureNotice pressure={conversation.memoryPressure} />
 
-      {refusal === undefined ? null : (
+      {visibleFailure === undefined ? null : (
         <div className="notice notice--fail conversation__refusal" role="alert">
-          <span className="notice__detail">{refusal}</span>
+          <span className="notice__detail">{visibleFailure}</span>
         </div>
       )}
 

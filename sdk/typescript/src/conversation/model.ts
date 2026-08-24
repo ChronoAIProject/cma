@@ -67,8 +67,10 @@ export interface ToolCallEntry {
 export interface GapEntry {
   readonly kind: 'gap';
   readonly id: string;
+  /** Durable frames the service could not retain, for a conversation gap. */
+  readonly frames?: number;
+  /** Snapshot time, when this boundary instead records a plane change. */
   readonly rotatedAt?: string;
-  readonly reason?: string;
   /**
    * Where the session was moved to, when the boundary is a plane change.
    *

@@ -451,14 +451,14 @@ export const NO_USAGE: Transcript = {
 };
 
 /**
- * A session carried onto a newer runtime mid-conversation.
+ * A conversation with a counted stretch the runtime did not retain.
  *
- * §3: a stretch of conversation the runtime had to drop arrives at `/gaps`,
- * which §18.6 draws as a boundary in the message stream at `rotated_at`.
+ * §3: the dropped stretch arrives at `/gaps` with its frame count, which
+ * §18.6 draws as a boundary in the message stream.
  */
 export const ROTATES: Transcript = {
   name: 'rotates',
-  about: 'A rotation mid-conversation, and the boundary it leaves behind.',
+  about: 'A counted conversation gap, and the boundary it leaves behind.',
   provenance: 'authored',
   source: 'docs/API_AGUI.md §3, CLAUDE.md §5',
   frames: [
@@ -486,7 +486,7 @@ export const ROTATES: Transcript = {
         {
           op: 'add',
           path: '/gaps/-',
-          value: { rotatedAt: '2026-08-18T09:12:44Z', reason: 'runtime_version' },
+          value: { frames: 12 },
         },
       ],
     }),
@@ -502,7 +502,7 @@ export const ROTATES: Transcript = {
       runId: 'run_11',
       seq: 7,
       messageId: 'm_7',
-      delta: 'Continuing from where the snapshot was taken.',
+      delta: 'Continuing after the unrecorded stretch.',
     }),
     frame(20, { type: 'TEXT_MESSAGE_END', runId: 'run_11', seq: 8, messageId: 'm_7' }),
     frame(20, { type: 'RUN_FINISHED', runId: 'run_11', seq: 9, outcome: { type: 'end_turn' } }),
@@ -684,7 +684,7 @@ export const FULL_CONVERSATION: Transcript = {
         {
           op: 'add',
           path: '/gaps/-',
-          value: { rotatedAt: '2026-08-23T09:58:00Z', reason: 'runtime_version' },
+          value: { frames: 4 },
         },
       ],
     }),

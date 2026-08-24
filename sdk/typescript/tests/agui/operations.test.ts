@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   AguiOperations,
   toCapabilities,
@@ -87,6 +87,70 @@ describe('the operations', () => {
 
     expect(sent[0]?.path).toBe('/api/v1/sessions/sesn_1/interrupt');
   });
+
+  it('releases every accepted run response immediately', async () => {
+    const operations = [
+      (client: AguiOperations) => client.prompt('start', 'run_prompt'),
+      (client: AguiOperations) => client.steer('change course', 'run_steer'),
+      (client: AguiOperations) => client.resolveApproval('apr_1', 'allow', 'run_approval'),
+    ];
+
+    for (const run of operations) {
+      const cancel = vi.fn();
+      const answer = () =>
+        new Response(new ReadableStream({ cancel }), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      const { transport: t } = transport(answer);
+
+      await run(new AguiOperations('sesn_1', t));
+
+      expect(cancel).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('accepts a bodiless acknowledgment and a body whose cancellation rejects', async () => {
+    const bodiless = transport(
+      () =>
+        new Response(null, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    );
+    await expect(
+      new AguiOperations('sesn_1', bodiless.transport).prompt('start', 'run_null'),
+    ).resolves.toBeUndefined();
+
+    const rejecting = transport(
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel: () => Promise.reject(new Error('connection already gone')),
+          }),
+          { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        ),
+    );
+    await expect(
+      new AguiOperations('sesn_1', rejecting.transport).prompt('start', 'run_reject'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('releases a malformed successful response before reporting it', async () => {
+    const cancel = vi.fn();
+    const malformed = transport(
+      () =>
+        new Response(new ReadableStream({ cancel }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+
+    await expect(
+      new AguiOperations('sesn_1', malformed.transport).prompt('start', 'run_malformed'),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
 });
 
 describe('a typed refusal', () => {
@@ -152,6 +216,14 @@ describe('a typed refusal', () => {
 });
 
 describe('reading what a session was granted', () => {
+  it('reads the server-emitted steering class as the steer capability', () => {
+    const capabilities = toCapabilities({
+      conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/steering'],
+    });
+
+    expect(capabilities.steer).toBe(true);
+  });
+
   it('lets a component ask rather than try', () => {
     // #116: read the granted set once and expose it, so components ask "may
     // this session steer" instead of trying and handling a refusal.
@@ -202,5 +274,45 @@ describe('reading what a session was granted', () => {
     const conformsTo = `https://spec.chrono-ai.fun/cma/1.0/conf/${String(className)}`;
     expect(conformsTo).toBe('https://spec.chrono-ai.fun/cma/1.0/conf/resources');
     expect(toCapabilities({ conforms_to: [conformsTo] }).resources).toBe(true);
+  });
+
+  it('cross-checks every capability class against conformance_for', () => {
+    const server = readFileSync(
+      new URL('../../../../api/crates/layer1-public/src/rest/mod.rs', import.meta.url),
+      'utf8',
+    );
+    const start = server.indexOf('fn conformance_for');
+    const end = server.indexOf('\n}\n', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const implementation = server.slice(start, end);
+    const emitted = [
+      'core',
+      'terminal',
+      'conversation',
+      'steering',
+      'interrupt',
+      'usage',
+      'resources',
+    ] as const;
+
+    expect(implementation).toContain('format!("{CONF_BASE}/core")');
+    for (const className of emitted.slice(1)) {
+      expect(implementation, `conformance_for must emit ${className}`).toContain(`"${className}"`);
+    }
+
+    const capabilities = toCapabilities({
+      conforms_to: emitted.map(
+        (className) => `https://spec.chrono-ai.fun/cma/1.0/conf/${className}`,
+      ),
+    });
+    expect(capabilities).toMatchObject({
+      terminal: true,
+      conversation: true,
+      steer: true,
+      interrupt: true,
+      usage: true,
+      resources: true,
+    });
   });
 });

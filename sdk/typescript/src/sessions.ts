@@ -119,13 +119,12 @@ export function toSession(raw: unknown): Session {
   // The wire carries RFC 3339; consumers count age in milliseconds. An
   // unparseable date falls back to now rather than propagating NaN.
   const parsed = typeof p.created_at === 'string' ? Date.parse(p.created_at) : Number.NaN;
+  const knownLifecycle = LIFECYCLES.includes(p.status as SessionLifecycle);
   return {
     id: p.id,
     kernel: p.kernel as Kernel,
-    lifecycle: LIFECYCLES.includes(p.status as SessionLifecycle)
-      ? (p.status as SessionLifecycle)
-      : 'unknown',
-    reportedStatus: LIFECYCLES.includes(p.status as SessionLifecycle) ? undefined : p.status,
+    lifecycle: knownLifecycle ? (p.status as SessionLifecycle) : 'unknown',
+    ...(knownLifecycle ? {} : { reportedStatus: p.status }),
     recoveryState:
       typeof p.recovery_state === 'string' && p.recovery_state !== ''
         ? p.recovery_state

@@ -43,9 +43,10 @@ export type StopReason =
 /**
  * Operational health beside lifecycle state.
  *
- * `recovering`, `degraded`, and the server's own `unknown` are not session
- * failures. Future values cross intact: coercing one to `unknown` would invent
- * the server's specific meaning, "the runtime cannot currently be observed."
+ * `normal`, `idle`, `recovering`, and the server's own `unknown` are not
+ * failures; `degraded`, `retired`, and `invalid` are failure indicators.
+ * Future values cross intact: coercing one to `unknown` would invent the
+ * server's specific meaning, "the runtime cannot currently be observed."
  */
 export type RecoveryState =
   | 'normal'

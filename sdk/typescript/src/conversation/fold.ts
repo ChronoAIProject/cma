@@ -1,5 +1,5 @@
 import type { AguiEvent } from '../agui/index.js';
-import { PATHS } from '../wire.js';
+import { GAP_VALUE_FRAMES, PATHS } from '../wire.js';
 import {
   EMPTY,
   type AvailableCommand,
@@ -480,15 +480,18 @@ function applyPatches(
           seq: event.seq,
         });
       }
-    } else if (patch.path.startsWith('/gaps')) {
+    } else if (patch.path === PATHS.gaps) {
       const value = (
         typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
       ) as Record<string, unknown>;
+      const frameCount = value[GAP_VALUE_FRAMES];
       next = append(next, {
         kind: 'gap',
         id: `gap-${String(event.seq)}`,
-        rotatedAt: typeof value.rotatedAt === 'string' ? value.rotatedAt : undefined,
-        reason: typeof value.reason === 'string' ? value.reason : undefined,
+        frames:
+          typeof frameCount === 'number' && Number.isSafeInteger(frameCount) && frameCount >= 0
+            ? frameCount
+            : undefined,
         seq: event.seq,
       });
     }
