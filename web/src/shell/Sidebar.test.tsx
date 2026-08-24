@@ -202,12 +202,19 @@ describe('the brand row is set the way the brand is', () => {
     expect(css).not.toMatch(/\.sidebar--collapsed\s+\.sidebar__mark/);
   });
 
-  it('inlines the mark so the appearance can ink it', () => {
+  it('inlines the animated mark so the appearance can ink it', () => {
     renderSidebar();
     const wrapper = document.querySelector('.sidebar__mark');
     expect(wrapper).toHaveAttribute('aria-hidden', 'true');
     expect(wrapper).toBeInstanceOf(HTMLSpanElement);
     expect(wrapper?.querySelector('svg')).not.toBeNull();
+    expect(wrapper?.querySelector('.cma-sweep')).not.toBeNull();
     expect(wrapper?.querySelector('img')).toBeNull();
+  });
+
+  it('keeps the animated asset fixed inside the sidebar wrapper', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/Sidebar.css'), 'utf8');
+    const wrapper = /\.sidebar__mark\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(wrapper).not.toMatch(/animation|transform/);
   });
 });

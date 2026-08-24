@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import markMarkup from '../assets/brand/cma-mark-animated.svg?raw';
 import type { CreationAbility } from '../sessions/availability';
 import { BUILD } from './build';
 import { IconNewChatOutline16, IconPanelLeftOutline16, IconSearchOutline16 } from '../ui/icons';
@@ -61,9 +61,9 @@ export function Sidebar({
           the pointer is the only affordance it needs, and a hover fill on a
           wordmark reads as the product name being a control.
 
-          The still mark, not the animated one: this sits in chrome that is on
-          screen for the whole session, and a logo that replays its entrance
-          every navigation is the kind of motion §14a exists to refuse.
+          The animated mark mounts with this authenticated shell rather than
+          with a session or view, so it draws once after sign-in and does not
+          replay while somebody navigates their work. Its wrapper stays still.
         */}
         <button
           type="button"
