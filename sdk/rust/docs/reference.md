@@ -9,10 +9,9 @@ not copied into this guide. Generate and open it locally with:
 cargo doc --no-deps --open
 ```
 
-After publication, docs.rs builds the same source at
-[`docs.rs/cma-sdk`](https://docs.rs/cma-sdk). The integration files in this
-directory appear under `cma_sdk::guides`, and their code fences run during
-`cargo test --doc`.
+The crate is repository-only and carries `publish = false`, so it has no crates.io
+release or docs.rs page. The integration files in this directory appear under
+`cma_sdk::guides`, and their code fences run during `cargo test --doc`.
 
 The public export list is in [`src/lib.rs`](../src/lib.rs). `Client` and
 `ClientBuilder` own transport configuration, `EventStream` owns the reconnecting
