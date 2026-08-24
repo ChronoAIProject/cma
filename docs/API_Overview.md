@@ -42,7 +42,7 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 | `stream_events` | ● | ● | ● | — | ● |
 | `resolve_approval` | ● | ● | ● at the TUI | ● | ● |
 | `interrupt` | ● | ● | ● | — | ● |
-| `steer` | ● | ● | ● | — | — |
+| `steer` | ● | ● | — | — | — |
 | `resize_terminal` | — | ● | ● | — | — |
 | `screen_snapshot` | — | ● | ● | — | — |
 | `get_usage` | ● | ● | — | — | ● |
