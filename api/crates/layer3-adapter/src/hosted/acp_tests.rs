@@ -462,6 +462,37 @@ async fn a_session_whose_mode_did_not_take_is_refused_rather_than_started() {
 }
 
 #[tokio::test]
+async fn a_failed_handshake_closes_a_runtime_that_keeps_its_socket_open() {
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_rejected_open".into());
+    // No call limit: after refusing the mode, the fixture deliberately waits
+    // for another frame and keeps the WebSocket open until the client leaves.
+    let (url, served) = bridging(None, Some("session/set_mode"), None).await;
+    let stream = connect(&url).await;
+    let error = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+    )
+    .await
+    .expect_err("a rejected mode fails the handshake");
+    assert!(matches!(error, AdapterError::Rejected(_)), "got {error:?}");
+
+    let observed = tokio::time::timeout(std::time::Duration::from_secs(1), served)
+        .await
+        .expect("the failed open closes its held runtime socket")
+        .expect("the fixture does not panic");
+    assert_eq!(
+        observed.asked,
+        vec!["initialize", "session/new", "session/set_mode"]
+    );
+    wait_until_link_is_gone(&kernel, &handle.0).await;
+}
+
+#[tokio::test]
 async fn a_conversation_that_could_not_be_resumed_fails_loudly() {
     // The runtime this came from is about to be torn down. Reporting success
     // here would lose somebody's history with nothing said about it.

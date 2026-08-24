@@ -134,6 +134,7 @@ impl Harness {
                 let writer = Arc::clone(&writer);
                 async move { writer.drive(input).await }
             });
+        let input_task_for_reader = input_task.clone();
 
         // Read before anything is sent: the handshake's own answer arrives on
         // this loop, so it has to be running to receive it.
@@ -141,7 +142,7 @@ impl Harness {
         let updates = updates_tx.clone();
         let control_for_reader = control.clone();
         let link_for_reader = link.clone();
-        tokio::spawn(async move {
+        let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
                     Ok(Message::Binary(bytes)) => match supervisor::unframe(&bytes) {
@@ -167,12 +168,20 @@ impl Harness {
             }
             reader.pending.lock().await.clear();
             link_for_reader.forget(&control_for_reader).await;
-            input_task.abort();
+            input_task_for_reader.abort();
             tracing::info!("conversation link ended");
         });
 
         if let Err(error) = harness.handshake(cwd, spec).await {
+            // A failed handshake does not imply the runtime closed its socket.
+            // Stop all detached work and close both halves before returning.
+            reader_task.abort();
+            let _ = reader_task.await;
+            input_task.abort();
             link.forget(&control).await;
+            drop(input);
+            drop(control);
+            let _ = harness.sink.lock().await.close().await;
             return Err(error);
         }
 

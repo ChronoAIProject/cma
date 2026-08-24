@@ -195,13 +195,14 @@ impl Bridge {
                 let updates = writer_updates.clone();
                 async move { writer.drive(input, &updates).await }
             });
+        let input_task_for_reader = input_task.clone();
 
         // Read before anything is sent: the handshake's own answers arrive on
         // this loop, so it has to be running to receive them.
         let reader = Arc::clone(&bridge);
         let updates = updates_tx.clone();
         let link_for_reader = link.clone();
-        tokio::spawn(async move {
+        let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
                     Ok(Message::Binary(bytes)) => match supervisor::unframe(&bytes) {
@@ -249,7 +250,7 @@ impl Bridge {
             if let Some(lifecycle) = link_for_reader.as_ref() {
                 lifecycle.forget(&control_for_reader).await;
             }
-            input_task.abort();
+            input_task_for_reader.abort();
             tracing::info!("conversation link ended");
         });
 
@@ -261,9 +262,18 @@ impl Bridge {
             .handshake(rejoin, resuming, cwd, mode, own_credential)
             .await;
         if let Err(error) = handshake {
+            // The runtime may reject the handshake while deliberately keeping
+            // its socket open. Stop every detached owner before returning, or
+            // repeated readoption attempts accumulate sockets and relay tasks.
+            reader_task.abort();
+            let _ = reader_task.await;
+            input_task.abort();
             if let Some(lifecycle) = link.as_ref() {
                 lifecycle.forget(&control).await;
             }
+            drop(input);
+            drop(control);
+            let _ = bridge.sink.lock().await.close().await;
             return Err(error);
         }
         let conversation_id = bridge.session.lock().await.clone();
