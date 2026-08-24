@@ -13,6 +13,7 @@ use axum::{
     http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
     Extension, Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, AuthenticatedSubject};
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
@@ -1312,6 +1313,86 @@ async fn bad_query_strings_are_problem_documents_on_every_query_route() {
         let body = assert_problem(response, StatusCode::BAD_REQUEST).await;
         assert_eq!(body["code"], "invalid_query", "for {uri}");
     }
+}
+
+#[tokio::test]
+async fn cursors_reject_cross_route_reuse_mutation_and_nonsemantic_timestamps() {
+    let TestSurface {
+        app,
+        store,
+        profiles,
+        caller,
+        ..
+    } = test_surface(true);
+    seed_sessions(
+        &store,
+        &caller.subject,
+        [SessionStatus::Ready, SessionStatus::Ready],
+    )
+    .await;
+    seed_profiles(&profiles, &caller.subject, 2).await;
+
+    let (_, headers) = get_collection(&app, "/api/v1/sessions?limit=1").await;
+    let next = next_link(&headers).expect("two sessions produce a continuation");
+    let query = next
+        .split_once('?')
+        .map(|(_, query)| query)
+        .expect("continuation carries a query");
+
+    for uri in [
+        format!("/api/v1/admin/sessions?{query}"),
+        format!("/api/v1/environment-profiles?{query}"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(&uri)
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        let body = assert_problem(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(body["code"], "invalid_query", "for {uri}");
+    }
+
+    let (before_cursor, encoded) = query
+        .split_once("cursor=")
+        .expect("continuation names its cursor");
+    let mut truncated = encoded.to_string();
+    truncated.pop();
+    let mutated = format!("/api/v1/sessions?{before_cursor}cursor={truncated}");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(&mutated)
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::BAD_REQUEST).await;
+    assert_eq!(body["code"], "invalid_query");
+
+    let invalid_time = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "collection": "sessions",
+            "created_at": "newest-ish",
+            "id": "sesn_cursor",
+        }))
+        .expect("test cursor serializes"),
+    );
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/sessions?cursor={invalid_time}"))
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::BAD_REQUEST).await;
+    assert_eq!(body["code"], "invalid_query");
 }
 
 #[tokio::test]
