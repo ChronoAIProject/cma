@@ -1,8 +1,10 @@
 use super::*;
 use layer2_core::{
-    AgentOptions, KernelId, Rate, RateCardId, RecoveryState, Session, SessionId, SessionPricing,
-    SessionRecord, SessionStatus, StopReason, SubjectId, TerminalGeometry,
+    AgentOptions, Event, EventKind, KernelId, Rate, RateCardId, RecoveryState, Session, SessionId,
+    SessionPricing, SessionRecord, SessionStatus, StopReason, SubjectId, TerminalGeometry,
 };
+use std::io::Write;
+use std::sync::{Arc, Mutex as StdMutex};
 
 fn record_with(pricing: Option<SessionPricing>) -> SessionRecord {
     SessionRecord::new(Session {
@@ -41,6 +43,116 @@ fn pricing() -> SessionPricing {
     }
 }
 
+fn event(session: &str, seq: u64) -> Event {
+    Event {
+        session_id: SessionId(session.into()),
+        seq,
+        kind: EventKind::SessionCreated,
+        appended_at: "2026-08-24T00:00:00Z".into(),
+    }
+}
+
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<StdMutex<Vec<u8>>>);
+
+struct LogWriter(Arc<StdMutex<Vec<u8>>>);
+
+impl Write for LogWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("log buffer is not poisoned")
+            .extend(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+    type Writer = LogWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        LogWriter(Arc::clone(&self.0))
+    }
+}
+
+#[test]
+fn a_contiguous_batch_passes_the_pre_insert_check() {
+    validate_contiguous_append(
+        &[event("sesn_ordered", 4), event("sesn_ordered", 5)],
+        Some(3),
+    )
+    .expect("the durable tail is followed exactly");
+}
+
+#[test]
+fn an_out_of_order_batch_is_typed_and_logged_before_insertion() {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(logs.clone())
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+
+    let error = validate_contiguous_append(&[event("sesn_gap", 5)], Some(3))
+        .expect_err("sequence four is not readable");
+
+    assert!(matches!(
+        error,
+        StoreError::NonContiguousAppend {
+            expected: 4,
+            got: 5
+        }
+    ));
+    let bytes = logs.0.lock().expect("log buffer").clone();
+    let output = String::from_utf8(bytes).expect("utf-8 logs");
+    assert!(output.contains("sesn_gap"), "session id missing: {output}");
+    assert!(
+        output.contains("expected=4"),
+        "expected seq missing: {output}"
+    );
+    assert!(output.contains("got=5"), "received seq missing: {output}");
+    assert!(
+        output.contains("refused a non-contiguous event append"),
+        "refusal missing: {output}"
+    );
+}
+
+#[test]
+fn a_gap_inside_one_batch_is_refused_too() {
+    let error = validate_contiguous_append(
+        &[event("sesn_internal_gap", 4), event("sesn_internal_gap", 6)],
+        Some(3),
+    )
+    .expect_err("sequence five is absent from the batch");
+
+    assert!(matches!(
+        error,
+        StoreError::NonContiguousAppend {
+            expected: 5,
+            got: 6
+        }
+    ));
+}
+
+#[test]
+fn a_lower_sequence_is_taken_not_a_forward_gap() {
+    let error = validate_contiguous_append(&[event("sesn_lower", 3)], Some(3))
+        .expect_err("the durable tail already owns sequence three");
+
+    assert!(matches!(
+        error,
+        StoreError::SequenceTaken {
+            expected: 4,
+            got: 3
+        }
+    ));
+}
+
 #[test]
 fn session_pricing_round_trips_exactly() {
     let expected = pricing();
@@ -58,6 +170,42 @@ fn a_document_without_pricing_reads_as_unpriced() {
     let old: SessionDoc = mongodb::bson::deserialize_from_bson(document.into()).expect("doc reads");
 
     assert_eq!(from_doc(old).expect("old doc reads").session.pricing, None);
+}
+
+#[test]
+fn a_document_without_revision_reads_as_revision_zero() {
+    let mut record = record_with(None);
+    record.revision = 7;
+    let stored = to_doc(&record).expect("record can be stored");
+    let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
+    assert!(document.remove("revision").is_some());
+
+    let legacy: SessionDoc =
+        mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
+
+    assert_eq!(from_doc(legacy).expect("legacy record decodes").revision, 0);
+}
+
+#[test]
+fn revision_zero_cas_atomically_matches_explicit_and_legacy_zero() {
+    assert_eq!(
+        session_revision_filter("sesn_legacy", 0),
+        doc! {
+            "_id": "sesn_legacy",
+            "$or": [
+                { "revision": 0_i64 },
+                { "revision": { "$exists": false } },
+            ],
+        }
+    );
+}
+
+#[test]
+fn positive_revision_cas_never_matches_a_missing_revision() {
+    assert_eq!(
+        session_revision_filter("sesn_revised", 4),
+        doc! { "_id": "sesn_revised", "revision": 4_i64 }
+    );
 }
 
 #[test]
@@ -102,6 +250,88 @@ fn enums_round_trip_through_their_serde_representation() {
     assert_eq!(s, SessionStatus::Terminated);
     let r: RecoveryState = parse_plain("degraded").unwrap();
     assert_eq!(r, RecoveryState::Degraded);
+}
+
+#[test]
+fn a_terminal_mongo_record_cannot_transition_back_to_live() {
+    let id = SessionId("sesn_terminal".into());
+    assert!(matches!(
+        validate_status_transition(&id, "terminated", "ready"),
+        Err(StoreError::SessionTerminated { id: refused }) if refused == id
+    ));
+    validate_status_transition(&id, "terminated", "terminated")
+        .expect("terminal cleanup remains writable");
+}
+
+#[test]
+fn an_empty_record_only_transaction_is_valid_input() {
+    validate_transaction_input("write-empty", &record_with(None), &[], false)
+        .expect("an empty event batch still updates the record and writes a receipt");
+}
+
+#[test]
+fn a_receipt_belongs_to_exactly_one_session_and_carries_a_valid_revision() {
+    let receipt = SessionWriteDoc {
+        id: "write-owned".into(),
+        session_id: "sesn_owner".into(),
+        revision: 7,
+    };
+    assert_eq!(
+        receipt_revision(&receipt, "write-owned", &SessionId("sesn_owner".into())).unwrap(),
+        7
+    );
+    assert!(receipt_revision(&receipt, "write-owned", &SessionId("sesn_other".into())).is_err());
+
+    let negative = SessionWriteDoc {
+        revision: -1,
+        ..receipt
+    };
+    assert!(receipt_revision(&negative, "write-owned", &SessionId("sesn_owner".into())).is_err());
+}
+
+#[test]
+fn revision_increment_is_checked_before_bson_storage() {
+    assert_eq!(next_stored_revision(0).unwrap(), (1, 1));
+    assert!(next_stored_revision(i64::MAX as u64).is_err());
+    assert!(next_stored_revision(u64::MAX).is_err());
+}
+
+#[test]
+fn transactional_updates_explicitly_disable_upsert() {
+    assert_eq!(session_update_options().upsert, Some(false));
+}
+
+#[test]
+fn a_session_tail_above_bson_i64_is_refused() {
+    let mut record = record_with(None);
+    record.session.last_seq = i64::MAX as u64 + 1;
+    assert!(matches!(to_doc(&record), Err(StoreError::Malformed(_))));
+}
+
+#[test]
+fn an_event_cursor_past_bson_i64_is_already_past_all_storable_events() {
+    assert_eq!(stored_event_cursor(i64::MAX as u64), Some(i64::MAX));
+    assert_eq!(stored_event_cursor(i64::MAX as u64 + 1), None);
+}
+
+#[test]
+fn a_legacy_record_tail_is_a_sequence_floor_without_authorizing_new_holes() {
+    assert_eq!(durable_sequence_floor(Some(7), Some(9)).unwrap(), 9);
+    assert_eq!(durable_sequence_floor(Some(11), Some(9)).unwrap(), 11);
+    assert!(durable_sequence_floor(Some(7), Some(-1)).is_err());
+
+    let id = SessionId("sesn_legacy_tail".into());
+    assert_eq!(resolved_transaction_tail(&id, 9, 9, &[]).unwrap(), 9);
+    assert_eq!(
+        resolved_transaction_tail(&id, 11, 9, &[]).unwrap(),
+        11,
+        "a record-only update preserves events already ahead of its snapshot"
+    );
+    assert!(resolved_transaction_tail(&id, 9, 10, &[]).is_err());
+    assert_eq!(
+        resolved_transaction_tail(&id, 9, 10, &[event("sesn_legacy_tail", 10)]).unwrap(),
+        10
+    );
 }
 
 #[test]
@@ -271,31 +501,17 @@ fn a_duplicate_sequence_is_named_rather_than_reported_as_an_outage() {
                    index: session_id_1_seq_1"
     }]));
 
-    assert!(matches!(
-        sequence_taken(&error, 4),
-        Some(StoreError::SequenceTaken {
-            written: 0,
-            total: 4
-        })
-    ));
+    assert!(sequence_taken(&error));
 }
 
 #[test]
-fn the_count_is_what_the_database_accepted_before_it_stopped() {
-    // Inserts are ordered, so the first failing position is the number already
-    // written. A caller re-numbering from zero would write those twice.
+fn any_duplicate_position_is_recognized_after_an_atomic_abort() {
     let error = insert_failure(serde_json::json!([
         { "index": 2, "code": 11000, "errmsg": "dup" },
         { "index": 3, "code": 11000, "errmsg": "dup" }
     ]));
 
-    assert!(matches!(
-        sequence_taken(&error, 5),
-        Some(StoreError::SequenceTaken {
-            written: 2,
-            total: 5
-        })
-    ));
+    assert!(sequence_taken(&error));
 }
 
 #[test]
@@ -303,9 +519,65 @@ fn any_other_failure_is_left_alone() {
     let other = insert_failure(serde_json::json!([{
         "index": 0, "code": 121, "errmsg": "document failed validation"
     }]));
-    assert!(sequence_taken(&other, 1).is_none());
+    assert!(!sequence_taken(&other));
 
     let unreachable: mongodb::error::Error =
         mongodb::error::ErrorKind::Io(std::sync::Arc::new(std::io::Error::other("gone"))).into();
-    assert!(sequence_taken(&unreachable, 1).is_none());
+    assert!(!sequence_taken(&unreachable));
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_legacy_document_passes_its_first_revision_zero_cas() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_legacy_revision_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database)
+        .await
+        .expect("test store opens");
+
+    let original = record_with(None);
+    let stored = to_doc(&original).expect("record encodes");
+    let mut legacy = mongodb::bson::serialize_to_document(&stored).expect("record serializes");
+    assert!(legacy.remove("revision").is_some());
+    store
+        .sessions
+        .clone_with_type::<Document>()
+        .insert_one(legacy)
+        .await
+        .expect("legacy document inserts");
+
+    let mut update = store
+        .get(&original.session.id)
+        .await
+        .expect("legacy record reads")
+        .expect("legacy record exists");
+    assert_eq!(update.revision, 0);
+    update.context_ref = Some("first-cas-succeeded".into());
+    let revision = store
+        .commit_session_idempotent("legacy-first-cas", &update, &[])
+        .await
+        .expect("missing revision atomically compares as zero");
+
+    assert_eq!(revision, 1);
+    let durable = store
+        .get(&original.session.id)
+        .await
+        .expect("updated record reads")
+        .expect("updated record exists");
+    assert_eq!(durable.revision, 1);
+    assert_eq!(durable.context_ref.as_deref(), Some("first-cas-succeeded"));
+
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
 }

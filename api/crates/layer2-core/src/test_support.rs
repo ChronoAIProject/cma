@@ -28,8 +28,12 @@ use crate::Reserved;
 /// see must have gone through it.
 #[derive(Default)]
 pub(crate) struct FakeStore {
+    /// Makes multi-collection operations atomic to every fake-store reader.
+    transaction: Mutex<()>,
     pub(crate) sessions: Mutex<HashMap<String, SessionRecord>>,
     pub(crate) events: Mutex<Vec<StoredEvent>>,
+    /// Durable receipts for whole record/event transactions, including empty batches.
+    write_receipts: Mutex<HashMap<String, (SessionId, u64)>>,
     /// Successful record writes, so idempotent migrations can be asserted.
     pub(crate) upserts: std::sync::atomic::AtomicUsize,
     /// When set, every operation fails, so callers can be checked against a
@@ -48,6 +52,134 @@ impl FakeStore {
         }
         Ok(())
     }
+
+    fn event_tail(held: &[StoredEvent], id: &SessionId) -> u64 {
+        held.iter()
+            .filter(|event| &event.session_id == id)
+            .map(|event| event.seq)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn validate_append(
+        held: &[StoredEvent],
+        events: &[Event],
+        recorded_tail: u64,
+    ) -> Result<(), StoreError> {
+        let Some(first) = events.first() else {
+            return Ok(());
+        };
+        let id = &first.session_id;
+        let mut expected = Self::event_tail(held, id)
+            .max(recorded_tail)
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+
+        for event in events {
+            if event.session_id != *id {
+                return Err(StoreError::Malformed(
+                    "one event append batch named more than one session".into(),
+                ));
+            }
+            if event.seq < expected {
+                return Err(StoreError::SequenceTaken {
+                    expected,
+                    got: event.seq,
+                });
+            }
+            if event.seq > expected {
+                return Err(StoreError::NonContiguousAppend {
+                    expected,
+                    got: event.seq,
+                });
+            }
+            expected = expected.checked_add(1).ok_or_else(|| {
+                StoreError::Malformed(format!("event sequence overflow for {id}"))
+            })?;
+        }
+        Ok(())
+    }
+
+    async fn commit_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+        create: bool,
+    ) -> Result<u64, StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let mut receipts = self.write_receipts.lock().await;
+        if let Some((held_by, revision)) = receipts.get(write_id) {
+            if held_by != &record.session.id {
+                return Err(StoreError::Malformed(format!(
+                    "session write ID {write_id} belongs to another session"
+                )));
+            }
+            return Ok(*revision);
+        }
+
+        let mut sessions = self.sessions.lock().await;
+        let existing = sessions.get(&record.session.id.0);
+        let actual = existing.map_or(0, |stored| stored.revision);
+        let recorded_tail = existing.map_or(0, |stored| stored.session.last_seq);
+        if create {
+            if record.revision != 0 || existing.is_some() {
+                return Err(StoreError::RevisionConflict {
+                    expected: 0,
+                    actual,
+                });
+            }
+        } else {
+            if existing.is_none() {
+                return Err(StoreError::SessionDeleted {
+                    id: record.session.id.clone(),
+                });
+            }
+            if actual != record.revision {
+                return Err(StoreError::RevisionConflict {
+                    expected: record.revision,
+                    actual,
+                });
+            }
+            if existing.is_some_and(|stored| {
+                stored.session.status.is_terminal() && !record.session.status.is_terminal()
+            }) {
+                return Err(StoreError::SessionTerminated {
+                    id: record.session.id.clone(),
+                });
+            }
+        }
+
+        let mut held = self.events.lock().await;
+        let sequence_floor = Self::event_tail(&held, &record.session.id).max(recorded_tail);
+        Self::validate_append(&held, events, recorded_tail)?;
+        let requested_tail = record.session.last_seq;
+        let durable_tail = events.last().map_or(sequence_floor, |event| event.seq);
+        let tail_matches = if events.is_empty() {
+            requested_tail <= sequence_floor
+        } else {
+            requested_tail == durable_tail
+        };
+        if !tail_matches {
+            return Err(StoreError::Malformed(format!(
+                "session {} record tail {} does not match durable tail {}",
+                record.session.id, requested_tail, durable_tail
+            )));
+        }
+        let revision = actual
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        let mut durable = record.clone();
+        durable.revision = revision;
+        durable.session.last_seq = durable_tail;
+        held.extend(events.iter().cloned().map(StoredEvent::from));
+        sessions.insert(record.session.id.0.clone(), durable);
+        receipts.insert(write_id.to_string(), (record.session.id.clone(), revision));
+        self.upserts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(revision)
+    }
 }
 
 #[async_trait::async_trait]
@@ -58,6 +190,7 @@ impl SessionStore for FakeStore {
 
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
         self.upserts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.sessions
@@ -69,11 +202,13 @@ impl SessionStore for FakeStore {
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
         Ok(self.sessions.lock().await.get(&id.0).cloned())
     }
 
     async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
         Ok(self
             .sessions
             .lock()
@@ -86,11 +221,13 @@ impl SessionStore for FakeStore {
 
     async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
         Ok(self.sessions.lock().await.values().cloned().collect())
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
         let mut reserved = Reserved::default();
         for record in self.sessions.lock().await.values() {
             if record.session.status.wants_runtime() {
@@ -102,12 +239,17 @@ impl SessionStore for FakeStore {
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
         self.sessions.lock().await.remove(&id.0);
         self.events.lock().await.retain(|e| &e.session_id != id);
+        self.write_receipts
+            .lock()
+            .await
+            .retain(|_, (session_id, _)| session_id != id);
         Ok(())
     }
 
-    /// Append, refusing a sequence the session already has.
+    /// Append atomically, refusing a collision or a forward gap.
     ///
     /// The refusal is the point. This double accepted duplicates, so a race
     /// that the database rejects outright looked perfectly healthy here — the
@@ -116,24 +258,54 @@ impl SessionStore for FakeStore {
     /// unique index this stands in for. A double that is more permissive than
     /// the thing it doubles is a test that passes for the wrong reason.
     ///
-    /// Ordered, like the real one, so the count reported is genuinely what was
-    /// written before the collision.
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let recorded_tail = match events.first() {
+            Some(first) => self
+                .sessions
+                .lock()
+                .await
+                .get(&first.session_id.0)
+                .map_or(0, |record| record.session.last_seq),
+            None => 0,
+        };
         let mut held = self.events.lock().await;
-        for (written, event) in events.iter().enumerate() {
-            if held
-                .iter()
-                .any(|e| e.session_id == event.session_id && e.seq == event.seq)
-            {
-                return Err(StoreError::SequenceTaken {
-                    written,
-                    total: events.len(),
-                });
-            }
-            held.push(StoredEvent::from(event.clone()));
-        }
+        Self::validate_append(&held, events, recorded_tail)?;
+        held.extend(events.iter().cloned().map(StoredEvent::from));
         Ok(())
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.commit_idempotent(write_id, record, events, false)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.commit_idempotent(write_id, record, events, true).await
+    }
+
+    async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {
+        self.guard().await?;
+        Ok(self
+            .events
+            .lock()
+            .await
+            .iter()
+            .filter(|event| &event.session_id == id)
+            .map(|event| event.seq)
+            .max()
+            .unwrap_or(0))
     }
 
     async fn events_since(

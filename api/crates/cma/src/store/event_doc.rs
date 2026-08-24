@@ -36,7 +36,12 @@ struct EventDoc {
 pub(super) fn to_document(event: &Event) -> Result<Document, StoreError> {
     let doc = EventDoc {
         session_id: event.session_id.0.clone(),
-        seq: event.seq as i64,
+        seq: i64::try_from(event.seq).map_err(|_| {
+            malformed(format!(
+                "seq {} exceeds the largest sequence MongoDB can store",
+                event.seq
+            ))
+        })?,
         appended_at: event.appended_at.clone(),
         kind: mongodb::bson::serialize_to_bson(&event.kind)
             .map_err(|error| StoreError::Malformed(error.to_string()))?,

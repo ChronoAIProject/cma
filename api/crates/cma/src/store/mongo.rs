@@ -1,20 +1,20 @@
 //! Session records and event history, in MongoDB.
 //!
-//! Two collections. Sessions are keyed by their own id so an upsert is a
-//! replace. Events carry a compound unique index on `(session_id, seq)`, which
-//! is what makes the per-session sequence a guarantee rather than a hope: a
-//! duplicate sequence is rejected by the database, not merely unlikely.
+//! Sessions, events, and whole-write receipts live in three collections.
+//! Events carry a compound unique index on `(session_id, seq)`, which is what
+//! makes the per-session sequence a guarantee rather than a hope: a duplicate
+//! sequence is rejected by the database, not merely unlikely.
 
 use std::{future::Future, time::Duration};
 
-use futures_util::TryStreamExt;
+use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     store::{SessionRecord, SessionStore, StoreError},
     Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StoredEvent,
     SubjectId,
 };
 use mongodb::bson::{doc, Document};
-use mongodb::options::{IndexOptions, ReplaceOptions};
+use mongodb::options::{IndexOptions, ReadConcern, ReplaceOptions, WriteConcern};
 use mongodb::{Client, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,7 @@ use super::event_doc;
 const SESSIONS: &str = "sessions";
 const EVENTS: &str = "session_events";
 const STORE_PING_TIMEOUT: Duration = Duration::from_secs(2);
+const WRITES: &str = "session_writes";
 
 /// A granted skill as it is stored.
 ///
@@ -47,7 +48,7 @@ enum StoredSkill {
 /// BSON has no unsigned 64-bit integer, so this mirror is explicit and every
 /// conversion is checked. A price that cannot be represented is refused
 /// rather than clamped into a different charge.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PricingDoc {
     rate_card: String,
     cpu_micros_per_cpu_hour: i64,
@@ -93,7 +94,7 @@ impl StoredSkill {
 /// and this owns how it is written. `_id` carries the session id so the
 /// database enforces uniqueness rather than the application.
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionDoc {
     #[serde(rename = "_id")]
     id: String,
@@ -157,6 +158,17 @@ struct SessionDoc {
     /// which is a different fact from a price of nothing.
     #[serde(default)]
     pricing: Option<PricingDoc>,
+    /// Optimistic store revision. Documents from before revisions read as zero.
+    #[serde(default)]
+    revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionWriteDoc {
+    #[serde(rename = "_id")]
+    id: String,
+    session_id: String,
+    revision: i64,
 }
 
 /// A MongoDB-backed session store.
@@ -166,9 +178,23 @@ struct SessionDoc {
 /// and telling a newer vocabulary apart from real corruption is exactly the
 /// decision `event_doc` exists to make.
 pub struct MongoSessionStore {
+    client: Client,
     database: Database,
     sessions: Collection<SessionDoc>,
     events: Collection<Document>,
+    writes: Collection<SessionWriteDoc>,
+}
+
+struct EventTransaction {
+    events_collection: Collection<Document>,
+    sessions_collection: Collection<SessionDoc>,
+    writes_collection: Collection<SessionWriteDoc>,
+    id: SessionId,
+    write_id: String,
+    create: bool,
+    events: Vec<Event>,
+    documents: Vec<Document>,
+    record: SessionDoc,
 }
 
 impl MongoSessionStore {
@@ -180,8 +206,10 @@ impl MongoSessionStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let db = client.database(database);
         let store = Self {
+            client: client.clone(),
             sessions: db.collection(SESSIONS),
             events: db.collection(EVENTS),
+            writes: db.collection(WRITES),
             database: db,
         };
         store.ensure_indexes().await?;
@@ -202,6 +230,14 @@ impl MongoSessionStore {
             .create_index(seq)
             .await
             .map_err(|e| StoreError::Unavailable(format!("event index: {e}")))?;
+
+        // A receipt is inserted atomically with every record/event unit. Its
+        // `_id` is already unique; this index makes deleting one session's
+        // receipts bounded when the owner deletes the session.
+        self.writes
+            .create_index(IndexModel::builder().keys(doc! { "session_id": 1 }).build())
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("session write index: {e}")))?;
 
         let owner = IndexModel::builder()
             .keys(doc! { "owner": 1, "created_at": -1 })
@@ -255,26 +291,205 @@ const DUPLICATE_KEY: i32 = 11000;
 
 /// Read a failed insert as a sequence collision, if that is what it was.
 ///
-/// `None` for anything else, so a store that is merely unreachable is still
-/// reported as unreachable. Only the compound unique index can produce this
-/// code on this collection, so a duplicate key here means one thing.
+/// False for anything else, so a store that is merely unreachable is still
+/// reported as unreachable. A sequence race is resolved from the durable tail
+/// by the core; whole-write idempotency is resolved separately by receipts.
 ///
-/// The batch is inserted ordered, so the first failing position is also the
-/// number of events the database accepted before it stopped — which is what a
-/// caller re-numbering the remainder needs, and the reason this returns a
-/// count rather than a bare marker.
-fn sequence_taken(error: &mongodb::error::Error, total: usize) -> Option<StoreError> {
+/// Event inserts run inside a transaction, so a duplicate aborts the entire
+/// batch. This helper only identifies the server error; the durable tail is
+/// read after the abort to construct the typed collision.
+fn sequence_taken(error: &mongodb::error::Error) -> bool {
     let mongodb::error::ErrorKind::InsertMany(ref failed) = *error.kind else {
-        return None;
+        return false;
     };
-    let written = failed
+    failed
         .write_errors
-        .as_ref()?
+        .as_ref()
+        .is_some_and(|errors| errors.iter().any(|error| error.code == DUPLICATE_KEY))
+}
+
+/// Refuse any batch that would make a higher sequence readable across a hole.
+///
+/// Checked as a batch before insertion so the refusal writes none of it. A
+/// lower sequence is `SequenceTaken`: it belongs behind the durable tail and
+/// the caller must rebase it. `NonContiguousAppend` is reserved for a forward
+/// gap whose missing lower writer may still be in flight.
+fn validate_contiguous_append(events: &[Event], last: Option<u64>) -> Result<(), StoreError> {
+    let Some(first) = events.first() else {
+        return Ok(());
+    };
+    let id = &first.session_id;
+    let mut expected = last
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+
+    for event in events {
+        if event.session_id != *id {
+            return Err(StoreError::Malformed(
+                "one event append batch named more than one session".into(),
+            ));
+        }
+        if event.seq < expected {
+            tracing::error!(
+                session_id = %id,
+                expected,
+                got = event.seq,
+                "refused an event sequence already below the durable tail"
+            );
+            return Err(StoreError::SequenceTaken {
+                expected,
+                got: event.seq,
+            });
+        }
+        if event.seq > expected {
+            tracing::error!(
+                session_id = %id,
+                expected,
+                got = event.seq,
+                "refused a non-contiguous event append"
+            );
+            return Err(StoreError::NonContiguousAppend {
+                expected,
+                got: event.seq,
+            });
+        }
+        expected = expected
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+    }
+    Ok(())
+}
+
+fn stored_event_tail(found: Option<Document>) -> Result<Option<u64>, StoreError> {
+    let Some(found) = found else {
+        return Ok(None);
+    };
+    let seq = found
+        .get_i64("seq")
+        .map_err(|_| StoreError::Malformed("event tail seq must be a 64-bit integer".into()))?;
+    u64::try_from(seq)
+        .map(Some)
+        .map_err(|_| StoreError::Malformed("event tail seq must not be negative".into()))
+}
+
+/// The next atomic writer starts after both facts an older deployment may have
+/// exposed: events that exist, and cursor positions its session record already
+/// advertised. The old two-step write could leave either one ahead of the
+/// other; taking the maximum preserves those cursors without allowing a new
+/// transaction to create another hole.
+fn durable_sequence_floor(
+    event_tail: Option<u64>,
+    recorded_tail: Option<i64>,
+) -> Result<u64, StoreError> {
+    let recorded_tail = recorded_tail
+        .map(|tail| {
+            u64::try_from(tail).map_err(|_| {
+                StoreError::Malformed("session event tail must not be negative".into())
+            })
+        })
+        .transpose()?
+        .unwrap_or(0);
+    Ok(event_tail.unwrap_or(0).max(recorded_tail))
+}
+
+fn resolved_transaction_tail(
+    id: &SessionId,
+    sequence_floor: u64,
+    requested_tail: u64,
+    events: &[Event],
+) -> Result<u64, StoreError> {
+    let durable_tail = events.last().map_or(sequence_floor, |event| event.seq);
+    let tail_matches = if events.is_empty() {
+        requested_tail <= sequence_floor
+    } else {
+        requested_tail == durable_tail
+    };
+    if !tail_matches {
+        return Err(StoreError::Malformed(format!(
+            "session {id} record tail {requested_tail} does not match durable tail {durable_tail}"
+        )));
+    }
+    Ok(durable_tail)
+}
+
+fn validate_transaction_input(
+    write_id: &str,
+    record: &SessionRecord,
+    events: &[Event],
+    create: bool,
+) -> Result<(), StoreError> {
+    if write_id.is_empty() {
+        return Err(StoreError::Malformed(
+            "session write ID must not be empty".into(),
+        ));
+    }
+    if record.session.id.0.is_empty() {
+        return Err(StoreError::Malformed("session id must not be empty".into()));
+    }
+    if events
         .iter()
-        .filter(|w| w.code == DUPLICATE_KEY)
-        .map(|w| w.index)
-        .min()?;
-    Some(StoreError::SequenceTaken { written, total })
+        .any(|event| event.session_id != record.session.id)
+    {
+        return Err(StoreError::Malformed(
+            "one durable session write named more than one session".into(),
+        ));
+    }
+    if create && record.revision != 0 {
+        return Err(StoreError::RevisionConflict {
+            expected: 0,
+            actual: record.revision,
+        });
+    }
+    Ok(())
+}
+
+fn receipt_revision(
+    receipt: &SessionWriteDoc,
+    write_id: &str,
+    id: &SessionId,
+) -> Result<u64, StoreError> {
+    if receipt.session_id != id.0 {
+        return Err(StoreError::Malformed(format!(
+            "session write ID {write_id} belongs to another session"
+        )));
+    }
+    u64::try_from(receipt.revision)
+        .map_err(|_| StoreError::Malformed("session write receipt revision is negative".into()))
+}
+
+fn next_stored_revision(actual: u64) -> Result<(u64, i64), StoreError> {
+    let revision = actual
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+    let stored = i64::try_from(revision)
+        .map_err(|_| StoreError::Malformed("session revision cannot be stored".into()))?;
+    Ok((revision, stored))
+}
+
+fn session_update_options() -> ReplaceOptions {
+    ReplaceOptions::builder().upsert(false).build()
+}
+
+fn session_revision_filter(id: &str, expected: i64) -> Document {
+    if expected == 0 {
+        // Records written before optimistic revisions have no `revision`
+        // field. Deserialization deliberately reads those as revision zero,
+        // so their first CAS must give the absent field the same meaning.
+        doc! {
+            "_id": id,
+            "$or": [
+                { "revision": 0_i64 },
+                { "revision": { "$exists": false } },
+            ],
+        }
+    } else {
+        doc! { "_id": id, "revision": expected }
+    }
+}
+
+fn stored_event_cursor(after: u64) -> Option<i64> {
+    i64::try_from(after).ok()
 }
 
 fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
@@ -291,7 +506,12 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         },
         columns: s.geometry.columns() as u32,
         rows: s.geometry.rows() as u32,
-        last_seq: s.last_seq as i64,
+        last_seq: i64::try_from(s.last_seq).map_err(|_| {
+            StoreError::Malformed(format!(
+                "session event tail {} cannot be stored",
+                s.last_seq
+            ))
+        })?,
         created_at: s.created_at.clone(),
         options: Some(
             mongodb::bson::serialize_to_bson(&s.options)
@@ -321,6 +541,9 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
                 .collect()
         }),
         pricing: s.pricing.as_ref().map(pricing_to_doc).transpose()?,
+        revision: i64::try_from(r.revision).map_err(|_| {
+            StoreError::Malformed(format!("session revision {} cannot be stored", r.revision))
+        })?,
     })
 }
 
@@ -395,6 +618,15 @@ fn serde_plain_string<T: Serialize>(value: &T) -> Result<String, StoreError> {
 fn parse_plain<T: for<'de> Deserialize<'de>>(s: &str) -> Result<T, StoreError> {
     serde_json::from_value(serde_json::Value::String(s.to_string()))
         .map_err(|e| StoreError::Malformed(format!("{s:?}: {e}")))
+}
+
+fn validate_status_transition(id: &SessionId, current: &str, next: &str) -> Result<(), StoreError> {
+    let current: SessionStatus = parse_plain(current)?;
+    let next: SessionStatus = parse_plain(next)?;
+    if current.is_terminal() && !next.is_terminal() {
+        return Err(StoreError::SessionTerminated { id: id.clone() });
+    }
+    Ok(())
 }
 
 /// A bounded server-side sum of every durable promise that wants a runtime.
@@ -493,6 +725,8 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         },
         runtime_id: d.runtime_id,
         context_ref: d.context_ref,
+        revision: u64::try_from(d.revision)
+            .map_err(|_| StoreError::Malformed("session revision must not be negative".into()))?,
     })
 }
 
@@ -566,31 +800,35 @@ impl SessionStore for MongoSessionStore {
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
-        self.sessions
-            .delete_one(doc! { "_id": &id.0 })
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("delete session: {e}")))?;
-        // History goes with it: keeping orphaned events would leave a record of
-        // work whose session the owner asked to be removed.
-        self.events
-            .delete_many(doc! { "session_id": &id.0 })
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("delete events: {e}")))?;
-        Ok(())
+        self.transactional_delete(id).await
     }
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
-        if events.is_empty() {
-            return Ok(());
-        }
-        let docs: Result<Vec<Document>, StoreError> =
-            events.iter().map(event_doc::to_document).collect();
-        let total = events.len();
-        self.events.insert_many(docs?).await.map_err(|e| {
-            sequence_taken(&e, total)
-                .unwrap_or_else(|| StoreError::Unavailable(format!("append events: {e}")))
-        })?;
-        Ok(())
+        self.transactional_events(events).await
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.transactional_commit(write_id, record, events, false)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.transactional_commit(write_id, record, events, true)
+            .await
+    }
+
+    async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {
+        Ok(self.last_event_sequence(id).await?.unwrap_or(0))
     }
 
     async fn events_since(
@@ -598,9 +836,14 @@ impl SessionStore for MongoSessionStore {
         id: &SessionId,
         after: u64,
     ) -> Result<Vec<StoredEvent>, StoreError> {
+        let Some(after) = stored_event_cursor(after) else {
+            // Mongo cannot contain an event above i64::MAX, so a cursor beyond
+            // that point is already past every representable event.
+            return Ok(Vec::new());
+        };
         let mut cursor = self
             .events
-            .find(doc! { "session_id": &id.0, "seq": { "$gt": after as i64 } })
+            .find(doc! { "session_id": &id.0, "seq": { "$gt": after } })
             .sort(doc! { "seq": 1 })
             .await
             .map_err(|e| StoreError::Unavailable(format!("events: {e}")))?;
@@ -617,6 +860,373 @@ impl SessionStore for MongoSessionStore {
 }
 
 impl MongoSessionStore {
+    /// Atomically commit one exact writer-owned record/event unit.
+    ///
+    /// The receipt is part of the transaction. The driver's convenient runner
+    /// reruns the callback for `TransientTransactionError` and retries commit
+    /// resolution for `UnknownTransactionCommitResult`; either path therefore
+    /// finds the same receipt rather than repeating events or an old record.
+    async fn transactional_commit(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+        create: bool,
+    ) -> Result<u64, StoreError> {
+        validate_transaction_input(write_id, record, events, create)?;
+
+        let id = record.session.id.clone();
+        let documents = events
+            .iter()
+            .map(event_doc::to_document)
+            .collect::<Result<Vec<_>, _>>()?;
+        let record = to_doc(record)?;
+        let mut session = self.client.start_session().await.map_err(|error| {
+            StoreError::Unavailable(format!("start session write transaction: {error}"))
+        })?;
+        let transaction = EventTransaction {
+            events_collection: self.events.clone(),
+            sessions_collection: self.sessions.clone(),
+            writes_collection: self.writes.clone(),
+            id: id.clone(),
+            write_id: write_id.to_string(),
+            create,
+            events: events.to_vec(),
+            documents,
+            record,
+        };
+
+        let outcome = session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run(transaction, |session, transaction| {
+                async move {
+                    if let Some(receipt) = transaction
+                        .writes_collection
+                        .find_one(doc! { "_id": &transaction.write_id })
+                        .session(&mut *session)
+                        .await?
+                    {
+                        return receipt_revision(&receipt, &transaction.write_id, &transaction.id)
+                            .map_err(mongodb::error::Error::custom);
+                    }
+
+                    let existing = transaction
+                        .sessions_collection
+                        .find_one(doc! { "_id": &transaction.id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    let actual = existing
+                        .as_ref()
+                        .map(|record| {
+                            u64::try_from(record.revision).map_err(|_| {
+                                mongodb::error::Error::custom(StoreError::Malformed(
+                                    "session revision must not be negative".into(),
+                                ))
+                            })
+                        })
+                        .transpose()?
+                        .unwrap_or(0);
+                    let expected = u64::try_from(transaction.record.revision).map_err(|_| {
+                        mongodb::error::Error::custom(StoreError::Malformed(
+                            "session revision must not be negative".into(),
+                        ))
+                    })?;
+                    if transaction.create {
+                        if existing.is_some() {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::RevisionConflict {
+                                    expected: 0,
+                                    actual,
+                                },
+                            ));
+                        }
+                    } else if existing.is_none() {
+                        return Err(mongodb::error::Error::custom(StoreError::SessionDeleted {
+                            id: transaction.id.clone(),
+                        }));
+                    } else if actual != expected {
+                        return Err(mongodb::error::Error::custom(
+                            StoreError::RevisionConflict { expected, actual },
+                        ));
+                    }
+                    if let Some(existing) = existing.as_ref() {
+                        validate_status_transition(
+                            &transaction.id,
+                            &existing.status,
+                            &transaction.record.status,
+                        )
+                        .map_err(mongodb::error::Error::custom)?;
+                    }
+
+                    let found = transaction
+                        .events_collection
+                        .find_one(doc! { "session_id": &transaction.id.0 })
+                        .sort(doc! { "seq": -1 })
+                        .projection(doc! { "_id": 0, "seq": 1 })
+                        .session(&mut *session)
+                        .await?;
+                    let event_tail =
+                        stored_event_tail(found).map_err(mongodb::error::Error::custom)?;
+                    let sequence_floor = durable_sequence_floor(
+                        event_tail,
+                        existing.as_ref().map(|record| record.last_seq),
+                    )
+                    .map_err(mongodb::error::Error::custom)?;
+                    validate_contiguous_append(&transaction.events, Some(sequence_floor))
+                        .map_err(mongodb::error::Error::custom)?;
+                    let durable_tail = resolved_transaction_tail(
+                        &transaction.id,
+                        sequence_floor,
+                        transaction.record.last_seq as u64,
+                        &transaction.events,
+                    )
+                    .map_err(mongodb::error::Error::custom)?;
+
+                    let (revision, revision_i64) =
+                        next_stored_revision(actual).map_err(mongodb::error::Error::custom)?;
+                    let mut durable = transaction.record.clone();
+                    durable.revision = revision_i64;
+                    durable.last_seq = i64::try_from(durable_tail).map_err(|_| {
+                        mongodb::error::Error::custom(StoreError::Malformed(format!(
+                            "session event tail {durable_tail} cannot be stored"
+                        )))
+                    })?;
+
+                    if !transaction.documents.is_empty() {
+                        transaction
+                            .events_collection
+                            .insert_many(transaction.documents.iter())
+                            .session(&mut *session)
+                            .await?;
+                    }
+                    if transaction.create {
+                        transaction
+                            .sessions_collection
+                            .insert_one(&durable)
+                            .session(&mut *session)
+                            .await?;
+                    } else {
+                        let replaced = transaction
+                            .sessions_collection
+                            .replace_one(
+                                session_revision_filter(&durable.id, transaction.record.revision),
+                                &durable,
+                            )
+                            .with_options(session_update_options())
+                            .session(&mut *session)
+                            .await?;
+                        if replaced.modified_count != 1 {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::RevisionConflict { expected, actual },
+                            ));
+                        }
+                    }
+                    transaction
+                        .writes_collection
+                        .insert_one(SessionWriteDoc {
+                            id: transaction.write_id.clone(),
+                            session_id: transaction.id.0.clone(),
+                            revision: revision_i64,
+                        })
+                        .session(&mut *session)
+                        .await?;
+                    Ok(revision)
+                }
+                .boxed()
+            })
+            .await;
+
+        match outcome {
+            Ok(revision) => Ok(revision),
+            Err(error) => {
+                if let Some(error) = error.get_custom::<StoreError>() {
+                    return Err(error.clone());
+                }
+                if sequence_taken(&error) {
+                    if let Some(revision) = self.write_receipt(write_id, &id).await? {
+                        return Ok(revision);
+                    }
+                    if let Some(first) = events.first() {
+                        let expected = self
+                            .last_event_sequence(&id)
+                            .await?
+                            .unwrap_or(0)
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                StoreError::Malformed(format!("event sequence overflow for {id}"))
+                            })?;
+                        return Err(StoreError::SequenceTaken {
+                            expected,
+                            got: first.seq,
+                        });
+                    }
+                }
+                Err(StoreError::Unavailable(format!(
+                    "commit session write transaction: {error}"
+                )))
+            }
+        }
+    }
+
+    async fn transactional_events(&self, events: &[Event]) -> Result<(), StoreError> {
+        let Some(first) = events.first() else {
+            return Ok(());
+        };
+        let id = first.session_id.clone();
+        let documents = events
+            .iter()
+            .map(event_doc::to_document)
+            .collect::<Result<Vec<_>, _>>()?;
+        let context = (
+            self.events.clone(),
+            self.sessions.clone_with_type::<Document>(),
+            id.clone(),
+            events.to_vec(),
+            documents,
+        );
+        let mut session = self.client.start_session().await.map_err(|error| {
+            StoreError::Unavailable(format!("start event transaction: {error}"))
+        })?;
+        let outcome = session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run(
+                context,
+                |session, (collection, sessions, id, events, documents)| {
+                    async move {
+                        let found = collection
+                            .find_one(doc! { "session_id": &id.0 })
+                            .sort(doc! { "seq": -1 })
+                            .projection(doc! { "_id": 0, "seq": 1 })
+                            .session(&mut *session)
+                            .await?;
+                        let event_tail =
+                            stored_event_tail(found).map_err(mongodb::error::Error::custom)?;
+                        let recorded_tail = sessions
+                            .find_one(doc! { "_id": &id.0 })
+                            .projection(doc! { "_id": 0, "last_seq": 1 })
+                            .session(&mut *session)
+                            .await?
+                            .map(|record| {
+                                record.get_i64("last_seq").map_err(|_| {
+                                    mongodb::error::Error::custom(StoreError::Malformed(
+                                        "session event tail must be a 64-bit integer".into(),
+                                    ))
+                                })
+                            })
+                            .transpose()?;
+                        let sequence_floor = durable_sequence_floor(event_tail, recorded_tail)
+                            .map_err(mongodb::error::Error::custom)?;
+                        validate_contiguous_append(events, Some(sequence_floor))
+                            .map_err(mongodb::error::Error::custom)?;
+                        collection
+                            .insert_many(documents.iter())
+                            .session(&mut *session)
+                            .await?;
+                        Ok(())
+                    }
+                    .boxed()
+                },
+            )
+            .await;
+        match outcome {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                if let Some(error) = error.get_custom::<StoreError>() {
+                    return Err(error.clone());
+                }
+                if sequence_taken(&error) {
+                    let expected = self
+                        .last_event_sequence(&id)
+                        .await?
+                        .unwrap_or(0)
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            StoreError::Malformed(format!("event sequence overflow for {id}"))
+                        })?;
+                    return Err(StoreError::SequenceTaken {
+                        expected,
+                        got: first.seq,
+                    });
+                }
+                Err(StoreError::Unavailable(format!(
+                    "commit event transaction: {error}"
+                )))
+            }
+        }
+    }
+
+    async fn transactional_delete(&self, id: &SessionId) -> Result<(), StoreError> {
+        let context = (
+            self.sessions.clone(),
+            self.events.clone(),
+            self.writes.clone(),
+            id.clone(),
+        );
+        let mut session = self.client.start_session().await.map_err(|error| {
+            StoreError::Unavailable(format!("start session deletion transaction: {error}"))
+        })?;
+        session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run(context, |session, (sessions, events, writes, id)| {
+                async move {
+                    sessions
+                        .delete_one(doc! { "_id": &id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    events
+                        .delete_many(doc! { "session_id": &id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    writes
+                        .delete_many(doc! { "session_id": &id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    Ok(())
+                }
+                .boxed()
+            })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("delete session transaction: {error}"))
+            })
+    }
+
+    async fn write_receipt(
+        &self,
+        write_id: &str,
+        id: &SessionId,
+    ) -> Result<Option<u64>, StoreError> {
+        let found = self
+            .writes
+            .find_one(doc! { "_id": write_id })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read session write receipt: {error}"))
+            })?;
+        let Some(receipt) = found else {
+            return Ok(None);
+        };
+        receipt_revision(&receipt, write_id, id).map(Some)
+    }
+
+    /// The highest event sequence currently readable for one session.
+    async fn last_event_sequence(&self, id: &SessionId) -> Result<Option<u64>, StoreError> {
+        let found = self
+            .events
+            .find_one(doc! { "session_id": &id.0 })
+            .sort(doc! { "seq": -1 })
+            .projection(doc! { "_id": 0, "seq": 1 })
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("read event tail: {e}")))?;
+        stored_event_tail(found)
+    }
+
     async fn query(&self, filter: Document) -> Result<Vec<SessionRecord>, StoreError> {
         let mut cursor = self
             .sessions

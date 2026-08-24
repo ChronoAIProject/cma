@@ -211,7 +211,7 @@ impl SessionService {
         if let Err(e) = adapter.terminate(&handle).await {
             tracing::warn!(session_id = %id, error = %e, "could not discard a failed runtime");
         }
-        if let Err(e) = self.store.upsert(&record).await {
+        if let Err(e) = self.persist_durably(&mut record, Vec::new()).await {
             tracing::error!(session_id = %id, error = %e, "cannot clear the discarded runtime");
         }
         self.entries.write().await.remove(id);
@@ -272,18 +272,13 @@ impl SessionService {
                 record.session.status = status;
                 record.session.stop_reason = Some(stop_reason);
                 record.session.recovery_state = recovery;
-                let seq = self.sequences.take(id, record.session.last_seq, 1);
-                record.session.last_seq = seq;
                 let session_id = record.session.id.clone();
-                if let Err(e) = self.store.upsert(&record).await {
-                    tracing::error!(session_id = %id, error = %e, "cannot record the failure");
-                }
                 if let Err(e) = self
-                    .append_durably(
-                        id,
+                    .persist_durably(
+                        &mut record,
                         vec![crate::event::Event {
                             session_id,
-                            seq,
+                            seq: 0,
                             kind: EventKind::StatusChanged {
                                 status,
                                 stop_reason: Some(stop_reason),
