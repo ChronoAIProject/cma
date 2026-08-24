@@ -171,3 +171,61 @@ fn a_history_read_is_bounded_and_a_watch_is_not() {
         serde_urlencoded::from_str("thread_id=sesn_1&follow=true").expect("parses");
     assert!(explicit.follows());
 }
+
+/// The projection batch a strict-greater-than replay read returns.
+fn replay_after(events: &[Event], cursor: u64) -> Vec<crate::agui::project::AguiEvent> {
+    events
+        .iter()
+        .filter(|event| event.seq > cursor)
+        .flat_map(|event| project(event, "sesn_1", "sesn_1").events)
+        .collect()
+}
+
+#[test]
+fn a_drop_mid_projection_resumes_the_event_whole() {
+    let log = vec![
+        logged(6, EventKind::TurnStarted),
+        logged(
+            7,
+            EventKind::MessageCommitted {
+                content: "nothing after the drop is lost".into(),
+            },
+        ),
+        logged(8, EventKind::TurnCompleted),
+    ];
+    let previous = project(&log[0], "sesn_1", "sesn_1");
+    let message = project(&log[1], "sesn_1", "sesn_1");
+
+    // The client received sequence 6 and then only message 7's START before
+    // the connection dropped. START is deliberately unstamped, so the last id
+    // it can hand back is still 6.
+    let last_seen = previous
+        .events
+        .iter()
+        .chain(message.events.iter().take(1))
+        .filter_map(|frame| frame.seq)
+        .next_back()
+        .expect("sequence 6 was delivered");
+    assert_eq!(last_seen, 6);
+
+    let resumed = replay_after(&log, last_seen);
+    assert_eq!(
+        resumed.iter().map(|frame| frame.kind).collect::<Vec<_>>(),
+        vec![
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "RUN_FINISHED"
+        ],
+        "sequence 7 is replayed whole rather than from its lost tail"
+    );
+    assert_eq!(
+        resumed.iter().map(|frame| frame.seq).collect::<Vec<_>>(),
+        vec![None, None, Some(7), Some(8)]
+    );
+
+    let after_message = replay_after(&log, 7);
+    assert_eq!(after_message.len(), 1);
+    assert_eq!(after_message[0].kind, "RUN_FINISHED");
+    assert_eq!(after_message[0].seq, Some(8));
+}
