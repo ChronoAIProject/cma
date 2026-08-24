@@ -14,12 +14,15 @@ use std::sync::Arc;
 
 use layer3_adapter::RuntimeLossReason;
 
-use crate::event::EventKind;
+use crate::commit_fault_support::CommitFaultStore;
+use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::Deployment;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionStatus, StopReason};
-use crate::store::SessionStore;
-use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::store::{SessionRecord, SessionStore};
+use crate::test_support::{
+    await_settled, service, service_over, spec, user, FakeAdapter, FakeStore,
+};
 
 /// Runtime losses in one session's log, in sequence order.
 async fn runtime_losses(
@@ -39,6 +42,12 @@ async fn runtime_losses(
             }
         })
         .collect()
+}
+
+fn is_runtime_lost(_record: &SessionRecord, events: &[Event]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event.kind, EventKind::RuntimeLost { .. }))
 }
 
 #[tokio::test]
@@ -198,6 +207,70 @@ async fn a_runtime_lost_under_the_process_serving_it_is_recorded_too() {
     assert_eq!(losses.len(), 1);
     assert_eq!(losses[0].1, dead);
     assert_eq!(losses[0].2, Some(RuntimeLossCause::Failed));
+}
+
+#[tokio::test]
+async fn four_runtime_loss_outages_defer_both_the_loss_and_its_replacement() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_runtime_lost));
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("runtime-loss-outage-owner");
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let dead = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("ready record exists")
+        .runtime_id
+        .expect("ready record names its runtime");
+    adapter.lose(&dead).await;
+
+    store.fail_next(4);
+    let rejected = svc.reconcile().await;
+    assert_eq!(rejected.lost_runtimes, 0);
+    assert_eq!(rejected.reprovisioned_sessions, 0);
+    assert_eq!(rejected.deferred_sessions, 1);
+    assert_eq!(store.matched_calls(), 4);
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a replacement cannot start without its RuntimeLost transaction"
+    );
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.runtime_id.as_deref(), Some(dead.as_str()));
+    assert_eq!(durable.session.recovery_state, RecoveryState::Normal);
+    assert!(runtime_losses(&inner, &created.id).await.is_empty());
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries
+            .get(&created.id)
+            .expect("a rejected loss does not remove live state");
+        assert_eq!(
+            entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+            Some(dead.as_str())
+        );
+    }
+
+    let retried = svc.reconcile().await;
+    assert_eq!(retried.lost_runtimes, 1);
+    assert_eq!(retried.reprovisioned_sessions, 1);
+    assert_eq!(store.matched_calls(), 5);
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let losses = runtime_losses(&inner, &created.id).await;
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].1, dead);
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "the replacement begins only on the sweep that records the loss"
+    );
 }
 
 #[tokio::test]
