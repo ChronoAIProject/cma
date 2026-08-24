@@ -25,7 +25,7 @@ use serde::Deserialize;
 
 use crate::auth::AuthenticatedCaller;
 
-use super::Problem;
+use super::RequestFailure;
 
 /// How often the log is re-read while a client is listening.
 ///
@@ -46,9 +46,10 @@ pub(super) async fn stream(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Query(cursor): Query<Cursor>,
+    cursor: Result<Query<Cursor>, axum::extract::rejection::QueryRejection>,
     headers: HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, Problem> {
+) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, RequestFailure> {
+    let Query(cursor) = cursor?;
     let id = SessionId(id);
 
     // A reconnecting browser sends the last id it saw. Preferring it over the
