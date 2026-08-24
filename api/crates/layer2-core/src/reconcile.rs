@@ -95,7 +95,7 @@ impl SessionService {
     pub async fn reconcile(self: &Arc<Self>) -> Reclaimed {
         let mut reclaimed = Reclaimed::default();
 
-        let records = match self.store.list_all().await {
+        let records = match self.store.scan_all().await {
             Ok(r) => r,
             Err(e) => {
                 // Without the record there is nothing to compare against, and
