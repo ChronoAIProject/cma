@@ -116,15 +116,15 @@ impl KernelAdapter for CodexAdapter {
             self.hosted.workspace().to_string(),
             Some(permission::mode_for(options.permission).to_string()),
             options.resume_conversation.clone(),
-            Some((self.hosted.switch_waiters(), handle.0.clone())),
+            Some(self.hosted.link_lifecycle(&handle.0)),
             options.own_credential,
             updates,
         )
         .await?;
-        // Recorded here so a credential can reach a session that never attaches
-        // a terminal — which is every conversation session, and every session
-        // at all on a kernel that serves only conversations.
-        self.hosted.remember_link(&handle.0, control).await;
+        // The bridge records this control generation before its socket reader
+        // starts, so a close racing the end of the handshake cannot leave a
+        // dead sender registered here.
+        drop(control);
         Ok(conversation)
     }
 

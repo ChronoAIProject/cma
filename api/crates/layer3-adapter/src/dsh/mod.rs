@@ -160,13 +160,12 @@ impl KernelAdapter for DshAdapter {
             self.hosted.workspace().to_string(),
             &self.spec,
             options.resume_conversation.clone(),
+            self.hosted.link_lifecycle(&handle.0),
             updates,
         )
         .await?;
-        // Recorded here so a credential can reach a session that never attaches
-        // a terminal — which is every conversation session, and every session
-        // at all on a kernel that serves only conversations.
-        self.hosted.remember_link(&handle.0, control).await;
+        // The harness registered this generation before starting its reader.
+        drop(control);
         Ok(conversation)
     }
 
