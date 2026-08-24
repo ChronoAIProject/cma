@@ -23,8 +23,8 @@ impl SessionService {
         Ok(record.session)
     }
 
-    /// List the subject's sessions, newest first.
-    pub async fn list_sessions(&self, caller: &Caller) -> Vec<Session> {
+    /// List the sessions visible to the caller, newest first.
+    pub async fn list_sessions(&self, caller: &Caller) -> Result<Vec<Session>, CoreError> {
         // A privileged reader sees every session; everyone else sees only their
         // own. The filter is here rather than in an interface so no interface
         // can forget it, and it is pushed into the query rather than applied
@@ -34,15 +34,11 @@ impl SessionService {
         } else {
             self.store.list_for(&caller.subject).await
         };
-        match result {
-            Ok(records) => records.into_iter().map(|r| r.session).collect(),
-            Err(e) => {
-                // Listing is a read: report nothing rather than pretend the
-                // caller has no sessions, and make the failure visible.
-                tracing::error!(error = %e, "cannot list sessions");
-                Vec::new()
-            }
-        }
+        let records = result.map_err(|e| {
+            tracing::error!(reader = %caller.subject, error = %e, "cannot list sessions");
+            store_failed(e)
+        })?;
+        Ok(records.into_iter().map(|r| r.session).collect())
     }
 
     /// The caller's current live-session allowance.
@@ -70,12 +66,9 @@ impl SessionService {
 
     /// Every session there is, whoever owns it.
     ///
-    /// Distinct from `list_sessions` in two ways that matter to whoever is
-    /// watching the service rather than using it. It refuses a caller who is
-    /// not entitled to see across subjects instead of quietly narrowing to
-    /// their own work, and it reports a store it could not read instead of
-    /// answering with an empty list — an operator told there are no sessions
-    /// will act on that, and "the record is unreachable" is a different fact.
+    /// Distinct from `list_sessions` because it refuses a caller who is not
+    /// entitled to see across subjects instead of quietly narrowing to their
+    /// own work.
     pub async fn list_all_sessions(&self, caller: &Caller) -> Result<Vec<Session>, CoreError> {
         caller.authorization.require(Capability::ReadAllSessions)?;
         let records = self.store.list_all().await.map_err(store_failed)?;
