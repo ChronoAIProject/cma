@@ -17,7 +17,6 @@ use crate::event::EventKind;
 use crate::ids::SessionId;
 use crate::log::append_with;
 use crate::service::{store_failed, SessionService};
-use crate::store::StoreError;
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
 /// Pump runtime output into the screen model and out to any live subscriber.
@@ -140,11 +139,7 @@ impl SessionService {
             );
             (Arc::clone(&entry.screen), commit)
         };
-        let committed = commit
-            .await
-            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))
-            .and_then(|result| result)
-            .map_err(store_failed)?;
+        let committed = commit.committed().await.map_err(store_failed)?;
         {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;

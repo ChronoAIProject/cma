@@ -1121,6 +1121,85 @@ async fn stale_status_change_cannot_restore_a_newer_lifecycle_state() {
 }
 
 #[tokio::test]
+async fn an_empty_barrier_cannot_replay_a_rejected_status_snapshot() {
+    let store = Arc::new(FaultStore::default());
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("status-barrier-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    };
+    wait_for_lane_idle(&lane).await;
+    let before = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    {
+        let mut entries = service.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("live entry");
+        entry.session.status = SessionStatus::Running;
+        super::append(
+            entry,
+            EventKind::StatusChanged {
+                status: SessionStatus::Running,
+                stop_reason: None,
+                detail: None,
+                capability: None,
+            },
+        );
+    }
+    store.write_started.notified().await;
+
+    let flush_service = Arc::clone(&service);
+    let flush_id = created.id.clone();
+    let barrier = tokio::spawn(async move { flush_service.flush(&flush_id).await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the empty barrier queues behind the held status event");
+
+    let mut rival = before.clone();
+    rival.session.status = SessionStatus::Idle;
+    rival.session.stop_reason = Some(StopReason::UserTerminated);
+    rival.session.recovery_state = RecoveryState::Idle;
+    store
+        .inner
+        .commit_session_idempotent("rival-status-before-barrier", &rival, &[])
+        .await
+        .expect("the rival lifecycle state commits first");
+    store.release_write.notify_one();
+
+    barrier.await.expect("the empty barrier finishes");
+    wait_for_lane_idle(&lane).await;
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Idle);
+    assert_eq!(durable.session.recovery_state, RecoveryState::Idle);
+    assert_eq!(
+        durable.session.stop_reason,
+        Some(StopReason::UserTerminated)
+    );
+    assert_eq!(durable.session.last_seq, before.session.last_seq);
+    assert!(store
+        .inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
 async fn stale_plane_change_cannot_erase_a_newer_runtime_decision() {
     let mut base = record();
     base.session.options.mode = SessionMode::Terminal;
