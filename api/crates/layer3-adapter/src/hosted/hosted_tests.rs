@@ -600,11 +600,201 @@ async fn a_runtime_that_never_answers_a_switch_is_not_recorded_as_having_switche
 }
 
 #[tokio::test]
+async fn cleanup_from_an_old_link_preserves_its_successor_and_waiter() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let (old_link, _old_input) = mpsc::channel::<TerminalInput>(1);
+    kernel
+        .remember_link("sbx_generation", old_link.clone())
+        .await;
+
+    let (successor, _successor_input) = mpsc::channel::<TerminalInput>(1);
+    kernel
+        .remember_link("sbx_generation", successor.clone())
+        .await;
+    let waiters = kernel.switch_waiters();
+    let mut answer = waiters.expect("sbx_generation", &successor).await;
+
+    // The old socket notices its close only after the successor is registered
+    // and waiting. Neither registry entry belongs to the old reader anymore.
+    super::link::forget_link_generation(
+        &kernel.links,
+        &kernel.switch_waiters,
+        "sbx_generation",
+        &old_link,
+    )
+    .await;
+
+    let current = kernel
+        .link_to("sbx_generation")
+        .await
+        .expect("the successor remains registered");
+    assert!(current.same_channel(&successor));
+    assert!(matches!(
+        answer.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+
+    waiters.settle("sbx_generation", &successor, true).await;
+    assert!(answer.await.expect("the successor's waiter is intact"));
+}
+
+#[tokio::test]
+async fn a_waiter_does_not_keep_its_control_lane_alive() {
+    let waiters = super::SwitchWaiters::default();
+    let (link, mut input) = mpsc::channel::<TerminalInput>(1);
+    let _answer = waiters.expect("sbx_weak_waiter", &link).await;
+
+    drop(link);
+    assert!(
+        input.recv().await.is_none(),
+        "waiter identity must not count as a live control-lane owner"
+    );
+}
+
+#[tokio::test]
+async fn remembering_the_same_link_again_keeps_its_waiter() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let (link, _input) = mpsc::channel::<TerminalInput>(1);
+    kernel
+        .remember_link("sbx_same_generation", link.clone())
+        .await;
+    let waiters = kernel.switch_waiters();
+    let mut answer = waiters.expect("sbx_same_generation", &link).await;
+
+    kernel
+        .remember_link("sbx_same_generation", link.clone())
+        .await;
+    assert!(matches!(
+        answer.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+
+    waiters.settle("sbx_same_generation", &link, true).await;
+    assert!(answer.await.expect("the same generation keeps its waiter"));
+}
+
+#[tokio::test]
+async fn replacing_a_link_cancels_only_that_generations_pending_switch() {
+    let kernel = Arc::new(hosted("http://127.0.0.1:1"));
+    let handle = RuntimeHandle("sbx_replaced_waiter".into());
+    let (old_link, mut old_input) = mpsc::channel::<TerminalInput>(1);
+    kernel.remember_link(&handle.0, old_link).await;
+
+    let old_attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.switch_plane(&handle, "old-command").await })
+    };
+    assert!(matches!(
+        old_input.recv().await,
+        Some(TerminalInput::SwitchPlane { command }) if command == "old-command"
+    ));
+
+    let (successor, mut successor_input) = mpsc::channel::<TerminalInput>(1);
+    kernel.remember_link(&handle.0, successor.clone()).await;
+    let old_outcome = old_attempt.await.expect("the old switch task ran");
+    assert!(
+        matches!(old_outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("ended before it answered")),
+        "replacement cancels the obsolete generation's waiter: {old_outcome:?}"
+    );
+
+    let successor_attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.switch_plane(&handle, "new-command").await })
+    };
+    assert!(matches!(
+        successor_input.recv().await,
+        Some(TerminalInput::SwitchPlane { command }) if command == "new-command"
+    ));
+    kernel
+        .switch_waiters()
+        .settle(&handle.0, &successor, true)
+        .await;
+    successor_attempt
+        .await
+        .expect("the successor switch task ran")
+        .expect("the successor retains its own waiter");
+}
+
+#[tokio::test]
+async fn stale_switch_failure_and_late_reply_do_not_settle_the_successor() {
+    let kernel = Arc::new(hosted("http://127.0.0.1:1"));
+    let handle = RuntimeHandle("sbx_race".into());
+
+    // Fill the old channel so its switch send parks after obtaining that link.
+    let (old_link, old_input) = mpsc::channel::<TerminalInput>(1);
+    old_link
+        .send(TerminalInput::Bytes(b"occupied".to_vec()))
+        .await
+        .expect("the old link is initially open");
+    kernel.remember_link(&handle.0, old_link.clone()).await;
+
+    let old_attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.switch_plane(&handle, "old-command").await })
+    };
+    tokio::task::yield_now().await;
+    assert!(
+        !old_attempt.is_finished(),
+        "the full old link keeps its send in flight"
+    );
+
+    let (successor, mut successor_input) = mpsc::channel::<TerminalInput>(1);
+    kernel.remember_link(&handle.0, successor.clone()).await;
+    let successor_attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.switch_plane(&handle, "new-command").await })
+    };
+    assert!(matches!(
+        successor_input.recv().await,
+        Some(TerminalInput::SwitchPlane { command }) if command == "new-command"
+    ));
+
+    // Releasing the parked old send makes it fail after the successor and its
+    // waiter exist. Its failure cleanup must be scoped to the old channel.
+    drop(old_input);
+    let old_outcome = old_attempt.await.expect("the old switch task ran");
+    assert!(
+        matches!(old_outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("closed before the switch reached it")),
+        "the old send reports its own failure: {old_outcome:?}"
+    );
+
+    // A reply already in flight from the old socket must not be mistaken for
+    // the successor's reply either.
+    kernel
+        .switch_waiters()
+        .settle(&handle.0, &old_link, false)
+        .await;
+    tokio::task::yield_now().await;
+    assert!(
+        !successor_attempt.is_finished(),
+        "the late old refusal did not settle the successor"
+    );
+    let current = kernel
+        .link_to(&handle.0)
+        .await
+        .expect("old failure cleanup preserves the successor");
+    assert!(current.same_channel(&successor));
+
+    kernel
+        .switch_waiters()
+        .settle(&handle.0, &successor, true)
+        .await;
+    successor_attempt
+        .await
+        .expect("the successor switch task ran")
+        .expect("the successor's own answer settles it");
+}
+
+#[tokio::test]
 async fn a_switch_the_runtime_confirms_is_recorded_as_done() {
     // The positive case, and the only one that may be recorded in place.
     let kernel = hosted("http://127.0.0.1:1");
     let (link, mut held) = mpsc::channel::<TerminalInput>(4);
-    kernel.remember_link("sbx_new", link).await;
+    kernel.remember_link("sbx_new", link.clone()).await;
 
     // Stand in for the pod: read the request off the link and answer it the
     // way a current supervisor does, on the wire.
@@ -615,7 +805,7 @@ async fn a_switch_the_runtime_confirms_is_recorded_as_done() {
                 serde_json::json!({ "t": "switch_plane_result", "command": command, "accepted": true })
                     .to_string();
             let accepted = super::link::switch_answer(&frame).expect("the answer parses");
-            waiters.settle("sbx_new", accepted).await;
+            waiters.settle("sbx_new", &link, accepted).await;
         }
     });
 
@@ -631,12 +821,12 @@ async fn a_refused_command_is_not_a_switch() {
     // negative answer, not a missing one, and it must not be recorded either.
     let kernel = hosted("http://127.0.0.1:1");
     let (link, mut held) = mpsc::channel::<TerminalInput>(4);
-    kernel.remember_link("sbx_ref", link).await;
+    kernel.remember_link("sbx_ref", link.clone()).await;
 
     let waiters = kernel.switch_waiters();
     tokio::spawn(async move {
         if held.recv().await.is_some() {
-            waiters.settle("sbx_ref", false).await;
+            waiters.settle("sbx_ref", &link, false).await;
         }
     });
 
