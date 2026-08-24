@@ -1,13 +1,20 @@
 # CMA TypeScript SDK
 
-`@chronoai/cma-sdk` is the typed browser and Node client for CMA. For a published
-release, install it with:
+`@chronoai/cma-sdk` is the typed browser and Node client for CMA. It is a
+repository-only package, deliberately marked private, and is not published to npm.
+CMA's web application consumes it through the local `file:../sdk/typescript`
+dependency. Build and inspect the same local archive used by CI with:
 
 ```sh
-npm install @chronoai/cma-sdk
+cd sdk/typescript
+npm ci
+npm run build
+npm pack
 ```
 
-The complete, executable integration guide ships in this package:
+The archive is for local scratch-consumer validation, not registry publication.
+
+The complete, executable integration guide lives in this package:
 
 - [Overview](docs/README.md)
 - [Quickstart](docs/quickstart.md)

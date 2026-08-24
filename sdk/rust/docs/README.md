@@ -6,18 +6,19 @@
 standalone Cargo project, uses Tokio and rustls, and has no dependency on CMA's
 service crates.
 
-## Install
+## Use from the repository
 
-For a published release:
+This crate is repository-only, carries `publish = false`, and is not published to
+crates.io. Add it by path from a checkout:
 
 ```sh
-cargo add cma-sdk
+cargo add cma-sdk --path /path/to/chrono-bot/sdk/rust
 cargo add tokio --features macros,rt-multi-thread
 ```
 
-The in-tree version remains `0.0.0`; the release workflow stamps the crate from
-the repository tag. CI also installs the packed crate into a fresh consumer,
-which proves the examples use only the public package surface.
+The in-tree version remains `0.0.0` because no registry release is produced. CI
+installs the crate by path into a fresh consumer, which proves the examples use
+only its exported surface.
 
 ## Guides
 
@@ -33,7 +34,7 @@ are included under `cma_sdk::guides`, so every Rust fence is a cargo doctest.
 | [Streaming](streaming.md) | Cursors, reconnects, events, and cancellation |
 | [Operations](operations.md) | Input, approvals, control, terminal REST, and usage |
 | [Errors](errors.md) | Typed failures and retry decisions |
-| [Reference](reference.md) | docs.rs and generated rustdoc |
+| [Reference](reference.md) | Locally generated rustdoc and public exports |
 
 ## Scope
 
