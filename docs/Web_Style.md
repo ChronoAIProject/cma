@@ -443,13 +443,13 @@ truncate rather than wrap: the sidebar is resizable and an address is arbitraril
 wrapping row would change the height of the column's foot as somebody drags it. Closed, the column
 keeps the face and drops the two lines.
 
-Everything else the foot used to carry is **inside that row's menu**: the appearance and terminal
-palettes, the environment profiles, operations where the caller holds the capability, and signing
-out. Each row takes a leading glyph. The menu opens **upward** and holds the trigger's own width, so
+Everything else the foot used to carry is **inside that row's menu**: appearance, environment
+profiles, Developer, operations where the caller holds the capability, and signing out. Each row
+takes a leading glyph. The menu opens **upward** and holds the trigger's own width, so
 its edges are the row's edges — it sits at the foot of a column, so there is nowhere below it to go,
 and a list that is narrower than the control it came from reads as belonging to something else.
 
-Operations is still one of §1's two views and still not navigation: **one** entry, which names where
+Operations is still one of §1's three views and still not navigation: **one** entry, which names where
 it goes — _Operations_, or _Back to sessions_ while the panel is showing. It does not mark itself as
 current, because a menu with a current value is a set of alternatives and these rows are actions.
 
