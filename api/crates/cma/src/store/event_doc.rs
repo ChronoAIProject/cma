@@ -26,6 +26,8 @@ use serde::Serialize;
 /// mirrored here.
 #[derive(Debug, Serialize)]
 struct EventDoc {
+    #[serde(rename = "_cma_write_protocol")]
+    write_protocol: i32,
     session_id: String,
     seq: i64,
     appended_at: String,
@@ -35,6 +37,7 @@ struct EventDoc {
 /// Render an event for insertion.
 pub(super) fn to_document(event: &Event) -> Result<Document, StoreError> {
     let doc = EventDoc {
+        write_protocol: super::mongo::WRITE_PROTOCOL,
         session_id: event.session_id.0.clone(),
         seq: i64::try_from(event.seq).map_err(|_| {
             malformed(format!(
