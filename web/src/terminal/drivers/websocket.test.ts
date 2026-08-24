@@ -217,12 +217,53 @@ describe('the websocket terminal driver', () => {
     expect(sink.written).toEqual(['terminal continues']);
   });
 
-  it('treats a clean close as the session ending', () => {
+  it('reports a numeric process exit without claiming the session ended', () => {
+    const { current, sockets, sink, driver } = harness();
+    driver.attach(sink);
+    const socket = current();
+    socket.control({ t: 'exit', code: 17, reason: 'exited' });
+    expect(sink.finishes).toEqual(['process exited with code 17']);
+
+    socket.onclose?.({ wasClean: true, code: 1000, reason: '' } as CloseEvent);
+    expect(sink.finishes).toEqual(['process exited with code 17']);
+    expect(sockets).toHaveLength(1);
+  });
+
+  it('distinguishes signal termination from a numeric process exit', () => {
     const { current, sink, driver } = harness();
     driver.attach(sink);
     const socket = current();
+    socket.control({ t: 'exit', code: null, reason: 'exited' });
+    expect(sink.finishes).toEqual(['process terminated by a signal']);
+
+    socket.onclose?.({ wasClean: true, code: 1000, reason: '' } as CloseEvent);
+    expect(sink.finishes).toEqual(['process terminated by a signal']);
+  });
+
+  it('does not turn malformed exit frames into process endings', () => {
+    const { current, sockets, sink, driver } = harness();
+    driver.attach(sink);
+    const socket = current();
+    socket.control({ t: 'exit', reason: 'exited' });
+    socket.control({ t: 'exit', code: '17', reason: 'exited' });
+    socket.control({ t: 'exit', code: 1.5, reason: 'exited' });
+    socket.control({ t: 'exit', code: 17, reason: 'end_turn' });
+
+    expect(sink.finishes).toEqual([]);
+    socket.onclose?.({ wasClean: true, code: 1000, reason: '' } as CloseEvent);
+    expect(sink.finishes).toEqual([]);
+    expect(sockets.length).toBeGreaterThan(1);
+  });
+
+  it('does not fabricate process or session termination from a bare clean close', () => {
+    const { current, sockets, sink, driver } = harness();
+    driver.attach(sink);
+    const socket = current();
     socket.onclose?.({ wasClean: true, code: 1000, reason: 'session ended' } as CloseEvent);
-    expect(sink.finishes).toEqual(['session ended']);
+
+    expect(sink.finishes).toEqual([]);
+    expect(sink.failures).toEqual([]);
+    expect(sockets.length).toBeGreaterThan(1);
   });
 
   it('reattaches after an interruption instead of reporting it', () => {

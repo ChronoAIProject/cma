@@ -22,6 +22,45 @@ interface ServerControl {
   t?: unknown;
   code?: unknown;
   detail?: unknown;
+  reason?: unknown;
+}
+
+interface ProcessExit {
+  /** Numeric process status, or null when a signal ended it. */
+  readonly code: number | null;
+}
+
+const MIN_I32 = -2_147_483_648;
+const MAX_I32 = 2_147_483_647;
+
+/**
+ * Read only the process-ending shape this interface promises.
+ *
+ * In particular, `code` must be present. Treating an absent or malformed value
+ * as null would turn an unknown ending into a claimed signal termination.
+ */
+function processExit(frame: ServerControl): ProcessExit | null {
+  if (frame.t !== 'exit' || frame.reason !== 'exited') {
+    return null;
+  }
+  if (frame.code === null) {
+    return { code: null };
+  }
+  if (
+    typeof frame.code === 'number' &&
+    Number.isInteger(frame.code) &&
+    frame.code >= MIN_I32 &&
+    frame.code <= MAX_I32
+  ) {
+    return { code: frame.code };
+  }
+  return null;
+}
+
+function processExitReason(exit: ProcessExit): string {
+  return exit.code === null
+    ? 'process terminated by a signal'
+    : `process exited with code ${String(exit.code)}`;
 }
 
 /**
@@ -106,13 +145,17 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
     sendControl({ t: 'resize', cols: size.cols, rows: size.rows });
   }
 
-  function handleControl(raw: string): void {
+  function handleControl(raw: string): ProcessExit | null {
     let frame: ServerControl;
     try {
-      frame = JSON.parse(raw) as ServerControl;
+      const decoded: unknown = JSON.parse(raw);
+      if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+        throw new TypeError('control frame is not an object');
+      }
+      frame = decoded as ServerControl;
     } catch {
       sink?.fail('the terminal sent a control frame that could not be read');
-      return;
+      return null;
     }
 
     switch (frame.t) {
@@ -134,20 +177,22 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
             sendBytes(next);
           }
         }
-        break;
+        return null;
       }
       case 'pong':
-        break;
+        return null;
       case 'error': {
         const detail = typeof frame.detail === 'string' ? frame.detail : '';
         const code = typeof frame.code === 'string' ? frame.code : 'error';
         sink?.fail(detail === '' ? `terminal error: ${code}` : `${code}: ${detail}`);
-        break;
+        return null;
       }
+      case 'exit':
+        return processExit(frame);
       default:
         // An unknown control frame is ignored rather than surfaced. The
         // protocol may grow, and a new frame type is not a terminal failure.
-        break;
+        return null;
     }
   }
 
@@ -173,6 +218,9 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
   function connect(): void {
     ready = false;
     opened = false;
+    // Kept per connection: the close event belongs to the socket that carried
+    // the report, even if a later reconnect has already been constructed.
+    let reportedExit: ProcessExit | null = null;
 
     let ws: WebSocket;
     try {
@@ -191,7 +239,14 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
 
     ws.onmessage = (event: MessageEvent) => {
       if (typeof event.data === 'string') {
-        handleControl(event.data);
+        const report = handleControl(event.data);
+        if (report !== null && reportedExit === null) {
+          reportedExit = report;
+          ready = false;
+          // This describes only the supervised process and this attachment.
+          // The durable session lifecycle changes independently over REST.
+          sink?.finish(processExitReason(report));
+        }
         return;
       }
       // Terminal output. Decoded as UTF-8 with replacement, never validated:
@@ -219,19 +274,19 @@ export function createWebSocketDriver(options: WebSocketDriverOptions): Terminal
       // close is what decides whether this is worth telling anyone about.
     };
 
-    ws.onclose = (event: CloseEvent) => {
+    ws.onclose = () => {
       if (detached) {
         return;
       }
-      if (event.wasClean && event.code === 1000) {
-        // The session itself ended. Reconnecting would reopen something that
-        // is over.
-        sink?.finish(event.reason === '' ? 'session ended' : event.reason);
+      if (reportedExit !== null) {
+        // The exit report itself is authoritative; the expected clean close
+        // carries no additional process or session lifecycle information.
         return;
       }
-      // Anything else is an interruption — an idle proxy reclaiming the
-      // socket, a network blip, a rollout. The screen is held server-side and
-      // repainted on reattach, so this is recovered rather than announced.
+      // A close without a valid process report is an interruption, even when
+      // its WebSocket handshake completed cleanly. The screen is held
+      // server-side and repainted on reattach, so this is recovered rather
+      // than being invented as process or durable-session termination.
       scheduleReconnect();
     };
   }
