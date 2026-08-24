@@ -52,6 +52,10 @@ impl FakeStore {
 
 #[async_trait::async_trait]
 impl SessionStore for FakeStore {
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.guard().await
+    }
+
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         self.guard().await?;
         self.upserts

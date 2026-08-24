@@ -26,6 +26,10 @@ struct MemorySessions(Mutex<HashMap<SessionId, SessionRecord>>);
 
 #[async_trait::async_trait]
 impl SessionStore for MemorySessions {
+    async fn ping(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
         self.0
             .lock()

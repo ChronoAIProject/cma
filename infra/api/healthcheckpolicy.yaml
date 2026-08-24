@@ -6,12 +6,10 @@
 # unusually misleading: the deployment is Ready, the endpoints are Ready, the
 # routes are Accepted, and the service is still unreachable from outside.
 #
-# It probes the liveness endpoint rather than the readiness one deliberately.
-# Readiness reports whether this instance should receive traffic and may go
-# false while dependencies recover; liveness reports whether the process is
-# alive. The balancer already stops sending traffic to endpoints Kubernetes
-# marks unready, so pointing it at readiness as well would take a backend out
-# twice for the same reason.
+# The Gateway probes readiness directly. GKE network endpoint groups can keep a
+# Kubernetes-unready pod attached, so a liveness-only load-balancer check could
+# continue routing external traffic after this instance loses its session
+# store. Kubelet liveness remains process-only in deployment.yaml.
 #
 # The neighbouring control planes each declare one of these; CMA simply
 # lacked it.
@@ -35,4 +33,4 @@ spec:
         # The container port, not the Service port: the balancer talks to pods
         # directly rather than through the Service's cluster IP.
         port: 8080
-        requestPath: /livez
+        requestPath: /ready
