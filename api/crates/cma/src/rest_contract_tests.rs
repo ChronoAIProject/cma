@@ -1029,6 +1029,81 @@ async fn an_authenticated_route_without_a_credential_returns_the_coded_401() {
 }
 
 #[tokio::test]
+async fn kernel_discovery_without_a_credential_returns_the_coded_401() {
+    let response = test_surface(false)
+        .app
+        .oneshot(
+            Request::get("/api/v1/kernels")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNAUTHORIZED).await;
+    assert_eq!(body["code"], "not_authenticated");
+    assert_eq!(
+        body["type"],
+        "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated"
+    );
+}
+
+#[tokio::test]
+async fn authenticated_kernel_discovery_returns_the_deployment_offering() {
+    let response = test_surface(true)
+        .app
+        .oneshot(
+            Request::get("/api/v1/kernels")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&HeaderValue::from_static("application/json"))
+    );
+    let body: serde_json::Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("kernel offerings are bounded"),
+    )
+    .expect("kernel offerings are json");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "kernels": [{ "id": "test", "modes": ["terminal", "conversation"] }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn conformance_remains_public() {
+    let response = test_surface(false)
+        .app
+        .oneshot(
+            Request::get("/api/v1/conformance")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("conformance documents are bounded"),
+    )
+    .expect("the conformance document is json");
+    assert!(
+        body["conformsTo"]
+            .as_array()
+            .is_some_and(|classes| !classes.is_empty()),
+        "public conformance document must name at least one class: {body}"
+    );
+}
+
+#[tokio::test]
 async fn session_list_distinguishes_empty_success_from_a_store_outage() {
     let TestSurface {
         app,
