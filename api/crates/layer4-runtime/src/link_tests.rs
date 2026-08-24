@@ -347,6 +347,96 @@ async fn signal_termination_reports_no_numeric_status_before_normal_close() {
 }
 
 #[tokio::test]
+async fn saturated_terminal_output_does_not_starve_a_control_reply() {
+    let state = AppState::for_test(&["/bin/sh", "codex-acp"]);
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_fair_control").await;
+    assert!(matches!(
+        next_client_message(&mut socket).await,
+        tokio_tungstenite::tungstenite::Message::Text(_)
+    ));
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_TERMINAL, b"yes saturated-output\n"),
+        ))
+        .await
+        .expect("the output producer starts");
+    loop {
+        if matches!(
+            next_client_message(&mut socket).await,
+            tokio_tungstenite::tungstenite::Message::Binary(_)
+        ) {
+            break;
+        }
+    }
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            serde_json::json!({
+                "t": "switch_plane",
+                "command": "codex-acp",
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the switch request reaches the supervisor");
+
+    let reply = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let tokio_tungstenite::tungstenite::Message::Text(text) =
+                next_client_message(&mut socket).await
+            {
+                let value: serde_json::Value =
+                    serde_json::from_str(&text).expect("the control reply is JSON");
+                if value["t"] == SWITCH_RESULT {
+                    break value;
+                }
+            }
+        }
+    })
+    .await;
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(_) => {
+            server.abort();
+            panic!("continuous terminal output starved control traffic");
+        }
+    };
+    assert_eq!(reply["accepted"], true);
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            serde_json::json!({ "t": "signal", "sig": "INT" }).to_string(),
+        ))
+        .await
+        .expect("the output producer is interrupted");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_TERMINAL, b"exit\n"),
+        ))
+        .await
+        .expect("the test shell is ended");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let tokio_tungstenite::tungstenite::Message::Text(text) =
+                next_client_message(&mut socket).await
+            {
+                let value: serde_json::Value =
+                    serde_json::from_str(&text).expect("the process ending is JSON");
+                if value["t"] == "exit" {
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .expect("the test shell exits after its output producer is interrupted");
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_link_that_names_a_cadence_is_a_telemetry_link_and_takes_no_pty() {
     let (state, _resources) = resource_state("telemetry-link", true);
     let inspected = state.clone();
