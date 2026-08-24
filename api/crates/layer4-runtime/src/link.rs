@@ -155,6 +155,16 @@ enum TerminalInputEnd {
     PtyWriteFailed,
 }
 
+/// The exact terminal byte represented by each supported signal name.
+fn signal_byte(sig: &str) -> Option<u8> {
+    match sig {
+        "INT" => Some(0x03),
+        "QUIT" => Some(0x1c),
+        "TERM" | "HUP" => Some(0x04),
+        _ => None,
+    }
+}
+
 pub(crate) type Sink = SplitSink<WebSocket, Message>;
 
 pub(crate) async fn attach(
@@ -457,12 +467,7 @@ pub(crate) async fn control(
             // Signals are delivered in band as the control character the
             // kernel already understands, so no separate signalling path is
             // needed.
-            let byte: Option<u8> = match sig.as_str() {
-                "INT" => Some(0x03),
-                "QUIT" => Some(0x1c),
-                "TERM" | "HUP" => Some(0x04),
-                _ => None,
-            };
+            let byte = signal_byte(&sig);
             match (byte, session) {
                 (Some(b), Some(session)) => {
                     if let Err(e) = session.write_input(&[b]) {
