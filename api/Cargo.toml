@@ -77,6 +77,7 @@ utoipa = { package = "meteroid-utoipa", version = "5.6", features = ["axum_extra
 utoipa-axum = { package = "meteroid-utoipa-axum", version = "0.2" }
 uuid = { version = "1", features = ["v4", "serde"] }
 vt100 = "0.15"
+zeroize = "1.9.0"
 
 layer2-core = { path = "crates/layer2-core" }
 layer3-adapter = { path = "crates/layer3-adapter" }
