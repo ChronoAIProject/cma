@@ -215,24 +215,16 @@ export interface EnvironmentProfileStore {
   /**
    * Choose which profile this user's sessions start from, or none.
    *
-   * Returns only the rows whose visible preference state changed: at most the
-   * previous and selected profiles. `null` clears it, which returns sessions
-   * to the deployment's own defaults and is a choice rather than an omission.
+   * Returns the whole list, because setting it changes two records — the one
+   * taking it and the one giving it up — and a caller must not have to guess
+   * which other rows moved. `null` clears it, which returns them to the
+   * deployment's own defaults and is a choice rather than an omission.
    */
   prefer(id: string | null): Promise<readonly EnvironmentProfile[]>;
   /** Skills this user may select, and what the platform mandates. */
   catalogue(): Promise<SkillCatalogue>;
   /** Services this user may allow a session to reach, and which are fixed. */
   services(): Promise<ServiceCatalogue>;
-}
-
-/** Merge a bounded preference change set without dropping any loaded profile. */
-export function mergeProfileChanges(
-  profiles: readonly EnvironmentProfile[],
-  changed: readonly EnvironmentProfile[],
-): readonly EnvironmentProfile[] {
-  const replacements = new Map(changed.map((profile) => [profile.id, profile]));
-  return profiles.map((profile) => replacements.get(profile.id) ?? profile);
 }
 
 /**

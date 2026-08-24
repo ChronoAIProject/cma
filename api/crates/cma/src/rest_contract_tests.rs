@@ -23,7 +23,7 @@ use layer2_core::{
     RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
     ServiceId, Session, SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService,
     SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource, StoreError,
-    StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+    StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -327,6 +327,7 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
 struct MemoryProfiles {
     records: Mutex<HashMap<String, EnvironmentProfile>>,
     list_calls: AtomicUsize,
+    list_limits: Mutex<Vec<u32>>,
     preference_writes: AtomicUsize,
 }
 
@@ -353,6 +354,7 @@ impl EnvironmentProfileStore for MemoryProfiles {
         page: &PageRequest,
     ) -> Result<Page<EnvironmentProfile>, StoreError> {
         self.list_calls.fetch_add(1, Ordering::SeqCst);
+        self.list_limits.lock().await.push(page.limit());
         Ok(page_profiles(
             self.records
                 .lock()
@@ -1805,30 +1807,37 @@ async fn admin_sessions_and_environment_profiles_use_the_same_page_contract() {
 }
 
 #[tokio::test]
-async fn preferred_profile_action_is_bounded_past_a_profile_page() {
+async fn preferred_profile_action_returns_every_profile_through_bounded_pages() {
     let TestSurface {
         app,
         profiles,
         caller,
         ..
     } = test_surface(true);
-    seed_profiles(&profiles, &caller.subject, 51).await;
+    const PROFILE_COUNT: usize = 205;
+    seed_profiles(&profiles, &caller.subject, PROFILE_COUNT).await;
 
     let first = assert_json(
         app.clone()
             .oneshot(json_request(
                 Method::PUT,
                 "/api/v1/environment-profiles/preferred",
-                r#"{"profile":"envp_page_0050"}"#,
+                r#"{"profile":"envp_page_0204"}"#,
             ))
             .await
             .expect("router answers"),
         StatusCode::OK,
     )
     .await;
-    assert_eq!(first.as_array().map(Vec::len), Some(1));
+    assert_complete_preference_response(&first, PROFILE_COUNT, "envp_page_0204");
+    assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 1);
+    assert_eq!(profiles.list_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        profiles.list_limits.lock().await.as_slice(),
+        [MAX_PAGE_SIZE, MAX_PAGE_SIZE]
+    );
 
-    let changed = assert_json(
+    let moved = assert_json(
         app.clone()
             .oneshot(json_request(
                 Method::PUT,
@@ -1840,13 +1849,17 @@ async fn preferred_profile_action_is_bounded_past_a_profile_page() {
         StatusCode::OK,
     )
     .await;
-    assert_eq!(changed.as_array().map(Vec::len), Some(2));
-    assert_eq!(changed[0]["id"], "envp_page_0050");
-    assert_eq!(changed[0]["preferred"], false);
-    assert_eq!(changed[1]["id"], "envp_page_0000");
-    assert_eq!(changed[1]["preferred"], true);
-    assert_eq!(profiles.list_calls.load(Ordering::SeqCst), 0);
+    assert_complete_preference_response(&moved, PROFILE_COUNT, "envp_page_0000");
     assert_eq!(profiles.preference_writes.load(Ordering::SeqCst), 2);
+    assert_eq!(profiles.list_calls.load(Ordering::SeqCst), 4);
+    let limits = profiles.list_limits.lock().await;
+    assert_eq!(limits.len(), 4, "each response needs two store pages");
+    assert!(
+        limits.iter().all(|limit| *limit <= MAX_PAGE_SIZE),
+        "no compatibility read may exceed the store page boundary: {limits:?}"
+    );
+    assert!(limits.iter().all(|limit| *limit == MAX_PAGE_SIZE));
+    drop(limits);
 
     let stored = profiles.records.lock().await;
     let held: Vec<_> = stored
@@ -1855,19 +1868,34 @@ async fn preferred_profile_action_is_bounded_past_a_profile_page() {
         .map(|profile| profile.id.0.clone())
         .collect();
     assert_eq!(held, vec!["envp_page_0000"]);
-    drop(stored);
+}
 
-    let (first_page, headers) = get_collection(&app, "/api/v1/environment-profiles").await;
-    assert_eq!(first_page.len(), 50);
-    assert!(first_page.iter().all(|profile| !profile["preferred"]
-        .as_bool()
-        .expect("preferred is boolean")));
-    let next = next_link(&headers).expect("the fifty-first profile is on another page");
-    let (last_page, headers) = get_collection(&app, &next).await;
-    assert_eq!(last_page.len(), 1);
-    assert_eq!(last_page[0]["id"], "envp_page_0000");
-    assert_eq!(last_page[0]["preferred"], true);
-    assert!(next_link(&headers).is_none());
+fn assert_complete_preference_response(
+    body: &serde_json::Value,
+    profile_count: usize,
+    preferred_id: &str,
+) {
+    let rows = body.as_array().expect("the action response is an array");
+    assert_eq!(rows.len(), profile_count);
+    let actual_ids: Vec<_> = rows
+        .iter()
+        .map(|row| row["id"].as_str().expect("profile id").to_string())
+        .collect();
+    let expected_ids: Vec<_> = (0..profile_count)
+        .rev()
+        .map(|sequence| format!("envp_page_{sequence:04}"))
+        .collect();
+    assert_eq!(
+        actual_ids, expected_ids,
+        "the complete list stays newest first"
+    );
+
+    let preferred: Vec<_> = rows
+        .iter()
+        .filter(|row| row["preferred"].as_bool() == Some(true))
+        .map(|row| row["id"].as_str().expect("profile id"))
+        .collect();
+    assert_eq!(preferred, vec![preferred_id]);
 }
 
 #[tokio::test]

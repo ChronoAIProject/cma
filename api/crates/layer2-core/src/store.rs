@@ -12,6 +12,8 @@
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
+use std::collections::HashSet;
+
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, ServiceId};
@@ -72,7 +74,7 @@ impl SessionRecord {
 /// Creation timestamps are not unique, so the durable resource identifier is
 /// the tie-breaker. Stores sort both descending and return rows strictly older
 /// than this pair.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PageCursor {
     /// Creation time of the last row already returned.
     pub created_at: String,
@@ -254,20 +256,20 @@ pub trait SessionStore: Send + Sync {
     async fn scan_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
         let mut records = Vec::new();
         let mut cursor = None;
+        let mut seen = HashSet::new();
         loop {
-            let requested = cursor.clone();
             let page = self
                 .list_for(
                     owner,
                     &SessionListQuery::new(
-                        PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
+                        PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, cursor.clone()),
                         None,
                     ),
                 )
                 .await?;
             records.extend(page.items);
             match page.next {
-                Some(next) if Some(&next) != requested.as_ref() => cursor = Some(next),
+                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
                 Some(_) => {
                     return Err(StoreError::Malformed(
                         "session listing repeated its continuation cursor".into(),
@@ -313,17 +315,17 @@ pub trait SessionStore: Send + Sync {
     async fn scan_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
         let mut records = Vec::new();
         let mut cursor = None;
+        let mut seen = HashSet::new();
         loop {
-            let requested = cursor.clone();
             let page = self
                 .list_all(&SessionListQuery::new(
-                    PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
+                    PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, cursor.clone()),
                     None,
                 ))
                 .await?;
             records.extend(page.items);
             match page.next {
-                Some(next) if Some(&next) != requested.as_ref() => cursor = Some(next),
+                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
                 Some(_) => {
                     return Err(StoreError::Malformed(
                         "session listing repeated its continuation cursor".into(),
