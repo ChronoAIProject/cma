@@ -191,6 +191,11 @@ GET    /api/v1/sessions/{id}/transcript
 DELETE /api/v1/sessions/{id}
 ```
 
+`GET /api/v1/sessions` returns `200 []` only when the session store was read
+successfully and the caller genuinely has no visible sessions. If the store
+cannot be read, it returns a `503 runtime_unavailable` problem document; an
+unavailable list is never represented as an empty one.
+
 `stop` releases the runtime and keeps the session: it goes `idle`, stays listed,
 stays readable, and nothing is being paid for. `revive` gives it a runtime
 again under the same id, with the same history and the same options — reviving
