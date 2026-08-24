@@ -733,7 +733,7 @@ async fn a_session_moves_between_planes_and_stays_the_same_session() {
     }
     assert_eq!(
         adapter.terminated.lock().await.as_slice(),
-        &[runtime.clone()]
+        std::slice::from_ref(&runtime)
     );
     assert!(!adapter.running.lock().await.contains_key(&runtime));
     assert!(adapter.running.lock().await.contains_key(&replacement));
