@@ -61,12 +61,12 @@ function text(seq: number, body: string) {
   };
 }
 
-function committedMessage(seq: number, messageId: string, body: string) {
+function committedMessage(seq: number, messageId: string, body: string, runId = 'run_1') {
   return [
     {
       type: 'TEXT_MESSAGE_START',
       threadId: 'sesn_1',
-      runId: 'run_1',
+      runId,
       seq: 0,
       messageId,
       role: 'assistant',
@@ -74,12 +74,12 @@ function committedMessage(seq: number, messageId: string, body: string) {
     {
       type: 'TEXT_MESSAGE_CONTENT',
       threadId: 'sesn_1',
-      runId: 'run_1',
+      runId,
       seq: 0,
       messageId,
       delta: body,
     },
-    { type: 'TEXT_MESSAGE_END', threadId: 'sesn_1', runId: 'run_1', seq, messageId },
+    { type: 'TEXT_MESSAGE_END', threadId: 'sesn_1', runId, seq, messageId },
   ] as const;
 }
 
@@ -406,14 +406,24 @@ describe('the reconnect order', () => {
 });
 
 describe('history and stream agree', () => {
-  it('produces the same events replayed as watched', async () => {
+  it('renders the same conversation despite the replay route run-id signature', async () => {
     // Web_Style.md §18.1's equivalence rule, at the layer that decides it. A
     // component drawing from history must produce what one watching produced,
-    // and that starts here.
-    const frames = [text(1, 'a'), text(2, 'b'), text(3, 'c')];
+    // even though the two routes deliberately identify their envelopes
+    // differently: a run response echoes the turn id, while replay identifies
+    // itself with runId == threadId. Neither the connection nor the fold may
+    // turn that route marker into per-run state.
+    const watchedFrames = [
+      ...committedMessage(1, 'm_1', 'a', 'run_1'),
+      ...committedMessage(2, 'm_2', 'b', 'run_1'),
+    ];
+    const replayedFrames = [
+      ...committedMessage(1, 'm_1', 'a', 'sesn_1'),
+      ...committedMessage(2, 'm_2', 'b', 'sesn_1'),
+    ];
 
     const streamed = new Fake();
-    streamed.onOpen = frames;
+    streamed.onOpen = watchedFrames;
     streamed.responses = [[]];
     const watching = connect(streamed);
     await tick();
@@ -421,13 +431,16 @@ describe('history and stream agree', () => {
     watching.stop();
 
     const stored = new Fake();
-    stored.responses = [frames];
+    stored.responses = [replayedFrames];
     const replaying = connect(stored);
     await tick();
     await tick();
     replaying.stop();
 
-    expect(watching.seen).toEqual(replaying.seen);
+    expect(watching.seen).toHaveLength(6);
+    expect(watching.seen.every((event) => event.runId === 'run_1')).toBe(true);
+    expect(replaying.seen.every((event) => event.runId === 'sesn_1')).toBe(true);
+    expect(fold(watching.seen)).toEqual(fold(replaying.seen));
   });
 });
 
