@@ -11,7 +11,7 @@ use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{SessionId, SubjectId};
-use crate::log::append;
+use crate::log::append_with;
 use crate::service::{store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::SessionRecord;
@@ -98,14 +98,12 @@ impl SessionService {
         let adapter = self.adapters.get(&record.session.kernel).cloned();
 
         // A live entry is the fast path; a record alone is the post-restart
-        // path. Both must reach the same end state.
-        let mut entries = self.entries.write().await;
-        let live_runtime = match entries.get_mut(id) {
-            Some(entry) => {
-                entry.session.status = SessionStatus::Terminated;
-                entry.session.stop_reason = Some(StopReason::UserTerminated);
-                entry.session.recovery_state = RecoveryState::Retired;
-                append(
+        // path. Both must reach the same end state. The live proposal changes
+        // no process state until its exact record/event unit is durable.
+        let live_commit = {
+            let mut entries = self.entries.write().await;
+            entries.get_mut(id).map(|entry| {
+                append_with(
                     entry,
                     EventKind::StatusChanged {
                         status: SessionStatus::Terminated,
@@ -113,18 +111,34 @@ impl SessionService {
                         detail: None,
                         capability: None,
                     },
-                );
-                entry.input = None;
-                Some(entry.runtime.take())
-            }
-            None => None,
+                    |intended| {
+                        intended.session.status = SessionStatus::Terminated;
+                        intended.session.stop_reason = Some(StopReason::UserTerminated);
+                        intended.session.recovery_state = RecoveryState::Retired;
+                        intended.runtime_id = None;
+                    },
+                )
+            })
         };
-        drop(entries);
 
-        let runtime = match live_runtime {
-            Some(taken) => {
-                self.flush(id).await;
-                taken
+        let runtime = match live_commit {
+            Some(commit) => {
+                let committed = match commit.committed().await {
+                    Ok(committed) => committed,
+                    Err(error) => {
+                        self.synchronize_live_tail(id).await;
+                        return Err(store_failed(error));
+                    }
+                };
+                let mut entries = self.entries.write().await;
+                let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+                entry.session.status = committed.session.status;
+                entry.session.stop_reason = committed.session.stop_reason;
+                entry.session.recovery_state = committed.session.recovery_state;
+                entry.session.last_seq = committed.session.last_seq;
+                entry.input = None;
+                entry.conversation = None;
+                entry.runtime.take()
             }
             None => {
                 // No live entry: write the terminal state straight through, and
@@ -222,14 +236,16 @@ impl SessionService {
         let owner = record.session.owner.clone();
 
         let adapter = self.adapters.get(&record.session.kernel).cloned();
-        let mut entries = self.entries.write().await;
-        let runtime = match entries.get_mut(id) {
-            Some(entry) => {
-                entry.session.status = SessionStatus::Idle;
-                entry.session.stop_reason = Some(StopReason::UserTerminated);
-                entry.input = None;
-                let taken = entry.runtime.take();
-                append(
+        // Captured before constructing the semantic write: its context
+        // reference then travels in the same awaited record as the stopped
+        // state instead of being left to a later best-effort flush.
+        if self.entries.read().await.contains_key(id) {
+            self.capture_transcript(id).await;
+        }
+        let live_commit = {
+            let mut entries = self.entries.write().await;
+            entries.get_mut(id).map(|entry| {
+                append_with(
                     entry,
                     EventKind::StatusChanged {
                         status: SessionStatus::Idle,
@@ -237,26 +253,42 @@ impl SessionService {
                         detail: None,
                         capability: None,
                     },
-                );
-                Some(taken)
-            }
-            None => None,
+                    |intended| {
+                        intended.session.status = SessionStatus::Idle;
+                        intended.session.stop_reason = Some(StopReason::UserTerminated);
+                        intended.session.recovery_state = RecoveryState::Idle;
+                        intended.runtime_id = None;
+                    },
+                )
+            })
         };
-        drop(entries);
 
-        let handle = match runtime {
-            Some(taken) => {
-                // Captured before the entry goes: this is the last chance to
-                // store what the session showed, and a stopped session with no
-                // transcript is one whose history was thrown away by stopping
-                // it — which is exactly what stopping is meant not to do.
-                self.capture_transcript(id).await;
-                self.flush(id).await;
+        let handle = match live_commit {
+            Some(commit) => {
+                let committed = match commit.committed().await {
+                    Ok(committed) => committed,
+                    Err(error) => {
+                        self.synchronize_live_tail(id).await;
+                        return Err(store_failed(error));
+                    }
+                };
                 // The attachment goes with the runtime: a live entry pointing
                 // at a torn-down sandbox would accept input that reaches
-                // nothing.
-                self.entries.write().await.remove(id);
-                taken
+                // nothing. Removal follows durability, so a rejected proposal
+                // leaves every live channel and the process handle intact.
+                let mut entry = self
+                    .entries
+                    .write()
+                    .await
+                    .remove(id)
+                    .ok_or(CoreError::SessionNotFound)?;
+                entry.session.status = committed.session.status;
+                entry.session.stop_reason = committed.session.stop_reason;
+                entry.session.recovery_state = committed.session.recovery_state;
+                entry.session.last_seq = committed.session.last_seq;
+                entry.input = None;
+                entry.conversation = None;
+                entry.runtime.take()
             }
             None => {
                 // Match termination's installation boundary: an in-flight
@@ -281,6 +313,7 @@ impl SessionService {
         let mut resting = record.clone();
         resting.session.status = SessionStatus::Idle;
         resting.session.stop_reason = Some(StopReason::UserTerminated);
+        resting.session.recovery_state = RecoveryState::Idle;
         // Nothing is running for it any more, so nothing should claim to be.
         resting.runtime_id = None;
         let id = resting.session.id.clone();
@@ -301,6 +334,23 @@ impl SessionService {
         .await
         .map_err(store_failed)?;
         Ok(())
+    }
+
+    async fn synchronize_live_tail(&self, id: &SessionId) {
+        let event_log = self
+            .entries
+            .read()
+            .await
+            .get(id)
+            .map(|entry| entry.event_log.clone());
+        if let Some(event_log) = event_log.as_ref() {
+            event_log.fence().await;
+        }
+        let mut entries = self.entries.write().await;
+        if let Some(entry) = entries.get_mut(id) {
+            let event_log = entry.event_log.clone();
+            event_log.synchronize_tail(&mut entry.session.last_seq);
+        }
     }
 
     /// Remove a session permanently.
