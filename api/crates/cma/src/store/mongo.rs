@@ -8,7 +8,8 @@
 use std::{
     collections::{BTreeMap, HashSet},
     future::Future,
-    time::Duration,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use futures_util::{FutureExt, TryStreamExt};
@@ -17,8 +18,10 @@ use layer2_core::{
     Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StoredEvent,
     SubjectId,
 };
-use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::{IndexOptions, ReadConcern, ReplaceOptions, WriteConcern};
+use mongodb::bson::{doc, Binary, Bson, Document};
+use mongodb::options::{
+    IndexOptions, ReadConcern, ReplaceOptions, ValidationAction, ValidationLevel, WriteConcern,
+};
 use mongodb::results::{CollectionSpecification, CollectionType};
 use mongodb::{Client, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
@@ -31,8 +34,10 @@ const SESSIONS: &str = "sessions_v2";
 const EVENTS: &str = "session_events_v2";
 const STORE_PING_TIMEOUT: Duration = Duration::from_secs(2);
 const STORE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+const HISTORY_AUDIT_INTERVAL: Duration = Duration::from_secs(30);
 const WRITES: &str = "session_writes";
 const TOMBSTONES: &str = "session_tombstones";
+const TRANSACTION_PROBE: &str = "_cma_transaction_probe";
 pub(super) const WRITE_PROTOCOL: i32 = 1;
 const WRITE_PROTOCOL_FIELD: &str = "_cma_write_protocol";
 
@@ -214,6 +219,48 @@ pub struct MongoSessionStore {
     events: Collection<Document>,
     writes: Collection<SessionWriteDoc>,
     tombstones: Collection<SessionTombstoneDoc>,
+    collection_ids: Arc<BTreeMap<String, Binary>>,
+    integrity: Arc<tokio::sync::Mutex<IntegrityAudit>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct HistorySnapshot {
+    tombstones: HashSet<String>,
+    session_tails: BTreeMap<String, u64>,
+    event_tails: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Default)]
+struct IntegrityAudit {
+    checked_at: Option<Instant>,
+    last_error: Option<StoreError>,
+    snapshot: Option<HistorySnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CollectionContract {
+    kind: NamespaceKind,
+    validator: Option<Document>,
+    validation_level: Option<ValidationLevel>,
+    validation_action: Option<ValidationAction>,
+    uuid: Option<Binary>,
+}
+
+#[derive(Debug, Clone)]
+struct RequiredIndex {
+    collection: &'static str,
+    name: &'static str,
+    keys: Document,
+    unique: bool,
+}
+
+/// Proof that the driver completed and aborted a real transaction.
+struct TransactionQualified;
+
+impl TransactionQualified {
+    fn authorize(&self, action: NamespaceAction) -> NamespaceAction {
+        action
+    }
 }
 
 struct EventTransaction {
@@ -267,30 +314,44 @@ impl MongoSessionStore {
     /// this deployment keeps in the same database. See `super::connect`.
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let db = client.database(database);
-        let store = Self {
+        let mut store = Self {
             client: client.clone(),
             sessions: db.collection(SESSIONS),
             events: db.collection(EVENTS),
             writes: db.collection(WRITES),
             tombstones: db.collection(TOMBSTONES),
             database: db,
+            collection_ids: Arc::new(BTreeMap::new()),
+            integrity: Arc::new(tokio::sync::Mutex::new(IntegrityAudit::default())),
         };
         store
             .validate_transaction_topology(STORE_OPEN_TIMEOUT)
             .await?;
+        let qualification = store.qualify_transaction(STORE_OPEN_TIMEOUT).await?;
         // Fence the old session writer first. Its write and delete paths both
         // touch the session collection before they touch event history, so a
         // read-only session view stops a new old operation at its first step.
         store
-            .ensure_versioned_namespace(LEGACY_SESSIONS, SESSIONS)
+            .ensure_versioned_namespace(&qualification, LEGACY_SESSIONS, SESSIONS)
             .await?;
         store
-            .ensure_versioned_namespace(LEGACY_EVENTS, EVENTS)
+            .ensure_versioned_namespace(&qualification, LEGACY_EVENTS, EVENTS)
             .await?;
         store.ensure_indexes().await?;
         store.ensure_tombstone_collection().await?;
         store.install_protocol_validators().await?;
-        store.validate_post_fence_state().await?;
+        let collection_ids = store.authoritative_collection_ids().await?;
+        store
+            .verify_collection_contracts(Some(&collection_ids))
+            .await?;
+        store.verify_required_indexes().await?;
+        let snapshot = store.validate_post_fence_state().await?;
+        {
+            let mut integrity = store.integrity.lock().await;
+            integrity.checked_at = Some(Instant::now());
+            integrity.snapshot = Some(snapshot);
+        }
+        store.collection_ids = Arc::new(collection_ids);
         tracing::info!(database, "session store ready");
         Ok(store)
     }
@@ -328,6 +389,53 @@ impl MongoSessionStore {
         validate_transaction_topology_reply(&reply)
     }
 
+    async fn qualify_transaction(
+        &self,
+        timeout: Duration,
+    ) -> Result<TransactionQualified, StoreError> {
+        let client = self.client.clone();
+        let probe = self.database.collection::<Document>(TRANSACTION_PROBE);
+        bounded_store_check(
+            "MongoDB transaction qualification",
+            async move {
+                let mut session = client.start_session().await.map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "start MongoDB transaction qualification session: {error}"
+                    ))
+                })?;
+                session
+                    .start_transaction()
+                    .read_concern(ReadConcern::snapshot())
+                    .write_concern(WriteConcern::majority())
+                    .await
+                    .map_err(|error| {
+                        StoreError::Unavailable(format!(
+                            "start MongoDB transaction qualification: {error}"
+                        ))
+                    })?;
+
+                // Starting a driver transaction is local. The first operation is
+                // what proves that the selected server accepts transaction commands.
+                let operation = probe.find_one(doc! {}).session(&mut session).await;
+                let abort = session.abort_transaction().await;
+                operation.map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "execute MongoDB transaction qualification: {error}"
+                    ))
+                })?;
+                abort.map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "abort MongoDB transaction qualification: {error}"
+                    ))
+                })?;
+                Ok(())
+            },
+            timeout,
+        )
+        .await?;
+        Ok(TransactionQualified)
+    }
+
     async fn verify_versioned_namespaces(&self) -> Result<(), StoreError> {
         for (legacy, authoritative) in [(LEGACY_SESSIONS, SESSIONS), (LEGACY_EVENTS, EVENTS)] {
             let pair = self.namespace_pair(legacy, authoritative).await?;
@@ -342,6 +450,7 @@ impl MongoSessionStore {
 
     async fn ensure_versioned_namespace(
         &self,
+        qualification: &TransactionQualified,
         legacy: &str,
         authoritative: &str,
     ) -> Result<(), StoreError> {
@@ -357,7 +466,7 @@ impl MongoSessionStore {
             }
 
             if let Err(error) = self
-                .execute_namespace_action(action, legacy, authoritative)
+                .execute_namespace_action(qualification, action, legacy, authoritative)
                 .await
             {
                 let after = self.namespace_pair(legacy, authoritative).await?;
@@ -404,11 +513,12 @@ impl MongoSessionStore {
 
     async fn execute_namespace_action(
         &self,
+        qualification: &TransactionQualified,
         action: NamespaceAction,
         legacy: &str,
         authoritative: &str,
     ) -> mongodb::error::Result<()> {
-        match action {
+        match qualification.authorize(action) {
             NamespaceAction::CreateAuthoritative => {
                 self.database.create_collection(authoritative).await
             }
@@ -437,42 +547,18 @@ impl MongoSessionStore {
     }
 
     async fn ensure_indexes(&self) -> Result<(), StoreError> {
-        // Unique per (session, seq): the database is what makes the per-session
-        // monotonic sequence a guarantee. Without it a racing append could
-        // duplicate a cursor position and a resuming client would silently
-        // skip or repeat history.
-        let seq = IndexModel::builder()
-            .keys(doc! { "session_id": 1, "seq": 1 })
-            .options(IndexOptions::builder().unique(true).build())
-            .build();
-        self.events
-            .create_index(seq)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("event index: {e}")))?;
-
-        // A receipt is inserted atomically with every record/event unit. Its
-        // `_id` is already unique; this index makes deleting one session's
-        // receipts bounded when the owner deletes the session.
-        self.writes
-            .create_index(IndexModel::builder().keys(doc! { "session_id": 1 }).build())
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("session write index: {e}")))?;
-
-        let owner = IndexModel::builder()
-            .keys(doc! { "owner": 1, "created_at": -1 })
-            .build();
-        self.sessions
-            .create_index(owner)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("session index: {e}")))?;
-
-        // Session creation matches this exact desired-state field before
-        // grouping reservations, so historical idle records never need to be
-        // scanned to answer whether another request fits.
-        self.sessions
-            .create_index(reservation_status_index())
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("session status index: {e}")))?;
+        for required in required_indexes() {
+            self.database
+                .collection::<Document>(required.collection)
+                .create_index(required_index_model(&required))
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "create required index {} on {}: {error}",
+                        required.name, required.collection
+                    ))
+                })?;
+        }
         Ok(())
     }
 
@@ -518,35 +604,138 @@ impl MongoSessionStore {
         Ok(())
     }
 
-    async fn validate_post_fence_state(&self) -> Result<(), StoreError> {
-        let tombstones = self.validated_tombstone_ids().await?;
-        let sessions = self.validated_session_tails().await?;
-        let event_tails = self.validated_event_tails().await?;
+    async fn collection_contracts(
+        &self,
+    ) -> Result<BTreeMap<String, CollectionContract>, StoreError> {
+        let mut cursor = self
+            .database
+            .list_collections()
+            .filter(doc! {
+                "name": { "$in": [SESSIONS, EVENTS, WRITES, TOMBSTONES] }
+            })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "list authoritative MongoDB collection contracts: {error}"
+                ))
+            })?;
+        let mut contracts = BTreeMap::new();
+        while let Some(specification) = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!(
+                "authoritative MongoDB collection contract cursor: {error}"
+            ))
+        })? {
+            contracts.insert(
+                specification.name.clone(),
+                collection_contract(&specification),
+            );
+        }
+        Ok(contracts)
+    }
 
-        for (id, event_tail) in &event_tails {
-            if sessions.contains_key(id) || tombstones.contains(id) {
+    async fn authoritative_collection_ids(&self) -> Result<BTreeMap<String, Binary>, StoreError> {
+        let contracts = self.collection_contracts().await?;
+        let mut ids = BTreeMap::new();
+        for collection in [SESSIONS, EVENTS, WRITES, TOMBSTONES] {
+            let contract = contracts.get(collection).ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "authoritative MongoDB collection {collection} is missing"
+                ))
+            })?;
+            let uuid = contract.uuid.clone().ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "authoritative MongoDB collection {collection} has no stable UUID"
+                ))
+            })?;
+            ids.insert(collection.to_owned(), uuid);
+        }
+        Ok(ids)
+    }
+
+    async fn verify_collection_contracts(
+        &self,
+        expected_ids: Option<&BTreeMap<String, Binary>>,
+    ) -> Result<(), StoreError> {
+        let contracts = self.collection_contracts().await?;
+        for collection in [SESSIONS, EVENTS, WRITES, TOMBSTONES] {
+            let contract = contracts.get(collection).ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "authoritative MongoDB collection {collection} is missing"
+                ))
+            })?;
+            validate_collection_contract(
+                collection,
+                contract,
+                expected_ids.and_then(|ids| ids.get(collection)),
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn verify_required_indexes(&self) -> Result<(), StoreError> {
+        let required = required_indexes();
+        for collection in [EVENTS, WRITES, SESSIONS] {
+            let mut cursor = self
+                .database
+                .collection::<Document>(collection)
+                .list_indexes()
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "list required MongoDB indexes on {collection}: {error}"
+                    ))
+                })?;
+            let mut indexes = Vec::new();
+            while let Some(index) = cursor.try_next().await.map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "required MongoDB index cursor on {collection}: {error}"
+                ))
+            })? {
+                indexes.push(index);
+            }
+            for specification in required
+                .iter()
+                .filter(|required| required.collection == collection)
+            {
+                validate_required_index(specification, &indexes)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_post_fence_state(&self) -> Result<HistorySnapshot, StoreError> {
+        let mut tombstones = self.validated_tombstone_ids().await?;
+        let mut sessions = self.validated_session_tails().await?;
+        let mut event_tails = self.validated_event_tails().await?;
+
+        for (id, event_tail) in event_tails.clone() {
+            if sessions.contains_key(&id) || tombstones.contains(&id) {
                 continue;
             }
             // A new replica may have committed this session after the session
             // scan began. Re-read only the apparent orphan after all old names
             // are fenced, so an old writer cannot make the answer oscillate.
-            if self
+            let owner = self
                 .sessions
-                .find_one(doc! { "_id": id })
+                .clone_with_type::<Document>()
+                .find_one(doc! { "_id": &id })
                 .await
                 .map_err(|error| {
                     StoreError::Unavailable(format!("recheck event-history owner {id}: {error}"))
-                })?
-                .is_none()
-                && !self.is_tombstoned(&SessionId(id.clone())).await?
-            {
+                })?;
+            if let Some(owner) = owner {
+                let (owner_id, owner_tail) = validate_stored_session_document(&owner)?;
+                sessions.insert(owner_id, owner_tail);
+            } else if self.is_tombstoned(&SessionId(id.clone())).await? {
+                tombstones.insert(id);
+            } else {
                 return Err(StoreError::Malformed(format!(
                     "event history for session {id} ends at {event_tail} but has no session record or deletion tombstone after the writer fence"
                 )));
             }
         }
 
-        for (id, recorded_tail) in sessions {
+        for (id, recorded_tail) in sessions.clone() {
             if tombstones.contains(&id) {
                 continue;
             }
@@ -554,9 +743,96 @@ impl MongoSessionStore {
             if recorded_tail <= physical_tail {
                 continue;
             }
-            self.recheck_record_tail(&id).await?;
+            if self.is_tombstoned(&SessionId(id.clone())).await? {
+                tombstones.insert(id);
+                continue;
+            }
+            let Some(record) = self
+                .sessions
+                .clone_with_type::<Document>()
+                .find_one(doc! { "_id": &id })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!("recheck session tail for {id}: {error}"))
+                })?
+            else {
+                if self.is_tombstoned(&SessionId(id.clone())).await? {
+                    tombstones.insert(id);
+                    continue;
+                }
+                return Err(StoreError::Malformed(format!(
+                    "session {id} disappeared without a deletion tombstone during history validation"
+                )));
+            };
+            let (_, current_recorded_tail) = validate_stored_session_document(&record)?;
+            let current_physical_tail = self
+                .last_event_sequence(&SessionId(id.clone()))
+                .await?
+                .unwrap_or(0);
+            if current_recorded_tail > current_physical_tail {
+                return Err(StoreError::Malformed(format!(
+                    "session {id} advertises event {current_recorded_tail}, but contiguous physical history ends at {current_physical_tail} after the old writer was fenced"
+                )));
+            }
+            sessions.insert(id.clone(), current_recorded_tail);
+            if current_physical_tail == 0 {
+                event_tails.remove(&id);
+            } else {
+                event_tails.insert(id, current_physical_tail);
+            }
         }
-        Ok(())
+        Ok(HistorySnapshot {
+            tombstones,
+            session_tails: sessions,
+            event_tails,
+        })
+    }
+
+    async fn audited_history_snapshot(
+        &self,
+        previous: Option<&HistorySnapshot>,
+    ) -> Result<HistorySnapshot, StoreError> {
+        let first = self.validate_post_fence_state().await;
+        if let Ok(snapshot) = first {
+            let progressed = previous
+                .map(|previous| validate_history_progress(previous, &snapshot).is_ok())
+                .unwrap_or(true);
+            if progressed {
+                return Ok(snapshot);
+            }
+        }
+
+        // A delete transaction can commit between the independent collection
+        // scans. Retry a suspicious result once so its permanent tombstone is
+        // visible before treating the apparent regression as corruption.
+        let snapshot = self.validate_post_fence_state().await?;
+        if let Some(previous) = previous {
+            validate_history_progress(previous, &snapshot)?;
+        }
+        Ok(snapshot)
+    }
+
+    async fn audit_history_if_due(&self) -> Result<(), StoreError> {
+        let mut audit = self.integrity.lock().await;
+        if let Some(cached) = audit.cached_result(Instant::now()) {
+            return cached;
+        }
+
+        let result = self.audited_history_snapshot(audit.snapshot.as_ref()).await;
+        let checked_at = Instant::now();
+        match result {
+            Ok(snapshot) => {
+                audit.record_success(checked_at, snapshot);
+                Ok(())
+            }
+            Err(error) => {
+                audit.record_failure(checked_at, error);
+                Err(audit
+                    .last_error
+                    .clone()
+                    .expect("a failed integrity audit retains its error"))
+            }
+        }
     }
 
     async fn validated_tombstone_ids(&self) -> Result<HashSet<String>, StoreError> {
@@ -635,34 +911,277 @@ impl MongoSessionStore {
         }
         Ok(tails)
     }
+}
 
-    async fn recheck_record_tail(&self, id: &str) -> Result<(), StoreError> {
-        if self.is_tombstoned(&SessionId(id.to_owned())).await? {
-            return Ok(());
+impl IntegrityAudit {
+    fn cached_result(&self, now: Instant) -> Option<Result<(), StoreError>> {
+        let checked_at = self.checked_at?;
+        if now.saturating_duration_since(checked_at) >= HISTORY_AUDIT_INTERVAL {
+            return None;
         }
-        let Some(record) = self
-            .sessions
-            .clone_with_type::<Document>()
-            .find_one(doc! { "_id": id })
-            .await
-            .map_err(|error| {
-                StoreError::Unavailable(format!("recheck session tail for {id}: {error}"))
-            })?
-        else {
-            return Ok(());
-        };
-        let (_, recorded_tail) = validate_stored_session_document(&record)?;
-        let physical_tail = self
-            .last_event_sequence(&SessionId(id.to_owned()))
-            .await?
-            .unwrap_or(0);
-        if recorded_tail > physical_tail {
+        if let Some(error) = &self.last_error {
+            return Some(Err(error.clone()));
+        }
+        self.snapshot.as_ref().map(|_| Ok(()))
+    }
+
+    fn record_success(&mut self, checked_at: Instant, snapshot: HistorySnapshot) {
+        self.checked_at = Some(checked_at);
+        self.last_error = None;
+        self.snapshot = Some(snapshot);
+    }
+
+    fn record_failure(&mut self, checked_at: Instant, error: StoreError) {
+        self.checked_at = Some(checked_at);
+        if self.last_error.is_none() {
+            self.last_error = Some(error);
+        }
+    }
+}
+
+fn collection_contract(specification: &CollectionSpecification) -> CollectionContract {
+    CollectionContract {
+        kind: namespace_kind(specification),
+        validator: specification.options.validator.clone(),
+        validation_level: specification.options.validation_level.clone(),
+        validation_action: specification.options.validation_action.clone(),
+        uuid: specification.info.uuid.clone(),
+    }
+}
+
+fn expected_validator(collection: &str) -> Option<Document> {
+    match collection {
+        SESSIONS => Some(session_protocol_validator()),
+        EVENTS => Some(event_protocol_validator()),
+        WRITES => Some(write_protocol_validator()),
+        TOMBSTONES => Some(tombstone_protocol_validator()),
+        _ => None,
+    }
+}
+
+fn validate_collection_contract(
+    collection: &str,
+    actual: &CollectionContract,
+    expected_uuid: Option<&Binary>,
+) -> Result<(), StoreError> {
+    let expected_validator = expected_validator(collection).ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "no MongoDB collection contract is defined for {collection}"
+        ))
+    })?;
+    if actual.kind != NamespaceKind::Collection {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB namespace {collection} is not a collection"
+        )));
+    }
+    if !actual
+        .validator
+        .as_ref()
+        .is_some_and(|validator| documents_equivalent(validator, &expected_validator))
+    {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} has a changed write-protocol validator"
+        )));
+    }
+    if actual.validation_level != Some(ValidationLevel::Strict) {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} does not enforce strict validation"
+        )));
+    }
+    if actual.validation_action != Some(ValidationAction::Error) {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} does not reject invalid writes"
+        )));
+    }
+    let actual_uuid = actual.uuid.as_ref().ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} has no stable UUID"
+        ))
+    })?;
+    if expected_uuid.is_some_and(|expected| expected != actual_uuid) {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} was replaced after startup"
+        )));
+    }
+    Ok(())
+}
+
+fn documents_equivalent(left: &Document, right: &Document) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|(key, left)| {
+            right
+                .get(key)
+                .is_some_and(|right| bson_values_equivalent(left, right))
+        })
+}
+
+fn bson_values_equivalent(left: &Bson, right: &Bson) -> bool {
+    match (left, right) {
+        (Bson::Document(left), Bson::Document(right)) => documents_equivalent(left, right),
+        (Bson::Array(left), Bson::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| bson_values_equivalent(left, right))
+        }
+        _ => left == right,
+    }
+}
+
+fn required_indexes() -> [RequiredIndex; 4] {
+    [
+        RequiredIndex {
+            collection: EVENTS,
+            name: "session_id_1_seq_1",
+            keys: doc! { "session_id": 1, "seq": 1 },
+            unique: true,
+        },
+        RequiredIndex {
+            collection: WRITES,
+            name: "session_id_1",
+            keys: doc! { "session_id": 1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: SESSIONS,
+            name: "owner_1_created_at_-1",
+            keys: doc! { "owner": 1, "created_at": -1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: SESSIONS,
+            name: "status_1",
+            keys: doc! { "status": 1 },
+            unique: false,
+        },
+    ]
+}
+
+fn required_index_model(required: &RequiredIndex) -> IndexModel {
+    IndexModel::builder()
+        .keys(required.keys.clone())
+        .options(
+            IndexOptions::builder()
+                .name(required.name.to_owned())
+                .unique(required.unique)
+                .build(),
+        )
+        .build()
+}
+
+fn index_keys_equal(left: &Document, right: &Document) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right.iter()).all(
+            |((left_key, left_value), (right_key, right_value))| {
+                left_key == right_key && left_value == right_value
+            },
+        )
+}
+
+fn validate_required_index(
+    required: &RequiredIndex,
+    indexes: &[IndexModel],
+) -> Result<(), StoreError> {
+    let actual = indexes
+        .iter()
+        .find(|index| {
+            index
+                .options
+                .as_ref()
+                .and_then(|options| options.name.as_deref())
+                == Some(required.name)
+        })
+        .ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "required MongoDB index {} is missing from {}",
+                required.name, required.collection
+            ))
+        })?;
+    let options = actual.options.as_ref().ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "required MongoDB index {} on {} has no options",
+            required.name, required.collection
+        ))
+    })?;
+    let unique = options.unique.unwrap_or(false);
+    let weakened = options.sparse.unwrap_or(false)
+        || options.partial_filter_expression.is_some()
+        || options.hidden.unwrap_or(false)
+        || options.expire_after.is_some()
+        || options.collation.is_some();
+    if !index_keys_equal(&actual.keys, &required.keys) || unique != required.unique || weakened {
+        return Err(StoreError::Unavailable(format!(
+            "required MongoDB index {} on {} no longer has its exact key and constraint contract",
+            required.name, required.collection
+        )));
+    }
+    Ok(())
+}
+
+fn validate_history_progress(
+    previous: &HistorySnapshot,
+    current: &HistorySnapshot,
+) -> Result<(), StoreError> {
+    for id in &previous.tombstones {
+        if !current.tombstones.contains(id) {
             return Err(StoreError::Malformed(format!(
-                "session {id} advertises event {recorded_tail}, but contiguous physical history ends at {physical_tail} after the old writer was fenced"
+                "permanent deletion tombstone for session {id} disappeared"
             )));
         }
-        Ok(())
     }
+
+    for (id, previous_tail) in &previous.session_tails {
+        if current.tombstones.contains(id) {
+            continue;
+        }
+        let current_tail = current.session_tails.get(id).ok_or_else(|| {
+            StoreError::Malformed(format!(
+                "session {id} disappeared without a deletion tombstone"
+            ))
+        })?;
+        if current_tail < previous_tail {
+            return Err(StoreError::Malformed(format!(
+                "session {id} recorded tail decreased from {previous_tail} to {current_tail}"
+            )));
+        }
+    }
+
+    for (id, previous_tail) in &previous.event_tails {
+        if current.tombstones.contains(id) {
+            continue;
+        }
+        let current_tail = current.event_tails.get(id).ok_or_else(|| {
+            StoreError::Malformed(format!(
+                "event history for session {id} disappeared without a deletion tombstone"
+            ))
+        })?;
+        if current_tail < previous_tail {
+            return Err(StoreError::Malformed(format!(
+                "event history for session {id} decreased from {previous_tail} to {current_tail}"
+            )));
+        }
+    }
+
+    for (id, recorded_tail) in &current.session_tails {
+        if current.tombstones.contains(id) {
+            continue;
+        }
+        let physical_tail = current.event_tails.get(id).copied().unwrap_or(0);
+        if recorded_tail > &physical_tail {
+            return Err(StoreError::Malformed(format!(
+                "session {id} advertises event {recorded_tail}, but physical history ends at {physical_tail}"
+            )));
+        }
+    }
+    for (id, event_tail) in &current.event_tails {
+        if !current.session_tails.contains_key(id) && !current.tombstones.contains(id) {
+            return Err(StoreError::Malformed(format!(
+                "event history for session {id} ends at {event_tail} without a session record or deletion tombstone"
+            )));
+        }
+    }
+    Ok(())
 }
 
 async fn bounded_ping(
@@ -902,13 +1421,6 @@ fn validate_stored_session_document(document: &Document) -> Result<(String, u64)
         .map_err(|error| StoreError::Malformed(format!("session {id}: {error}")))?;
     from_doc(stored)?;
     Ok((id, tail))
-}
-
-fn reservation_status_index() -> IndexModel {
-    IndexModel::builder()
-        .keys(doc! { "status": 1 })
-        .options(IndexOptions::builder().name("status_1".to_string()).build())
-        .build()
 }
 
 /// The duplicate-key code, which is the unique index on `(session_id, seq)`
@@ -1402,8 +1914,15 @@ impl SessionStore for MongoSessionStore {
             .await?;
         let store = self.clone();
         bounded_store_check(
-            "MongoDB namespace readiness",
-            async move { store.verify_versioned_namespaces().await },
+            "MongoDB session-store readiness",
+            async move {
+                store.verify_versioned_namespaces().await?;
+                store
+                    .verify_collection_contracts(Some(store.collection_ids.as_ref()))
+                    .await?;
+                store.verify_required_indexes().await?;
+                store.audit_history_if_due().await
+            },
             STORE_PING_TIMEOUT,
         )
         .await
