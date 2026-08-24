@@ -9,6 +9,8 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex as StdMutex};
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tokio::sync::{broadcast, watch, Mutex};
@@ -18,6 +20,21 @@ const OUTPUT_BUFFER: usize = 512;
 
 /// Bytes read from the pty in one go.
 const READ_CHUNK: usize = 8192;
+
+/// Longest the supervisor waits between checking the primary child.
+///
+/// PTY readability cannot be the child-liveness signal: a descendant may keep
+/// the slave open after the supervised process exits.
+#[cfg(unix)]
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Bound on output draining after the primary process has been reaped.
+///
+/// Ordinarily the drain stops immediately when the kernel buffer is empty. A
+/// descendant that escaped the primary's process group can keep writing, so a
+/// bound is still required to make the primary's ending report inevitable.
+#[cfg(unix)]
+const EXIT_DRAIN_DEADLINE: Duration = Duration::from_millis(250);
 
 /// A live agent process and its pty.
 pub struct PtySession {
@@ -181,7 +198,7 @@ fn start_process(
         cmd.cwd(home);
     }
 
-    let mut child = pair
+    let child = pair
         .slave
         .spawn_command(cmd)
         .map_err(std::io::Error::other)?;
@@ -199,39 +216,19 @@ fn start_process(
     let first_output = output.subscribe();
     let (exit_tx, exit) = watch::channel(None);
 
-    // The pty reader is blocking, so it owns a dedicated thread rather than
-    // occupying an async worker.
+    // PTY reads and child polling are blocking operating-system work, so one
+    // dedicated thread supervises both rather than occupying an async worker.
     let out = output.clone();
+    #[cfg(unix)]
+    let terminal_fd = pair
+        .master
+        .as_raw_fd()
+        .ok_or_else(|| std::io::Error::other("native pty exposes no pollable descriptor"))?;
     std::thread::spawn(move || {
-        let mut buf = vec![0u8; READ_CHUNK];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    // No subscribers simply means nobody is attached right now.
-                    let _ = out.send(buf[..n].to_vec());
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "pty read failed");
-                    break;
-                }
-            }
-        }
-        tracing::info!("pty output ended");
-        // Reap only after the pty has reached EOF. The status therefore cannot
-        // overtake bytes the process wrote immediately before it ended.
-        match child.wait() {
-            Ok(status) => {
-                let code = if status.signal().is_some() {
-                    None
-                } else {
-                    i32::try_from(status.exit_code()).ok()
-                };
-                tracing::info!(?status, "runtime process exited");
-                exit_tx.send_replace(Some(ProcessExit { code }));
-            }
-            Err(e) => tracing::warn!(error = %e, "waiting on runtime process failed"),
-        }
+        #[cfg(unix)]
+        supervise_process(child, &mut reader, terminal_fd, &out, exit_tx);
+        #[cfg(not(unix))]
+        supervise_process(child, &mut reader, &out, exit_tx);
     });
 
     Ok((
@@ -243,6 +240,166 @@ fn start_process(
         },
         first_output,
     ))
+}
+
+fn process_exit(status: &portable_pty::ExitStatus) -> ProcessExit {
+    let code = if status.signal().is_some() {
+        None
+    } else {
+        i32::try_from(status.exit_code()).ok()
+    };
+    ProcessExit { code }
+}
+
+/// Supervise the primary process without treating PTY EOF as its liveness.
+///
+/// `portable-pty` starts the primary as a new session leader. Polling its
+/// handle reaps that exact process even when one of its descendants inherited
+/// the slave descriptor. Once it exits, every byte already readable from the
+/// master is forwarded, then the status is latched. No output-forwarding path
+/// survives this function, so terminal bytes cannot overtake the report.
+#[cfg(unix)]
+fn supervise_process(
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    reader: &mut Box<dyn Read + Send>,
+    terminal_fd: std::os::fd::RawFd,
+    output: &broadcast::Sender<Vec<u8>>,
+    exit: watch::Sender<Option<ProcessExit>>,
+) {
+    let process_group = child.process_id().and_then(|pid| i32::try_from(pid).ok());
+    let mut terminal_open = true;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // The primary is gone, so none of its descendants may remain
+                // attached to this terminal. Kill its process group before
+                // draining; an escaped descendant is handled by the deadline.
+                terminate_process_group(process_group);
+                if terminal_open {
+                    drain_after_exit(reader, terminal_fd, output);
+                }
+                tracing::info!(?status, "runtime process exited");
+                exit.send_replace(Some(process_exit(&status)));
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, "polling runtime process failed");
+                return;
+            }
+        }
+
+        if !terminal_open {
+            std::thread::sleep(PROCESS_POLL_INTERVAL);
+            continue;
+        }
+
+        match poll_terminal(terminal_fd, PROCESS_POLL_INTERVAL) {
+            Ok(true) => terminal_open = forward_one_chunk(reader, output),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, "polling pty output failed");
+                terminal_open = false;
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn drain_after_exit(
+    reader: &mut Box<dyn Read + Send>,
+    terminal_fd: std::os::fd::RawFd,
+    output: &broadcast::Sender<Vec<u8>>,
+) {
+    let deadline = Instant::now() + EXIT_DRAIN_DEADLINE;
+    while Instant::now() < deadline {
+        match poll_terminal(terminal_fd, Duration::ZERO) {
+            Ok(true) if forward_one_chunk(reader, output) => {}
+            Ok(true) | Ok(false) => return,
+            Err(error) => {
+                tracing::warn!(%error, "draining pty output failed");
+                return;
+            }
+        }
+    }
+    tracing::warn!("pty output remained busy after the primary process exited; ending the drain");
+}
+
+#[cfg(unix)]
+fn poll_terminal(fd: std::os::fd::RawFd, timeout: Duration) -> std::io::Result<bool> {
+    let timeout_ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    loop {
+        let mut descriptor = libc::pollfd {
+            fd,
+            events: libc::POLLIN | libc::POLLHUP | libc::POLLERR,
+            revents: 0,
+        };
+        let result = unsafe { libc::poll(&mut descriptor, 1, timeout_ms) };
+        if result >= 0 {
+            return Ok(result > 0);
+        }
+
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+fn forward_one_chunk(
+    reader: &mut Box<dyn Read + Send>,
+    output: &broadcast::Sender<Vec<u8>>,
+) -> bool {
+    let mut buffer = vec![0u8; READ_CHUNK];
+    match reader.read(&mut buffer) {
+        Ok(0) => {
+            tracing::info!("pty output ended");
+            false
+        }
+        Ok(read) => {
+            // No subscribers simply means nobody is attached right now.
+            let _ = output.send(buffer[..read].to_vec());
+            true
+        }
+        Err(error) => {
+            tracing::warn!(%error, "pty read failed");
+            false
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process_group(process_group: Option<i32>) {
+    let Some(process_group) = process_group.filter(|pid| *pid > 0) else {
+        return;
+    };
+    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
+    if result == -1 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            tracing::warn!(%error, process_group, "terminating runtime process group failed");
+        }
+    }
+}
+
+/// Non-Unix native PTYs do not expose a pollable descriptor. Preserve their
+/// blocking drain, while still keeping the platform-specific code isolated.
+#[cfg(not(unix))]
+fn supervise_process(
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    reader: &mut Box<dyn Read + Send>,
+    output: &broadcast::Sender<Vec<u8>>,
+    exit: watch::Sender<Option<ProcessExit>>,
+) {
+    while forward_one_chunk(reader, output) {}
+    match child.wait() {
+        Ok(status) => {
+            tracing::info!(?status, "runtime process exited");
+            exit.send_replace(Some(process_exit(&status)));
+        }
+        Err(error) => tracing::warn!(%error, "waiting on runtime process failed"),
+    }
 }
 
 #[cfg(test)]
@@ -332,6 +489,36 @@ mod tests {
             *reattached_exit.borrow(),
             Some(ProcessExit { code: Some(0) }),
             "reattach must see the original process's latched status"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_descendant_holding_the_slave_cannot_hide_the_primary_exit() {
+        let reg = PtyRegistry::new();
+        let (session, mut output) = reg
+            .get_or_start("descendant", "/bin/sh", 80, 24, "k")
+            .await
+            .expect("starts");
+        let mut exited = session.subscribe_exit();
+
+        session
+            .write_input(b"sleep 3 &\nprintf primary-; printf final-output\nexit 7\n")
+            .expect("the shell receives its commands");
+
+        tokio::time::timeout(Duration::from_secs(1), exited.changed())
+            .await
+            .expect("the primary exit is not held behind the descendant")
+            .expect("the exit watch remains open");
+        assert_eq!(*exited.borrow(), Some(ProcessExit { code: Some(7) }));
+
+        let mut terminal = Vec::new();
+        while let Ok(chunk) = output.try_recv() {
+            terminal.extend_from_slice(&chunk);
+        }
+        assert!(
+            String::from_utf8_lossy(&terminal).contains("primary-final-output"),
+            "the primary's final output is drained before its status: {terminal:?}"
         );
     }
 
