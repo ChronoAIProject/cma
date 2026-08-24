@@ -1,4 +1,4 @@
-import type { RuntimeLoss as RuntimeLossState } from './conversation';
+import type { RuntimeLoss as RuntimeLossState } from '@chronoai/cma-sdk';
 import { fullTimestamp } from '../sessions/sessionTime';
 import { Button } from '../ui/Button';
 

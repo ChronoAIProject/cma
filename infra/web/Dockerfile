@@ -1,6 +1,14 @@
 # syntax=docker/dockerfile:1
 FROM node:26-alpine AS build
-WORKDIR /build
+WORKDIR /build/sdk/typescript
+COPY sdk/typescript/package.json sdk/typescript/package-lock.json ./
+RUN npm ci
+# The web bundle consumes both SDK documentation trees. Keep sdk/ as one build
+# input so a new guide cannot work locally and disappear from the image build.
+COPY sdk/ /build/sdk/
+RUN npm run build
+
+WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
@@ -18,7 +26,7 @@ FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
 USER root
 RUN apk upgrade --no-cache
 USER 101:101
-COPY --from=build /build/dist /usr/share/nginx/html
+COPY --from=build /build/web/dist /usr/share/nginx/html
 # Same-origin proxy for the API and the terminal WebSocket, so the bundle needs
 # no knowledge of where the control plane lives.
 COPY web/nginx.conf /etc/nginx/conf.d/default.conf

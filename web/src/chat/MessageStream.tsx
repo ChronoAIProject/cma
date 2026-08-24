@@ -4,7 +4,7 @@ import { CopyKey } from './CopyKey';
 import { Thinking } from './Thinking';
 import { ToolCall } from './ToolCall';
 import { formatTokens } from './Usage';
-import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from './conversation';
+import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from '@chronoai/cma-sdk';
 import { fullTimestampOrNone, timeOfDay } from '../sessions/sessionTime';
 import './MessageStream.css';
 import { IconChevronDownOutline14 } from '../ui/icons';
@@ -444,13 +444,25 @@ function StreamEntry({
        * recognises a gap rather than puzzling over one, and one they cannot
        * see reads as the agent having forgotten.
        */
+      if (entry.rotatedAt === undefined) {
+        const count =
+          entry.frames === undefined
+            ? 'Part of this conversation was not recorded.'
+            : `${String(entry.frames)} ${entry.frames === 1 ? 'frame was' : 'frames were'} not recorded.`;
+        return (
+          <div className="gap" role="separator">
+            <span className="gap__label">{count}</span>
+            <span className="gap__note">The surrounding conversation remains available.</span>
+          </div>
+        );
+      }
       return (
         <div className="gap" role="separator">
           <span className="gap__label">
             {entry.movedTo === undefined
               ? 'Carried forward from '
               : `Moved to ${entry.movedTo}, carried forward from `}
-            {fullTimestampOrNone(Date.parse(entry.rotatedAt ?? ''))}
+            {fullTimestampOrNone(Date.parse(entry.rotatedAt))}
           </span>
           <span className="gap__note">Anything after that moment did not travel.</span>
         </div>

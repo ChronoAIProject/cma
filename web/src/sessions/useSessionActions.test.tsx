@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 import {
   changePlane,
   createSession,
