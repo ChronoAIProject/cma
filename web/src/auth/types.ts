@@ -1,8 +1,8 @@
 /**
  * Authentication contract.
  *
- * chrono-bot's REST surface documents two client credentials: a NyxID bearer
- * token, or the chrono-bot session cookie for browser clients (docs/API_REST.md).
+ * CMA's REST surface documents two client credentials: a NyxID bearer token,
+ * or the CMA session cookie for browser clients (docs/API_REST.md).
  * The browser is a cookie client, so nothing here ever holds a raw token — and
  * no implementation may write one to storage.
  *

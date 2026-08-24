@@ -122,6 +122,23 @@ pub struct ResourceFrame {
     pub sent_bytes: Option<u64>,
 }
 
+impl ResourceFrame {
+    /// Whether the pod observed a resource rather than only advancing time.
+    pub(crate) fn has_observations(&self) -> bool {
+        self.cpu_usage_usec.is_some()
+            || self.cpu_millis_limit.is_some()
+            || self.memory_bytes_used.is_some()
+            || self.memory_bytes_limit.is_some()
+            || self.memory_bytes_peak.is_some()
+            || self.stall_permille.is_some()
+            || self.ceiling_hits.is_some()
+            || self.allocation_failures.is_some()
+            || self.kills.is_some()
+            || self.received_bytes.is_some()
+            || self.sent_bytes.is_some()
+    }
+}
+
 impl Ready {
     /// Read a pod's declaration out of a control frame, if that is what it is.
     ///
@@ -238,6 +255,7 @@ mod tests {
         assert!(frame.kills.is_none());
         assert!(frame.received_bytes.is_none());
         assert!(frame.sent_bytes.is_none());
+        assert!(!frame.has_observations());
     }
 
     #[test]
@@ -248,6 +266,7 @@ mod tests {
         .expect("unknown fields are forward-compatible");
         assert_eq!(frame.uptime_ms, 17);
         assert_eq!(frame.memory_bytes_used, Some(23));
+        assert!(frame.has_observations());
     }
 
     #[test]

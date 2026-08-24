@@ -10,35 +10,36 @@
 
 use layer2_core::{Authorization, Capability};
 
-/// Permission strings this service recognises.
+/// Canonical permission strings this service recognises.
 ///
 /// The provider's convention is `<product>:<resource>:<action>`, matching the
-/// neighbouring products on the same platform.
+/// neighbouring products on the same platform. New roles use these spellings;
+/// the exact pre-CMA spellings remain private compatibility aliases below.
 pub mod permission {
     /// Provision a session.
-    pub const SESSION_CREATE: &str = "chrono-bot:session:create";
+    pub const SESSION_CREATE: &str = "cma:session:create";
     /// Read and attach to your own sessions.
-    pub const SESSION_USE: &str = "chrono-bot:session:use";
+    pub const SESSION_USE: &str = "cma:session:use";
     /// End your own session.
-    pub const SESSION_TERMINATE: &str = "chrono-bot:session:terminate";
+    pub const SESSION_TERMINATE: &str = "cma:session:terminate";
     /// Author and reuse your own environment profiles.
-    pub const ENVIRONMENT_PROFILE_MANAGE: &str = "chrono-bot:environment-profile:manage";
+    pub const ENVIRONMENT_PROFILE_MANAGE: &str = "cma:environment-profile:manage";
     /// Read every session, whoever owns it.
-    pub const ADMIN_SESSIONS: &str = "chrono-bot:admin:sessions";
+    pub const ADMIN_SESSIONS: &str = "cma:admin:sessions";
     /// Read the sandbox inventory and its status.
-    pub const ADMIN_SANDBOXES: &str = "chrono-bot:admin:sandboxes";
+    pub const ADMIN_SANDBOXES: &str = "cma:admin:sandboxes";
     /// Read the durable event log of any session.
-    pub const ADMIN_EVENTS: &str = "chrono-bot:admin:events";
+    pub const ADMIN_EVENTS: &str = "cma:admin:events";
     /// Read the record of what the service was asked to do.
-    pub const ADMIN_ACTIVITY: &str = "chrono-bot:admin:activity";
+    pub const ADMIN_ACTIVITY: &str = "cma:admin:activity";
     /// Read the directory of subjects that have used the service.
-    pub const ADMIN_USERS: &str = "chrono-bot:admin:users";
+    pub const ADMIN_USERS: &str = "cma:admin:users";
     /// End or pause a session whatever subject owns it.
     ///
     /// Its own permission rather than part of the monitoring set, because it
     /// is the only one of these that changes anything. A role handed out so
     /// somebody can watch the service should not also let them stop it.
-    pub const ADMIN_CONTROL: &str = "chrono-bot:admin:control";
+    pub const ADMIN_CONTROL: &str = "cma:admin:control";
     /// Read and change settings that apply to the whole deployment.
     ///
     /// Separate from `ADMIN_CONTROL` for the same reason that one is separate
@@ -46,7 +47,7 @@ pub mod permission {
     /// the session stopped, while changing a platform setting affects every
     /// session created afterwards, including ones belonging to people who
     /// will never meet whoever changed it.
-    pub const ADMIN_SETTINGS: &str = "chrono-bot:admin:settings";
+    pub const ADMIN_SETTINGS: &str = "cma:admin:settings";
     /// Create and revive sessions past the deployment's live-session limit.
     ///
     /// Its own string rather than part of any admin bundle. Every other
@@ -55,6 +56,26 @@ pub mod permission {
     /// how many sessions its own holder may have at once. Bundling it with a
     /// monitoring role would hand unlimited session creation to somebody who
     /// asked to watch the service.
+    pub const ADMIN_UNLIMITED_SESSIONS: &str = "cma:admin:unlimited-sessions";
+}
+
+/// Exact grants issued before the CMA permission vocabulary was introduced.
+///
+/// These are aliases, not a second public vocabulary. Keeping them explicit
+/// preserves deny-by-default translation: similar prefixes, suffixes, and
+/// future permissions do not acquire authority by inference.
+mod legacy_permission {
+    pub const SESSION_CREATE: &str = "chrono-bot:session:create";
+    pub const SESSION_USE: &str = "chrono-bot:session:use";
+    pub const SESSION_TERMINATE: &str = "chrono-bot:session:terminate";
+    pub const ENVIRONMENT_PROFILE_MANAGE: &str = "chrono-bot:environment-profile:manage";
+    pub const ADMIN_SESSIONS: &str = "chrono-bot:admin:sessions";
+    pub const ADMIN_SANDBOXES: &str = "chrono-bot:admin:sandboxes";
+    pub const ADMIN_EVENTS: &str = "chrono-bot:admin:events";
+    pub const ADMIN_ACTIVITY: &str = "chrono-bot:admin:activity";
+    pub const ADMIN_USERS: &str = "chrono-bot:admin:users";
+    pub const ADMIN_CONTROL: &str = "chrono-bot:admin:control";
+    pub const ADMIN_SETTINGS: &str = "chrono-bot:admin:settings";
     pub const ADMIN_UNLIMITED_SESSIONS: &str = "chrono-bot:admin:unlimited-sessions";
 }
 
@@ -74,8 +95,11 @@ const WILDCARD: &str = "*";
 /// Wildcard naming this product, which does grant everything here.
 ///
 /// Distinct from the one above because this one was written by somebody
-/// deciding about chrono-bot.
-const PRODUCT_WILDCARD: &str = "chrono-bot:*";
+/// deciding about CMA.
+const PRODUCT_WILDCARD: &str = "cma:*";
+
+/// Exact pre-CMA product wildcard, retained for already-issued grants.
+const LEGACY_PRODUCT_WILDCARD: &str = "chrono-bot:*";
 
 /// What a subject may do to their own work, and nothing beyond it.
 const OWN_WORK: [Capability; 4] = [
@@ -136,12 +160,12 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             own_work = true;
             continue;
         }
-        if p == PRODUCT_WILDCARD {
+        if p == PRODUCT_WILDCARD || p == LEGACY_PRODUCT_WILDCARD {
             everything = true;
             continue;
         }
         match p {
-            permission::SESSION_CREATE => {
+            permission::SESSION_CREATE | legacy_permission::SESSION_CREATE => {
                 granted.push(Capability::CreateSession);
                 // An environment profile is an input to creating a session:
                 // it describes what the session a caller may already start
@@ -151,19 +175,40 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
                 // can start sessions but not describe them.
                 granted.push(Capability::ManageOwnEnvironmentProfiles);
             }
-            permission::ENVIRONMENT_PROFILE_MANAGE => {
+            permission::ENVIRONMENT_PROFILE_MANAGE
+            | legacy_permission::ENVIRONMENT_PROFILE_MANAGE => {
                 granted.push(Capability::ManageOwnEnvironmentProfiles)
             }
-            permission::SESSION_USE => granted.push(Capability::UseOwnSessions),
-            permission::SESSION_TERMINATE => granted.push(Capability::TerminateOwnSession),
-            permission::ADMIN_SESSIONS => granted.push(Capability::ReadAllSessions),
-            permission::ADMIN_SANDBOXES => granted.push(Capability::ReadRuntimeInventory),
-            permission::ADMIN_EVENTS => granted.push(Capability::ReadEventLog),
-            permission::ADMIN_ACTIVITY => granted.push(Capability::ReadActivityLog),
-            permission::ADMIN_USERS => granted.push(Capability::ReadUserDirectory),
-            permission::ADMIN_CONTROL => granted.push(Capability::ControlAnySession),
-            permission::ADMIN_SETTINGS => granted.push(Capability::ConfigurePlatform),
-            permission::ADMIN_UNLIMITED_SESSIONS => granted.push(Capability::ExceedSessionLimit),
+            permission::SESSION_USE | legacy_permission::SESSION_USE => {
+                granted.push(Capability::UseOwnSessions)
+            }
+            permission::SESSION_TERMINATE | legacy_permission::SESSION_TERMINATE => {
+                granted.push(Capability::TerminateOwnSession)
+            }
+            permission::ADMIN_SESSIONS | legacy_permission::ADMIN_SESSIONS => {
+                granted.push(Capability::ReadAllSessions)
+            }
+            permission::ADMIN_SANDBOXES | legacy_permission::ADMIN_SANDBOXES => {
+                granted.push(Capability::ReadRuntimeInventory)
+            }
+            permission::ADMIN_EVENTS | legacy_permission::ADMIN_EVENTS => {
+                granted.push(Capability::ReadEventLog)
+            }
+            permission::ADMIN_ACTIVITY | legacy_permission::ADMIN_ACTIVITY => {
+                granted.push(Capability::ReadActivityLog)
+            }
+            permission::ADMIN_USERS | legacy_permission::ADMIN_USERS => {
+                granted.push(Capability::ReadUserDirectory)
+            }
+            permission::ADMIN_CONTROL | legacy_permission::ADMIN_CONTROL => {
+                granted.push(Capability::ControlAnySession)
+            }
+            permission::ADMIN_SETTINGS | legacy_permission::ADMIN_SETTINGS => {
+                granted.push(Capability::ConfigurePlatform)
+            }
+            permission::ADMIN_UNLIMITED_SESSIONS | legacy_permission::ADMIN_UNLIMITED_SESSIONS => {
+                granted.push(Capability::ExceedSessionLimit)
+            }
             _ => {}
         }
     }
@@ -364,7 +409,7 @@ mod tests {
     fn an_unrecognised_permission_still_grants_nothing() {
         // Translation is deny-by-default. A singular near miss must not be
         // guessed into the deployment-wide exemption.
-        let a = capabilities_from_permissions(["chrono-bot:admin:unlimited-session"]);
+        let a = capabilities_from_permissions(["cma:admin:unlimited-session"]);
         assert_eq!(a.capabilities().count(), 0);
     }
 
@@ -411,7 +456,7 @@ mod tests {
     #[test]
     fn a_product_wildcard_grants_everything_here() {
         // Named this product, so it is a decision about this product.
-        let a = capabilities_from_permissions(["chrono-bot:*"]);
+        let a = capabilities_from_permissions([PRODUCT_WILDCARD]);
         for c in Capability::ALL {
             assert!(a.allows(c), "the product wildcard must grant {c:?}");
         }
@@ -429,7 +474,7 @@ mod tests {
     fn the_product_wildcard_grants_exactly_what_it_says_it_reaches() {
         // The grant and the decision are two expressions of one fact, and a
         // test that reads only one cannot notice them parting.
-        let a = capabilities_from_permissions(["chrono-bot:*"]);
+        let a = capabilities_from_permissions([PRODUCT_WILDCARD]);
         for c in Capability::ALL {
             assert_eq!(
                 a.allows(c),
@@ -514,7 +559,7 @@ mod tests {
 
     #[test]
     fn surrounding_whitespace_does_not_defeat_a_grant() {
-        let a = capabilities_from_permissions(["  chrono-bot:session:use  "]);
+        let a = capabilities_from_permissions(["  cma:session:use  "]);
         assert!(a.allows(Capability::UseOwnSessions));
     }
 
@@ -522,11 +567,77 @@ mod tests {
     fn a_near_miss_grants_nothing() {
         // Deny-by-default: anything not matched exactly is ignored, so a typo
         // in a role definition fails closed.
-        let a = capabilities_from_permissions([
-            "chrono-bot:session:read",
-            "chronobot:session:use",
-            "chrono-bot:admin",
-        ]);
+        let a =
+            capabilities_from_permissions(["cma:session:read", "cmabot:session:use", "cma:admin"]);
         assert_eq!(a.capabilities().count(), 0);
+    }
+
+    #[test]
+    fn every_legacy_exact_grant_keeps_the_canonical_capability() {
+        let aliases = [
+            (
+                permission::SESSION_CREATE,
+                legacy_permission::SESSION_CREATE,
+            ),
+            (permission::SESSION_USE, legacy_permission::SESSION_USE),
+            (
+                permission::SESSION_TERMINATE,
+                legacy_permission::SESSION_TERMINATE,
+            ),
+            (
+                permission::ENVIRONMENT_PROFILE_MANAGE,
+                legacy_permission::ENVIRONMENT_PROFILE_MANAGE,
+            ),
+            (
+                permission::ADMIN_SESSIONS,
+                legacy_permission::ADMIN_SESSIONS,
+            ),
+            (
+                permission::ADMIN_SANDBOXES,
+                legacy_permission::ADMIN_SANDBOXES,
+            ),
+            (permission::ADMIN_EVENTS, legacy_permission::ADMIN_EVENTS),
+            (
+                permission::ADMIN_ACTIVITY,
+                legacy_permission::ADMIN_ACTIVITY,
+            ),
+            (permission::ADMIN_USERS, legacy_permission::ADMIN_USERS),
+            (permission::ADMIN_CONTROL, legacy_permission::ADMIN_CONTROL),
+            (
+                permission::ADMIN_SETTINGS,
+                legacy_permission::ADMIN_SETTINGS,
+            ),
+            (
+                permission::ADMIN_UNLIMITED_SESSIONS,
+                legacy_permission::ADMIN_UNLIMITED_SESSIONS,
+            ),
+        ];
+
+        for (canonical, legacy) in aliases {
+            let canonical_authorization = capabilities_from_permissions([canonical]);
+            let legacy_authorization = capabilities_from_permissions([legacy]);
+            assert!(
+                canonical_authorization.capabilities().next().is_some(),
+                "the canonical grant {canonical} must grant something"
+            );
+            assert_eq!(
+                legacy_authorization, canonical_authorization,
+                "the compatibility grant {legacy} drifted from {canonical}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_legacy_product_wildcard_keeps_every_capability() {
+        assert_eq!(
+            capabilities_from_permissions([LEGACY_PRODUCT_WILDCARD]),
+            capabilities_from_permissions([PRODUCT_WILDCARD])
+        );
+        assert_eq!(
+            capabilities_from_permissions([LEGACY_PRODUCT_WILDCARD])
+                .capabilities()
+                .count(),
+            Capability::ALL.len()
+        );
     }
 }

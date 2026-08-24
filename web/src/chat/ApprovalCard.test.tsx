@@ -47,7 +47,7 @@ async function conversationFrom(name: string, options: { dropAfter?: number; upT
 
 const THREE_ANSWERS = {
   id: 'apr_7Q2',
-  reason: 'chrono:command_execution',
+  reason: 'cma:command_execution',
   message: 'Run `rm -rf build/`?',
   options: [
     { decision: 'allow', label: 'Allow', affirmative: true },
@@ -76,7 +76,7 @@ describe('the card', () => {
     const question = container.querySelector('.approval__question');
     expect(question?.textContent).toBe('Run rm -rf build/?');
     // The reason rides the eyebrow — approval · <the kernel's own reason>.
-    expect(screen.getByText(/chrono:command_execution/)).toBeInTheDocument();
+    expect(screen.getByText(/cma:command_execution/)).toBeInTheDocument();
   });
 
   it('draws the command as code rather than as punctuation', () => {

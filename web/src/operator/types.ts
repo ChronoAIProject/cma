@@ -149,9 +149,26 @@ export interface CapacityBounds {
   readonly maxMemoryMib: number;
 }
 
+/** The numeric cost assigned to a session with no recorded size. */
+export interface AssumedSessionSize {
+  readonly cpuMillis: number;
+  readonly memoryMib: number;
+}
+
+/** Totals this deployment declares it is prepared to reserve. */
+export interface DeploymentCapacity {
+  /** `null` leaves the CPU dimension undeclared. Zero is an explicit ceiling. */
+  readonly cpuMillis: number | null;
+  /** `null` leaves the memory dimension undeclared. Zero is an explicit ceiling. */
+  readonly memoryMib: number | null;
+  /** `null` leaves any ledger containing an unsized session incomplete. */
+  readonly assumedSessionSize: AssumedSessionSize | null;
+}
+
 /** Deployment-wide settings as the operator surface edits them. */
 export interface PlatformSettings {
   readonly briefing: SessionBriefing;
+  readonly deploymentCapacity: DeploymentCapacity;
   readonly sizeBounds: CapacityBounds;
   /** `null` means the deployment imposes no per-subject live-session limit. */
   readonly liveSessions: number | null;

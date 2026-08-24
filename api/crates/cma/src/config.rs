@@ -144,6 +144,13 @@ pub struct Config {
 /// would pin the test to itself and nothing else.
 const BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
 
+/// Deployment identity used only when a new installation omits the key.
+///
+/// Existing installations set this explicitly because it is persisted into
+/// credential names and sandbox metadata; a rebrand must not change that
+/// state identity underneath them.
+const DEFAULT_DEPLOYMENT_ID: &str = "cma";
+
 impl Config {
     /// Read configuration from the environment.
     pub fn from_env() -> Result<Self, String> {
@@ -163,7 +170,7 @@ impl Config {
         // How the agent is told to continue a conversation rather than start
         // one. Here rather than baked into the runtime image so a change in
         // the agent's own flags is a configuration edit, not a rebuild.
-        let deployment_id = var_or("CHRONO_DEPLOYMENT_ID", "chrono-bot");
+        let deployment_id = var_or("CHRONO_DEPLOYMENT_ID", DEFAULT_DEPLOYMENT_ID);
         let adopts_untagged_runtimes =
             var_or("CHRONO_ADOPT_UNTAGGED_RUNTIMES", "true").trim() != "false";
         // Defaulted rather than required. These are what a session is expected
@@ -418,7 +425,7 @@ impl Config {
             baseline_packages: vec![],
             baseline_skills: vec![],
             baseline_services: vec![],
-            deployment_id: "chrono-bot".into(),
+            deployment_id: DEFAULT_DEPLOYMENT_ID.into(),
             adopts_untagged_runtimes: true,
             upstream_base_url: "http://u".into(),
             upstream_model: "m".into(),
@@ -450,6 +457,14 @@ mod tests {
         // An env var set to the empty string is a common deployment mistake and
         // must behave as absent rather than producing an empty bind address.
         assert_eq!(var_or("CHRONO_TEST_ABSENT_KEY", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn a_new_deployment_defaults_to_the_cma_identity() {
+        assert_eq!(
+            var_or("CHRONO_TEST_ABSENT_DEPLOYMENT_ID", DEFAULT_DEPLOYMENT_ID),
+            "cma"
+        );
     }
 
     #[test]

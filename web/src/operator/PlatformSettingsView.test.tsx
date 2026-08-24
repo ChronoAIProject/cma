@@ -5,19 +5,27 @@ import { createMockOperatorStore, MOCK_PLATFORM_SETTINGS, type MockOperatorOptio
 import { PlatformSettingsView } from './PlatformSettingsView';
 import type { PlatformSettings, SessionBriefing, StoredPlatformSettings } from './types';
 
-type SettingsChange = Omit<Partial<PlatformSettings>, 'briefing' | 'sizeBounds'> & {
+type SettingsChange = Omit<
+  Partial<PlatformSettings>,
+  'briefing' | 'deploymentCapacity' | 'sizeBounds'
+> & {
   readonly briefing?: Partial<SessionBriefing>;
+  readonly deploymentCapacity?: Partial<PlatformSettings['deploymentCapacity']>;
   readonly sizeBounds?: Partial<PlatformSettings['sizeBounds']>;
 };
 
 function changedSettings(change: SettingsChange = {}): PlatformSettings {
-  const { briefing, sizeBounds, ...rest } = change;
+  const { briefing, deploymentCapacity, sizeBounds, ...rest } = change;
   return {
     ...MOCK_PLATFORM_SETTINGS.settings,
     ...rest,
     briefing: {
       ...MOCK_PLATFORM_SETTINGS.settings.briefing,
       ...briefing,
+    },
+    deploymentCapacity: {
+      ...MOCK_PLATFORM_SETTINGS.settings.deploymentCapacity,
+      ...deploymentCapacity,
     },
     sizeBounds: {
       ...MOCK_PLATFORM_SETTINGS.settings.sizeBounds,
@@ -51,11 +59,13 @@ describe('the assembled session briefing', () => {
 
   it('states the Codex-only limit and the authentication-guidance cost', async () => {
     await open();
-    expect(screen.getByText(/only Codex currently reads this document/i)).toBeInTheDocument();
-    expect(screen.getByText(/clearing platform prose removes/i)).toHaveTextContent(
+    expect(
+      screen.getByText(/only Codex currently reads the session briefing/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/clearing its prose removes/i)).toHaveTextContent(
       /already authenticated/i,
     );
-    expect(screen.getByText(/clearing platform prose removes/i)).toHaveTextContent(/nyxid login/i);
+    expect(screen.getByText(/clearing its prose removes/i)).toHaveTextContent(/nyxid login/i);
   });
 
   it('adds, orders, and removes prose blocks', async () => {
@@ -103,7 +113,7 @@ describe('conditional settings writes', () => {
     expect(screen.getByLabelText(/maximum live sessions/i)).toHaveValue(7);
   });
 
-  it('saves prose, bounds, and an enabled live-session limit together', async () => {
+  it('saves prose, deployment capacity, bounds, and a live-session limit together', async () => {
     const user = userEvent.setup();
     const onSettingsChange = vi.fn();
     await open({ onSettingsChange });
@@ -112,6 +122,19 @@ describe('conditional settings writes', () => {
     await user.type(screen.getByLabelText(/granted-services heading/i), 'Reach from this session');
     await user.clear(screen.getByLabelText('Maximum CPU'));
     await user.type(screen.getByLabelText('Maximum CPU'), '4500');
+    await user.click(screen.getByRole('checkbox', { name: /declare a CPU total/i }));
+    await user.clear(screen.getByLabelText('Total CPU'));
+    await user.type(screen.getByLabelText('Total CPU'), '20000');
+    await user.click(screen.getByRole('checkbox', { name: /declare a memory total/i }));
+    await user.clear(screen.getByLabelText(/total memory/i));
+    await user.type(screen.getByLabelText(/total memory/i), '40960');
+    await user.click(
+      screen.getByRole('checkbox', { name: /account for sessions without a recorded size/i }),
+    );
+    await user.clear(screen.getByLabelText(/assumed CPU/i));
+    await user.type(screen.getByLabelText(/assumed CPU/i), '1000');
+    await user.clear(screen.getByLabelText(/assumed memory/i));
+    await user.type(screen.getByLabelText(/assumed memory/i), '1024');
     await user.click(screen.getByRole('checkbox', { name: /limit live sessions per person/i }));
     await user.clear(screen.getByLabelText(/maximum live sessions/i));
     await user.type(screen.getByLabelText(/maximum live sessions/i), '4');
@@ -122,9 +145,29 @@ describe('conditional settings writes', () => {
     });
     const saved = onSettingsChange.mock.calls[0]?.[0] as PlatformSettings;
     expect(saved.briefing.reachHeading).toBe('Reach from this session');
+    expect(saved.deploymentCapacity).toEqual({
+      cpuMillis: 20_000,
+      memoryMib: 40_960,
+      assumedSessionSize: { cpuMillis: 1_000, memoryMib: 1_024 },
+    });
     expect(saved.sizeBounds.maxCpuMillis).toBe(4500);
     expect(saved.liveSessions).toBe(4);
     expect(screen.getByText(/saved revision 1/i)).toBeInTheDocument();
+  });
+
+  it('warns when a declared capacity cannot account for unsized sessions', async () => {
+    const user = userEvent.setup();
+    await open();
+
+    expect(screen.queryByText(/capacity admission is inactive/i)).toBeNull();
+    await user.click(screen.getByRole('checkbox', { name: /declare a CPU total/i }));
+
+    expect(screen.getByText(/capacity admission is inactive/i)).toHaveTextContent(
+      /without a recorded size/i,
+    );
+    expect(
+      screen.getByRole('checkbox', { name: /account for sessions without a recorded size/i }),
+    ).not.toBeChecked();
   });
 
   it('loads previous values into the draft and writes only when Save is chosen', async () => {
@@ -153,7 +196,7 @@ describe('conditional settings writes', () => {
     expect((onSettingsChange.mock.calls[0]?.[0] as PlatformSettings).liveSessions).toBe(6);
   });
 
-  it('resets only briefing prose and preserves bounds and concurrency', async () => {
+  it('resets only briefing prose and preserves capacity, bounds, and concurrency', async () => {
     const user = userEvent.setup();
     const onBriefingReset = vi.fn();
     const custom = changedSettings({
@@ -163,6 +206,11 @@ describe('conditional settings writes', () => {
         maxCpuMillis: 5000,
         minMemoryMib: 512,
         maxMemoryMib: 10_240,
+      },
+      deploymentCapacity: {
+        cpuMillis: 12_000,
+        memoryMib: 24_576,
+        assumedSessionSize: { cpuMillis: 1_000, memoryMib: 1_024 },
       },
       liveSessions: 8,
     });
@@ -183,6 +231,7 @@ describe('conditional settings writes', () => {
       MOCK_PLATFORM_SETTINGS.settings.briefing.reachHeading,
     );
     expect(stored.settings.sizeBounds).toEqual(custom.sizeBounds);
+    expect(stored.settings.deploymentCapacity).toEqual(custom.deploymentCapacity);
     expect(stored.settings.liveSessions).toBe(8);
     expect(screen.getByLabelText('Maximum CPU')).toHaveValue(6000);
     expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();

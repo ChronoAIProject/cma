@@ -1,5 +1,5 @@
 /**
- * The dashboard's own chrono-bot client.
+ * The dashboard's own CMA client.
  *
  * Everything below is the SDK (`web/src/sdk/`) bound to one configuration: the
  * empty one. That means same-origin paths authenticated by the cookie the
@@ -35,7 +35,13 @@ import type {
 import { isStage, type Stage } from '../sessions/progress';
 import type { SignIn } from '../chat/conversationModel';
 
-export { ApiError, CapabilityRefused, SessionLimitReached, toSession } from '../sdk';
+export {
+  ApiError,
+  CapabilityRefused,
+  DeploymentAtCapacity,
+  SessionLimitReached,
+  toSession,
+} from '../sdk';
 export type { PricingQuote, SessionAllowance, SessionResourceStatus, SessionSpend } from '../sdk';
 
 /**

@@ -116,7 +116,7 @@ export class MockSession {
             // connection deliver it once from history and once from the live
             // stream, and makes a reload show reasoning the protocol never
             // persisted.
-            if (frame.event['chrono:live'] !== true) {
+            if (frame.event['cma:live'] !== true) {
               this.#delivered.push(frame.event);
             }
             onFrame(frame.event);
@@ -157,7 +157,7 @@ export class MockSession {
    * finds it; liveness remains live-only, like it does on the wire.
    */
   emit(event: Record<string, unknown>, onFrame: (raw: unknown) => void): void {
-    if (event['chrono:live'] !== true) {
+    if (event['cma:live'] !== true) {
       this.#delivered.push(event);
     }
     onFrame(event);

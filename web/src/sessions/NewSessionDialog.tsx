@@ -14,7 +14,7 @@ import type {
 import { kernelLabel, planeRefusal, PLANES } from './kernels';
 import './NewSessionDialog.css';
 import type { KernelOffer, SessionPlane } from './types';
-import { ApiError, type PricingQuote } from '../sdk';
+import { ApiError, DeploymentAtCapacity, type PricingQuote } from '../sdk';
 
 /**
  * The choice made when a session starts.
@@ -260,6 +260,8 @@ export function NewSessionDialog({
         // Do not call the accepted figure "new" while the replacement quote
         // is still in flight. The alert appears only with the refresh result.
         setPriceChanged(true);
+      } else if (cause instanceof DeploymentAtCapacity) {
+        setError(capacityRefusal(cause));
       } else {
         setError(message(cause, 'The session could not be started.'));
       }
@@ -473,4 +475,17 @@ function planeWord(plane: SessionPlane): string {
 
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+}
+
+function capacityRefusal(error: DeploymentAtCapacity): string {
+  const { requestedCpuMillis, requestedMemoryMib, freeCpuMillis, freeMemoryMib } = error;
+  if (
+    requestedCpuMillis === undefined ||
+    requestedMemoryMib === undefined ||
+    freeCpuMillis === undefined ||
+    freeMemoryMib === undefined
+  ) {
+    return error.message;
+  }
+  return `This session asks for ${requestedCpuMillis.toLocaleString('en-US')} millicores and ${requestedMemoryMib.toLocaleString('en-US')} MiB; ${freeCpuMillis.toLocaleString('en-US')} millicores and ${freeMemoryMib.toLocaleString('en-US')} MiB are free. A smaller session may fit.`;
 }
