@@ -311,9 +311,9 @@ pub(super) async fn interrupt(
     let session = service.get_session(&caller, &id).await?;
     match session.capabilities.holds(SessionCapability::Conversation) {
         true => service.interrupt_turn(&caller, &id).await?,
-        // Delivered even while a client is attached: a signal is not a
-        // keystroke, and stopping a runaway command is exactly what an owner
-        // may need to do from elsewhere while a screen is held open.
+        // Delivered even while a client is attached: this injects only the
+        // bounded INT control byte, and stopping a runaway command is exactly
+        // what an owner may need to do while a screen is held elsewhere.
         false => service.send_signal(&caller, &id, "INT".to_string()).await?,
     }
     Ok(StatusCode::ACCEPTED)
