@@ -158,7 +158,7 @@ Changing an image reference in `infra/` is a deployment-surface change and belon
 
 **The release pull request reads `BEHIND` and will not merge.** `develop` is missing the merge commit the *previous* release left on `main`. It carries no content — `git diff develop..main` is empty — but a merge commit is still a commit, and a protected branch requiring up-to-date branches will not take a pull request without it.
 
-Since `v0.4.0` the publish workflow opens that back-merge itself, as its last step, so this should not recur. If it does, the release gate now says so by name before anything else runs, and the fix is to merge that pull request. Merging `origin/main` into `develop` by hand does the same thing; do not force push, `develop` is protected.
+Since `v0.4.0` the publish workflow pushes a release-specific branch and opens that back-merge itself, as its last step, so this should not recur. If repository policy refuses Actions permission to open pull requests, the job fails and leaves the branch in place rather than reporting a false success. Open the branch against `develop` manually, then rerun the failed job; it recognizes the open pull request and completes without creating a duplicate. If the release gate later says `develop contains main` failed, merge that back-merge pull request. Merging `origin/main` into `develop` by hand does the same thing; do not force push, `develop` is protected.
 
 A back-merge that **conflicts** is left open deliberately rather than resolved automatically: a conflict means `develop` moved during the release, and a resolution nobody chose is how a release silently reverts something.
 
