@@ -242,7 +242,7 @@ async fn an_unreachable_catalogue_is_reported() {
         .await
         .expect_err("must be reported");
     assert!(
-        matches!(err, CoreError::RuntimeUnavailable(_)),
+        matches!(err, CoreError::SkillCatalogUnavailable(_)),
         "got {err:?}"
     );
 }

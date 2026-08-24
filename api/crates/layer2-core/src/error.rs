@@ -144,6 +144,15 @@ pub enum CoreError {
     #[error("service catalogue unavailable: {0}")]
     ServiceCatalogUnavailable(String),
 
+    /// The skill catalogue could not produce a complete answer.
+    ///
+    /// **Transient.** This includes transport failures and an upstream page
+    /// walk whose cursor or bound cannot prove completeness. Distinct from a
+    /// missing runtime: replacing a session's sandbox cannot repair the skill
+    /// registry and would destroy working state for no reason.
+    #[error("skill catalogue unavailable: {0}")]
+    SkillCatalogUnavailable(String),
+
     /// The quote a caller accepted names a rate card no longer in force.
     ///
     /// Both ids are fields so an interface can tell the caller exactly what
@@ -208,6 +217,7 @@ impl CoreError {
             Self::InvalidRequest(_) => "invalid_request",
             Self::ServiceNotGranted(_) => "service_not_granted",
             Self::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+            Self::SkillCatalogUnavailable(_) => "skill_catalogue_unavailable",
             Self::PriceChanged { .. } => "price_changed",
             Self::PriceListNotAppendOnly(_) => "price_list_not_append_only",
             Self::SettingsConflict(_) => "settings_conflict",
@@ -278,6 +288,7 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("api-github".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::SkillCatalogUnavailable("down".into()),
             CoreError::PriceChanged {
                 quoted: "rate_old".into(),
                 in_force: "rate_new".into(),
@@ -309,6 +320,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::SkillCatalogUnavailable(_)
                 | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
@@ -353,6 +365,10 @@ mod tests {
         // caller told "runtime unavailable" would go looking.
         assert_ne!(
             CoreError::ServiceCatalogUnavailable("down".into()).code(),
+            CoreError::RuntimeUnavailable("down".into()).code(),
+        );
+        assert_ne!(
+            CoreError::SkillCatalogUnavailable("down".into()).code(),
             CoreError::RuntimeUnavailable("down".into()).code(),
         );
     }
