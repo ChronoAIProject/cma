@@ -75,10 +75,34 @@ Binary frames are terminal bytes. Text frames are JSON control messages. There i
 | C → S | `{"t":"ping"}` | keepalive |
 | S → C | binary | raw PTY output |
 | S → C | `{"t":"ready","cols":120,"rows":40,"snapshot":true,"resources":true}` | attached; a screen snapshot follows, then resource frames where declared |
-| S → C | `{"t":"exit","code":0,"reason":"end_turn"}` | the kernel process ended |
+| S → C | `{"t":"exit","code":0,"reason":"exited"}` | the kernel process ended |
 | S → C | `{"t":"resources",…}` | one whole live resource reading; every absent field is `null` |
 | S → C | `{"t":"error","code":"…","detail":"…"}` | typed failure |
 | S → C | `{"t":"pong"}` | keepalive response |
+
+### Process ending
+
+An `exit` frame reports the status of the supervised kernel process. `code` is
+an integer when the process returned a numeric exit status and is `null` when a
+signal ended it. `reason` is always the literal `"exited"`:
+
+```json
+{ "t": "exit", "code": null, "reason": "exited" }
+```
+
+The server drains the attachment's queued binary PTY output before this frame.
+The frame is followed immediately by a WebSocket Close frame with code `1000`
+(normal closure); no terminal bytes follow it.
+
+The report ends this live terminal attachment only. It does not change the
+session's durable lifecycle status: for example, a `ready` session remains
+`ready` until the session lifecycle independently changes it.
+
+If the runtime channel ends without reporting a process status, the server
+emits no `exit` frame and does not manufacture `code:0` or a normal process
+close. Likewise, a network failure or client disconnect carries no process
+status. Clients must treat the absence of `exit` as unknown, not as successful
+termination.
 
 A resource frame carries the same fourteen fields as the REST and AG-UI
 projections, under camel-case names:
@@ -206,6 +230,9 @@ Multi-viewer fan-out is not offered in this version. The server-side emulator ma
 | `4002` | the session is being carried onto an updated runtime; attach again in a moment |
 
 All three are in the private range, and all three close with a reason rather than going quiet. They ask different things of whoever is looking — go to the other tab, stop looking for a terminal, wait a moment — which is why they cannot share a code.
+
+A process exit is separate from these attachment-control endings. It uses the
+`exit` text frame and subsequent normal close code `1000` described in §2.
 
 ### Approvals behave differently here, and it matters
 
