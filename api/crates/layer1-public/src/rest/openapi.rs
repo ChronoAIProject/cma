@@ -133,6 +133,24 @@ fn finish_document(document: &mut openapi::OpenApi) {
         .expect("the terminal ticket body is JSON")
         .schema = Some(openapi::Ref::from_schema_name("TicketRequest").into());
 
+    // Replacement also accepts the complete view returned by GET. The custom
+    // extractor validates and removes its server-owned fields before decoding
+    // the writable projection, while create remains ProfileRequest-only.
+    let profile_replacement = document
+        .paths
+        .paths
+        .get_mut("/api/v1/environment-profiles/{id}")
+        .and_then(|item| item.put.as_mut())
+        .and_then(|operation| operation.request_body.as_mut())
+        .and_then(|body| body.content.get_mut("application/json"))
+        .expect("the profile replacement body is JSON");
+    profile_replacement.schema = Some(
+        openapi::schema::OneOfBuilder::new()
+            .item(openapi::Ref::from_schema_name("ProfileRequest"))
+            .item(openapi::Ref::from_schema_name("ProfileView"))
+            .into(),
+    );
+
     for (path, item) in &mut document.paths.paths {
         for (method, operation) in [
             ("get", item.get.as_mut()),
