@@ -16,9 +16,53 @@ use layer2_core::{
     PermissionMode, ReasoningEffort, ServiceId, SessionMode, SessionSize, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+const MAX_DIAGNOSTIC_FIELD_BYTES: usize = 64;
+
+const PROFILE_FIELDS: &[&str] = &[
+    "name",
+    "variables",
+    "packages",
+    "agent",
+    "nyxid",
+    "agent_notes",
+];
+const PROFILE_VIEW_FIELDS: &[&str] = &[
+    "name",
+    "variables",
+    "packages",
+    "agent",
+    "nyxid",
+    "agent_notes",
+    "id",
+    "mandatory",
+    "created_at",
+    "updated_at",
+    "preferred",
+];
+const PROFILE_SERVER_FIELDS: &[&str] =
+    &["id", "mandatory", "created_at", "updated_at", "preferred"];
+const VARIABLE_FIELDS: &[&str] = &["key", "value"];
+const PACKAGE_FIELDS: &[&str] = &["name", "version"];
+const AGENT_FIELDS: &[&str] = &[
+    "kernel",
+    "mode",
+    "model",
+    "reasoning_effort",
+    "permission",
+    "credential",
+    "size",
+    "record_tool_bodies",
+    "skills",
+];
+const SIZE_FIELDS: &[&str] = &["cpu_millis", "memory_mib"];
+const NYXID_FIELDS: &[&str] = &["services"];
+const MANDATORY_FIELDS: &[&str] = &["packages", "skills"];
 
 /// A variable as this interface reads and writes it.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct VariableBody {
     /// Variable name.
     pub key: String,
@@ -28,6 +72,7 @@ pub struct VariableBody {
 
 /// A package as this interface reads and writes it.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageBody {
     /// Package name.
     pub name: String,
@@ -37,7 +82,8 @@ pub struct PackageBody {
 }
 
 /// Request body for creating or replacing a profile.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileRequest {
     /// Name the owner recognises it by.
     pub name: String,
@@ -64,7 +110,8 @@ pub struct ProfileRequest {
 }
 
 /// The platform-access half of a profile, as a caller supplies it.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NyxIdBody {
     /// Identifiers of the services to allow.
     #[serde(default)]
@@ -75,7 +122,8 @@ pub struct NyxIdBody {
 ///
 /// Every field defaults, so a client that cares about none of them sends a
 /// name and gets a profile that behaves the way the deployment says it should.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentBody {
     /// Which runtime implementation backs the session.
     #[serde(default)]
@@ -111,10 +159,207 @@ pub struct AgentBody {
 /// Two integers with their units in their names. A field called `cpu` carrying
 /// `1` is ambiguous between one core and one millicore, and the two differ by a
 /// factor of a thousand.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SizeBody {
     pub cpu_millis: u32,
     pub memory_mib: u32,
+}
+
+/// Schema metadata safe to add to an unknown-field problem document.
+///
+/// JSON object keys are still caller input. Only a short identifier-shaped key
+/// is returned; arbitrary prose, control characters, and unbounded keys stay
+/// behind the same fixed-detail refusal as every other invalid body.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct UnknownProfileField {
+    pub(super) field: Option<String>,
+    pub(super) path: Option<String>,
+}
+
+/// Locate an unknown field structurally, without inspecting or formatting any
+/// submitted scalar value.
+pub(super) fn unknown_profile_field(
+    body: &Value,
+    accepts_profile_view: bool,
+) -> Option<UnknownProfileField> {
+    let profile = body.as_object()?;
+    let accepted = if accepts_profile_view {
+        PROFILE_VIEW_FIELDS
+    } else {
+        PROFILE_FIELDS
+    };
+    if let Some(unknown) = unknown_in(profile, accepted, "") {
+        return Some(unknown);
+    }
+
+    for (index, variable) in profile
+        .get("variables")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if let Some(unknown) = variable
+            .as_object()
+            .and_then(|object| unknown_in(object, VARIABLE_FIELDS, &format!("variables[{index}]")))
+        {
+            return Some(unknown);
+        }
+    }
+
+    for (index, package) in profile
+        .get("packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if let Some(unknown) = package
+            .as_object()
+            .and_then(|object| unknown_in(object, PACKAGE_FIELDS, &format!("packages[{index}]")))
+        {
+            return Some(unknown);
+        }
+    }
+
+    if let Some(agent) = profile.get("agent").and_then(Value::as_object) {
+        if let Some(unknown) = unknown_in(agent, AGENT_FIELDS, "agent") {
+            return Some(unknown);
+        }
+        if let Some(unknown) = agent
+            .get("size")
+            .and_then(Value::as_object)
+            .and_then(|size| unknown_in(size, SIZE_FIELDS, "agent.size"))
+        {
+            return Some(unknown);
+        }
+    }
+
+    if accepts_profile_view {
+        if let Some(unknown) = profile
+            .get("mandatory")
+            .and_then(Value::as_object)
+            .and_then(|mandatory| unknown_in(mandatory, MANDATORY_FIELDS, "mandatory"))
+        {
+            return Some(unknown);
+        }
+    }
+
+    profile
+        .get("nyxid")
+        .and_then(Value::as_object)
+        .and_then(|nyxid| unknown_in(nyxid, NYXID_FIELDS, "nyxid"))
+}
+
+/// Decode a create body or the writable contents of a replacement body.
+///
+/// A replacement may be the complete `ProfileView` returned by GET. Its five
+/// server-owned fields are checked as part of that closed schema and removed
+/// before the writable request is decoded; they can therefore round-trip but
+/// can never overwrite identity, timestamps, the deployment baseline, or the
+/// current preference.
+pub(super) fn decode_profile_request(
+    mut body: Value,
+    accepts_profile_view: bool,
+) -> Result<(ProfileRequest, Option<String>), serde_json::Error> {
+    let echoed_id = if accepts_profile_view {
+        let mut server_fields = Map::new();
+        if let Some(profile) = body.as_object_mut() {
+            for field in PROFILE_SERVER_FIELDS {
+                if let Some(value) = profile.remove(*field) {
+                    server_fields.insert((*field).to_owned(), value);
+                }
+            }
+        }
+        serde_json::from_value::<ProfileViewEcho>(Value::Object(server_fields))?.into_id()
+    } else {
+        None
+    };
+    Ok((serde_json::from_value(body)?, echoed_id))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileViewEcho {
+    #[serde(default, deserialize_with = "present_non_null")]
+    id: Option<String>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    mandatory: Option<MandatoryEcho>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    created_at: Option<String>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    updated_at: Option<String>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    preferred: Option<bool>,
+}
+
+fn present_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+impl ProfileViewEcho {
+    fn into_id(self) -> Option<String> {
+        let Self {
+            id,
+            mandatory,
+            created_at,
+            updated_at,
+            preferred,
+        } = self;
+        if let Some(MandatoryEcho { packages, skills }) = mandatory {
+            drop((packages, skills));
+        }
+        drop((created_at, updated_at, preferred));
+        id
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MandatoryEcho {
+    packages: Vec<String>,
+    skills: Vec<String>,
+}
+
+fn unknown_in(
+    object: &Map<String, Value>,
+    accepted: &[&str],
+    parent: &str,
+) -> Option<UnknownProfileField> {
+    object
+        .keys()
+        .find(|key| !accepted.contains(&key.as_str()))
+        .map(|field| {
+            if reportable_field(field) {
+                let path = if parent.is_empty() {
+                    field.clone()
+                } else {
+                    format!("{parent}.{field}")
+                };
+                UnknownProfileField {
+                    field: Some(field.clone()),
+                    path: Some(path),
+                }
+            } else {
+                UnknownProfileField {
+                    field: None,
+                    path: None,
+                }
+            }
+        })
+}
+
+fn reportable_field(field: &str) -> bool {
+    !field.is_empty()
+        && field.len() <= MAX_DIAGNOSTIC_FIELD_BYTES
+        && field
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 impl TryFrom<ProfileRequest> for EnvironmentProfileSpec {
@@ -182,6 +427,7 @@ pub struct AgentView {
     credential: CredentialMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     size: Option<SessionSize>,
+    record_tool_bodies: bool,
     skills: Vec<String>,
 }
 
@@ -212,8 +458,8 @@ pub struct ProfileView {
     mandatory: MandatoryView,
     created_at: String,
     updated_at: String,
-    /// Whether its owner's sessions start from this profile unless told
-    /// otherwise. At most one of theirs carries it.
+    /// Whether clients should preselect this profile for its owner. At most one
+    /// of theirs carries it; the server does not use it for session creation.
     preferred: bool,
 }
 
@@ -262,6 +508,7 @@ impl ProfileView {
                 permission: profile.agent.permission,
                 credential: profile.agent.credential,
                 size: profile.agent.size,
+                record_tool_bodies: profile.agent.record_tool_bodies,
                 skills: profile.agent.skills.into_iter().map(|s| s.0).collect(),
             },
             nyxid: NyxIdView {

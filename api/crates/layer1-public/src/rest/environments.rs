@@ -14,8 +14,10 @@
 use std::{collections::HashSet, sync::Arc};
 
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
+    body::Bytes,
+    extract::{FromRequest, Path, Query, State},
+    http::{header, HeaderMap, Method, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, put},
     Json, Router,
 };
@@ -24,13 +26,15 @@ use layer2_core::{
     PageCursor, PageRequest, MAX_PAGE_SIZE,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
-    MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
+    decode_profile_request, unknown_profile_field, MandatoryView, ProfileRequest, ProfileView,
+    SkillCatalogView, SkillView, UnknownProfileField,
 };
 use crate::rest::pagination::PageParams;
-use crate::rest::{Problem, RequestFailure};
+use crate::rest::{problem_document, problem_response, BodyProblem, Problem, RequestFailure};
 
 /// Routes this resource contributes.
 ///
@@ -47,7 +51,7 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
             get(read).put(replace).delete(remove),
         )
         /*
-         * Which profile this owner's sessions start from.
+         * Which profile clients should preselect for this owner.
          *
          * A collection rather than a flag on one profile, because setting it
          * changes two records — the one taking it and the one giving it up —
@@ -60,13 +64,100 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
         .with_state(service)
 }
 
+#[cfg(test)]
+#[path = "environments_tests.rs"]
+mod route_tests;
+
+/// A profile body gets one additional diagnostic over the shared JSON
+/// extractor: an identifier-shaped unknown field is named without reflecting
+/// any value that appeared beneath it.
+struct ProfileBody {
+    request: ProfileRequest,
+    echoed_id: Option<String>,
+}
+
+enum ProfileBodyProblem {
+    Body(BodyProblem),
+    InvalidSchema,
+    Unknown(UnknownProfileField),
+}
+
+impl<S> FromRequest<S> for ProfileBody
+where
+    S: Send + Sync,
+{
+    type Rejection = ProfileBodyProblem;
+
+    async fn from_request(
+        request: axum::extract::Request,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let accepts_profile_view = request.method() == Method::PUT;
+        if !json_content_type(request.headers()) {
+            return Err(ProfileBodyProblem::Body(
+                BodyProblem::missing_json_content_type(),
+            ));
+        }
+        let bytes = Bytes::from_request(request, state).await.map_err(|error| {
+            let rejection = axum::extract::rejection::JsonRejection::from(error);
+            ProfileBodyProblem::Body(BodyProblem::from(rejection))
+        })?;
+        let Json(value) = Json::<Value>::from_bytes(&bytes)
+            .map_err(|error| ProfileBodyProblem::Body(error.into()))?;
+        if let Some(unknown) = unknown_profile_field(&value, accepts_profile_view) {
+            return Err(ProfileBodyProblem::Unknown(unknown));
+        }
+        let (request, echoed_id) = decode_profile_request(value, accepts_profile_view)
+            .map_err(|_| ProfileBodyProblem::InvalidSchema)?;
+        Ok(Self { request, echoed_id })
+    }
+}
+
+fn json_content_type(headers: &HeaderMap) -> bool {
+    let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<mime::Mime>().ok())
+    else {
+        return false;
+    };
+    content_type.type_() == mime::APPLICATION
+        && (content_type.subtype() == mime::JSON || content_type.suffix() == Some(mime::JSON))
+}
+
+impl IntoResponse for ProfileBodyProblem {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Body(problem) => problem.into_response(),
+            Self::InvalidSchema => BodyProblem::invalid_data().into_response(),
+            Self::Unknown(unknown) => {
+                let status = StatusCode::UNPROCESSABLE_ENTITY;
+                let mut body = problem_document(
+                    status,
+                    "invalid-request",
+                    "The JSON body does not match this operation's request schema.",
+                    "invalid_request",
+                );
+                if let Some(object) = body.as_object_mut() {
+                    if let Some(field) = unknown.field {
+                        object.insert("field".into(), field.into());
+                    }
+                    if let Some(path) = unknown.path {
+                        object.insert("path".into(), path.into());
+                    }
+                }
+                problem_response(status, body)
+            }
+        }
+    }
+}
+
 async fn create(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<ProfileRequest>, axum::extract::rejection::JsonRejection>,
+    ProfileBody { request, .. }: ProfileBody,
 ) -> Result<(StatusCode, Json<ProfileView>), RequestFailure> {
-    let Json(body) = body?;
-    let profile = service.create(&caller, body.try_into()?).await?;
+    let profile = service.create(&caller, request.try_into()?).await?;
     Ok((
         StatusCode::CREATED,
         Json(ProfileView::render(profile, &service)),
@@ -93,12 +184,12 @@ async fn list(
     ))
 }
 
-/// Which profile the caller's sessions should start from.
+/// Which profile clients should preselect for the caller.
 ///
-/// `null` is a value rather than an omission: it clears the preference and
-/// returns them to the deployment's own defaults, which is a choice somebody
-/// makes rather than the absence of one. `deny_unknown_fields` so a caller who
-/// spells the field wrong is told, instead of silently clearing it.
+/// `null` is a value rather than an omission: it clears the preselection. The
+/// server never substitutes this value into a session-create request;
+/// `deny_unknown_fields` ensures a misspelling is reported instead of silently
+/// clearing it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreferredRequest {
@@ -168,11 +259,13 @@ async fn replace(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    body: Result<Json<ProfileRequest>, axum::extract::rejection::JsonRejection>,
+    ProfileBody { request, echoed_id }: ProfileBody,
 ) -> Result<Json<ProfileView>, RequestFailure> {
-    let Json(body) = body?;
+    if echoed_id.as_deref().is_some_and(|echoed| echoed != id) {
+        return Err(BodyProblem::invalid_data().into());
+    }
     let profile = service
-        .update(&caller, &EnvironmentProfileId(id), body.try_into()?)
+        .update(&caller, &EnvironmentProfileId(id), request.try_into()?)
         .await?;
     Ok(Json(ProfileView::render(profile, &service)))
 }
@@ -276,6 +369,14 @@ mod tests {
         async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
             Ok(())
         }
+        async fn replace_content(
+            &self,
+            _id: &EnvironmentProfileId,
+            _content: &EnvironmentProfileSpec,
+            _updated_at: &str,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
+        }
         async fn get(
             &self,
             _id: &EnvironmentProfileId,
@@ -371,6 +472,15 @@ mod tests {
         impl EnvironmentProfileStore for CyclingStore {
             async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
                 Ok(())
+            }
+
+            async fn replace_content(
+                &self,
+                _id: &EnvironmentProfileId,
+                _content: &EnvironmentProfileSpec,
+                _updated_at: &str,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
             }
 
             async fn get(
@@ -556,6 +666,20 @@ mod tests {
                 Ok(())
             }
 
+            async fn replace_content(
+                &self,
+                id: &EnvironmentProfileId,
+                content: &EnvironmentProfileSpec,
+                updated_at: &str,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                let mut profiles = self.0.lock().unwrap();
+                let Some(profile) = profiles.iter_mut().find(|profile| profile.id == *id) else {
+                    return Ok(None);
+                };
+                profile.apply_content(content, updated_at);
+                Ok(Some(profile.clone()))
+            }
+
             async fn get(
                 &self,
                 _id: &EnvironmentProfileId,
@@ -644,7 +768,15 @@ mod tests {
         )
         .expect("parses");
 
-        let refusal = create(State(service), AuthenticatedCaller(caller), Ok(Json(body))).await;
+        let refusal = create(
+            State(service),
+            AuthenticatedCaller(caller),
+            ProfileBody {
+                request: body,
+                echoed_id: None,
+            },
+        )
+        .await;
         let problem = match refusal {
             Err(problem) => problem,
             Ok(_) => panic!("a zero size must be refused"),

@@ -34,14 +34,29 @@ pub(crate) struct FakeProfileStore {
     pub(crate) profiles: Mutex<HashMap<String, EnvironmentProfile>>,
     pub(crate) list_calls: AtomicUsize,
     pub(crate) preference_writes: AtomicUsize,
+    pub(crate) content_replacements: AtomicUsize,
+    replacement_interference: Mutex<Option<ReplacementInterference>>,
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ReplacementInterference {
+    Preferred(bool),
+    Delete,
+}
+
 impl FakeProfileStore {
     pub(crate) async fn fail_everything(&self) {
         *self.broken.lock().await = true;
+    }
+
+    pub(crate) async fn interfere_with_next_replacement(
+        &self,
+        interference: ReplacementInterference,
+    ) {
+        *self.replacement_interference.lock().await = Some(interference);
     }
 
     async fn guard(&self) -> Result<(), StoreError> {
@@ -61,6 +76,35 @@ impl EnvironmentProfileStore for FakeProfileStore {
             .await
             .insert(profile.id.0.clone(), profile.clone());
         Ok(())
+    }
+
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        self.guard().await?;
+        let interference = self.replacement_interference.lock().await.take();
+        let mut profiles = self.profiles.lock().await;
+        match interference {
+            Some(ReplacementInterference::Preferred(preferred)) => {
+                if let Some(profile) = profiles.get_mut(&id.0) {
+                    profile.preferred = preferred;
+                }
+            }
+            Some(ReplacementInterference::Delete) => {
+                profiles.remove(&id.0);
+            }
+            None => {}
+        }
+        let Some(profile) = profiles.get_mut(&id.0) else {
+            return Ok(None);
+        };
+        profile.apply_content(content, updated_at);
+        let profile = profile.clone();
+        self.content_replacements.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(profile))
     }
 
     async fn get(

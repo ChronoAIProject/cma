@@ -8,10 +8,10 @@ use futures_util::{SinkExt, StreamExt};
 use layer2_core::{
     AgentConfiguration, AgentOptions, AttachmentClaim, Authorization, Baseline, Caller, Capability,
     Deployment, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-    EnvironmentProfileStore, Event, KernelId, Page, PageCursor, PageRequest,
-    PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, SessionId,
-    SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus,
-    SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry,
+    EnvironmentProfileSpec, EnvironmentProfileStore, Event, KernelId, Page, PageCursor,
+    PageRequest, PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
+    SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionSpec,
+    SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeSpec, TerminalChannel,
@@ -149,6 +149,15 @@ struct EmptyProfiles;
 impl EnvironmentProfileStore for EmptyProfiles {
     async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    async fn replace_content(
+        &self,
+        _id: &EnvironmentProfileId,
+        _content: &EnvironmentProfileSpec,
+        _updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(None)
     }
 
     async fn get(

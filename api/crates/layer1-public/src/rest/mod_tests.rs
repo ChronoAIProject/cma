@@ -697,8 +697,8 @@ mod reach {
     use super::*;
     use layer2_core::{
         Baseline, CatalogService, EnvironmentProfile, EnvironmentProfileId,
-        EnvironmentProfileService, EnvironmentProfileStore, Page, PageRequest, ServiceId,
-        StoreError,
+        EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Page,
+        PageRequest, ServiceId, StoreError,
     };
 
     /// A store that holds nothing: these tests never read a profile, which is
@@ -709,6 +709,14 @@ mod reach {
     impl EnvironmentProfileStore for NoProfiles {
         async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
             Ok(())
+        }
+        async fn replace_content(
+            &self,
+            _id: &EnvironmentProfileId,
+            _content: &EnvironmentProfileSpec,
+            _updated_at: &str,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
         }
         async fn get(
             &self,
