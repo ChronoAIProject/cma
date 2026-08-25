@@ -63,6 +63,7 @@ impl SessionService {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
             lifecycle_gates: Default::default(),
+            conversation_order_gates: Default::default(),
             skills,
             sequences,
             event_logs,
