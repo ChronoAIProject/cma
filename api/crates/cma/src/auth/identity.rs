@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 use layer2_core::{store::StoreError, Authorization, SubjectId};
 
 use super::persistence::{DurableSubjectTokens, SecretValue};
-use super::AuthState;
+use super::{next_token_generation, AuthState};
 
 impl AuthState {
     /// Who a bearer token belongs to, asking the provider when necessary.
@@ -82,6 +82,7 @@ impl AuthState {
                 .as_ref()
                 .is_none_or(|tokens| tokens.refresh_token.is_none())
             {
+                state.token_generation = next_token_generation(state.token_generation)?;
                 state.tokens = Some(DurableSubjectTokens {
                     access_token: SecretValue::new(token.to_string()),
                     refresh_token: None,
@@ -91,6 +92,7 @@ impl AuthState {
                 });
                 state.refresh_lease = None;
             }
+            Ok(())
         })
         .await
     }
