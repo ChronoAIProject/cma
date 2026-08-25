@@ -280,18 +280,9 @@ impl SessionService {
             }
         };
 
-        // Captured to storage as well as handed to the new runtime. The
-        // handover is the moment a session is most exposed, and a copy that
-        // outlives this process is what makes a failure here recoverable
-        // rather than final.
-        if let (Some(context), Some(bytes)) = (self.context.clone(), restore.as_ref()) {
-            match context.put(&id, bytes.clone()).await {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(session_id = %id, error = %e, "could not store the snapshot")
-                }
-            }
-        }
+        // Keep adapter state in memory and hand it directly to the replacement.
+        // `ContextStore` owns terminal transcript bytes; writing this opaque
+        // adapter snapshot there would overwrite a different durable stream.
 
         let mut moved = rotating.clone();
         moved.runtime_id = None;
@@ -328,7 +319,7 @@ impl SessionService {
         };
         if let Err(e) = self.persist_durably(&mut moved, events).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
-            self.restore_after_failed_move(&record, &old).await;
+            self.restore_after_failed_move(&record, &rotating).await;
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's move could not be recorded".into(),
@@ -389,25 +380,14 @@ impl SessionService {
     /// status makes their existing channels usable again; if this compensating
     /// write is also unavailable, leaving both sides `Rotating` is coherent and
     /// recoverable, while tearing anything down would not be.
-    async fn restore_after_failed_move(&self, original: &SessionRecord, old: &RuntimeHandle) {
+    async fn restore_after_failed_move(&self, original: &SessionRecord, rotating: &SessionRecord) {
         let id = &original.session.id;
-        let mut current = match self.store.get(id).await {
-            Ok(Some(record)) => record,
-            Ok(None) => return,
-            Err(error) => {
-                tracing::error!(session_id = %id, %error, "cannot read the failed handover for recovery");
-                return;
-            }
-        };
-        if current.session.status != SessionStatus::Rotating
-            || current.runtime_id.as_deref() != Some(old.0.as_str())
-        {
-            return;
-        }
-
-        current.session.status = original.session.status;
-        current.session.stop_reason = original.session.stop_reason;
-        let mut restored = current;
+        // Roll back only the exact durable rotation claim made by this task.
+        // Reloading by status and runtime would let a stale task erase a newer
+        // replica's claim after an ABA transition back to `Rotating`.
+        let mut restored = rotating.clone();
+        restored.session.status = original.session.status;
+        restored.session.stop_reason = original.session.stop_reason;
         let event = Event {
             session_id: id.clone(),
             seq: 0,
