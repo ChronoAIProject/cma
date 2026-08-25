@@ -220,6 +220,21 @@ describe('a state delta', () => {
     );
   });
 
+  it('rejects operation metadata inherited through a patch prototype', () => {
+    const inheritedOperation = Object.create({ op: 'remove', path: '/mode' }) as object;
+    const inheritedFrom = Object.assign(Object.create({ from: '/mode' }) as object, {
+      op: 'copy',
+      path: '/extension',
+    });
+
+    expect(() => toEvent({ ...base, type: 'STATE_DELTA', delta: [inheritedOperation] })).toThrow(
+      ProtocolError,
+    );
+    expect(() => toEvent({ ...base, type: 'STATE_DELTA', delta: [inheritedFrom] })).toThrow(
+      ProtocolError,
+    );
+  });
+
   it('preserves from and accepts the empty pointer to the document root', () => {
     const event = toEvent({
       ...base,

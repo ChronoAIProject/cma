@@ -65,11 +65,17 @@ function operationFrom(raw: JsonValue, index: number): PatchOperation {
     throw new ProtocolError(`AG-UI state patch ${String(index)} was not an object`);
   }
 
+  if (!hasOwn(raw, 'op')) {
+    throw new ProtocolError(`AG-UI state patch ${String(index)} omitted op`);
+  }
   const op = raw.op;
   if (typeof op !== 'string' || !RFC_6902_OPERATIONS.has(op)) {
     throw new ProtocolError(
       `AG-UI state patch ${String(index)} used unsupported operation '${String(op)}'`,
     );
+  }
+  if (!hasOwn(raw, 'path')) {
+    throw new ProtocolError(`AG-UI state patch ${String(index)} omitted path`);
   }
   const path = pointerFrom(raw.path, index, 'path');
 
@@ -84,6 +90,9 @@ function operationFrom(raw: JsonValue, index: number): PatchOperation {
     }
     case 'move':
     case 'copy': {
+      if (!hasOwn(raw, 'from')) {
+        throw new ProtocolError(`AG-UI state patch ${String(index)} ${op} operation omitted from`);
+      }
       const from = pointerFrom(raw.from, index, 'from');
       if (op === 'move' && isProperPrefix(from.tokens, path.tokens)) {
         throw new ProtocolError(
