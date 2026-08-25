@@ -370,8 +370,8 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
 
 pub(crate) use crate::adapter_support::FakeAdapter;
 pub(crate) use crate::environment_support::{
-    baseline, catalog_service, environments, profile_spec, unconfigured_settings, FakeProfileStore,
-    FakeSkillCatalog,
+    baseline, catalog_service, environments, fake_agent, profile_spec, unconfigured_settings,
+    FakeProfileStore, FakeSkillCatalog, ReplacementInterference,
 };
 pub(crate) use crate::screen_support::{FixedCredential, RecordingScreen};
 

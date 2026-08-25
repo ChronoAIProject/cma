@@ -5,9 +5,26 @@
 
 use super::*;
 use crate::authz::Authorization;
-use crate::environment::EnvironmentVariable;
+use crate::environment::{EnvironmentVariable, ServiceId, SkillId, SoftwarePackage};
 use crate::ids::{KernelId, SubjectId};
-use crate::test_support::{environments, profile_spec, FakeProfileStore};
+use crate::test_support::{
+    environments, fake_agent, profile_spec, unconfigured_settings, FakeProfileStore,
+    ReplacementInterference,
+};
+
+fn environments_with_baseline(
+    store: Arc<FakeProfileStore>,
+    baseline: Baseline,
+) -> Arc<EnvironmentProfileService> {
+    EnvironmentProfileService::new(
+        store,
+        baseline,
+        None,
+        None,
+        fake_agent(),
+        unconfigured_settings(),
+    )
+}
 
 fn caller(subject: &str) -> Caller {
     Caller::new(
@@ -232,10 +249,234 @@ async fn an_update_replaces_contents_but_keeps_identity_and_creation_time() {
         .expect("updates");
 
     assert_eq!(updated.id, created.id);
+    assert_eq!(updated.owner, created.owner);
     assert_eq!(updated.created_at, created.created_at);
     assert_eq!(updated.name, "second");
     assert_eq!(updated.variables.len(), 1);
     assert_eq!(updated.variables[0].key, "TWO");
+}
+
+#[tokio::test]
+async fn caller_limits_allow_exact_echoes_beside_the_current_baseline() {
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments_with_baseline(
+        Arc::clone(&store),
+        Baseline::new(
+            [SoftwarePackage::new("mandatory-package")],
+            [SkillId::new("mandatory-skill")],
+            [ServiceId::new("mandatory-service")],
+        ),
+    );
+    let owner = caller("subject-a");
+    let mut boundary = profile_spec("boundary");
+    boundary.packages = (0..100)
+        .map(|i| SoftwarePackage::new(format!("caller-package-{i}")))
+        .collect();
+    boundary.agent.skills = (0..100)
+        .map(|i| SkillId::new(format!("caller-skill-{i}")))
+        .collect();
+    boundary.services = (0..100)
+        .map(|i| ServiceId::new(format!("caller-service-{i}")))
+        .collect();
+
+    let created = service
+        .create(&owner, boundary)
+        .await
+        .expect("100 caller entries plus each baseline entry create");
+    assert_eq!(created.packages.len(), 101);
+    assert_eq!(created.agent.skills.len(), 101);
+    assert_eq!(created.services.len(), 101);
+
+    let echoed = service
+        .update(&owner, &created.id, created.to_spec())
+        .await
+        .expect("the normalized response is a valid exact echo");
+    assert_eq!(echoed.to_spec(), created.to_spec());
+    assert_eq!(echoed.updated_at, created.updated_at);
+    assert_eq!(
+        store
+            .content_replacements
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an exact boundary echo performs no content write"
+    );
+
+    let mut too_many_packages = profile_spec("too many packages");
+    too_many_packages.packages = (0..101)
+        .map(|i| SoftwarePackage::new(format!("caller-package-{i}")))
+        .collect();
+    assert!(service.create(&owner, too_many_packages).await.is_err());
+
+    let mut too_many_skills = profile_spec("too many skills");
+    too_many_skills.agent.skills = (0..101)
+        .map(|i| SkillId::new(format!("caller-skill-{i}")))
+        .collect();
+    assert!(service.create(&owner, too_many_skills).await.is_err());
+
+    let mut too_many_services = profile_spec("too many services");
+    too_many_services.services = (0..101)
+        .map(|i| ServiceId::new(format!("caller-service-{i}")))
+        .collect();
+    assert!(service.create(&owner, too_many_services).await.is_err());
+}
+
+#[tokio::test]
+async fn a_legacy_profile_remains_echoable_after_the_baseline_grows_past_raw_limits() {
+    let store = Arc::new(FakeProfileStore::default());
+    let old_service = environments_with_baseline(Arc::clone(&store), Baseline::default());
+    let owner = caller("subject-a");
+    let mut historical = profile_spec("historical boundary");
+    historical.packages = (0..100)
+        .map(|i| SoftwarePackage::new(format!("caller-package-{i}")))
+        .collect();
+    historical.agent.skills = (0..100)
+        .map(|i| SkillId::new(format!("caller-skill-{i}")))
+        .collect();
+    historical.services = (0..100)
+        .map(|i| ServiceId::new(format!("caller-service-{i}")))
+        .collect();
+    let stored = old_service
+        .create(&owner, historical)
+        .await
+        .expect("the old deployment stores its boundary");
+    let raw_before = store
+        .profiles
+        .lock()
+        .await
+        .get(stored.id.as_str())
+        .expect("the historical row exists")
+        .clone();
+
+    let current_service = environments_with_baseline(
+        Arc::clone(&store),
+        Baseline::new(
+            [SoftwarePackage::new("new-mandatory-package")],
+            [SkillId::new("new-mandatory-skill")],
+            [ServiceId::new("new-mandatory-service")],
+        ),
+    );
+    let projected = current_service
+        .get(&owner, &stored.id)
+        .await
+        .expect("the legacy boundary projects through the new baseline");
+    assert_eq!(projected.packages.len(), 101);
+    assert_eq!(projected.agent.skills.len(), 101);
+    assert_eq!(projected.services.len(), 101);
+
+    let echoed = current_service
+        .update(&owner, &stored.id, projected.to_spec())
+        .await
+        .expect("the post-growth projection remains echoable");
+    assert_eq!(echoed.to_spec(), projected.to_spec());
+    assert_eq!(echoed.updated_at, raw_before.updated_at);
+    assert_eq!(
+        store
+            .content_replacements
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    let raw_after = store.profiles.lock().await;
+    let raw_after = raw_after.get(stored.id.as_str()).expect("row remains");
+    assert_eq!(raw_after.to_spec(), raw_before.to_spec());
+    assert_eq!(raw_after.updated_at, raw_before.updated_at);
+}
+
+#[tokio::test]
+async fn replacement_preserves_a_preference_set_after_the_service_read() {
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments(Arc::clone(&store));
+    let owner = caller("subject-a");
+    let profile = service
+        .create(&owner, profile_spec("before"))
+        .await
+        .expect("creates");
+    assert!(!profile.preferred);
+    store
+        .interfere_with_next_replacement(ReplacementInterference::Preferred(true))
+        .await;
+
+    let replaced = service
+        .update(&owner, &profile.id, profile_spec("after"))
+        .await
+        .expect("replaces");
+
+    assert!(replaced.preferred);
+    assert!(
+        store
+            .profiles
+            .lock()
+            .await
+            .get(profile.id.as_str())
+            .expect("row remains")
+            .preferred
+    );
+}
+
+#[tokio::test]
+async fn replacement_preserves_a_preference_cleared_after_the_service_read() {
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments(Arc::clone(&store));
+    let owner = caller("subject-a");
+    let profile = service
+        .create(&owner, profile_spec("before"))
+        .await
+        .expect("creates");
+    service
+        .prefer(&owner, Some(&profile.id))
+        .await
+        .expect("sets the stale value");
+    store
+        .interfere_with_next_replacement(ReplacementInterference::Preferred(false))
+        .await;
+
+    let replaced = service
+        .update(&owner, &profile.id, profile_spec("after"))
+        .await
+        .expect("replaces");
+
+    assert!(!replaced.preferred);
+    assert!(
+        !store
+            .profiles
+            .lock()
+            .await
+            .get(profile.id.as_str())
+            .expect("row remains")
+            .preferred
+    );
+}
+
+#[tokio::test]
+async fn replacement_refuses_a_profile_deleted_after_the_service_read() {
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments(Arc::clone(&store));
+    let owner = caller("subject-a");
+    let profile = service
+        .create(&owner, profile_spec("before"))
+        .await
+        .expect("creates");
+    store
+        .interfere_with_next_replacement(ReplacementInterference::Delete)
+        .await;
+
+    let error = service
+        .update(&owner, &profile.id, profile_spec("after"))
+        .await
+        .expect_err("a deleted row cannot be replaced");
+
+    assert_eq!(error, CoreError::EnvironmentProfileNotFound);
+    assert!(!store
+        .profiles
+        .lock()
+        .await
+        .contains_key(profile.id.as_str()));
+    assert_eq!(
+        store
+            .content_replacements
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "replacement never resurrects the deleted identifier"
+    );
 }
 
 #[tokio::test]
