@@ -181,6 +181,9 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        if record.session.status.is_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
         record.session.capabilities.require(Capability::Terminal)?;
         if !self.entries.read().await.contains_key(id) {
             // The sandbox outlives this process, so a restart loses the
@@ -217,6 +220,12 @@ impl SessionService {
             }
             if entry.session.status.is_terminal() {
                 return Err(CoreError::SessionTerminated);
+            }
+            // The durable check above can race a handover while this operation
+            // waits for lifecycle ownership. Never attach a client to the
+            // runtime that handover is about to supersede.
+            if entry.session.status.is_rotating() {
+                return Err(CoreError::SessionRotating);
             }
             entry.session.capabilities.require(Capability::Terminal)?;
             let replaced = match (&entry.attached, claim) {
