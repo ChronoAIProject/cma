@@ -464,6 +464,22 @@ fn legacy_profile() -> EnvironmentProfile {
     profile
 }
 
+fn retired_baseline_boundary_profile() -> EnvironmentProfile {
+    let mut profile = seeded_profile();
+    profile.name = "retired baseline boundary".into();
+    profile.packages = std::iter::once(SoftwarePackage::new("old-mandatory-package"))
+        .chain((0..100).map(|i| SoftwarePackage::new(format!("caller-package-{i}"))))
+        .collect();
+    profile.agent.skills = std::iter::once(SkillId::new("old-mandatory-skill"))
+        .chain((0..100).map(|i| SkillId::new(format!("caller-skill-{i}"))))
+        .collect();
+    profile.services = std::iter::once(ServiceId::new("old-mandatory-service"))
+        .chain((0..100).map(|i| ServiceId::new(format!("caller-service-{i}"))))
+        .collect();
+    profile.updated_at = "2025-01-01T00:00:00Z".into();
+    profile
+}
+
 fn documented_profile(preferred: bool) -> EnvironmentProfile {
     EnvironmentProfile {
         id: EnvironmentProfileId("envp_example".into()),
@@ -570,6 +586,37 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
     );
     assert_eq!(before.json["preferred"], false);
 
+    let stored_before = harness
+        .store
+        .snapshot(&id)
+        .expect("the created profile is stored");
+    let refused = send(
+        &harness.app,
+        Method::PUT,
+        &profile_uri,
+        Some(before.json.clone()),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(refused.content_type.as_deref(), Some(PROBLEM_CONTENT_TYPE));
+    assert_eq!(refused.json["status"], 422);
+    assert_eq!(refused.json["code"], "invalid_request");
+    let rejected_field = refused.json["field"]
+        .as_str()
+        .expect("the server-owned field is identified");
+    assert!(
+        ["id", "mandatory", "created_at", "updated_at", "preferred"].contains(&rejected_field),
+        "a raw ProfileView is refused for a server-owned field, got {rejected_field}"
+    );
+    assert_eq!(refused.json["path"], rejected_field);
+    assert_eq!(harness.store.upserts.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        harness.store.snapshot(&id),
+        Some(stored_before),
+        "schema rejection happens before any store mutation"
+    );
+
     let echoed = writable_projection(&before.json);
     assert_eq!(
         echoed, submitted,
@@ -592,6 +639,112 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
         after.bytes, before.bytes,
         "echoing every writable field must leave the complete ProfileView JSON byte-identical"
     );
+}
+
+#[tokio::test]
+async fn retired_mandatory_identities_only_bypass_bounds_for_an_exact_projection() {
+    let harness = Harness::with_baseline(Baseline::new(
+        [SoftwarePackage::new("new-mandatory-package")],
+        [SkillId::new("new-mandatory-skill")],
+        [ServiceId::new("new-mandatory-service")],
+    ));
+    harness.store.seed(retired_baseline_boundary_profile());
+    let stored_before = harness
+        .store
+        .snapshot(PROFILE_ID)
+        .expect("the historical profile is stored");
+    let profile_uri = format!("/api/v1/environment-profiles/{PROFILE_ID}");
+
+    let before = send(&harness.app, Method::GET, &profile_uri, None).await;
+    assert_eq!(before.status, StatusCode::OK);
+    assert_eq!(before.json["packages"].as_array().unwrap().len(), 102);
+    assert_eq!(
+        before.json["agent"]["skills"].as_array().unwrap().len(),
+        102
+    );
+    assert_eq!(
+        before.json["nyxid"]["services"].as_array().unwrap().len(),
+        102
+    );
+    assert_eq!(before.json["packages"][0]["name"], "new-mandatory-package");
+    assert!(before.json["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|package| package["name"] == "old-mandatory-package"));
+    assert_eq!(before.json["agent"]["skills"][0], "new-mandatory-skill");
+    assert!(before.json["agent"]["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|skill| skill == "old-mandatory-skill"));
+    assert_eq!(before.json["nyxid"]["services"][0], "new-mandatory-service");
+    assert!(before.json["nyxid"]["services"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|service| service == "old-mandatory-service"));
+
+    let projection = writable_projection(&before.json);
+    let echoed = send(
+        &harness.app,
+        Method::PUT,
+        &profile_uri,
+        Some(projection.clone()),
+    )
+    .await;
+    assert_eq!(echoed.status, StatusCode::OK);
+    assert_eq!(echoed.bytes, before.bytes);
+    assert_eq!(harness.store.upserts.load(Ordering::SeqCst), 0);
+    assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        harness.store.snapshot(PROFILE_ID),
+        Some(stored_before.clone())
+    );
+
+    let mut changed_packages = projection.clone();
+    changed_packages["name"] = json!("changed packages");
+    changed_packages["agent"]["skills"] = json!(["new-mandatory-skill"]);
+    changed_packages["nyxid"]["services"] = json!(["new-mandatory-service"]);
+
+    let mut changed_skills = projection.clone();
+    changed_skills["name"] = json!("changed skills");
+    changed_skills["packages"] = json!([{ "name": "new-mandatory-package" }]);
+    changed_skills["nyxid"]["services"] = json!(["new-mandatory-service"]);
+
+    let mut changed_services = projection;
+    changed_services["name"] = json!("changed services");
+    changed_services["packages"] = json!([{ "name": "new-mandatory-package" }]);
+    changed_services["agent"]["skills"] = json!(["new-mandatory-skill"]);
+
+    for (collection, changed) in [
+        ("packages", changed_packages),
+        ("skills", changed_skills),
+        ("services", changed_services),
+    ] {
+        let refused = send(&harness.app, Method::PUT, &profile_uri, Some(changed)).await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(refused.content_type.as_deref(), Some(PROBLEM_CONTENT_TYPE));
+        assert_eq!(refused.json["status"], 422);
+        assert_eq!(refused.json["code"], "invalid_request");
+        assert!(
+            refused.json["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains(collection)),
+            "the independent {collection} refusal names its bound: {}",
+            refused.json["detail"]
+        );
+        assert_eq!(harness.store.upserts.load(Ordering::SeqCst), 0);
+        assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            harness.store.snapshot(PROFILE_ID),
+            Some(stored_before.clone()),
+            "the refused {collection} replacement does not mutate storage"
+        );
+    }
+
+    let after = send(&harness.app, Method::GET, &profile_uri, None).await;
+    assert_eq!(after.bytes, before.bytes);
 }
 
 #[tokio::test]
@@ -993,6 +1146,17 @@ fn environment_profile_documentation_examples_follow_the_wire_types() {
         marked_examples(section, "profile-view-example"),
         vec![profile_view.clone()],
         "the response example is produced by ProfileView's real serializer"
+    );
+    serde_json::from_value::<ProfileRequest>(writable_projection(&profile_view))
+        .expect("a ProfileView's exact writable projection is a ProfileRequest");
+    let raw_view_refusal = serde_json::from_value::<ProfileRequest>(profile_view.clone())
+        .expect_err("server-owned ProfileView fields are not accepted write fields")
+        .to_string();
+    assert!(
+        ["id", "mandatory", "created_at", "updated_at", "preferred"]
+            .iter()
+            .any(|field| raw_view_refusal.contains(field)),
+        "the raw ProfileView refusal identifies a server-owned field: {raw_view_refusal}"
     );
     assert_eq!(
         marked_examples(section, "profile-list-response-example"),

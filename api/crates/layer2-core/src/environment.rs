@@ -153,11 +153,11 @@ impl EnvironmentProfileSpec {
     /// Reject invalid content while treating one copy of each mandatory entry
     /// as deployment-owned rather than caller-controlled.
     ///
-    /// GET includes today's baseline, so the same validator must accept both a
-    /// fresh request with 100 caller entries and an exact echo of its normalized
-    /// response. Only one occurrence per distinct mandatory identity is
-    /// discounted; repeated mandatory identifiers still consume the caller's
-    /// bound and cannot be used to grow a request without limit.
+    /// GET includes today's baseline, so only one occurrence per distinct
+    /// current mandatory identity is discounted. Repeated mandatory identifiers
+    /// and identities retired from the current baseline consume the caller's
+    /// bound. The profile service separately permits an exact normalized no-op
+    /// before this validation; every changed write is checked here.
     pub fn validate_with_baseline(&self, baseline: &Baseline) -> Result<(), CoreError> {
         let name = self.name.trim();
         if name.is_empty() {

@@ -416,6 +416,135 @@ async fn a_legacy_profile_remains_echoable_after_the_baseline_grows_past_raw_lim
 }
 
 #[tokio::test]
+async fn only_an_exact_no_op_bypasses_bounds_after_mandatory_identities_are_retired() {
+    let store = Arc::new(FakeProfileStore::default());
+    let old_service = environments_with_baseline(
+        Arc::clone(&store),
+        Baseline::new(
+            [SoftwarePackage::new("old-mandatory-package")],
+            [SkillId::new("old-mandatory-skill")],
+            [ServiceId::new("old-mandatory-service")],
+        ),
+    );
+    let owner = caller("subject-a");
+    let mut historical = profile_spec("retired baseline boundary");
+    historical.packages = (0..100)
+        .map(|i| SoftwarePackage::new(format!("caller-package-{i}")))
+        .collect();
+    historical.agent.skills = (0..100)
+        .map(|i| SkillId::new(format!("caller-skill-{i}")))
+        .collect();
+    historical.services = (0..100)
+        .map(|i| ServiceId::new(format!("caller-service-{i}")))
+        .collect();
+    let stored = old_service
+        .create(&owner, historical)
+        .await
+        .expect("the old deployment stores its boundary and mandatory entries");
+    let raw_before = store
+        .profiles
+        .lock()
+        .await
+        .get(stored.id.as_str())
+        .expect("the historical row exists")
+        .clone();
+
+    let current_service = environments_with_baseline(
+        Arc::clone(&store),
+        Baseline::new(
+            [SoftwarePackage::new("new-mandatory-package")],
+            [SkillId::new("new-mandatory-skill")],
+            [ServiceId::new("new-mandatory-service")],
+        ),
+    );
+    let projected = current_service
+        .get(&owner, &stored.id)
+        .await
+        .expect("the renamed baseline is projected without rewriting storage");
+    assert_eq!(projected.packages.len(), 102);
+    assert_eq!(projected.agent.skills.len(), 102);
+    assert_eq!(projected.services.len(), 102);
+
+    let echoed = current_service
+        .update(&owner, &stored.id, projected.to_spec())
+        .await
+        .expect("the exact normalized projection is a no-op despite retired identities");
+    assert_eq!(echoed.to_spec(), projected.to_spec());
+    assert_eq!(echoed.updated_at, raw_before.updated_at);
+    assert_eq!(
+        store
+            .content_replacements
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the exact projection does not call replace_content"
+    );
+    let raw_after_echo = store
+        .profiles
+        .lock()
+        .await
+        .get(stored.id.as_str())
+        .expect("the historical row remains")
+        .clone();
+    assert_eq!(
+        serde_json::to_value(&raw_after_echo).expect("stored profile serializes"),
+        serde_json::to_value(&raw_before).expect("stored profile serializes"),
+        "the no-op does not normalize the stored row or advance updated_at"
+    );
+
+    let mut changed_packages = projected.to_spec();
+    changed_packages.name = "changed packages".into();
+    changed_packages.agent.skills = vec![SkillId::new("new-mandatory-skill")];
+    changed_packages.services = vec![ServiceId::new("new-mandatory-service")];
+
+    let mut changed_skills = projected.to_spec();
+    changed_skills.name = "changed skills".into();
+    changed_skills.packages = vec![SoftwarePackage::new("new-mandatory-package")];
+    changed_skills.services = vec![ServiceId::new("new-mandatory-service")];
+
+    let mut changed_services = projected.to_spec();
+    changed_services.name = "changed services".into();
+    changed_services.packages = vec![SoftwarePackage::new("new-mandatory-package")];
+    changed_services.agent.skills = vec![SkillId::new("new-mandatory-skill")];
+
+    for (collection, changed) in [
+        ("packages", changed_packages),
+        ("skills", changed_skills),
+        ("services", changed_services),
+    ] {
+        let error = current_service
+            .update(&owner, &stored.id, changed)
+            .await
+            .expect_err("a changed write must validate retired identities as caller-controlled");
+        let CoreError::InvalidRequest(detail) = error else {
+            panic!("expected an invalid {collection} request, got {error:?}");
+        };
+        assert!(
+            detail.contains(collection),
+            "the independent {collection} refusal names its bound: {detail}"
+        );
+    }
+
+    assert_eq!(
+        store
+            .content_replacements
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no refused changed write reaches replace_content"
+    );
+    let raw_after_refusals = store
+        .profiles
+        .lock()
+        .await
+        .get(stored.id.as_str())
+        .expect("the historical row remains")
+        .clone();
+    assert_eq!(
+        serde_json::to_value(raw_after_refusals).expect("stored profile serializes"),
+        serde_json::to_value(raw_before).expect("stored profile serializes")
+    );
+}
+
+#[tokio::test]
 async fn replacement_preserves_a_preference_set_after_the_service_read() {
     let store = Arc::new(FakeProfileStore::default());
     let service = environments(Arc::clone(&store));

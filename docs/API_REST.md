@@ -125,12 +125,17 @@ Top-level fields:
 | `record_tool_bodies` | no | `false`. Whether tool arguments and results are written to the durable conversation log. The response always carries this boolean |
 | `skills` | no | `[]`, before mandatory skills are merged. Entries are skill identifiers |
 
-Each list accepts at most 100 caller-controlled entries. `packages`, `skills`,
-and `nyxid.services` may render more than 100 entries after the deployment adds
-its mandatory baseline. One occurrence of each distinct mandatory identifier is
-deployment-owned when validating POST or PUT; further duplicates count toward
-the caller's limit. A complete GET response therefore remains a valid PUT echo,
-including after the mandatory baseline grows.
+Each writable list accepts at most 100 caller-controlled entries. `packages`,
+`skills`, and `nyxid.services` may render more than 100 entries after the
+deployment adds its mandatory baseline. To echo a read, construct the writable
+projection containing exactly `name`, `variables`, `packages`, `agent`, `nyxid`,
+and `agent_notes`. Do not send `id`, `mandatory`, `created_at`, `updated_at`, or
+`preferred`; these fields are server-owned and the closed request schema rejects
+them. An exact writable projection remains a no-op after the mandatory baseline
+grows, shrinks, or renames entries. Any changed replacement is validated against
+the current baseline: one occurrence of each current mandatory identifier is
+deployment-owned, while duplicates and retired mandatory identities count toward
+the caller's limit.
 
 Every object in this request is closed: unknown fields are refused at the top
 level and inside `variables`, `packages`, `agent`, `agent.size`, and `nyxid`.
@@ -163,7 +168,7 @@ Every accepted write field is rendered back. Server-owned fields are added:
 | `mandatory.packages` | Package names the deployment puts back on every write |
 | `mandatory.skills` | Skill identifiers the deployment puts back on every write |
 | `created_at` | Creation time, retained across replacement |
-| `updated_at` | Last content-changing replacement time; an exact echo retains it |
+| `updated_at` | Last content-changing replacement time; an exact writable-projection echo retains it |
 | `preferred` | Client-facing preselection state. A client may start its session form on this profile, but must still send its id in `POST /api/v1/sessions` |
 
 `agent.kernel`, `mode`, `reasoning_effort`, `permission`, `credential`,
@@ -175,8 +180,8 @@ likewise omitted for an unpinned package. A boolean such as
 A profile stored before the deployment added a mandatory entry or began
 settling kernels is projected through the current baseline and configured
 kernel when read. This does not rewrite the stored record or advance
-`updated_at`; it gives legacy and newly written profiles the same echoable wire
-shape.
+`updated_at`; it gives legacy and newly written profiles the same writable
+projection in the wire shape.
 
 **`mandatory` marks entries, not a special profile.** Omitting a mandatory
 package or skill from a replacement does not remove it; the service merges it
@@ -308,10 +313,10 @@ Content-Type: application/json
 to their documented defaults, after which mandatory entries are merged back.
 The profile keeps its `id`, `created_at`, and `preferred` value. A malformed or
 unknown field returns `400` or `422`; an unknown or foreign id returns `404`.
-An echo whose normalized writable contents already match performs no store
-write and retains `updated_at`, so the complete response stays byte-identical.
-That includes legacy profiles projected through a baseline or kernel that
-changed after they were stored.
+An exact writable-projection echo whose normalized contents already match
+performs no store write and retains `updated_at`, so the returned `ProfileView`
+stays byte-identical. That includes legacy profiles projected through a
+baseline or kernel that changed after they were stored.
 
 ```http
 DELETE /api/v1/environment-profiles/{id}
