@@ -58,11 +58,14 @@ impl SessionService {
         session: &SessionId,
         owner: &SubjectId,
         services: &[crate::environment::ServiceId],
+        caller_credential: Option<&str>,
     ) -> Result<Option<String>, crate::store::StoreError> {
         let Some(source) = self.credentials.as_ref() else {
             return Ok(None);
         };
-        source.credential_for(session, owner, services).await
+        source
+            .credential_for(session, owner, services, caller_credential)
+            .await
     }
 
     /// What this session's profile says its credential may reach.
@@ -154,7 +157,7 @@ impl SessionService {
     /// broken while being perfectly alive.
     pub(crate) async fn supply_credential(&self, id: &SessionId, owner: &SubjectId) {
         let services = self.services_for(id).await;
-        let credential = match self.credential_for(id, owner, &services).await {
+        let credential = match self.credential_for(id, owner, &services, None).await {
             Ok(Some(credential)) => credential,
             Ok(None) => {
                 tracing::debug!(session_id = %id, "no credential held for this session's owner");

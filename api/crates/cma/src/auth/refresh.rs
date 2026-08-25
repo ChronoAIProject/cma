@@ -255,10 +255,37 @@ impl AuthState {
         };
         if !resp.status().is_success() {
             let status = resp.status();
-            self.finish_refresh_lease(subject, &holder, None, budget)
-                .await
-                .map_err(|error| format!("auth store failed after rejected refresh: {error}"))?;
-            return Err(format!("provider refused refresh with {status}"));
+            #[derive(Deserialize)]
+            struct OAuthErrorResponse {
+                error: String,
+            }
+            let error_code = match resp.bytes().await {
+                Ok(body) => serde_json::from_slice::<OAuthErrorResponse>(&body)
+                    .ok()
+                    .map(|body| body.error),
+                Err(_) => None,
+            };
+            if error_code.as_deref() == Some("invalid_grant") {
+                self.finish_refresh_lease(subject, &holder, None, budget)
+                    .await
+                    .map_err(|error| {
+                        format!("auth store failed after terminal refresh rejection: {error}")
+                    })?;
+            } else {
+                // HTTP throttling and provider outages say nothing about the
+                // refresh token. The same is true of client/configuration
+                // errors and unparseable responses: only invalid_grant is an
+                // OAuth assertion that this subject's grant is no longer usable.
+                self.abandon_refresh_lease(subject, &holder, budget)
+                    .await
+                    .map_err(|error| {
+                        format!("auth store failed after retryable refresh rejection: {error}")
+                    })?;
+            }
+            return Err(match error_code {
+                Some(code) => format!("provider refused refresh with {status} ({code})"),
+                None => format!("provider refused refresh with {status}"),
+            });
         }
 
         #[derive(Deserialize)]
@@ -318,7 +345,7 @@ mod tests {
         Arc,
     };
 
-    use axum::{extract::State, routing::post, Json, Router};
+    use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 
     use super::*;
     use crate::auth::persistence::{AuthStore, MemoryAuthStore};
@@ -340,6 +367,17 @@ mod tests {
             "access_token": format!("access-new-{call}"),
             "expires_in": 3600,
         }))
+    }
+
+    async fn reject_refresh(
+        State(status): State<StatusCode>,
+    ) -> (StatusCode, Json<serde_json::Value>) {
+        let error = if status == StatusCode::BAD_REQUEST {
+            "invalid_grant"
+        } else {
+            "temporarily_unavailable"
+        };
+        (status, Json(serde_json::json!({ "error": error })))
     }
 
     async fn provider_replicas(
@@ -532,6 +570,117 @@ mod tests {
                 .map(SecretValue::expose),
             Some("refresh-reused")
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn transient_http_rejections_retain_tokens_and_only_invalid_grant_revokes() {
+        let subject = SubjectId("subject-transient".into());
+        for status in [
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            let app = Router::new()
+                .route("/token", post(reject_refresh))
+                .with_state(status);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind rejecting provider");
+            let base = format!("http://{}", listener.local_addr().expect("local address"));
+            let server = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("serve rejecting provider");
+            });
+            let (store, auth, _) = provider_replicas(&base).await;
+            auth.store_tokens(
+                &subject,
+                SubjectTokens {
+                    access_token: "access-old".into(),
+                    refresh_token: Some("refresh-valid".into()),
+                    expires_at: std::time::Instant::now(),
+                },
+            )
+            .await
+            .expect("tokens persist");
+            let before = store
+                .subject(&subject)
+                .await
+                .expect("store works")
+                .expect("subject exists");
+            let error = auth
+                .refresh(
+                    &subject,
+                    "refresh-valid",
+                    &before.incarnation,
+                    before.token_generation,
+                )
+                .await
+                .expect_err("transient rejection is retryable");
+            assert!(error.contains(status.as_str()), "got {error}");
+            let after = store
+                .subject(&subject)
+                .await
+                .expect("store works")
+                .expect("subject remains");
+            assert!(after.refresh_lease.is_none());
+            assert_eq!(after.token_generation, before.token_generation);
+            let tokens = after.tokens.expect("transient response retains tokens");
+            assert_eq!(tokens.access_token.expose(), "access-old");
+            assert_eq!(
+                tokens.refresh_token.as_ref().map(SecretValue::expose),
+                Some("refresh-valid")
+            );
+            server.abort();
+        }
+
+        let app = Router::new()
+            .route("/token", post(reject_refresh))
+            .with_state(StatusCode::BAD_REQUEST);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind terminal provider");
+        let base = format!("http://{}", listener.local_addr().expect("local address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve terminal provider");
+        });
+        let (store, auth, _) = provider_replicas(&base).await;
+        auth.store_tokens(
+            &subject,
+            SubjectTokens {
+                access_token: "access-old".into(),
+                refresh_token: Some("refresh-revoked".into()),
+                expires_at: std::time::Instant::now(),
+            },
+        )
+        .await
+        .expect("tokens persist");
+        let before = store
+            .subject(&subject)
+            .await
+            .expect("store works")
+            .expect("subject exists");
+        let error = auth
+            .refresh(
+                &subject,
+                "refresh-revoked",
+                &before.incarnation,
+                before.token_generation,
+            )
+            .await
+            .expect_err("invalid_grant is terminal");
+        assert!(error.contains("invalid_grant"), "got {error}");
+        let after = store
+            .subject(&subject)
+            .await
+            .expect("store works")
+            .expect("subject fact remains");
+        assert!(after.tokens.is_none());
+        assert!(after.refresh_lease.is_none());
+        assert_eq!(after.token_generation, before.token_generation + 1);
         server.abort();
     }
 

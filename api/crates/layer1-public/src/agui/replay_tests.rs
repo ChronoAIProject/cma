@@ -546,7 +546,7 @@ mod route_resume {
         let state = SessionsState {
             sessions,
             users: UserDirectory::new(Arc::new(NoDirectory)),
-            tickets: TerminalTickets::new(),
+            tickets: TerminalTickets::in_memory(),
             environments,
         };
         let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
