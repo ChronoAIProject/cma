@@ -253,15 +253,17 @@ pub struct EnvironmentProfile {
     pub created_at: String,
     /// Last modification timestamp, RFC 3339 in UTC.
     pub updated_at: String,
-    /// Whether its owner has made this the profile their sessions start from.
+    /// Whether clients should preselect this profile for its owner.
     ///
     /// At most one of a subject's profiles holds it. Kept here rather than as
     /// a pointer beside the subject because it is a fact about the profile
     /// that is read whenever the profile is — a separate record would have to
     /// be fetched to answer a question the list already answers.
     ///
-    /// `#[serde(default)]` so a profile stored before this reads back as not
-    /// the default, which is the right answer for every one of them.
+    /// This is presentation state only. Session creation never consults it: an
+    /// unqualified create uses deployment defaults, and a qualified create uses
+    /// the id in that request. `#[serde(default)]` keeps older stored profiles
+    /// readable as not preselected.
     #[serde(default)]
     pub preferred: bool,
 }
