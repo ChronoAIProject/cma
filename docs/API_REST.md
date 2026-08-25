@@ -115,7 +115,7 @@ Top-level fields:
 
 | Field | Required | Default and meaning |
 |---|---:|---|
-| `kernel` | no | On create, the deployment's configured kernel. On full replacement, omission does not preserve the current explicit selection; echo the value from GET to retain it |
+| `kernel` | no | The deployment's configured kernel on create and full replacement. Replacement omission does not preserve the current explicit selection; echo the value from GET to retain it |
 | `mode` | no | `"terminal"`; the other value is `"conversation"` |
 | `model` | no | No pinned model. It is omitted from the response when absent |
 | `reasoning_effort` | no | `"high"`; accepted values are `minimal`, `low`, `medium`, `high`, and `x_high` |
@@ -128,8 +128,13 @@ Top-level fields:
 Every object in this request is closed: unknown fields are refused at the top
 level and inside `variables`, `packages`, `agent`, `agent.size`, and `nyxid`.
 Create and replace both return `422 invalid_request` rather than silently
-discarding a misspelling. Rejection detail is fixed by error class and does not
-reflect the submitted key or value. For example, this is invalid:
+discarding a misspelling. For a short identifier-shaped unknown key, the
+problem document names it in `field` and gives its object location in `path`
+(for example, `"field": "reasoningEffort"` and
+`"path": "agent.reasoningEffort"`). The human-readable detail stays fixed and
+no submitted scalar value is reflected. Non-identifier and unbounded keys are
+also refused but omitted from the diagnostic fields. For example, this is
+invalid:
 
 <!-- profile-invalid-request-example -->
 ```json
@@ -151,7 +156,7 @@ Every accepted write field is rendered back. Server-owned fields are added:
 | `mandatory.packages` | Package names the deployment puts back on every write |
 | `mandatory.skills` | Skill identifiers the deployment puts back on every write |
 | `created_at` | Creation time, retained across replacement |
-| `updated_at` | Last replacement time |
+| `updated_at` | Last content-changing replacement time; an exact echo retains it |
 | `preferred` | Whether sessions that name no profile start from this one |
 
 `agent.kernel`, `mode`, `reasoning_effort`, `permission`, `credential`,
@@ -289,6 +294,8 @@ Content-Type: application/json
 to their documented defaults, after which mandatory entries are merged back.
 The profile keeps its `id`, `created_at`, and `preferred` value. A malformed or
 unknown field returns `400` or `422`; an unknown or foreign id returns `404`.
+An echo whose normalized writable contents already match performs no store
+write and retains `updated_at`, so the complete response stays byte-identical.
 
 ```http
 DELETE /api/v1/environment-profiles/{id}

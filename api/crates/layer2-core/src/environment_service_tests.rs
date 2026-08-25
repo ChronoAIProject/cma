@@ -239,6 +239,31 @@ async fn an_update_replaces_contents_but_keeps_identity_and_creation_time() {
 }
 
 #[tokio::test]
+async fn echoing_normalized_contents_keeps_the_last_modification_time() {
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments(Arc::clone(&store));
+    let owner = caller("subject-a");
+    let created = service
+        .create(&owner, profile_spec("unchanged"))
+        .await
+        .expect("creates");
+    let mut historical = created.clone();
+    historical.updated_at = "2025-01-01T00:00:00Z".into();
+    store
+        .upsert(&historical)
+        .await
+        .expect("seeds old timestamp");
+
+    let echoed = service
+        .update(&owner, &historical.id, historical.to_spec())
+        .await
+        .expect("an echo succeeds");
+
+    assert_eq!(echoed.updated_at, historical.updated_at);
+    assert_eq!(echoed.to_spec(), historical.to_spec());
+}
+
+#[tokio::test]
 async fn a_removed_profile_is_gone() {
     let service = environments(Arc::new(FakeProfileStore::default()));
     let owner = caller("subject-a");
