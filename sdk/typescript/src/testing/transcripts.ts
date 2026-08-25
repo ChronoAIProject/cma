@@ -319,10 +319,10 @@ export const REPORTS_USAGE: Transcript = {
   ],
 };
 
-/** A context reading accompanied by the ceiling the runtime stated. */
+/** A context reading survives later turn accounting that carried no reading. */
 export const CONTEXT_WITH_WINDOW: Transcript = {
   name: 'context-with-window',
-  about: 'Context fullness arrives with the window it is drawn from.',
+  about: 'Context fullness and its window survive a later contextless usage report.',
   provenance: 'authored',
   source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
   frames: [
@@ -339,9 +339,18 @@ export const CONTEXT_WITH_WINDOW: Transcript = {
       ],
     }),
     frame(20, {
-      type: 'RUN_FINISHED',
+      type: 'STATE_DELTA',
       runId: 'run_context_window',
       seq: 3,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 0 },
+        { op: 'replace', path: '/usage/outputTokens', value: 0 },
+      ],
+    }),
+    frame(20, {
+      type: 'RUN_FINISHED',
+      runId: 'run_context_window',
+      seq: 4,
       outcome: { type: 'end_turn' },
     }),
   ],

@@ -256,6 +256,26 @@ fn a_usage_report_without_a_window_does_not_erase_one() {
 }
 
 #[test]
+fn turn_accounting_without_a_context_reading_does_not_erase_one() {
+    let p = projected(EventKind::UsageReported {
+        input_tokens: 0,
+        output_tokens: 0,
+        context_used: 0,
+        context_window: None,
+    });
+    let delta = p.events[0].body["delta"].as_array().expect("a patch list");
+
+    assert_eq!(delta.len(), 2);
+    assert_eq!(delta[0]["path"], "/usage/inputTokens");
+    assert_eq!(delta[0]["value"], 0);
+    assert_eq!(delta[1]["path"], "/usage/outputTokens");
+    assert_eq!(delta[1]["value"], 0);
+    assert!(delta
+        .iter()
+        .all(|patch| patch["path"] != "/usage/contextUsed"));
+}
+
+#[test]
 fn a_context_compaction_is_appended_to_state_without_an_invented_event_kind() {
     let p = projected(EventKind::ContextCompacted {
         was: 198_000,
