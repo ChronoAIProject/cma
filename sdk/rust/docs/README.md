@@ -38,12 +38,12 @@ are included under `cma_sdk::guides`, so every Rust fence is a cargo doctest.
 
 ## Scope
 
-This crate currently exposes session create/list/read, durable event streaming,
-input, approval resolution, interrupt, steer, terminal resize and screen snapshot,
-and usage. It deliberately does not expose the live bidirectional PTY WebSocket,
-environment-profile administration, pricing, resources, or session stop/revive/
-delete operations. An absent method is an absence, not an invitation to assume a
-wire shape.
+This crate currently exposes anonymous deployment conformance discovery, session
+create/list/read, durable event streaming, input, approval resolution, interrupt,
+steer, terminal resize and screen snapshot, and usage. It deliberately does not
+expose the live bidirectional PTY WebSocket, environment-profile administration,
+pricing, resources, or session stop/revive/delete operations. An absent method is
+an absence, not an invitation to assume a wire shape.
 
 These guides explain how to use the crate. The authoritative wire documents are
 the [REST contract](../../../docs/API_REST.md),

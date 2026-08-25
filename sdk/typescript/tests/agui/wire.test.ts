@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAguiTransport, parseEventStream } from '../../src/agui/wire.js';
 import { toEvent } from '../../src/agui/events.js';
-import { ApiError, ProtocolError, TimeoutError } from '../../src/errors.js';
+import type { ResponseMetadata } from '../../src/config.js';
+import { ApiError, ProtocolError, RequestAborted, TimeoutError } from '../../src/errors.js';
+import type { OperationOptions } from '../../src/http.js';
 
 /**
  * The seam between what the interface serves and what this client reads.
@@ -150,11 +152,23 @@ describe('what the interface serves is what this client reads', () => {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function eventStream(body: string): Response {
-  return new Response(body, {
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function eventStream(body: string, requestId?: string): Response {
+  const response = new Response(body, {
     status: 200,
     headers: { 'content-type': 'text/event-stream; charset=utf-8' },
   });
+  if (requestId !== undefined) {
+    response.headers.set('x-request-id', requestId);
+  }
+  return response;
 }
 
 async function openBody(body: string, cursor = 0) {
@@ -256,6 +270,51 @@ describe('the live stream, not just the history read', () => {
     expect(new Headers(init.headers).get('last-event-id')).toBe('8');
   });
 
+  it('shares one request id across live and history reconnects and observes both', async () => {
+    const responses = [
+      eventStream('', 'response-agui-live'),
+      eventStream('', 'response-agui-history'),
+    ];
+    const fetch = vi.fn<typeof globalThis.fetch>(() => {
+      const response = responses.shift();
+      return response === undefined
+        ? Promise.reject(new Error('unexpected AG-UI request'))
+        : Promise.resolve(response);
+    });
+    const requestIdProvider = vi.fn(() => 'caller-agui-connection-488');
+    const observed: ResponseMetadata[] = [];
+    const transport = createAguiTransport({
+      cookies: false,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+      responseObserver: (metadata) => {
+        observed.push(metadata);
+      },
+    });
+    const options: OperationOptions = {};
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      () => undefined,
+      options,
+    );
+    await tick();
+    await tick();
+    stop();
+
+    await expect(transport.history('sesn_1', 0, options)).resolves.toEqual([]);
+
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+    expect(
+      fetch.mock.calls.map(([, init]) => new Headers(init?.headers).get('x-request-id')),
+    ).toEqual(['caller-agui-connection-488', 'caller-agui-connection-488']);
+    expect(observed).toEqual([
+      { status: 200, requestId: 'response-agui-live' },
+      { status: 200, requestId: 'response-agui-history' },
+    ]);
+  });
+
   it('keeps a failed handshake body inside the request deadline', async () => {
     const fetch = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
       const body = new ReadableStream<Uint8Array>({
@@ -284,9 +343,181 @@ describe('the live stream, not just the history read', () => {
 
     expect(drops[0]).toBeInstanceOf(TimeoutError);
   });
+
+  it('does not continue a timed-out request-id hook into a late live handshake', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const transport = createAguiTransport({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+    const drops: unknown[] = [];
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      (cause) => drops.push(cause),
+      { timeoutMs: 5 },
+    );
+
+    await vi.waitFor(() => expect(drops).toHaveLength(1));
+    expect(drops[0]).toBeInstanceOf(TimeoutError);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+
+    requestId.resolve('caller-agui-after-timeout');
+    await tick();
+    stop();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not observe a live handshake that arrives after its deadline', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const transport = createAguiTransport({
+      fetch: vi.fn(() => fetched.promise) as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const drops: unknown[] = [];
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      (cause) => drops.push(cause),
+      { timeoutMs: 5 },
+    );
+
+    await vi.waitFor(() => expect(drops).toHaveLength(1));
+    expect(drops[0]).toBeInstanceOf(TimeoutError);
+
+    fetched.resolve(eventStream(''));
+    await tick();
+    stop();
+
+    expect(responseObserver).not.toHaveBeenCalled();
+  });
+
+  it('does not read a live body after its response observer times out', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const transport = createAguiTransport({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const drops: unknown[] = [];
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      (cause) => drops.push(cause),
+      { timeoutMs: 50 },
+    );
+    await observerStarted.promise;
+
+    await vi.waitFor(() => expect(drops).toHaveLength(1));
+    expect(drops[0]).toBeInstanceOf(TimeoutError);
+
+    observer.resolve(undefined);
+    await tick();
+    stop();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
+    expect(getReader).not.toHaveBeenCalled();
+  });
 });
 
 describe('the history read finishes', () => {
+  it('does not continue an aborted request-id hook into a late history request', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const controller = new AbortController();
+    const transport = createAguiTransport({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+    const pending = transport.history('sesn_1', 0, { signal: controller.signal });
+    await vi.waitFor(() => expect(requestIdProvider).toHaveBeenCalledOnce());
+
+    controller.abort('cancelled while resolving request id');
+
+    await expect(pending).rejects.toBeInstanceOf(RequestAborted);
+    requestId.resolve('caller-agui-history-after-abort');
+    await tick();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not observe a history response that arrives after cancellation', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const controller = new AbortController();
+    const fetch = vi.fn(() => fetched.promise);
+    const transport = createAguiTransport({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = transport.history('sesn_1', 0, { signal: controller.signal });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+
+    controller.abort('cancelled while fetching history');
+
+    await expect(pending).rejects.toBeInstanceOf(RequestAborted);
+    fetched.resolve(eventStream(''));
+    await tick();
+
+    expect(responseObserver).not.toHaveBeenCalled();
+  });
+
+  it('does not read a history body after its response observer times out', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const transport = createAguiTransport({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = transport.history('sesn_1', 0, { timeoutMs: 50 });
+    await observerStarted.promise;
+
+    await expect(pending).rejects.toBeInstanceOf(TimeoutError);
+    observer.resolve(undefined);
+    await tick();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
+    expect(getReader).not.toHaveBeenCalled();
+  });
+
   it('retains a permanent HTTP status for the reconnect classifier', async () => {
     const fetch = vi.fn(() =>
       Promise.resolve(
@@ -296,7 +527,13 @@ describe('the history read finishes', () => {
             code: 'not_found',
             detail: 'this session no longer exists',
           }),
-          { status: 404, headers: { 'content-type': 'application/problem+json' } },
+          {
+            status: 404,
+            headers: {
+              'content-type': 'application/problem+json',
+              'x-request-id': 'response-agui-refusal',
+            },
+          },
         ),
       ),
     );
@@ -305,7 +542,11 @@ describe('the history read finishes', () => {
     const failure = await transport.history('sesn_1', 0).catch((cause: unknown) => cause);
 
     expect(failure).toBeInstanceOf(ApiError);
-    expect(failure).toMatchObject({ status: 404, message: 'this session no longer exists' });
+    expect(failure).toMatchObject({
+      status: 404,
+      message: 'this session no longer exists',
+      requestId: 'response-agui-refusal',
+    });
   });
 
   it('asks the route to stop at the end of the log', async () => {

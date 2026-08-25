@@ -182,6 +182,9 @@ jobs:
           push: false
           load: true
           tags: cma-${{ matrix.component }}:release
+          build-args: |
+            CHRONO_BUILD=${{ needs.plan.outputs.version }}
+            CHRONO_BUILD_SHA=${{ github.sha }}
           # Populated by ci.yml. A run on main can restore caches from main and
           # from the default branch, and develop is the default branch, so the
           # layers the merged pull request built are still warm here.
@@ -218,10 +221,11 @@ jobs:
           provenance: false
           # Both immutable. The version is what a deployment names; the short
           # SHA is how an image already in hand is traced back to its commit.
-          # web bakes the version into its bundle so the status band names the
-          # release it is actually running. Ignored by the other two images.
+          # web's status band and api's discovery responses bake the version
+          # so they name the release actually running. Ignored by runtime.
           build-args: |
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
+            CHRONO_BUILD_SHA=${{ github.sha }}
           tags: |
             ${{ steps.image.outputs.repository }}:${{ needs.plan.outputs.version }}
             ${{ steps.image.outputs.repository }}:${{ steps.image.outputs.revision }}

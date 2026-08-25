@@ -1,7 +1,9 @@
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
 import {
   headersFor,
+  observeResponse,
   resolveConfig,
+  resolveRequestId,
   urlOf,
   type ClientConfig,
   type ResolvedConfig,
@@ -14,7 +16,13 @@ import {
   TransportError,
   ValidationError,
 } from '../errors.js';
-import { errorFromResponse, withDeadline, type OperationOptions } from '../http.js';
+import {
+  errorFromResponse,
+  raceWithAbortSignal,
+  throwIfSignalAborted,
+  withOperationDeadline,
+  type OperationOptions,
+} from '../http.js';
 import type { AguiTransport } from './connection.js';
 
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
@@ -35,17 +43,33 @@ export function createAguiTransport(
   configOrOptions: ResolvedConfig | ClientConfig = {},
 ): AguiTransport {
   const config = isResolved(configOrOptions) ? configOrOptions : resolveConfig(configOrOptions);
+  const requestIds = new WeakMap<OperationOptions, Promise<string>>();
+  const requestIdFor = (options: OperationOptions): Promise<string> => {
+    const existing = requestIds.get(options);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const pending = resolveRequestId(config, options.requestId);
+    requestIds.set(options, pending);
+    return pending;
+  };
   return {
     open(session, cursor, onFrame, onDrop, options = {}) {
       const controller = new AbortController();
       const onAbort = () => controller.abort(options.signal?.reason);
-      options.signal?.addEventListener('abort', onAbort, { once: true });
+      if (options.signal?.aborted === true) {
+        controller.abort(options.signal.reason);
+      } else {
+        options.signal?.addEventListener('abort', onAbort, { once: true });
+      }
       let closed = false;
 
       void (async () => {
         try {
-          const response = await openStream(config, session, cursor, options, controller);
-          for await (const frame of framesFromBody(response)) {
+          const response = await openStream(config, session, cursor, options, controller, () =>
+            requestIdFor(options),
+          );
+          for await (const frame of framesFromBody(response, controller.signal)) {
             if (closed) {
               return;
             }
@@ -81,18 +105,26 @@ export function createAguiTransport(
       };
     },
 
-    history(session, cursor, options = {}) {
-      return withDeadline(config, options, async (signal) => {
+    async history(session, cursor, options = {}) {
+      return withOperationDeadline(config, options, async (signal) => {
+        const requestId = await requestIdFor(options);
+        throwIfSignalAborted(signal);
+        const headers = await headersFor(config, { Accept: 'text/event-stream' }, { requestId });
+        throwIfSignalAborted(signal);
         const response = await config.fetch(urlOf(config, streamPath(session, cursor, false)), {
           method: 'GET',
-          headers: await headersFor(config, { Accept: 'text/event-stream' }),
+          headers,
           credentials: config.cookies ? 'include' : 'omit',
           redirect: 'error',
           signal,
         });
-        await validateResponse(response);
+        throwIfSignalAborted(signal);
+        const metadata = await observeResponse(config, response);
+        throwIfSignalAborted(signal);
+        await validateResponse(response, signal, metadata.requestId);
+        throwIfSignalAborted(signal);
         const frames: unknown[] = [];
-        for await (const frame of framesFromBody(response)) {
+        for await (const frame of framesFromBody(response, signal)) {
           frames.push(frame);
         }
         return frames;
@@ -110,6 +142,7 @@ async function openStream(
   cursor: number,
   options: OperationOptions,
   controller: AbortController,
+  requestId: () => Promise<string>,
 ): Promise<Response> {
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
@@ -121,38 +154,57 @@ async function openStream(
     controller.abort();
   }, timeoutMs);
   try {
-    const response = await config.fetch(urlOf(config, streamPath(session, cursor, true)), {
-      method: 'GET',
-      headers: await headersFor(config, {
-        Accept: 'text/event-stream',
-        ...(cursor === 0 ? {} : { 'Last-Event-ID': String(cursor) }),
-      }),
-      credentials: config.cookies ? 'include' : 'omit',
-      redirect: 'error',
-      signal: controller.signal,
+    const response = await raceWithAbortSignal(controller.signal, async () => {
+      const operationRequestId = await requestId();
+      throwIfSignalAborted(controller.signal);
+      const headers = await headersFor(
+        config,
+        {
+          Accept: 'text/event-stream',
+          ...(cursor === 0 ? {} : { 'Last-Event-ID': String(cursor) }),
+        },
+        { requestId: operationRequestId },
+      );
+      throwIfSignalAborted(controller.signal);
+      const received = await config.fetch(urlOf(config, streamPath(session, cursor, true)), {
+        method: 'GET',
+        headers,
+        credentials: config.cookies ? 'include' : 'omit',
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      throwIfSignalAborted(controller.signal);
+      const metadata = await observeResponse(config, received);
+      throwIfSignalAborted(controller.signal);
+      await validateResponse(received, controller.signal, metadata.requestId);
+      throwIfSignalAborted(controller.signal);
+      return received;
     });
-    await validateResponse(response);
     clearTimeout(timer);
     return response;
   } catch (cause) {
     clearTimeout(timer);
     controller.abort();
-    if (cause instanceof CmaError) {
-      throw cause;
-    }
     if (options.signal?.aborted === true) {
       throw new RequestAborted(undefined, { cause });
     }
     if (timedOut) {
       throw new TimeoutError(timeoutMs, { cause });
     }
+    if (cause instanceof CmaError) {
+      throw cause;
+    }
     throw new TransportError(`cannot open the AG-UI event stream: ${messageOf(cause)}`, { cause });
   }
 }
 
-async function validateResponse(response: Response): Promise<void> {
+async function validateResponse(
+  response: Response,
+  signal: AbortSignal,
+  requestId?: string,
+): Promise<void> {
   if (!response.ok) {
-    throw await errorFromResponse(response);
+    throw await errorFromResponse(response, signal, requestId);
   }
   if (response.status !== 200) {
     throw new ProtocolError(
@@ -168,7 +220,7 @@ async function validateResponse(response: Response): Promise<void> {
   }
 }
 
-async function* framesFromBody(response: Response): AsyncGenerator<unknown> {
+async function* framesFromBody(response: Response, signal: AbortSignal): AsyncGenerator<unknown> {
   const body = response.body;
   if (body === null) {
     throw new ProtocolError('AG-UI event stream response carried no body');
@@ -185,7 +237,7 @@ async function* framesFromBody(response: Response): AsyncGenerator<unknown> {
   const reader = body.getReader();
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await raceWithAbortSignal(signal, () => reader.read());
       if (done) {
         break;
       }
@@ -214,6 +266,9 @@ async function* framesFromBody(response: Response): AsyncGenerator<unknown> {
       yield pending.shift();
     }
   } finally {
+    if (signal.aborted) {
+      await reader.cancel(signal.reason).catch(() => undefined);
+    }
     reader.releaseLock();
   }
 }
@@ -306,7 +361,9 @@ function sequenceOf(raw: string | undefined): number {
 
 function isResolved(value: ResolvedConfig | ClientConfig): value is ResolvedConfig {
   return (
+    typeof (value as Partial<ResolvedConfig>).baseUrl === 'string' &&
     typeof (value as Partial<ResolvedConfig>).fetch === 'function' &&
+    typeof (value as Partial<ResolvedConfig>).requestIdProvider === 'function' &&
     typeof (value as Partial<ResolvedConfig>).requestTimeoutMs === 'number' &&
     typeof (value as Partial<ResolvedConfig>).cookies === 'boolean'
   );

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EventSourceMessage } from 'eventsource-parser';
-import { resolveConfig } from '../src/config.js';
+import { resolveConfig, type ResponseMetadata } from '../src/config.js';
 import {
   ApiError,
   CapabilityRefused,
@@ -31,6 +31,7 @@ function message(event: unknown, seq = 1, sessionId = SESSION): EventSourceMessa
 function sse(
   events: readonly { readonly seq: number; readonly event: unknown }[],
   sessionId = SESSION,
+  requestId?: string,
 ): Response {
   const body = events
     .map(({ seq, event }) => {
@@ -38,10 +39,14 @@ function sse(
       return `id: ${String(seq)}\ndata: ${data}\n\n`;
     })
     .join('');
-  return new Response(body, {
+  const response = new Response(body, {
     status: 200,
     headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
   });
+  if (requestId !== undefined) {
+    response.headers.set('x-request-id', requestId);
+  }
+  return response;
 }
 
 async function first(events: AsyncIterable<SessionEvent>): Promise<SessionEvent> {
@@ -61,6 +66,16 @@ async function take(events: AsyncIterable<SessionEvent>, count: number): Promise
   }
   return received;
 }
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+const nextTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('core event envelopes', () => {
   const known: readonly Record<string, unknown>[] = [
@@ -300,13 +315,14 @@ describe('the reconnecting event stream', () => {
 
   it('reconnects from the last cursor, refreshes credentials, and deduplicates overlap', async () => {
     const responses = [
-      sse([{ seq: 8, event: { type: 'session_created' } }], 'sesn/fixture'),
+      sse([{ seq: 8, event: { type: 'session_created' } }], 'sesn/fixture', 'response-events-one'),
       sse(
         [
           { seq: 8, event: { type: 'session_created' } },
           { seq: 9, event: { type: 'turn_started' } },
         ],
         'sesn/fixture',
+        'response-events-two',
       ),
     ];
     const calls: { readonly url: string; readonly init: RequestInit }[] = [];
@@ -320,10 +336,16 @@ describe('the reconnecting event stream', () => {
     });
     let credential = 0;
     const delays: number[] = [];
+    const requestIdProvider = vi.fn(() => 'caller-event-stream-488');
+    const observed: ResponseMetadata[] = [];
     const config = resolveConfig({
       cookies: false,
       credential: () => `token-${String(++credential)}`,
       fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+      responseObserver: (metadata) => {
+        observed.push(metadata);
+      },
     });
 
     const received = await take(
@@ -352,6 +374,15 @@ describe('the reconnecting event stream', () => {
     expect(calls.map(({ init }) => new Headers(init.headers).get('authorization'))).toEqual([
       'Bearer token-1',
       'Bearer token-2',
+    ]);
+    expect(calls.map(({ init }) => new Headers(init.headers).get('x-request-id'))).toEqual([
+      'caller-event-stream-488',
+      'caller-event-stream-488',
+    ]);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+    expect(observed).toEqual([
+      { status: 200, requestId: 'response-events-one' },
+      { status: 200, requestId: 'response-events-two' },
     ]);
     expect(calls.every(({ init }) => init.credentials === 'omit')).toBe(true);
     expect(delays).toEqual([10]);
@@ -419,7 +450,7 @@ describe('the reconnecting event stream', () => {
             code: 'capability_unsupported',
             capability: 'core_events',
           }),
-          { status: 422 },
+          { status: 422, headers: { 'x-request-id': 'response-event-refusal' } },
         ),
       ),
     );
@@ -430,6 +461,7 @@ describe('the reconnecting event stream', () => {
       ),
     ).catch((cause: unknown) => cause);
     expect(refusal).toBeInstanceOf(CapabilityRefused);
+    expect((refusal as CapabilityRefused).requestId).toBe('response-event-refusal');
     expect(refusing).toHaveBeenCalledOnce();
   });
 
@@ -574,6 +606,77 @@ describe('the reconnecting event stream', () => {
     await expect(
       first(streamEvents(config, SESSION, { timeoutMs: 5, maxEmptyConnections: 1 })),
     ).rejects.toBeInstanceOf(TimeoutError);
+  });
+
+  it('does not continue a timed-out request-id hook into a late handshake', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const config = resolveConfig({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+
+    await expect(
+      first(streamEvents(config, SESSION, { timeoutMs: 5, maxEmptyConnections: 1 })),
+    ).rejects.toBeInstanceOf(TimeoutError);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+
+    requestId.resolve('caller-event-after-timeout');
+    await nextTurn();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not observe a stream handshake that arrives after its deadline', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const config = resolveConfig({
+      fetch: vi.fn(() => fetched.promise) as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+
+    await expect(
+      first(streamEvents(config, SESSION, { timeoutMs: 5, maxEmptyConnections: 1 })),
+    ).rejects.toBeInstanceOf(TimeoutError);
+
+    fetched.resolve(sse([{ seq: 1, event: { type: 'session_created' } }]));
+    await nextTurn();
+
+    expect(responseObserver).not.toHaveBeenCalled();
+  });
+
+  it('does not read a stream body after its response observer times out', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const config = resolveConfig({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = first(streamEvents(config, SESSION, { timeoutMs: 50, maxEmptyConnections: 1 }));
+    await observerStarted.promise;
+
+    await expect(pending).rejects.toBeInstanceOf(TimeoutError);
+    observer.resolve(undefined);
+    await nextTurn();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
+    expect(getReader).not.toHaveBeenCalled();
   });
 
   it('aborts immediately while waiting to reconnect', async () => {

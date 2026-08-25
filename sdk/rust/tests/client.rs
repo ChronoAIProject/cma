@@ -1,19 +1,19 @@
 use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::State;
-use axum::http::{HeaderMap, Method, StatusCode, Uri};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
-    ApprovalDecision, Client, CreateSessionRequest, Error, Event, EventKind, MAX_PAGE_SIZE,
-    PageWalkLimits, RetryPolicy, ScreenSnapshot, Session, SessionId, SessionInput,
-    SessionPageRequest, SessionStatus, TerminalGeometry, Usage,
+    ApprovalDecision, Client, Conformance, CreateSessionRequest, Error, Event, EventKind,
+    MAX_PAGE_SIZE, PageWalkLimits, ResponseMetadata, RetryPolicy, ScreenSnapshot, Session,
+    SessionId, SessionInput, SessionPageRequest, SessionStatus, TerminalGeometry, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -28,6 +28,11 @@ const EVENT: &str = include_str!("fixtures/event.json");
 const CAPABILITY_REFUSED: &str = include_str!("fixtures/capability_refused.json");
 const SCREEN: &str = include_str!("fixtures/screen.json");
 const USAGE: &str = include_str!("fixtures/usage.json");
+const CONFORMANCE: &str = r#"{
+  "conformsTo": ["https://spec.chrono-ai.fun/cma/1.0/conf/rest-core"],
+  "version": "development",
+  "build_sha": "development"
+}"#;
 
 #[derive(Clone)]
 struct StubState {
@@ -39,7 +44,7 @@ struct StubState {
 struct StubResponse {
     status: StatusCode,
     content_type: Option<&'static str>,
-    headers: Vec<(&'static str, &'static str)>,
+    headers: Vec<(HeaderName, HeaderValue)>,
     body: String,
     delay: Duration,
 }
@@ -85,7 +90,18 @@ impl StubResponse {
     }
 
     fn header(mut self, name: &'static str, value: &'static str) -> Self {
-        self.headers.push((name, value));
+        self.headers.push((
+            HeaderName::from_static(name),
+            HeaderValue::from_static(value),
+        ));
+        self
+    }
+
+    fn raw_header(mut self, name: &'static str, value: &[u8]) -> Self {
+        self.headers.push((
+            HeaderName::from_static(name),
+            HeaderValue::from_bytes(value).expect("stub header value is HTTP-compatible"),
+        ));
         self
     }
 }
@@ -95,6 +111,7 @@ struct CapturedRequest {
     method: Method,
     uri: Uri,
     authorization: Option<String>,
+    request_id: Option<String>,
     last_event_id: Option<String>,
     body: Vec<u8>,
 }
@@ -153,6 +170,10 @@ async fn capture(
         uri,
         authorization: headers
             .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+        request_id: headers
+            .get("x-request-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
         last_event_id: headers
@@ -214,6 +235,9 @@ fn event_fixture(source: &str) -> serde_json::Value {
 
 #[test]
 fn sdk_copies_read_every_server_owned_response_fixture() {
+    let conformance: Conformance =
+        serde_json::from_str(CONFORMANCE).expect("conformance fixture is typed");
+    assert_eq!(conformance.version, "development");
     let session: Session = serde_json::from_str(SESSION).expect("session fixture is typed");
     assert_eq!(session.id.as_str(), "sesn_fixture");
     let sessions: Vec<Session> = serde_json::from_str(SESSIONS).expect("list fixture is typed");
@@ -224,6 +248,196 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(screen.lines.len(), 3);
     let usage: Usage = serde_json::from_str(USAGE).expect("usage fixture is typed");
     assert_eq!(usage.context_window, Some(200_000));
+}
+
+#[tokio::test]
+async fn conformance_discovery_is_typed_anonymous_and_correlated() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, CONFORMANCE)
+        .header("x-request-id", "response-conformance-488")])
+    .await;
+    let observed = Arc::new(StdMutex::new(Vec::<ResponseMetadata>::new()));
+    let observer_values = Arc::clone(&observed);
+    let credential_calls = Arc::new(AtomicUsize::new(0));
+    let provider_calls = Arc::clone(&credential_calls);
+    let client = Client::builder(&stub.base_url)
+        .expect("stub URL is valid")
+        .credential_provider(move || {
+            provider_calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>("must-not-leave-the-client".to_owned())
+        })
+        .request_id_provider(|| Ok::<_, Infallible>("caller-conformance-488".to_owned()))
+        .response_observer(move |metadata| {
+            observer_values
+                .lock()
+                .expect("observer values remain available")
+                .push(metadata.clone());
+            Ok::<_, Infallible>(())
+        })
+        .build()
+        .expect("anonymous client builds");
+
+    let conformance = client
+        .read_conformance()
+        .await
+        .expect("anonymous discovery succeeds");
+
+    assert_eq!(
+        conformance.conforms_to,
+        ["https://spec.chrono-ai.fun/cma/1.0/conf/rest-core"]
+    );
+    assert_eq!(conformance.version, "development");
+    assert_eq!(conformance.build_sha, "development");
+    assert_eq!(
+        *observed.lock().expect("observer values remain available"),
+        [ResponseMetadata {
+            status: 200,
+            request_id: Some("response-conformance-488".to_owned()),
+        }]
+    );
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::GET);
+    assert_eq!(requests[0].uri.path(), "/proxy/api/v1/conformance");
+    assert_eq!(requests[0].authorization, None);
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        requests[0].request_id.as_deref(),
+        Some("caller-conformance-488")
+    );
+}
+
+#[tokio::test]
+async fn response_observation_precedes_strict_success_decoding() {
+    let with_unknown_field =
+        CONFORMANCE.replace("\n}", ",\n  \"unexpected\": \"must be rejected\"\n}");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &with_unknown_field)
+        .header("x-request-id", "response-before-decode")])
+    .await;
+    let observed = Arc::new(AtomicUsize::new(0));
+    let observer_calls = Arc::clone(&observed);
+    let client = Client::builder(&stub.base_url)
+        .expect("stub URL is valid")
+        .response_observer(move |metadata| {
+            assert_eq!(metadata.status, 200);
+            assert_eq!(
+                metadata.request_id.as_deref(),
+                Some("response-before-decode")
+            );
+            observer_calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>(())
+        })
+        .build()
+        .expect("anonymous client builds");
+
+    assert!(matches!(
+        client.read_conformance().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn missing_blank_and_opaque_response_ids_are_absent_metadata() {
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, CONFORMANCE),
+        StubResponse::json(StatusCode::OK, CONFORMANCE).raw_header("x-request-id", b" \t "),
+        StubResponse::json(StatusCode::OK, CONFORMANCE).raw_header("x-request-id", &[0xff]),
+    ])
+    .await;
+    let observed = Arc::new(StdMutex::new(Vec::<ResponseMetadata>::new()));
+    let observer_values = Arc::clone(&observed);
+    let client = Client::builder(&stub.base_url)
+        .expect("stub URL is valid")
+        .response_observer(move |metadata| {
+            observer_values
+                .lock()
+                .expect("observer values remain available")
+                .push(metadata.clone());
+            Ok::<_, Infallible>(())
+        })
+        .build()
+        .expect("anonymous client builds");
+
+    for _ in 0..3 {
+        client
+            .read_conformance()
+            .await
+            .expect("an unusable correlation header does not damage the body");
+    }
+    let observed = observed.lock().expect("observer values remain available");
+    assert_eq!(observed.len(), 3);
+    assert!(
+        observed
+            .iter()
+            .all(|metadata| { metadata.status == 200 && metadata.request_id.is_none() })
+    );
+}
+
+#[tokio::test]
+async fn observer_failure_is_explicit_and_stops_response_handling() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, CONFORMANCE)]).await;
+    let client = Client::builder(&stub.base_url)
+        .expect("stub URL is valid")
+        .response_observer(|_| Err::<(), _>("metadata sink unavailable"))
+        .build()
+        .expect("anonymous client builds");
+
+    let error = client
+        .read_conformance()
+        .await
+        .expect_err("observer refusal wins before body decoding");
+    assert!(matches!(
+        error,
+        Error::Observer { ref message } if message.contains("metadata sink unavailable")
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn observer_panic_is_contained_as_an_explicit_sdk_error() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, CONFORMANCE)]).await;
+    let client = Client::builder(&stub.base_url)
+        .expect("stub URL is valid")
+        .response_observer(|_| -> Result<(), Infallible> {
+            panic!("observer fixture panic");
+        })
+        .build()
+        .expect("anonymous client builds");
+
+    assert!(matches!(
+        client.read_conformance().await,
+        Err(Error::Observer { ref message }) if message == "response observer panicked"
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn unusable_or_failed_request_id_providers_stop_before_http() {
+    for request_id in ["", " \t ", "line\nbreak"] {
+        let stub = Stub::start([StubResponse::json(StatusCode::OK, CONFORMANCE)]).await;
+        let client = Client::builder(&stub.base_url)
+            .expect("stub URL is valid")
+            .request_id_provider(move || Ok::<_, Infallible>(request_id.to_owned()))
+            .build()
+            .expect("anonymous client builds");
+        assert!(matches!(
+            client.read_conformance().await,
+            Err(Error::Protocol { .. })
+        ));
+        assert!(stub.requests().await.is_empty());
+    }
+
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, CONFORMANCE)]).await;
+    let client = Client::builder(&stub.base_url)
+        .expect("stub URL is valid")
+        .request_id_provider(|| Err::<String, _>("trace context unavailable"))
+        .build()
+        .expect("anonymous client builds");
+    assert!(matches!(
+        client.read_conformance().await,
+        Err(Error::Transport { .. })
+    ));
+    assert!(stub.requests().await.is_empty());
 }
 
 #[tokio::test]
@@ -617,11 +831,12 @@ async fn stream_reconnects_after_the_last_validated_cursor_and_deduplicates() {
 
 #[tokio::test]
 async fn capability_refusal_is_publicly_distinct_from_transport_failure() {
-    let stub = Stub::start([StubResponse::json(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        CAPABILITY_REFUSED,
-    )])
-    .await;
+    let stub =
+        Stub::start([
+            StubResponse::json(StatusCode::UNPROCESSABLE_ENTITY, CAPABILITY_REFUSED)
+                .header("x-request-id", "response-capability-488"),
+        ])
+        .await;
     let (client, _) = stub_client(&stub, 1);
     let id = SessionId::new("sesn_fixture").expect("valid id");
     let error = client
@@ -630,7 +845,10 @@ async fn capability_refusal_is_publicly_distinct_from_transport_failure() {
         .expect_err("steer is refused");
     assert!(matches!(
         error,
-        Error::CapabilityRefused { ref capability } if capability == "steer"
+        Error::CapabilityRefused {
+            ref capability,
+            request_id: Some(ref request_id),
+        } if capability == "steer" && request_id == "response-capability-488"
     ));
 
     let unavailable = Client::builder("https://example.test")
@@ -643,6 +861,70 @@ async fn capability_refusal_is_publicly_distinct_from_transport_failure() {
         unavailable.list_sessions().await,
         Err(Error::Transport { .. })
     ));
+}
+
+#[tokio::test]
+async fn request_id_provider_is_resolved_once_and_reused_across_http_retries() {
+    let unavailable = serde_json::json!({
+        "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-unavailable",
+        "title": "runtime unavailable",
+        "status": 503,
+        "detail": "runtime is unavailable",
+        "code": "runtime_unavailable"
+    })
+    .to_string();
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::SERVICE_UNAVAILABLE, &unavailable)
+            .header("retry-after", "0")
+            .header("x-request-id", "response-retry-one"),
+        StubResponse::json(StatusCode::OK, SESSIONS).header("x-request-id", "response-retry-two"),
+    ])
+    .await;
+    let request_id_calls = Arc::new(AtomicUsize::new(0));
+    let provider_calls = Arc::clone(&request_id_calls);
+    let observed = Arc::new(StdMutex::new(Vec::<ResponseMetadata>::new()));
+    let observer_values = Arc::clone(&observed);
+    let client = Client::builder(&stub.base_url)
+        .expect("stub URL is valid")
+        .credential_provider(|| Ok::<_, Infallible>("fixture-auth".to_owned()))
+        .request_id_provider(move || {
+            provider_calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>("caller-retry-488/exact".to_owned())
+        })
+        .response_observer(move |metadata| {
+            observer_values
+                .lock()
+                .expect("observer values remain available")
+                .push(metadata.clone());
+            Ok::<_, Infallible>(())
+        })
+        .retry_policy(no_delay_policy(2))
+        .build()
+        .expect("client builds");
+
+    client.list_sessions().await.expect("retry succeeds");
+
+    assert_eq!(request_id_calls.load(Ordering::SeqCst), 1);
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| { request.request_id.as_deref() == Some("caller-retry-488/exact") })
+    );
+    assert_eq!(
+        *observed.lock().expect("observer values remain available"),
+        [
+            ResponseMetadata {
+                status: 503,
+                request_id: Some("response-retry-one".to_owned()),
+            },
+            ResponseMetadata {
+                status: 200,
+                request_id: Some("response-retry-two".to_owned()),
+            },
+        ]
+    );
 }
 
 #[tokio::test]
@@ -680,7 +962,8 @@ async fn an_api_failure_without_retry_after_is_not_retried() {
     })
     .to_string();
     let stub = Stub::start([
-        StubResponse::json(StatusCode::SERVICE_UNAVAILABLE, &unavailable),
+        StubResponse::json(StatusCode::SERVICE_UNAVAILABLE, &unavailable)
+            .header("x-request-id", "response-api-488"),
         StubResponse::json(StatusCode::OK, SESSIONS),
     ])
     .await;
@@ -695,11 +978,41 @@ async fn an_api_failure_without_retry_after_is_not_retried() {
         Error::Api {
             status: 503,
             ref code,
+            request_id: Some(ref request_id),
             ..
-        } if code == "runtime_unavailable"
+        } if code == "runtime_unavailable" && request_id == "response-api-488"
     ));
     assert_eq!(stub.requests().await.len(), 1);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn structured_api_error_survives_a_missing_response_id() {
+    let problem = serde_json::json!({
+        "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state",
+        "title": "invalid state",
+        "status": 409,
+        "detail": "session is rotating",
+        "code": "invalid_state"
+    })
+    .to_string();
+    let stub = Stub::start([StubResponse::json(StatusCode::CONFLICT, &problem)]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let error = client
+        .list_sessions()
+        .await
+        .expect_err("the structured refusal is returned");
+
+    assert!(matches!(
+        error,
+        Error::Api {
+            status: 409,
+            ref code,
+            request_id: None,
+            ..
+        } if code == "invalid_state"
+    ));
 }
 
 #[tokio::test]

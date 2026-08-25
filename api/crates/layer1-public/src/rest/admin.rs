@@ -24,7 +24,6 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
     Json, Router,
 };
 use layer2_core::{
@@ -33,8 +32,11 @@ use layer2_core::{
     SessionService, SubjectId, UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
+use crate::rest::openapi_shapes;
 use crate::rest::pagination::AdminSessionPageParams;
 use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
 
@@ -138,7 +140,7 @@ impl IntoResponse for AdminRequestFailure {
 /// The identifier is present because clients key on it, and it is deliberately
 /// not what a person is shown by: `label` is what a screen draws, falling back
 /// to the identifier only when the provider released nothing at all.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UserView {
     subject: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,18 +171,22 @@ impl From<RegisteredUser> for UserView {
 /// The core's own vocabulary is emitted directly rather than remapped: these
 /// strings are the record, and translating them here would mean two spellings
 /// of the same fact.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ActivityView {
     id: String,
     at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<String>,
+    #[schema(value_type = openapi_shapes::ActivityAction)]
     action: layer2_core::ActivityAction,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::ActivityTarget>)]
     target: Option<layer2_core::ActivityTarget>,
+    #[schema(value_type = openapi_shapes::ActivityOutcome)]
     outcome: layer2_core::ActivityOutcome,
     /// The parameters that were allowed to be kept. Never a secret: the core's
     /// allowlist is what decides, and there is no key for one.
+    #[schema(value_type = std::collections::BTreeMap<String, String>)]
     detail: layer2_core::ActivityDetail,
 }
 
@@ -202,16 +208,19 @@ impl From<ActivityRecord> for ActivityView {
 ///
 /// Carries its owner, which the ordinary session view does not: a list of
 /// everybody's work is unreadable without saying whose each row is.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AdminSessionView {
     id: String,
     owner: String,
     /// How the owner should be shown, when the directory knows a name for them.
     #[serde(skip_serializing_if = "Option::is_none")]
     owner_label: Option<String>,
+    #[schema(value_type = openapi_shapes::SessionStatus)]
     status: layer2_core::SessionStatus,
+    #[schema(value_type = openapi_shapes::RecoveryState)]
     recovery_state: layer2_core::RecoveryState,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::StopReason>)]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
     last_seq: u64,
@@ -238,7 +247,7 @@ impl AdminSessionView {
 }
 
 /// One runtime in service, as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RuntimeView {
     runtime: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -246,6 +255,7 @@ pub struct RuntimeView {
     #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::SessionStatus>)]
     status: Option<layer2_core::SessionStatus>,
     /// Whether nothing in the record accounts for this runtime.
     unaccounted: bool,
@@ -257,7 +267,7 @@ pub struct RuntimeView {
 /// is then absent rather than empty. A client cannot accidentally read "we
 /// could not ask" as "there is nothing running", because there is no empty
 /// array there to read.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProviderInventoryView {
     kernel: String,
     observable: bool,
@@ -268,7 +278,7 @@ pub struct ProviderInventoryView {
 }
 
 /// Everything in service, as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InventoryView {
     /// How many runtimes are in service. Absent when a provider could not be
     /// asked, because a partial total presented as a total is the same lie as
@@ -344,6 +354,7 @@ pub struct ActivityParams {
 /// surface lives under one segment precisely so a gateway can restrict it as a
 /// unit, and a route added outside that segment would escape whatever protects
 /// it without anything noticing.
+#[cfg(test)]
 const OPERATOR_ROUTES: [&str; 8] = [
     "/api/v1/admin/users",
     "/api/v1/admin/activity",
@@ -360,18 +371,29 @@ const OPERATOR_ROUTES: [&str; 8] = [
 
 /// Routes this surface contributes.
 pub fn router(state: Arc<AdminState>) -> Router {
+    documented_router(state).into()
+}
+
+pub(super) fn documented_router(state: Arc<AdminState>) -> OpenApiRouter {
     let settings = settings::router(Arc::clone(&state.settings));
-    Router::new()
-        .route(OPERATOR_ROUTES[0], get(users))
-        .route(OPERATOR_ROUTES[1], get(activity))
-        .route(OPERATOR_ROUTES[2], get(runtimes))
-        .route(OPERATOR_ROUTES[3], get(sessions))
-        .route(OPERATOR_ROUTES[4], post(stop))
-        .route(OPERATOR_ROUTES[5], post(terminate))
+    OpenApiRouter::new()
+        .routes(routes!(users))
+        .routes(routes!(activity))
+        .routes(routes!(runtimes))
+        .routes(routes!(sessions))
+        .routes(routes!(stop))
+        .routes(routes!(terminate))
         .with_state(state)
         .merge(settings)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/users",
+    tag = "administration",
+    params(("limit" = Option<u32>, Query)),
+    responses((status = 200, description = "Registered users", body = [UserView]))
+)]
 async fn users(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -390,6 +412,13 @@ async fn users(
     Ok(Json(users.into_iter().map(UserView::from).collect()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/activity",
+    tag = "administration",
+    params(("actor" = Option<String>, Query), ("limit" = Option<u32>, Query)),
+    responses((status = 200, description = "Activity records", body = [ActivityView]))
+)]
 async fn activity(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -409,6 +438,12 @@ async fn activity(
     Ok(Json(entries.into_iter().map(ActivityView::from).collect()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/runtimes",
+    tag = "administration",
+    responses((status = 200, description = "Runtime inventory", body = InventoryView))
+)]
 async fn runtimes(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -417,6 +452,17 @@ async fn runtimes(
     Ok(Json(InventoryView::render(inventory)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/sessions",
+    tag = "administration",
+    params(
+        ("status" = Option<String>, Query),
+        ("limit" = Option<u32>, Query),
+        ("cursor" = Option<String>, Query)
+    ),
+    responses((status = 200, description = "Cross-owner session page", body = [AdminSessionView]))
+)]
 async fn sessions(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -452,6 +498,13 @@ async fn sessions(
 /// Refusals keep the session surface's rendering: this route does address an
 /// identifier, so a caller who may not act on it must not be able to learn
 /// whether it exists by the shape of the answer.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/sessions/{id}/terminate",
+    tag = "administration",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Session terminated by an operator"))
+)]
 async fn terminate(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -465,6 +518,13 @@ async fn terminate(
 }
 
 /// Release somebody's session's runtime, keeping the session.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/sessions/{id}/stop",
+    tag = "administration",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Session stopped by an operator"))
+)]
 async fn stop(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,

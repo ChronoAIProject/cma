@@ -13,6 +13,8 @@ export class ApiError extends CmaError {
     message: string,
     /** Stable problem code, where the service supplied one. */
     readonly code?: string,
+    /** Correlation id returned with the failed response, when usable. */
+    readonly requestId?: string,
   ) {
     super('ApiError', message);
   }
@@ -33,8 +35,9 @@ export class CapabilityRefused extends ApiError {
     status: number,
     message: string,
     readonly capability: string,
+    requestId?: string,
   ) {
-    super(status, message, 'capability_unsupported');
+    super(status, message, 'capability_unsupported', requestId);
     this.name = 'CapabilityRefused';
   }
 }
@@ -46,8 +49,9 @@ export class SessionLimitReached extends ApiError {
     message: string,
     readonly limit?: number,
     readonly live?: number,
+    requestId?: string,
   ) {
-    super(status, message, 'session_limit_reached');
+    super(status, message, 'session_limit_reached', requestId);
     this.name = 'SessionLimitReached';
   }
 }
@@ -61,8 +65,9 @@ export class DeploymentAtCapacity extends ApiError {
     readonly requestedMemoryMib?: number,
     readonly freeCpuMillis?: number,
     readonly freeMemoryMib?: number,
+    requestId?: string,
   ) {
-    super(status, message, 'deployment_at_capacity');
+    super(status, message, 'deployment_at_capacity', requestId);
     this.name = 'DeploymentAtCapacity';
   }
 }
@@ -85,6 +90,20 @@ export class ValidationError extends CmaError {
 export class CredentialError extends CmaError {
   constructor(message: string, options?: ErrorOptions) {
     super('CredentialError', message, options);
+  }
+}
+
+/** A configured request-id provider failed or returned an unusable value. */
+export class RequestIdError extends CmaError {
+  constructor(message: string, options?: ErrorOptions) {
+    super('RequestIdError', message, options);
+  }
+}
+
+/** A response observer failed after the service answered. */
+export class ResponseObserverError extends CmaError {
+  constructor(options?: ErrorOptions) {
+    super('ResponseObserverError', 'the response observer failed', options);
   }
 }
 

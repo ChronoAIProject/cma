@@ -11,7 +11,6 @@ use axum::{
     extract::{FromRef, FromRequest, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
     Json, Router,
 };
 use layer2_core::{
@@ -20,16 +19,20 @@ use layer2_core::{
     TerminalGeometry, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod allowance;
 mod deployment_capacity;
 mod events;
+mod openapi;
+mod openapi_shapes;
 mod operate;
 mod problems;
 mod tickets;
 
 pub(crate) use problems::{problem_document, problem_response};
-pub use problems::{HttpProblem, Problem};
+pub use problems::{HttpProblem, Problem, ProblemDocument};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::tickets::TerminalTickets;
@@ -41,9 +44,24 @@ pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/proble
 
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[
-    "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/steering",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
     "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/usage",
 ];
+
+const BUILD_SHA: &str = match option_env!("CHRONO_BUILD_SHA") {
+    Some(sha) => sha,
+    None => "development",
+};
+
+const SERVICE_VERSION: &str = match option_env!("CHRONO_BUILD") {
+    Some(version) => version,
+    None => "development",
+};
 
 /// Where every conformance class this service declares is rooted.
 const CONF_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/conf";
@@ -114,7 +132,7 @@ impl InterfaceProfile for RestInterface {
 /// silence swallowed `environmentProfile` — the camelCase spelling this
 /// project's own SDK and its AG-UI interface both use — and started a session
 /// on the deployment's default profile instead of the named one.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
     /// Declared only so it can be refused in words a caller can act on.
@@ -129,6 +147,7 @@ pub struct CreateSessionRequest {
     /// deliberately does not carry Serde's raw diagnostic because it can quote
     /// submitted values on other mismatch branches.
     #[serde(default)]
+    #[schema(ignore)]
     kernel: Option<String>,
     /// Initial terminal width.
     #[serde(default)]
@@ -205,21 +224,21 @@ impl CreateSessionRequest {
 }
 
 /// Query parameters for pricing the deployment default or one profile.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 struct PricingQuoteParams {
     #[serde(default)]
     environment_profile: Option<String>,
 }
 
 /// A quote response, including the deliberate absence of a configured price.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(untagged)]
 enum PricingQuoteView {
     Priced(PricedQuoteView),
     Unpriced { priced: bool },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct PricedQuoteView {
     rate_card: String,
     currency: &'static str,
@@ -252,12 +271,15 @@ impl From<Option<Quote>> for PricingQuoteView {
 }
 
 /// A session as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SessionView {
     id: String,
+    #[schema(value_type = openapi_shapes::SessionStatus)]
     status: layer2_core::SessionStatus,
+    #[schema(value_type = openapi_shapes::RecoveryState)]
     recovery_state: layer2_core::RecoveryState,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::StopReason>)]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
     /// How this session's agent was configured, settled when it was created.
@@ -290,6 +312,7 @@ pub struct SessionView {
     /// A client renders what it is given and never falls back to the subject
     /// identifier, which is not a name and reads as a fault when shown as one.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::PublicIdentity>)]
     creator: Option<PublicIdentity>,
     /// What this particular session can be asked to do.
     ///
@@ -354,14 +377,14 @@ impl IntoResponse for ProjectedSessions {
 }
 
 /// A rendered terminal screen on the REST wire.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ScreenView {
     cols: u16,
     rows: u16,
     lines: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct SessionPricingView {
     rate_card: String,
     currency: &'static str,
@@ -376,19 +399,24 @@ struct SessionPricingView {
 /// Never a credential and never an endpoint. Which *kind* of credential pays
 /// for the model is a fact somebody needs — it decides whose bill a turn lands
 /// on — and the value behind it is not.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[schema(as = SessionAgentView)]
 pub struct AgentView {
     /// The model the agent selects, when the session names one.
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     /// How much the agent may do before asking.
+    #[schema(value_type = openapi_shapes::PermissionMode)]
     permission: layer2_core::PermissionMode,
     /// How hard it thinks.
+    #[schema(value_type = openapi_shapes::ReasoningEffort)]
     reasoning_effort: layer2_core::ReasoningEffort,
     /// Whose account the model calls are spent against.
+    #[schema(value_type = openapi_shapes::CredentialMode)]
     credential: layer2_core::CredentialMode,
     /// How much this session reserves, or absent for the deployment's own.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::SessionSize>)]
     size: Option<layer2_core::SessionSize>,
     /// The skills this session was given, or absent where none was recorded.
     ///
@@ -406,7 +434,7 @@ pub struct AgentView {
 ///
 /// Never a credential, never a token, and never an expiry. What a session may
 /// reach is a fact about its configuration; what it holds is not.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReachView {
     /// The identifier the profile stored. Always present.
     id: String,
@@ -429,7 +457,8 @@ pub struct ReachView {
 /// The same shape and the same reasoning as `ReachView`: the identifier is
 /// always true, and a catalogue that could not be asked costs the name rather
 /// than the answer.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[schema(as = SessionSkillView)]
 pub struct SkillView {
     /// The identifier the profile stored. Always present.
     id: String,
@@ -967,63 +996,77 @@ impl FromRef<SessionsState> for Arc<EnvironmentProfileService> {
 
 /// Routes this interface contributes.
 pub fn router(state: SessionsState) -> Router {
-    Router::new()
-        .route("/api/v1/pricing/quote", get(pricing_quote))
-        .route("/api/v1/sessions", post(create).get(list))
-        .route("/api/v1/sessions/allowance", get(allowance::read))
-        .route("/api/v1/sessions/{id}", get(read))
+    documented_router(state).into()
+}
+
+/// Compose every REST resource and the generated anonymous contract route.
+pub fn complete_router(state: SessionsState, admin: Arc<admin::AdminState>) -> Router {
+    let environments = Arc::clone(&state.environments);
+    openapi::finish(
+        documented_router(state)
+            .merge(environments::documented_router(environments))
+            .merge(admin::documented_router(admin)),
+    )
+}
+
+fn documented_router(state: SessionsState) -> OpenApiRouter {
+    OpenApiRouter::new()
+        .routes(routes!(pricing_quote))
+        .routes(routes!(create, list))
+        .routes(routes!(allowance::read))
+        .routes(routes!(read, remove))
         // Two distinct verbs: ending a session leaves it listed, removing it
         // does not. Collapsing them would make "stop this" and "forget this"
         // the same button.
-        .route("/api/v1/sessions/{id}", delete(remove))
-        .route("/api/v1/sessions/{id}/terminate", post(terminate))
+        .routes(routes!(terminate))
         // Stopping is not ending. A stopped session keeps its history and can
         // be picked up again; the pair only makes sense together, which is why
         // reviving lives beside it rather than behind a creation call.
-        .route("/api/v1/sessions/{id}/stop", post(stop))
-        .route("/api/v1/sessions/{id}/plane", post(plane))
-        .route("/api/v1/sessions/{id}/revive", post(revive))
+        .routes(routes!(stop))
+        .routes(routes!(plane))
+        .routes(routes!(revive))
         // Exchanges the credential this route can carry for one the WebSocket
         // upgrade can. See `crate::tickets` for why that exchange exists.
-        .route(
-            "/api/v1/sessions/{id}/terminal-ticket",
-            post(tickets::terminal_ticket),
-        )
+        .routes(routes!(tickets::terminal_ticket))
         // What a caller sends to a session, on whichever plane it holds:
         // keystrokes to a terminal, a prompt turn to a conversation. One route
         // because it is one operation in the core, and the session's granted
         // capabilities decide what it means.
-        .route("/api/v1/sessions/{id}/input", post(operate::input))
+        .routes(routes!(operate::input))
         // Stop what it is doing without ending it. A signal on the terminal
         // plane, the conversation's own cancel on the other.
-        .route("/api/v1/sessions/{id}/interrupt", post(operate::interrupt))
+        .routes(routes!(operate::interrupt))
         // Adding to a turn already running, which is not the same as starting
         // one — and is refused by name where a kernel cannot tell them apart.
-        .route("/api/v1/sessions/{id}/steer", post(operate::steer))
-        .route("/api/v1/sessions/{id}/resize", post(operate::resize))
+        .routes(routes!(operate::steer))
+        .routes(routes!(operate::resize))
         // Answering what a runtime is blocked on. Conversation sessions only:
         // a terminal kernel asks on its own screen, and its answer is a
         // keystroke, so inventing an operation here would be a second way to
         // say something this session cannot hear.
-        .route(
-            "/api/v1/sessions/{id}/approvals/{request_id}",
-            post(operate::resolve_approval),
-        )
-        .route("/api/v1/sessions/{id}/usage", get(operate::usage))
-        .route("/api/v1/sessions/{id}/resources", get(operate::resources))
-        .route("/api/v1/sessions/{id}/spend", get(operate::spend))
-        .route("/api/v1/sessions/{id}/screen", get(screen))
+        .routes(routes!(operate::resolve_approval))
+        .routes(routes!(operate::usage))
+        .routes(routes!(operate::resources))
+        .routes(routes!(operate::spend))
+        .routes(routes!(screen))
         // What the session has shown, for one that has no runtime to attach
         // to. Reading stopped work is not the same as resuming it.
-        .route("/api/v1/sessions/{id}/transcript", get(transcript))
+        .routes(routes!(transcript))
         // Progress for a session whose runtime is still starting, and its
         // history thereafter. Resumable, so a reconnect loses nothing.
-        .route("/api/v1/sessions/{id}/events", get(events::stream))
-        .route("/api/v1/conformance", get(conformance))
-        .route("/api/v1/kernels", get(kernels))
+        .routes(routes!(events::stream))
+        .routes(routes!(conformance))
+        .routes(routes!(kernels))
         .with_state(state)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/pricing/quote",
+    tag = "pricing",
+    params(("environment_profile" = Option<String>, Query)),
+    responses((status = 200, description = "Quote or explicit unpriced result", body = PricingQuoteView))
+)]
 async fn pricing_quote(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -1037,6 +1080,13 @@ async fn pricing_quote(
     Ok(Json(quote.into()))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions",
+    tag = "sessions",
+    request_body = CreateSessionRequest,
+    responses((status = 201, description = "Session created", body = SessionView))
+)]
 async fn create(
     State(service): State<Arc<SessionService>>,
     State(environments): State<Arc<EnvironmentProfileService>>,
@@ -1100,6 +1150,17 @@ async fn create(
     Ok((StatusCode::CREATED, view))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions",
+    tag = "sessions",
+    params(
+        ("status" = Option<String>, Query),
+        ("limit" = Option<u32>, Query),
+        ("cursor" = Option<String>, Query)
+    ),
+    responses((status = 200, description = "Newest-first session page", body = [SessionView]))
+)]
 async fn list(
     State(service): State<Arc<SessionService>>,
     State(users): State<Arc<UserDirectory>>,
@@ -1125,6 +1186,13 @@ async fn list(
     Ok((headers, views))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}",
+    tag = "sessions",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Session", body = SessionView))
+)]
 async fn read(
     State(service): State<Arc<SessionService>>,
     State(users): State<Arc<UserDirectory>>,
@@ -1146,6 +1214,13 @@ async fn read(
     Ok(view)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/terminate",
+    tag = "sessions",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Session terminated"))
+)]
 async fn terminate(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -1155,6 +1230,13 @@ async fn terminate(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/stop",
+    tag = "sessions",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Session runtime stopped"))
+)]
 async fn stop(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -1165,9 +1247,10 @@ async fn stop(
 }
 
 /// Which plane the caller wants this session driven on.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PlaneRequest {
     /// The plane to move to. Naming the one it is already on changes nothing.
+    #[schema(value_type = openapi_shapes::SessionMode)]
     pub plane: layer2_core::SessionMode,
 }
 
@@ -1181,6 +1264,14 @@ pub struct PlaneRequest {
 /// Every refusal is typed and names what is missing, per §3 of the overview: a
 /// kernel that does not serve the plane, or one that cannot carry its
 /// conversation across, is refused before anything is torn down.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/plane",
+    tag = "sessions",
+    params(("id" = String, Path)),
+    request_body = PlaneRequest,
+    responses((status = 200, description = "Session rotating onto the requested plane", body = SessionView))
+)]
 async fn plane(
     State(service): State<Arc<SessionService>>,
     State(users): State<Arc<UserDirectory>>,
@@ -1205,6 +1296,13 @@ async fn plane(
     .await)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/revive",
+    tag = "sessions",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Revived session", body = SessionView))
+)]
 async fn revive(
     State(service): State<Arc<SessionService>>,
     State(users): State<Arc<UserDirectory>>,
@@ -1230,6 +1328,18 @@ async fn revive(
 /// Served as an octet stream rather than JSON because it is an escape-sequence
 /// stream: encoding it as a string would mean deciding how to escape it, and
 /// the client only has to write it to a terminal.
+#[allow(dead_code)]
+#[derive(ToSchema)]
+#[schema(value_type = String, format = Binary)]
+struct TranscriptBody(Vec<u8>);
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}/transcript",
+    tag = "sessions",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Terminal byte transcript", body = TranscriptBody, content_type = "application/octet-stream"))
+)]
 async fn transcript(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -1243,6 +1353,13 @@ async fn transcript(
         .into_response())
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/sessions/{id}",
+    tag = "sessions",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Session and history removed"))
+)]
 async fn remove(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -1254,6 +1371,13 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}/screen",
+    tag = "terminal",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Rendered terminal screen", body = ScreenView))
+)]
 async fn screen(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -1267,8 +1391,40 @@ async fn screen(
     }))
 }
 
-async fn conformance() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "conformsTo": CONFORMS_TO }))
+/// Static protocol support plus the exact service build answering the request.
+#[derive(Debug, Serialize, ToSchema)]
+struct ConformanceView {
+    #[serde(rename = "conformsTo")]
+    conforms_to: &'static [&'static str],
+    version: &'static str,
+    build_sha: &'static str,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/conformance",
+    tag = "discovery",
+    responses((status = 200, description = "Protocol and build conformance", body = ConformanceView)),
+    security(())
+)]
+async fn conformance() -> Json<ConformanceView> {
+    Json(ConformanceView {
+        conforms_to: CONFORMS_TO,
+        version: SERVICE_VERSION,
+        build_sha: BUILD_SHA,
+    })
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct KernelOffering {
+    id: String,
+    #[schema(value_type = Vec<openapi_shapes::SessionMode>)]
+    modes: Vec<layer2_core::SessionMode>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct KernelsView {
+    kernels: Vec<KernelOffering>,
 }
 
 /// The runtimes a session can be started on, and what each one can be.
@@ -1277,18 +1433,27 @@ async fn conformance() -> Json<serde_json::Value> {
 /// pairing where the person is still choosing, rather than submitting it and
 /// rendering the refusal that comes back. Both come from the same core answer,
 /// so an interface cannot offer a combination the core would decline.
+#[utoipa::path(
+    get,
+    path = "/api/v1/kernels",
+    tag = "discovery",
+    responses((status = 200, description = "Available kernels and planes", body = KernelsView))
+)]
 async fn kernels(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(_caller): AuthenticatedCaller,
-) -> Json<serde_json::Value> {
+) -> Json<KernelsView> {
     // Any authenticated caller may plan a session. Discovery needs no
     // capability check beyond refusing anonymous deployment reconnaissance.
-    let offerings: Vec<serde_json::Value> = service
+    let offerings = service
         .available_kernels()
         .into_iter()
-        .map(|(kernel, modes)| serde_json::json!({ "id": kernel.0, "modes": modes }))
+        .map(|(kernel, modes)| KernelOffering {
+            id: kernel.0,
+            modes,
+        })
         .collect();
-    Json(serde_json::json!({ "kernels": offerings }))
+    Json(KernelsView { kernels: offerings })
 }
 
 #[cfg(test)]

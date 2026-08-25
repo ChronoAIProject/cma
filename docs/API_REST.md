@@ -44,7 +44,10 @@ on that code and the status, never on its prose.
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
-Every response carries `X-Request-Id`. Include it in any support report.
+Every response carries `X-Request-Id`, including authentication failures and
+unmatched routes. A supplied value is echoed; otherwise CMA mints a UUID. The
+same value is attached to the request's tracing span. Include it in any support
+report.
 
 ---
 
@@ -830,8 +833,6 @@ POST /api/v1/sessions/{id}/steer
 
 Redirects a turn already in progress, which is not the same as starting a new one. Projected only where the kernel advertises `steer`; elsewhere it returns the typed capability error. Subsets are declared, not discovered.
 
-Sending input while a turn is in flight resolves according to the session's `concurrent_input` policy; on `reject` it returns `409` with `problem.type` ending `/turn-in-progress`.
-
 ### While a terminal is attached
 
 A live PTY attachment holds the terminal exclusively, and that changes what these routes do:
@@ -1164,7 +1165,8 @@ GET /api/v1/conformance
 ```
 
 ```json
-{ "conformsTo": [
+{
+  "conformsTo": [
   "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
   "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
   "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
@@ -1172,8 +1174,18 @@ GET /api/v1/conformance
   "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
   "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
   "https://spec.chrono-ai.fun/cma/1.0/conf/usage"
-] }
+  ],
+  "version": "v0.7.0",
+  "build_sha": "8d74d0e55c39d9170d35f92b7818a5eb923bd201"
+}
 ```
+
+`version` is the release version baked into the API image, or `development` for
+a local build that supplied no release version. `build_sha` is the full source
+commit baked into the API image, or `development` for a local build that
+supplied no commit. Clients use these fields to establish which additive `/v1`
+contract a deployment is running; neither field is an authorization or
+capability grant.
 
 Representations carry `Link: <…/conf/rest-core>; rel="profile"`, and the service advertises `Link: </openapi.json>; rel="service-desc"`.
 
@@ -1198,21 +1210,26 @@ Kernel discovery requires authentication because it reports deployment-specific 
 
 A runtime that serves neither plane is listed with an empty `modes`. It is still a runtime this deployment knows about, and reporting it as absent would be a different claim.
 
-The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated from code so it cannot drift.
+The machine-readable contract is anonymous `GET /openapi.json` (OpenAPI 3.1).
+It is generated from the annotated handlers through the same registrations
+that build the router, so adding a documented operation also adds its route.
+The document includes the RFC 9457 problem schema used by every refusal.
 
 ---
 
 ## 10. Errors
 
-```json
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
+X-Request-Id: 94ea38a2-c2cb-4a43-9fe2-d25a60b59ec5
+
 {
-  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/turn-in-progress",
-  "title": "A turn is already in progress",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/session-terminated",
+  "title": "session terminated",
   "status": 409,
-  "detail": "Session sesn_01JD8Z3K7 has an active turn and its concurrent_input policy is 'reject'.",
-  "code": "turn_in_progress",
-  "instance": "/api/v1/sessions/sesn_01JD8Z3K7/input",
-  "request_id": "req_01JD8Z4M2"
+  "detail": "session terminated",
+  "code": "session_terminated"
 }
 ```
 
@@ -1223,7 +1240,7 @@ The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated fr
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
 | `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
-| `409` | Conflicts with current state — turn in progress, session terminated, live-session limit reached, or the quoted rate card is no longer in force |
+| `409` | Conflicts with current state — session terminated, live-session limit reached, or the quoted rate card is no longer in force |
 | `413` | The request body exceeds the service's accepted limit (`code: "request_too_large"`) |
 | `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
 | `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |

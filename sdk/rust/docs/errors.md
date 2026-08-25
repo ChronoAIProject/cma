@@ -11,16 +11,22 @@ use cma_sdk::{Client, Error, SessionId};
 async fn interrupt(client: &Client, session_id: &SessionId) -> cma_sdk::Result<()> {
     match client.interrupt(session_id).await {
         Ok(()) => Ok(()),
-        Err(Error::CapabilityRefused { capability }) => {
-            eprintln!("session was not granted {capability}");
+        Err(Error::CapabilityRefused {
+            capability,
+            request_id,
+            ..
+        }) => {
+            eprintln!("session was not granted {capability}; request_id={request_id:?}");
             Ok(())
         }
         Err(Error::Api {
             status,
             code,
             message,
+            request_id,
+            ..
         }) => {
-            eprintln!("HTTP {status} {code}: {message}");
+            eprintln!("HTTP {status} {code}: {message}; request_id={request_id:?}");
             Ok(())
         }
         Err(error) => Err(error),
@@ -34,6 +40,7 @@ async fn interrupt(client: &Client, session_id: &SessionId) -> cma_sdk::Result<(
 | `Api` | Structured service problem with HTTP status, code, and detail | Only according to status and operation semantics |
 | `Transport` | Credential provider, timeout, connection, or response-body failure | A later attempt may work; outcome can be unknown |
 | `Protocol` | Caller value or server response violated the typed boundary | Fix input or investigate version/server drift |
+| `Observer` | The configured response metadata observer failed or panicked | Repair the observer; the response body was not consumed |
 
 The crate retries transport failures according to `RetryPolicy`. It retries HTTP
 `429` or `503` only when the response carries a valid `Retry-After`; an API failure
@@ -60,5 +67,10 @@ fn conservative_client() -> cma_sdk::Result<Client> {
 ```
 
 Problem documents that do not match the
-[REST error contract](../../../docs/API_REST.md#9-errors) become `Error::Protocol`
+[REST error contract](../../../docs/API_REST.md#10-errors) become `Error::Protocol`
 rather than an unreliable generic API error.
+
+`Error::Api` and `Error::CapabilityRefused` expose `request_id` from the HTTP
+`X-Request-Id` response header. It is `None` when that header is missing or
+unusable. Correlation is not read from, or represented as, a `request_id` field
+inside the problem JSON body.
