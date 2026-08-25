@@ -28,6 +28,21 @@ const PROFILE_FIELDS: &[&str] = &[
     "nyxid",
     "agent_notes",
 ];
+const PROFILE_VIEW_FIELDS: &[&str] = &[
+    "name",
+    "variables",
+    "packages",
+    "agent",
+    "nyxid",
+    "agent_notes",
+    "id",
+    "mandatory",
+    "created_at",
+    "updated_at",
+    "preferred",
+];
+const PROFILE_SERVER_FIELDS: &[&str] =
+    &["id", "mandatory", "created_at", "updated_at", "preferred"];
 const VARIABLE_FIELDS: &[&str] = &["key", "value"];
 const PACKAGE_FIELDS: &[&str] = &["name", "version"];
 const AGENT_FIELDS: &[&str] = &[
@@ -43,6 +58,7 @@ const AGENT_FIELDS: &[&str] = &[
 ];
 const SIZE_FIELDS: &[&str] = &["cpu_millis", "memory_mib"];
 const NYXID_FIELDS: &[&str] = &["services"];
+const MANDATORY_FIELDS: &[&str] = &["packages", "skills"];
 
 /// A variable as this interface reads and writes it.
 #[derive(Debug, Deserialize, Serialize)]
@@ -163,9 +179,17 @@ pub(super) struct UnknownProfileField {
 
 /// Locate an unknown field structurally, without inspecting or formatting any
 /// submitted scalar value.
-pub(super) fn unknown_profile_field(body: &Value) -> Option<UnknownProfileField> {
+pub(super) fn unknown_profile_field(
+    body: &Value,
+    accepts_profile_view: bool,
+) -> Option<UnknownProfileField> {
     let profile = body.as_object()?;
-    if let Some(unknown) = unknown_in(profile, PROFILE_FIELDS, "") {
+    let accepted = if accepts_profile_view {
+        PROFILE_VIEW_FIELDS
+    } else {
+        PROFILE_FIELDS
+    };
+    if let Some(unknown) = unknown_in(profile, accepted, "") {
         return Some(unknown);
     }
 
@@ -212,10 +236,94 @@ pub(super) fn unknown_profile_field(body: &Value) -> Option<UnknownProfileField>
         }
     }
 
+    if accepts_profile_view {
+        if let Some(unknown) = profile
+            .get("mandatory")
+            .and_then(Value::as_object)
+            .and_then(|mandatory| unknown_in(mandatory, MANDATORY_FIELDS, "mandatory"))
+        {
+            return Some(unknown);
+        }
+    }
+
     profile
         .get("nyxid")
         .and_then(Value::as_object)
         .and_then(|nyxid| unknown_in(nyxid, NYXID_FIELDS, "nyxid"))
+}
+
+/// Decode a create body or the writable contents of a replacement body.
+///
+/// A replacement may be the complete `ProfileView` returned by GET. Its five
+/// server-owned fields are checked as part of that closed schema and removed
+/// before the writable request is decoded; they can therefore round-trip but
+/// can never overwrite identity, timestamps, the deployment baseline, or the
+/// current preference.
+pub(super) fn decode_profile_request(
+    mut body: Value,
+    accepts_profile_view: bool,
+) -> Result<(ProfileRequest, Option<String>), serde_json::Error> {
+    let echoed_id = if accepts_profile_view {
+        let mut server_fields = Map::new();
+        if let Some(profile) = body.as_object_mut() {
+            for field in PROFILE_SERVER_FIELDS {
+                if let Some(value) = profile.remove(*field) {
+                    server_fields.insert((*field).to_owned(), value);
+                }
+            }
+        }
+        serde_json::from_value::<ProfileViewEcho>(Value::Object(server_fields))?.into_id()
+    } else {
+        None
+    };
+    Ok((serde_json::from_value(body)?, echoed_id))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileViewEcho {
+    #[serde(default, deserialize_with = "present_non_null")]
+    id: Option<String>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    mandatory: Option<MandatoryEcho>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    created_at: Option<String>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    updated_at: Option<String>,
+    #[serde(default, deserialize_with = "present_non_null")]
+    preferred: Option<bool>,
+}
+
+fn present_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+impl ProfileViewEcho {
+    fn into_id(self) -> Option<String> {
+        let Self {
+            id,
+            mandatory,
+            created_at,
+            updated_at,
+            preferred,
+        } = self;
+        if let Some(MandatoryEcho { packages, skills }) = mandatory {
+            drop((packages, skills));
+        }
+        drop((created_at, updated_at, preferred));
+        id
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MandatoryEcho {
+    packages: Vec<String>,
+    skills: Vec<String>,
 }
 
 fn unknown_in(
