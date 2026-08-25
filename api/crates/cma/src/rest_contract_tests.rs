@@ -13,15 +13,16 @@ use axum::{
     http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
     Extension, Router,
 };
+use futures_util::StreamExt;
 use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, AuthenticatedSubject};
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, Authorization, Baseline,
     Caller, Capability, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
-    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore, Event, KernelId,
-    PlatformSettingsService, RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
-    ServiceCatalog, ServiceId, SessionId, SessionPorts, SessionRecord, SessionService,
-    SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource, StoreError,
-    StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore, Event, EventKind,
+    KernelId, PlatformSettingsService, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
+    ScreenSnapshot, ServiceCatalog, ServiceId, SessionId, SessionPorts, SessionRecord,
+    SessionService, SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource,
+    StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -577,6 +578,51 @@ async fn create_ready_session(
     id
 }
 
+async fn seed_cursor_contract_events(store: &MemorySessions, id: &SessionId) {
+    *store.events.lock().await = [41, 42, 43]
+        .into_iter()
+        .map(|seq| Event {
+            session_id: id.clone(),
+            seq,
+            kind: EventKind::SessionCreated,
+            appended_at: String::new(),
+        })
+        .collect();
+}
+
+async fn initial_sse_frames(app: &Router, uri: &str, last_event_id: Option<&str>) -> String {
+    let mut request = Request::get(uri);
+    if let Some(last_event_id) = last_event_id {
+        request = request.header("last-event-id", last_event_id);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).expect("request builds"))
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK, "for {uri}");
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&HeaderValue::from_static("text/event-stream")),
+        "for {uri}"
+    );
+
+    let mut data = response.into_body().into_data_stream();
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), data.next())
+        .await
+        .expect("the seeded replay answers without polling")
+        .expect("the replay contains one frame")
+        .expect("the SSE body is readable");
+    let mut rendered = String::from_utf8(first.to_vec()).expect("SSE frames are text");
+    while let Ok(Some(next)) =
+        tokio::time::timeout(std::time::Duration::from_millis(50), data.next()).await
+    {
+        let bytes = next.expect("the SSE body is readable");
+        rendered.push_str(std::str::from_utf8(&bytes).expect("SSE frames are text"));
+    }
+    rendered
+}
+
 fn assert_creator(view: &serde_json::Value) {
     assert_eq!(
         view["creator"],
@@ -807,6 +853,55 @@ async fn listed_origin_allows_the_sdk_reconnect_cursor_header() {
 }
 
 #[tokio::test]
+async fn rest_event_cursor_spellings_each_resume_at_the_next_event_once() {
+    let TestSurface {
+        app,
+        sessions,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_session(&app, &sessions, &caller).await;
+    seed_cursor_contract_events(&store, &id).await;
+
+    for query in ["starting_after=42", "after=42"] {
+        let uri = format!("/api/v1/sessions/{}/events?{query}", id.0);
+        let frame = initial_sse_frames(&app, &uri, None).await;
+        assert_eq!(frame.matches("id: 43").count(), 1, "for {query}: {frame:?}");
+        assert!(frame.contains("\"seq\":43"), "for {query}: {frame:?}");
+        assert!(
+            frame.contains(&format!("\"session_id\":\"{}\"", id.0)),
+            "for {query}: {frame:?}"
+        );
+        assert!(frame.contains("\"event\":"), "for {query}: {frame:?}");
+        assert!(
+            frame.lines().all(|line| !line.starts_with("event:")),
+            "REST uses SSE's default event type: {frame:?}"
+        );
+        assert!(!frame.contains("id: 41"), "for {query}: {frame:?}");
+        assert!(!frame.contains("id: 42"), "for {query}: {frame:?}");
+    }
+}
+
+#[tokio::test]
+async fn last_event_id_wins_over_a_conflicting_rest_query_cursor() {
+    let TestSurface {
+        app,
+        sessions,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_session(&app, &sessions, &caller).await;
+    seed_cursor_contract_events(&store, &id).await;
+
+    let uri = format!("/api/v1/sessions/{}/events?starting_after=41", id.0);
+    let frame = initial_sse_frames(&app, &uri, Some("42")).await;
+    assert_eq!(frame.matches("id: 43").count(), 1, "{frame:?}");
+    assert!(!frame.contains("id: 42"), "{frame:?}");
+}
+
+#[tokio::test]
 async fn listed_origin_allows_profile_put_preflight() {
     let app = with_cors(
         test_surface(true).app,
@@ -898,6 +993,9 @@ async fn bad_query_strings_are_problem_documents_on_every_query_route() {
     let app = test_surface(true).app;
     for uri in [
         "/api/v1/sessions/sesn_bad/events?after=not-a-number",
+        "/api/v1/sessions/sesn_bad/events?starting_after=not-a-number",
+        "/api/v1/sessions/sesn_bad/events?startingafter=17",
+        "/api/v1/sessions/sesn_bad/events?starting_after=17&after=17",
         "/api/v1/pricing/quote?environment_profile=one&environment_profile=two",
         "/api/v1/admin/users?limit=not-a-number",
         "/api/v1/admin/activity?limit=not-a-number",
