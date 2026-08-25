@@ -755,6 +755,7 @@ impl AuthState {
         first_error.map_or(Ok(reclaimed), Err)
     }
 
+    #[cfg(test)]
     pub(super) async fn mint_session_credential(
         &self,
         session: &SessionId,
@@ -762,8 +763,26 @@ impl AuthState {
         services: &[ServiceId],
         replacement: bool,
     ) -> Result<Option<String>, StoreError> {
-        self.mint_session_credential_inner(session, subject, services, replacement, None)
+        self.mint_session_credential_inner(session, subject, services, None, replacement, None)
             .await
+    }
+
+    async fn mint_session_credential_for_request(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        caller_credential: Option<&str>,
+    ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential_inner(
+            session,
+            subject,
+            services,
+            caller_credential,
+            false,
+            None,
+        )
+        .await
     }
 
     pub(super) async fn mint_session_credential_with_budget(
@@ -774,8 +793,15 @@ impl AuthState {
         replacement: bool,
         budget: AuthOperationBudget,
     ) -> Result<Option<String>, StoreError> {
-        self.mint_session_credential_inner(session, subject, services, replacement, Some(budget))
-            .await
+        self.mint_session_credential_inner(
+            session,
+            subject,
+            services,
+            None,
+            replacement,
+            Some(budget),
+        )
+        .await
     }
 
     async fn mint_session_credential_inner(
@@ -783,15 +809,19 @@ impl AuthState {
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
+        caller_credential: Option<&str>,
         replacement: bool,
         budget: Option<AuthOperationBudget>,
     ) -> Result<Option<String>, StoreError> {
         let Some(issuer) = self.issuer.read().await.clone() else {
+            if let Some(credential) = caller_credential {
+                return Ok(Some(credential.to_string()));
+            }
             take_operation(budget.as_ref(), 1, "subject access-token read")?;
             return self.access_token(subject).await;
         };
         let fingerprint = scope_fingerprint(services);
-        let mut owner_token = None;
+        let mut owner_token = caller_credential.map(str::to_string);
 
         let (holder, fence) = loop {
             let current = ensure_state(&self.store, session, budget.as_ref()).await?;
@@ -1101,8 +1131,9 @@ impl layer2_core::CredentialSource for AuthState {
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
+        caller_credential: Option<&str>,
     ) -> Result<Option<String>, StoreError> {
-        self.mint_session_credential(session, subject, services, false)
+        self.mint_session_credential_for_request(session, subject, services, caller_credential)
             .await
     }
 

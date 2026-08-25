@@ -2320,6 +2320,16 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         ticket_schema["$ref"], "#/components/schemas/TicketRequest",
         "an explicit ticket body must be a non-null TicketRequest: {ticket_schema}"
     );
+    let ticket_responses = &paths["/api/v1/sessions/{id}/terminal-ticket"]["post"]["responses"];
+    assert_eq!(
+        ticket_responses["503"]["content"]["application/problem+json"]["schema"]["$ref"],
+        "#/components/schemas/ProblemDocument",
+        "ticket-store failures must advertise their typed problem: {ticket_responses}"
+    );
+    assert_eq!(
+        ticket_responses["default"]["$ref"], "#/components/responses/Problem",
+        "the shared OpenAPI problem fallback must remain present: {ticket_responses}"
+    );
 
     let profile_create_schema = &paths["/api/v1/environment-profiles"]["post"]["requestBody"]
         ["content"]["application/json"]["schema"];

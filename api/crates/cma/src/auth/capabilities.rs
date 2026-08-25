@@ -45,7 +45,8 @@ impl AuthState {
     /// bypassing them.
     pub async fn authorization(&self, subject: &SubjectId) -> Result<Authorization, StoreError> {
         Ok(self
-            .subject_fact(subject)
+            .store
+            .subject(subject)
             .await?
             .map(|state| state.authorization)
             .unwrap_or_else(Authorization::none))

@@ -519,7 +519,9 @@ async fn a_lost_mongo_ack_does_not_revoke_or_remint_recorded_initial_custody() {
 
     store.lose_credential_replace_response_on_call(2);
     assert!(matches!(
-        minting.credential_for(&session, &owner, &services).await,
+        minting
+            .credential_for(&session, &owner, &services, None)
+            .await,
         Err(StoreError::Unavailable(_))
     ));
     assert_eq!(platform.mints.load(Ordering::SeqCst), 1);
@@ -548,7 +550,7 @@ async fn a_lost_mongo_ack_does_not_revoke_or_remint_recorded_initial_custody() {
         .await;
     assert_eq!(
         restarted
-            .credential_for(&session, &owner, &services)
+            .credential_for(&session, &owner, &services, None)
             .await
             .expect("restart reads recorded custody"),
         Some("full-key-1".into())
@@ -577,7 +579,7 @@ async fn a_lost_mongo_ack_does_not_revoke_or_remint_recorded_pending_custody() {
 
     assert_eq!(
         minting
-            .credential_for(&session, &owner, &services)
+            .credential_for(&session, &owner, &services, None)
             .await
             .expect("initial custody persists"),
         Some("full-key-1".into())
@@ -649,7 +651,9 @@ async fn lost_initial_mint_response_is_reclaimed_after_restart_and_lease_expiry(
 
     store.fail_credential_replace_on_call(2);
     assert!(matches!(
-        minting.credential_for(&session, &owner, &services).await,
+        minting
+            .credential_for(&session, &owner, &services, None)
+            .await,
         Err(StoreError::Unavailable(_))
     ));
     assert_eq!(platform.remaining_ids(), ["provider-key-1"]);
@@ -927,12 +931,49 @@ async fn another_instance_reads_the_same_current_credential() {
     drop(first);
     assert_eq!(
         second
-            .credential_for(&session, &owner, &services)
+            .credential_for(&session, &owner, &services, None)
             .await
             .expect("credential loads")
             .as_deref(),
         Some("session-secret")
     );
+}
+
+#[tokio::test]
+async fn a_request_bearer_mints_session_custody_without_becoming_subject_state() {
+    let (base, mints, server) = mint_platform().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+        reqwest::Client::new(),
+        base,
+        "test",
+    )))
+    .await;
+    let owner = SubjectId("bearer-owner".into());
+    let session = SessionId("sesn_request_bearer".into());
+    let services = [ServiceId::new("model")];
+
+    assert_eq!(
+        auth.credential_for(&session, &owner, &services, Some("owner-access"))
+            .await
+            .expect("request token mints custody")
+            .as_deref(),
+        Some("full-key-1")
+    );
+    assert_eq!(mints.load(Ordering::SeqCst), 1);
+    assert!(
+        store.subject(&owner).await.expect("store works").is_none(),
+        "an externally minted bearer must not overwrite renewable browser state"
+    );
+    assert!(store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("session custody persists")
+        .current
+        .is_some());
+    server.abort();
 }
 
 #[tokio::test]
@@ -959,7 +1000,7 @@ async fn two_instances_racing_for_one_session_mint_exactly_one_key() {
         let owner = owner.clone();
         let services = services.clone();
         async move {
-            auth.credential_for(&session, &owner, &services)
+            auth.credential_for(&session, &owner, &services, None)
                 .await
                 .expect("first replica completes")
         }
@@ -970,7 +1011,7 @@ async fn two_instances_racing_for_one_session_mint_exactly_one_key() {
         let owner = owner.clone();
         let services = services.clone();
         async move {
-            auth.credential_for(&session, &owner, &services)
+            auth.credential_for(&session, &owner, &services, None)
                 .await
                 .expect("second replica completes")
         }
@@ -1004,7 +1045,7 @@ async fn a_pending_replacement_survives_replica_restart_until_confirmation() {
 
     assert_eq!(
         first
-            .credential_for(&session, &owner, &services)
+            .credential_for(&session, &owner, &services, None)
             .await
             .expect("initial mint succeeds")
             .as_deref(),
@@ -1157,7 +1198,7 @@ async fn an_expired_initial_mint_lease_is_recovered_after_restart() {
 
     assert_eq!(
         restarted
-            .credential_for(&session, &owner, &services)
+            .credential_for(&session, &owner, &services, None)
             .await
             .expect("initial mint resumes")
             .as_deref(),
@@ -1204,7 +1245,7 @@ async fn release_fences_a_provider_mint_that_finishes_late() {
         let auth = Arc::clone(&minting);
         let session = session.clone();
         let owner = owner.clone();
-        async move { auth.credential_for(&session, &owner, &services).await }
+        async move { auth.credential_for(&session, &owner, &services, None).await }
     });
     tokio::time::timeout(Duration::from_secs(1), async {
         while mints.load(Ordering::SeqCst) == 0 {
@@ -1320,6 +1361,7 @@ async fn a_store_outage_is_an_error_not_an_absent_delegation() {
             &SessionId("sesn_outage".into()),
             &owner,
             &[ServiceId::new("model")],
+            None,
         )
         .await,
         Err(StoreError::Unavailable(_))
