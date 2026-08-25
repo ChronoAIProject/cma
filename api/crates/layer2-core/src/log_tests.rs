@@ -402,7 +402,15 @@ async fn dropping_a_success_delivered_before_poll_runs_its_cleanup() {
         send.send(delivery).is_ok(),
         "the success is placed in the unpolled receiver"
     );
-    drop(receive);
+    std::thread::spawn(move || {
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "the regression must drop outside every entered Tokio runtime"
+        );
+        drop(receive);
+    })
+    .join()
+    .expect("the outside-runtime receiver drop does not panic");
 
     tokio::time::timeout(Duration::from_secs(1), async {
         while !cleaned.load(Ordering::SeqCst) {
