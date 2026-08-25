@@ -80,6 +80,25 @@ Binary frames are terminal bytes. Text frames are JSON control messages. There i
 | S → C | `{"t":"error","code":"…","detail":"…"}` | typed failure |
 | S → C | `{"t":"pong"}` | keepalive response |
 
+### Refusal while an established socket is rotating
+
+A session can enter `rotating` after this socket has already received `ready`.
+From that moment, binary input, `resize`, and `signal` frames are refused with
+the same typed, retryable control frame:
+
+```json
+{ "t": "error", "code": "session_rotating", "detail": "…" }
+```
+
+The refused operation did not reach the outgoing runtime and is not buffered
+by the server. Rotation ends on its own. Clients should disable input for the
+duration, and may retry an intended operation only after the session is usable
+again (normally after the rotation close and a fresh attach reaches `ready`).
+Client-side disabling is an experience improvement; the server-side refusal is
+the correctness boundary. If supersession overlaps a frame the server already
+read, its `session_rotating` error is sent before the `4001` or `4002` close.
+Once supersession is observed, the server accepts no later client frame.
+
 ### Process ending
 
 An `exit` frame reports the status of the supervised kernel process. `code` is
