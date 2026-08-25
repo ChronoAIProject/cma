@@ -661,13 +661,20 @@ pub(crate) fn spawn_folder(
     id: SessionId,
     mut updates: mpsc::Receiver<ConversationUpdate>,
 ) {
+    // Kept alive for the folder's lifetime so every prompt and every update
+    // for this runtime meet at the same per-session gate. It is deliberately
+    // independent of lifecycle installation: this folder starts first because
+    // a conversation can report useful updates while it is still opening.
+    let ordering = service.conversation_order_gates.gate(&id);
     tokio::spawn(async move {
         while let Some(update) = updates.recv().await {
+            let _ordered_update = ordering.lock().await;
             service.fold_update(&id, update).await;
         }
         // The channel ending is the runtime's conversation ending. A turn left
         // open would sit in the log forever looking like work still in
         // progress, so it is closed with the reason it actually stopped for.
+        let _ordered_close = ordering.lock().await;
         service.close_open_turn(&id).await;
         tracing::info!(session_id = %id, "conversation folding ended");
     });

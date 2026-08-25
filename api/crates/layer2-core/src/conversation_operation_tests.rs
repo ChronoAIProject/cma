@@ -33,6 +33,113 @@ async fn a_prompt_reaches_the_runtime() {
 }
 
 #[tokio::test]
+async fn a_prompt_records_the_turn_boundary_before_its_owner_message() {
+    let (svc, alice, id, _adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "open the turn".into())
+        .await
+        .expect("the owner may prompt their own session");
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("the prompt history is readable");
+    let prompt_events = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::TurnStarted => Some(&event.kind),
+            EventKind::OwnerMessage { .. } => Some(&event.kind),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        matches!(
+            prompt_events.as_slice(),
+            [EventKind::TurnStarted, EventKind::OwnerMessage { content }]
+                if content == "open the turn"
+        ),
+        "the durable turn must open before its owner message: {prompt_events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_completion_cannot_overtake_the_prompt_turn_boundary() {
+    let (svc, alice, id, adapter) = conversation().await;
+    let updates = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation is open")
+        .updates
+        .clone();
+    let input = layer3_adapter::ConversationInputSender::spawn(1, move |input| {
+        let updates = updates.clone();
+        async move {
+            if matches!(input, ConversationInput::Prompt(_)) {
+                updates
+                    .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                        layer3_adapter::PromptResponse::new(
+                            layer3_adapter::TurnStopReason::EndTurn,
+                        ),
+                    ))
+                    .await
+                    .expect("the core is folding runtime updates");
+                // Let the folder observe the completion before delivery is
+                // acknowledged. Without the conversation-order gate it folds
+                // the ending here, ahead of the boundary below.
+                tokio::task::yield_now().await;
+            }
+            Ok(())
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(input);
+
+    svc.send_prompt(&alice, &id, "finish immediately".into())
+        .await
+        .expect("the prompt was delivered");
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::TurnCompleted
+        ))
+        .await,
+        "the immediate completion must still be recorded"
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("the completed prompt history is readable");
+    let turn = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::TurnStarted
+            | EventKind::OwnerMessage { .. }
+            | EventKind::TurnCompleted => Some(&event.kind),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        matches!(
+            turn.as_slice(),
+            [
+                EventKind::TurnStarted,
+                EventKind::OwnerMessage { content },
+                EventKind::TurnCompleted
+            ] if content == "finish immediately"
+        ),
+        "the accepted prompt must be recorded before its effects: {turn:?}"
+    );
+}
+
+#[tokio::test]
 async fn interrupting_cancels_the_turn_rather_than_the_session() {
     let (svc, alice, id, adapter) = conversation().await;
     svc.interrupt_turn(&alice, &id)
