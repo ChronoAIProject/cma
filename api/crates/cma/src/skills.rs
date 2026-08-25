@@ -15,9 +15,10 @@
 //! what is public — correct for a signed-out browse, wrong as a substitute for
 //! the caller, which is why it is never preferred over one.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use layer2_core::{CatalogError, CatalogSkill, SkillCatalog, SkillId, SubjectId};
+use layer2_core::{CatalogError, CatalogSkill, DescribedSkill, SkillCatalog, SkillId, SubjectId};
 
 use crate::store::token::TokenSource;
 
@@ -35,11 +36,22 @@ const SCOPE: &str = "mixed";
 
 /// How many skills one page returns.
 ///
-/// The registry caps a page at 100. The picker shows a flat list, so a single
-/// page is fetched rather than paging: a caller with more than this many
-/// skills is better served by search than by scrolling, and unbounded paging
-/// here would let one request fan out into dozens.
+/// The registry caps a page at 100 and returns an opaque cursor when more exist.
 const PAGE_SIZE: usize = 100;
+
+/// Maximum pages one catalogue response may fan out into.
+///
+/// This is the same external-list ceiling used for sandbox discovery: fifty
+/// pages prove completeness for up to 5,000 skills without letting one picker
+/// request drive an unbounded number of upstream calls. Page fifty is accepted
+/// when it is terminal; a registry that still advertises more fails visibly.
+const CATALOG_PAGE_LIMIT: usize = 50;
+
+/// Maximum complete catalogue size implied by the page contract above.
+const CATALOG_SKILL_LIMIT: usize = PAGE_SIZE * CATALOG_PAGE_LIMIT;
+
+/// Maximum length the registry accepts for an opaque cursor.
+const CURSOR_LENGTH_LIMIT: usize = 2_048;
 
 /// A skill as the registry describes it.
 ///
@@ -47,6 +59,7 @@ const PAGE_SIZE: usize = 100;
 /// rather than breaking the picker.
 #[derive(Debug, serde::Deserialize)]
 struct RegistrySkill {
+    #[serde(default)]
     guid: String,
     #[serde(default)]
     name: String,
@@ -57,10 +70,62 @@ struct RegistrySkill {
     access_reason: Option<String>,
 }
 
+#[derive(Debug)]
+enum DescriptionMatch {
+    Missing,
+    Unique { skill: CatalogSkill, exact_id: bool },
+    Ambiguous,
+}
+
+impl DescriptionMatch {
+    fn record(&mut self, skill: CatalogSkill, exact_id: bool) {
+        *self = match self {
+            Self::Missing => Self::Unique { skill, exact_id },
+            Self::Unique { .. } | Self::Ambiguous => Self::Ambiguous,
+        };
+    }
+
+    fn reject(&mut self) {
+        *self = Self::Ambiguous;
+    }
+}
+
+impl RegistrySkill {
+    fn into_catalog(self) -> Result<CatalogSkill, CatalogError> {
+        if self.guid.trim().is_empty() {
+            return Err(CatalogError::Malformed(
+                "skill search returned an item without a guid".into(),
+            ));
+        }
+        if self.name.trim().is_empty() {
+            return Err(CatalogError::Malformed(format!(
+                "skill search returned {} without a name",
+                self.guid
+            )));
+        }
+        Ok(CatalogSkill {
+            id: SkillId::new(self.guid),
+            name: self.name,
+            description: self.description,
+            access: self.access_reason,
+        })
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct SearchPage {
-    #[serde(default)]
     items: Vec<RegistrySkill>,
+    #[serde(default)]
+    meta: Option<SearchMeta>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SearchMeta {
+    limit: usize,
+    #[serde(rename = "hasMore")]
+    has_more: bool,
+    #[serde(default, rename = "nextCursor")]
+    next_cursor: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -101,6 +166,46 @@ impl PlatformSkillCatalog {
         format!("{}{SEARCH_PATH}", self.base_url)
     }
 
+    /// Read one canonical cursor page.
+    async fn search_page(
+        &self,
+        url: &str,
+        bearer: &str,
+        query: Option<&str>,
+        cursor: Option<&str>,
+    ) -> Result<SearchPage, CatalogError> {
+        let limit = PAGE_SIZE.to_string();
+        let mut request = self.http.get(url).query(&[
+            ("scope", SCOPE),
+            ("limit", limit.as_str()),
+            ("mode", "keyword"),
+        ]);
+        if let Some(cursor) = cursor {
+            request = request.query(&[("cursor", cursor)]);
+        }
+        if let Some(query) = query {
+            request = request.query(&[("q", query)]);
+        }
+        let response = request
+            .bearer_auth(bearer)
+            .send()
+            .await
+            .map_err(|e| CatalogError::Unavailable(format!("GET {url}: {e}")))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(CatalogError::Unavailable(format!(
+                "skill search returned {status}"
+            )));
+        }
+        let body: SearchResponse = response
+            .json()
+            .await
+            .map_err(|e| CatalogError::Malformed(format!("skill search response: {e}")))?;
+        body.data
+            .ok_or_else(|| CatalogError::Malformed("skill search response has no data".into()))
+    }
+
     /// The credential this request should present.
     ///
     /// The caller's own when there is one. Falling back to this service's
@@ -127,52 +232,256 @@ impl SkillCatalog for PlatformSkillCatalog {
     ) -> Result<Vec<CatalogSkill>, CatalogError> {
         let url = self.search_url();
         let bearer = self.bearer(credential).await?;
-        let resp = self
-            .http
-            .get(&url)
-            .query(&[
-                ("scope", SCOPE),
-                ("pageSize", &PAGE_SIZE.to_string()),
-                ("mode", "keyword"),
-            ])
-            .bearer_auth(bearer)
-            .send()
-            .await
-            .map_err(|e| CatalogError::Unavailable(format!("GET {url}: {e}")))?;
+        let mut cursor = None;
+        let mut cursors = HashSet::new();
+        let mut identities = HashSet::new();
+        let mut skills = Vec::new();
 
-        let status = resp.status();
-        if !status.is_success() {
-            // The body can name the reason but is also where a proxy echoes a
-            // request back, so the status alone is reported.
-            return Err(CatalogError::Unavailable(format!(
-                "skill search returned {status}"
-            )));
+        for page_number in 1..=CATALOG_PAGE_LIMIT {
+            let page = self
+                .search_page(&url, &bearer, None, cursor.as_deref())
+                .await?;
+            let meta = page.meta.ok_or_else(|| {
+                CatalogError::Malformed(format!(
+                    "skill search page {page_number} has no pagination metadata"
+                ))
+            })?;
+            if meta.limit == 0 || meta.limit > PAGE_SIZE {
+                return Err(CatalogError::Malformed(format!(
+                    "skill search page {page_number} reported invalid limit {}",
+                    meta.limit
+                )));
+            }
+            if page.items.len() > meta.limit {
+                return Err(CatalogError::Malformed(format!(
+                    "skill search page {page_number} returned {} items for limit {}",
+                    page.items.len(),
+                    meta.limit
+                )));
+            }
+
+            for item in page.items {
+                let skill = item.into_catalog()?;
+                if !identities.insert(skill.id.0.clone()) {
+                    return Err(CatalogError::Malformed(format!(
+                        "skill search repeated identity {}",
+                        skill.id.0
+                    )));
+                }
+                skills.push(skill);
+            }
+
+            if !meta.has_more {
+                tracing::info!(
+                    %subject,
+                    count = skills.len(),
+                    pages = page_number,
+                    delegated = credential.is_some(),
+                    "listed selectable skills"
+                );
+                return Ok(skills);
+            }
+            if skills.len() >= CATALOG_SKILL_LIMIT || page_number == CATALOG_PAGE_LIMIT {
+                return Err(CatalogError::Malformed(format!(
+                    "skill search did not end within {CATALOG_PAGE_LIMIT} pages / {CATALOG_SKILL_LIMIT} skills"
+                )));
+            }
+
+            let next = meta
+                .next_cursor
+                .filter(|next| !next.trim().is_empty())
+                .ok_or_else(|| {
+                    CatalogError::Malformed(format!(
+                        "skill search page {page_number} says more exist but has no next cursor"
+                    ))
+                })?;
+            if next.len() > CURSOR_LENGTH_LIMIT {
+                return Err(CatalogError::Malformed(format!(
+                    "skill search page {page_number} returned an oversized cursor"
+                )));
+            }
+            if !cursors.insert(next.clone()) {
+                return Err(CatalogError::Malformed(format!(
+                    "skill search repeated a cursor on page {page_number}"
+                )));
+            }
+            cursor = Some(next);
         }
-        let body: SearchResponse = resp
-            .json()
-            .await
-            .map_err(|e| CatalogError::Malformed(format!("skill search response: {e}")))?;
 
-        let items = body.data.map(|d| d.items).unwrap_or_default();
-        let skills: Vec<CatalogSkill> = items
+        unreachable!("the catalogue page loop returns at its explicit bound")
+    }
+
+    async fn describe(
+        &self,
+        subject: &SubjectId,
+        credential: Option<&str>,
+        skills: &[SkillId],
+    ) -> Result<Vec<DescribedSkill>, CatalogError> {
+        if skills.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let url = self.search_url();
+        let bearer = self.bearer(credential).await?;
+        let mut requested = HashMap::new();
+        let mut requested_order = Vec::new();
+        let mut matches = Vec::new();
+        for skill in skills {
+            if requested.contains_key(&skill.0) {
+                continue;
+            }
+            requested.insert(skill.0.clone(), matches.len());
+            requested_order.push(skill.clone());
+            matches.push(DescriptionMatch::Missing);
+        }
+
+        let mut cursor = None;
+        let mut cursors = HashSet::new();
+        let mut pages = 0;
+        let mut failure = None;
+        let mut complete = false;
+
+        for page_number in 1..=CATALOG_PAGE_LIMIT {
+            pages = page_number;
+            let page = match self
+                .search_page(&url, &bearer, None, cursor.as_deref())
+                .await
+            {
+                Ok(page) => page,
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            };
+
+            let item_count = page.items.len();
+            let meta = match &page.meta {
+                Some(meta) => meta,
+                None => {
+                    failure = Some(CatalogError::Malformed(format!(
+                        "skill search page {page_number} has no pagination metadata"
+                    )));
+                    break;
+                }
+            };
+            if meta.limit == 0 || meta.limit > PAGE_SIZE {
+                failure = Some(CatalogError::Malformed(format!(
+                    "skill search page {page_number} reported invalid limit {}",
+                    meta.limit
+                )));
+                break;
+            }
+            if item_count > meta.limit {
+                failure = Some(CatalogError::Malformed(format!(
+                    "skill search page {page_number} returned {item_count} items for limit {}",
+                    meta.limit
+                )));
+                break;
+            }
+            let next = if meta.has_more {
+                if page_number == CATALOG_PAGE_LIMIT {
+                    failure = Some(CatalogError::Malformed(format!(
+                        "skill search did not end within {CATALOG_PAGE_LIMIT} pages / {CATALOG_SKILL_LIMIT} skills"
+                    )));
+                    break;
+                }
+                let Some(next) = meta
+                    .next_cursor
+                    .as_ref()
+                    .filter(|next| !next.trim().is_empty())
+                else {
+                    failure = Some(CatalogError::Malformed(format!(
+                        "skill search page {page_number} says more exist but has no next cursor"
+                    )));
+                    break;
+                };
+                if next.len() > CURSOR_LENGTH_LIMIT {
+                    failure = Some(CatalogError::Malformed(format!(
+                        "skill search page {page_number} returned an oversized cursor"
+                    )));
+                    break;
+                }
+                if !cursors.insert(next.clone()) {
+                    failure = Some(CatalogError::Malformed(format!(
+                        "skill search repeated a cursor on page {page_number}"
+                    )));
+                    break;
+                }
+                Some(next.clone())
+            } else {
+                None
+            };
+
+            for item in page.items {
+                let guid_match = requested.get(&item.guid).copied();
+                let name_match = requested.get(&item.name).copied();
+                match item.into_catalog() {
+                    Ok(candidate) => {
+                        if let Some(index) = guid_match {
+                            matches[index].record(candidate.clone(), true);
+                        }
+                        if let Some(index) = name_match.filter(|index| Some(*index) != guid_match) {
+                            matches[index].record(candidate, false);
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(index) = guid_match {
+                            matches[index].reject();
+                        }
+                        if let Some(index) = name_match.filter(|index| Some(*index) != guid_match) {
+                            matches[index].reject();
+                        }
+                        tracing::warn!(
+                            page = page_number,
+                            error = %error,
+                            "ignored malformed skill metadata while describing durable grants"
+                        );
+                    }
+                }
+            }
+
+            if let Some(next) = next {
+                cursor = Some(next);
+            } else {
+                complete = true;
+                break;
+            }
+        }
+
+        let described: Vec<DescribedSkill> = requested_order
             .into_iter()
-            // A skill with no identifier cannot be stored in a profile, so it
-            // is dropped rather than offered and then rejected on save.
-            .filter(|s| !s.guid.trim().is_empty())
-            .map(|s| CatalogSkill {
-                id: SkillId::new(s.guid),
-                name: s.name,
-                description: s.description,
-                access: s.access_reason,
+            .zip(matches)
+            .filter_map(|(requested, matched)| match matched {
+                DescriptionMatch::Unique { skill, exact_id } if complete || exact_id => {
+                    Some(DescribedSkill { requested, skill })
+                }
+                DescriptionMatch::Unique { .. }
+                | DescriptionMatch::Missing
+                | DescriptionMatch::Ambiguous => None,
             })
             .collect();
+        if described.is_empty() {
+            if let Some(error) = failure {
+                return Err(error);
+            }
+        } else if let Some(error) = failure {
+            tracing::warn!(
+                %subject,
+                pages,
+                count = described.len(),
+                error = %error,
+                "skill metadata walk ended early; preserving exact matches collected so far"
+            );
+        }
         tracing::info!(
             %subject,
-            count = skills.len(),
+            count = described.len(),
+            requested = requested.len(),
+            pages,
             delegated = credential.is_some(),
-            "listed selectable skills"
+            "described this page's session skills"
         );
-        Ok(skills)
+        Ok(described)
     }
 }
 
@@ -280,14 +589,15 @@ mod tests {
         // picker.
         let body: SearchResponse = serde_json::from_str(
             r#"{"data":{"items":[{"guid":"g1","tags":["x"],"isPrivate":false}],
-                "meta":{"hasMore":false}},"error":null}"#,
+                "meta":{"limit":100,"hasMore":false,"newField":"kept-forward-compatible"}},
+                "error":null,"topLevelAddition":true}"#,
         )
         .expect("forward-compatible");
         assert_eq!(body.data.expect("has data").items[0].guid, "g1");
     }
 
     #[test]
-    fn a_response_with_no_data_is_an_empty_list_rather_than_an_error() {
+    fn a_response_with_no_data_is_represented_as_missing_not_as_an_empty_page() {
         let body: SearchResponse = serde_json::from_str(r#"{"error":null}"#).expect("parses");
         assert!(body.data.is_none());
     }
@@ -300,6 +610,10 @@ mod tests {
         assert!(from_config("https://platform.example", Some(tokens)).is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "skills_paging_tests.rs"]
+mod paging_tests;
 
 /// Where one skill's contents are fetched from.
 ///

@@ -410,6 +410,7 @@ fn error_code(err: &CoreError) -> &'static str {
         // here rather than a frame that quietly says the wrong thing.
         CoreError::ServiceNotGranted(_) => "service_not_granted",
         CoreError::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+        CoreError::SkillCatalogUnavailable(_) => "skill_catalogue_unavailable",
         // A card-change refusal occurs only while creating a session, which
         // this interface never does. It remains named so the exhaustive match
         // keeps the terminal vocabulary aligned with the core.

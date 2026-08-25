@@ -19,8 +19,8 @@ use std::sync::Arc;
 use crate::authz::{Caller, Capability};
 use crate::clock::now_rfc3339;
 use crate::environment::{
-    AgentConfiguration, Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
-    ResolvedEnvironment, ServiceAvailability, SkillCatalog,
+    AgentConfiguration, Baseline, CatalogSkill, DescribedSkill, EnvironmentProfile,
+    EnvironmentProfileSpec, ResolvedEnvironment, ServiceAvailability, SkillCatalog, SkillId,
 };
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
@@ -585,7 +585,34 @@ impl EnvironmentProfileService {
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "cannot list selectable skills");
-                CoreError::RuntimeUnavailable(format!("skill catalogue: {e}"))
+                CoreError::SkillCatalogUnavailable(e.to_string())
+            })
+    }
+
+    /// Describe the named skills through the catalogue's bounded projection.
+    ///
+    /// Session views already hold the durable grant. This lookup supplies only
+    /// display metadata for those identifiers, so an adapter can use one
+    /// bounded projection instead of one upstream request per durable grant.
+    pub async fn describe_skills(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+        skills: &[SkillId],
+    ) -> Result<Vec<DescribedSkill>, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let Some(catalog) = self.catalog.as_ref() else {
+            tracing::debug!("no skill catalogue is configured");
+            return Ok(Vec::new());
+        };
+        catalog
+            .describe(&caller.subject, credential, skills)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "cannot describe session skills");
+                CoreError::SkillCatalogUnavailable(e.to_string())
             })
     }
 

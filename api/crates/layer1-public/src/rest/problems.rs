@@ -163,6 +163,10 @@ impl IntoResponse for Problem {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service-catalogue-unavailable",
             ),
+            CoreError::SkillCatalogUnavailable(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "skill-catalogue-unavailable",
+            ),
             // The same request succeeds after the caller re-quotes. Time alone
             // does not clear it, so this is a conflict rather than a rate limit.
             CoreError::PriceChanged { .. } => (StatusCode::CONFLICT, "price-changed"),
@@ -181,7 +185,16 @@ impl IntoResponse for Problem {
             }
         };
 
-        let mut body = problem_document(status, slug, &rendered.to_string(), rendered.code());
+        // Upstream errors can contain request URLs and transport internals. The
+        // logs retain those for diagnosis; the public problem says only what a
+        // caller can act on and never reflects the upstream string.
+        let detail = match rendered {
+            CoreError::SkillCatalogUnavailable(_) => {
+                "The skill catalogue could not be read completely.".to_string()
+            }
+            _ => rendered.to_string(),
+        };
+        let mut body = problem_document(status, slug, &detail, rendered.code());
         if let Some(object) = body.as_object_mut() {
             match rendered {
                 // Names are fields rather than prose a client has to parse.
@@ -326,6 +339,7 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("service".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::SkillCatalogUnavailable("down".into()),
             CoreError::PriceChanged {
                 quoted: "rate_old".into(),
                 in_force: "rate_new".into(),
@@ -354,6 +368,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::SkillCatalogUnavailable(_)
                 | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
@@ -383,6 +398,27 @@ mod tests {
         assert_eq!(body["requested"], 8_193);
         assert_eq!(body["minimum"], 256);
         assert_eq!(body["maximum"], 8_192);
+    }
+
+    #[tokio::test]
+    async fn a_skill_catalogue_failure_is_coded_and_does_not_reflect_upstream_detail() {
+        let (status, body) = rendered(CoreError::SkillCatalogUnavailable(
+            "GET https://registry.internal/secret?cursor=opaque failed".into(),
+        ))
+        .await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["code"], "skill_catalogue_unavailable");
+        assert!(body["type"]
+            .as_str()
+            .expect("problem type")
+            .ends_with("/skill-catalogue-unavailable"));
+        assert_eq!(
+            body["detail"],
+            "The skill catalogue could not be read completely."
+        );
+        assert!(!body.to_string().contains("registry.internal"));
+        assert!(!body.to_string().contains("opaque"));
     }
 
     #[tokio::test]
