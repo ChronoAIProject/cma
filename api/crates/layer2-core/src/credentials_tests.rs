@@ -6,7 +6,7 @@ use std::sync::Arc;
 use layer3_adapter::KernelAdapter;
 
 use crate::authz::{Authorization, Caller, Capability};
-use crate::ids::{KernelId, SubjectId};
+use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::SessionService;
 use crate::session::SessionSpec;
 use crate::terminal::ScreenModel;
@@ -512,6 +512,91 @@ mod what_still_claims_a_credential {
 
         assert!(matches!(
             svc.session_claims_credential(&crate::ids::SessionId("sesn_unreadable".into()))
+                .await,
+            Err(crate::store::StoreError::Unavailable(_))
+        ));
+    }
+}
+
+/// The durable authority used when recurring work replaces a session key.
+mod recurring_credential_context {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_active_session_returns_its_durable_owner_and_frozen_grant() {
+        let store = Arc::new(FakeStore::default());
+        let svc = service_with_store(
+            Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            Arc::clone(&store),
+            None,
+            true,
+        );
+        let owner = caller("durable-owner");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("session is durably created");
+
+        let (recorded_owner, services) = svc
+            .session_credential_context(&session.id)
+            .await
+            .expect("session store works")
+            .expect("active session has credential context");
+        assert_eq!(recorded_owner, owner.subject);
+        assert_eq!(
+            services,
+            store
+                .sessions
+                .lock()
+                .await
+                .get(session.id.as_str())
+                .expect("durable session exists")
+                .session
+                .granted_services
+                .clone()
+                .expect("new sessions freeze their service grant")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_and_terminal_sessions_have_no_credential_context() {
+        let svc = service(Arc::new(tokio::sync::Mutex::new(Vec::new())));
+        assert_eq!(
+            svc.session_credential_context(&SessionId("sesn_missing".into()))
+                .await
+                .expect("session store works"),
+            None
+        );
+
+        let owner = caller("terminal-owner");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("session is created");
+        svc.terminate_session(&owner, &session.id)
+            .await
+            .expect("session is terminated");
+        assert_eq!(
+            svc.session_credential_context(&session.id)
+                .await
+                .expect("session store works"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_outage_is_not_misreported_as_missing_context() {
+        let store = Arc::new(FakeStore::default());
+        let svc = service_with_store(
+            Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            Arc::clone(&store),
+            None,
+            true,
+        );
+        store.fail_everything().await;
+
+        assert!(matches!(
+            svc.session_credential_context(&SessionId("sesn_unreadable".into()))
                 .await,
             Err(crate::store::StoreError::Unavailable(_))
         ));

@@ -90,7 +90,11 @@ impl AuthState {
                 expires_at: SystemTime::now() + REFRESH_LEASE_LIFETIME,
             });
             take_operation(budget, 2, "subject refresh lease write")?;
-            if self.store.replace_subject(current.revision, next).await? {
+            if self
+                .store
+                .replace_subject(&current.incarnation, current.revision, next)
+                .await?
+            {
                 return Ok(LeaseOutcome::Acquired(holder));
             }
         }
@@ -124,7 +128,11 @@ impl AuthState {
             next.tokens = tokens.clone();
             next.refresh_lease = None;
             take_operation(budget, 2, "subject refresh completion write")?;
-            if self.store.replace_subject(current.revision, next).await? {
+            if self
+                .store
+                .replace_subject(&current.incarnation, current.revision, next)
+                .await?
+            {
                 return Ok(true);
             }
         }
@@ -155,7 +163,11 @@ impl AuthState {
                 .ok_or_else(|| StoreError::Malformed("subject auth revision exhausted".into()))?;
             next.refresh_lease = None;
             take_operation(budget, 2, "subject refresh abandonment write")?;
-            if self.store.replace_subject(current.revision, next).await? {
+            if self
+                .store
+                .replace_subject(&current.incarnation, current.revision, next)
+                .await?
+            {
                 return Ok(());
             }
         }
@@ -720,10 +732,11 @@ mod tests {
             .expect("store works")
             .expect("expired incarnation exists");
         let expired_revision = expired_fact.revision;
+        let expired_incarnation = expired_fact.incarnation.clone();
         expired_fact.revision += 1;
         expired_fact.incarnation = "expired-incarnation".into();
         assert!(expired_store
-            .replace_subject(expired_revision, expired_fact)
+            .replace_subject(&expired_incarnation, expired_revision, expired_fact)
             .await
             .expect("expired incarnation is deterministic"));
         let stale = expired
@@ -754,10 +767,15 @@ mod tests {
             .expect("store works")
             .expect("replacement incarnation exists");
         let replacement_revision = replacement_fact.revision;
+        let replacement_incarnation = replacement_fact.incarnation.clone();
         replacement_fact.revision += 1;
         replacement_fact.incarnation = "replacement-incarnation".into();
         assert!(replacement_store
-            .replace_subject(replacement_revision, replacement_fact.clone())
+            .replace_subject(
+                &replacement_incarnation,
+                replacement_revision,
+                replacement_fact.clone(),
+            )
             .await
             .expect("replacement incarnation is deterministic"));
         assert_eq!(stale.token_generation, replacement_fact.token_generation);

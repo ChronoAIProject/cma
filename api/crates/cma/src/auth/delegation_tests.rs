@@ -32,6 +32,15 @@ fn auth(store: Arc<MemoryAuthStore>) -> Arc<AuthState> {
     )
 }
 
+async fn configure_test_issuer(auth: &AuthState) {
+    auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+        reqwest::Client::new(),
+        "http://platform.invalid",
+        "test",
+    )))
+    .await;
+}
+
 fn credential(id: &str, value: &str, owner: &SubjectId, scope: &str) -> DurableCredential {
     DurableCredential {
         id: id.into(),
@@ -40,6 +49,7 @@ fn credential(id: &str, value: &str, owner: &SubjectId, scope: &str) -> DurableC
         issued_at: SystemTime::now(),
         expires_at: None,
         scope_fingerprint: scope.into(),
+        revocation_credential: None,
     }
 }
 
@@ -148,6 +158,7 @@ impl AuthStore for TerminalInsertRaceStore {
 
     async fn replace_subject(
         &self,
+        _expected_incarnation: &str,
         _expected_revision: u64,
         _state: SubjectAuthState,
     ) -> Result<bool, StoreError> {
@@ -905,17 +916,10 @@ async fn losing_only_a_mint_lease_does_not_retire_an_active_session() {
 }
 
 #[tokio::test]
-async fn another_instance_reads_the_same_current_credential() {
+async fn issuer_removal_keeps_the_scoped_current_credential() {
     let store = Arc::new(MemoryAuthStore::default());
     let first = auth(store.clone());
     let second = auth(store.clone());
-    second
-        .use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
-            reqwest::Client::new(),
-            "http://provider.invalid",
-            "test",
-        )))
-        .await;
     let owner = SubjectId("owner".into());
     let session = SessionId("sesn_shared".into());
     let services = [ServiceId::new("model")];
@@ -932,11 +936,275 @@ async fn another_instance_reads_the_same_current_credential() {
     drop(first);
     assert_eq!(
         second
-            .credential_for(&session, &owner, &services, None)
+            .credential_for(
+                &session,
+                &owner,
+                &services,
+                Some(&CallerCredential::from("subject-wide")),
+            )
             .await
             .expect("credential loads")
             .as_deref(),
-        Some("session-secret")
+        Some("session-secret"),
+        "removing the issuer must not widen an existing scoped session"
+    );
+    assert!(!second
+        .tracks_subject_credential(&session)
+        .await
+        .expect("scoped custody provenance loads"));
+}
+
+#[tokio::test]
+async fn issuer_removal_rejects_scoped_custody_for_another_owner() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let recorded_owner = SubjectId("recorded-owner".into());
+    let requested_owner = SubjectId("requested-owner".into());
+    let session = SessionId("sesn_wrong_scoped_owner".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential(
+                "provider-id",
+                "wrong-owner-secret",
+                &recorded_owner,
+                &scope,
+            )),
+            None,
+        ))
+        .await
+        .expect("malformed custody fixture persists");
+
+    assert!(matches!(
+        auth.credential_for(&session, &requested_owner, &services, None)
+            .await,
+        Err(StoreError::Malformed(_))
+    ));
+    assert!(matches!(
+        auth.reissue(&session, &requested_owner, &services).await,
+        Err(StoreError::Malformed(_))
+    ));
+
+    let wrong_scope_session = SessionId("sesn_wrong_scoped_grant".into());
+    store
+        .insert_credential(state(
+            &wrong_scope_session,
+            Some(credential(
+                "wrong-scope-provider-id",
+                "wrong-scope-secret",
+                &requested_owner,
+                "not-the-frozen-grant",
+            )),
+            None,
+        ))
+        .await
+        .expect("wrong-scope custody fixture persists");
+    assert!(matches!(
+        auth.credential_for(
+            &wrong_scope_session,
+            &requested_owner,
+            &services,
+            Some(&CallerCredential::from("wider-subject-token")),
+        )
+        .await,
+        Err(StoreError::Malformed(_))
+    ));
+    assert!(matches!(
+        auth.reissue(&wrong_scope_session, &requested_owner, &services)
+            .await,
+        Err(StoreError::Malformed(_))
+    ));
+}
+
+#[tokio::test]
+async fn issuer_removal_does_not_widen_an_incomplete_scoped_transition() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_incomplete_scoped_transition".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let mut custody = state(
+        &session,
+        None,
+        Some(credential(
+            "provider-pending",
+            "pending-session-secret",
+            &owner,
+            &scope,
+        )),
+    );
+    custody.request_bound_credential = Some(SecretValue::new("subject-wide".into()));
+    store
+        .insert_credential(custody)
+        .await
+        .expect("incomplete scoped custody persists");
+
+    assert_eq!(
+        auth.credential_for(
+            &session,
+            &owner,
+            &services,
+            Some(&CallerCredential::from("new-subject-wide")),
+        )
+        .await
+        .expect("incomplete transition fails closed"),
+        None
+    );
+    assert!(!auth
+        .tracks_subject_credential(&session)
+        .await
+        .expect("pending scoped provenance loads"));
+}
+
+#[tokio::test]
+async fn issuer_removal_keeps_a_recorded_transition_mode_correct() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_transition_without_issuer".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-id", "current-secret", &owner, &scope)),
+            Some(credential("pending-id", "pending-secret", &owner, &scope)),
+        ))
+        .await
+        .expect("recorded transition persists");
+
+    assert_eq!(
+        auth.credential_for(&session, &owner, &services, None)
+            .await
+            .expect("ordinary lookup uses current custody")
+            .as_deref(),
+        Some("current-secret")
+    );
+    assert_eq!(
+        auth.reissue(&session, &owner, &services)
+            .await
+            .expect("replacement lookup resumes recorded custody")
+            .as_deref(),
+        Some("pending-secret")
+    );
+}
+
+#[tokio::test]
+async fn configured_issuer_rejects_pending_custody_without_a_current_credential() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    configure_test_issuer(&auth).await;
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_pending_without_current".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    store
+        .insert_credential(state(
+            &session,
+            None,
+            Some(credential("pending-id", "pending-secret", &owner, &scope)),
+        ))
+        .await
+        .expect("incomplete custody fixture persists");
+
+    assert_eq!(
+        auth.credential_for(&session, &owner, &services, None)
+            .await
+            .expect("ordinary credential lookup fails closed"),
+        None
+    );
+    assert_eq!(
+        auth.reissue(&session, &owner, &services)
+            .await
+            .expect("replacement lookup fails closed"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn configured_issuer_rejects_a_pending_credential_owned_by_another_subject() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    configure_test_issuer(&auth).await;
+    let owner = SubjectId("owner".into());
+    let other = SubjectId("other".into());
+    let session = SessionId("sesn_wrong_pending_owner".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-id", "current-secret", &owner, &scope)),
+            Some(credential("pending-id", "pending-secret", &other, &scope)),
+        ))
+        .await
+        .expect("wrong-owner pending fixture persists");
+
+    assert!(matches!(
+        auth.credential_for(&session, &owner, &services, None).await,
+        Err(StoreError::Malformed(_))
+    ));
+}
+
+#[tokio::test]
+async fn configured_issuer_rejects_a_current_credential_owned_by_another_subject() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    configure_test_issuer(&auth).await;
+    let owner = SubjectId("owner".into());
+    let other = SubjectId("other".into());
+    let session = SessionId("sesn_wrong_current_owner".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-id", "current-secret", &other, &scope)),
+            Some(credential("pending-id", "pending-secret", &owner, &scope)),
+        ))
+        .await
+        .expect("wrong-owner current fixture persists");
+
+    assert!(matches!(
+        auth.credential_for(&session, &owner, &services, None).await,
+        Err(StoreError::Malformed(_))
+    ));
+}
+
+#[tokio::test]
+async fn configured_issuer_selects_current_or_pending_by_operation_mode() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    configure_test_issuer(&auth).await;
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_valid_transition".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-id", "current-secret", &owner, &scope)),
+            Some(credential("pending-id", "pending-secret", &owner, &scope)),
+        ))
+        .await
+        .expect("valid transition fixture persists");
+
+    assert_eq!(
+        auth.credential_for(&session, &owner, &services, None)
+            .await
+            .expect("ordinary lookup validates both credentials")
+            .as_deref(),
+        Some("current-secret")
+    );
+    assert_eq!(
+        auth.reissue(&session, &owner, &services)
+            .await
+            .expect("replacement lookup validates both credentials")
+            .as_deref(),
+        Some("pending-secret")
     );
 }
 
@@ -977,7 +1245,15 @@ async fn a_request_bearer_mints_session_custody_without_becoming_subject_state()
         .await
         .expect("store works")
         .expect("session custody persists");
-    assert!(custody.current.is_some());
+    assert_eq!(
+        custody
+            .current
+            .as_ref()
+            .and_then(|held| held.revocation_credential.as_ref())
+            .expect("minted key owns its bearer-only revoke authority")
+            .expose(),
+        "owner-access"
+    );
     assert_eq!(
         custody
             .request_bound_credential
@@ -1234,7 +1510,7 @@ async fn an_expired_replacement_lease_is_recovered_after_restart() {
         .sessions_due_for_reissue(Duration::ZERO)
         .await
         .expect("expired replacement lease is scanned");
-    assert_eq!(due, vec![(session.clone(), owner.clone())]);
+    assert_eq!(due, vec![session.clone()]);
 
     assert_eq!(
         restarted

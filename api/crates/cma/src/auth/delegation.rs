@@ -79,6 +79,24 @@ fn scope_fingerprint(services: &[ServiceId]) -> String {
         .collect()
 }
 
+fn validate_credential_grant(
+    credential: &DurableCredential,
+    subject: &SubjectId,
+    fingerprint: &str,
+) -> Result<(), StoreError> {
+    if &credential.owner != subject {
+        return Err(StoreError::Malformed(
+            "recorded credential does not belong to the session owner".into(),
+        ));
+    }
+    if credential.scope_fingerprint != fingerprint {
+        return Err(StoreError::Malformed(
+            "recorded credential does not match the session grant".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn lease_matches(state: &SessionCredentialState, holder: &str, fence: u64) -> bool {
     state
         .lease
@@ -87,23 +105,75 @@ fn lease_matches(state: &SessionCredentialState, holder: &str, fence: u64) -> bo
 }
 
 fn queue_debt(state: &mut SessionCredentialState, credential: &DurableCredential) {
-    if state
+    let revocation_credential = credential
+        .revocation_credential
+        .clone()
+        .or_else(|| state.request_bound_credential.clone());
+    if let Some(queued) = state
         .revoke_debt
-        .iter()
-        .any(|debt| debt.id == credential.id)
+        .iter_mut()
+        .find(|debt| debt.id == credential.id)
     {
+        if queued.revocation_credential.is_none() {
+            queued.revocation_credential = revocation_credential;
+        }
         return;
     }
     let debt = RevokeDebt {
         id: credential.id.clone(),
         owner: credential.owner.clone(),
         queued_at: SystemTime::now(),
+        revocation_credential,
     };
     let position = state
         .revoke_debt
         .binary_search_by(|queued| queued.id.cmp(&debt.id))
         .unwrap_or_else(|position| position);
     state.revoke_debt.insert(position, debt);
+}
+
+fn retain_request_bound_revocation_authority(state: &mut SessionCredentialState) {
+    let Some(authority) = state.request_bound_credential.as_ref() else {
+        return;
+    };
+    for debt in &mut state.revoke_debt {
+        if debt.revocation_credential.is_none() {
+            debt.revocation_credential = Some(authority.clone());
+        }
+    }
+}
+
+fn enrich_accounted_revocation_authority(
+    state: &mut SessionCredentialState,
+    credential: &DurableCredential,
+) -> bool {
+    let Some(authority) = credential
+        .revocation_credential
+        .clone()
+        .or_else(|| state.request_bound_credential.clone())
+    else {
+        return false;
+    };
+    let mut enriched = false;
+    if let Some(current) = state.current.as_mut() {
+        if current.id == credential.id && current.revocation_credential.is_none() {
+            current.revocation_credential = Some(authority.clone());
+            enriched = true;
+        }
+    }
+    if let Some(pending) = state.pending.as_mut() {
+        if pending.id == credential.id && pending.revocation_credential.is_none() {
+            pending.revocation_credential = Some(authority.clone());
+            enriched = true;
+        }
+    }
+    for debt in &mut state.revoke_debt {
+        if debt.id == credential.id && debt.revocation_credential.is_none() {
+            debt.revocation_credential = Some(authority.clone());
+            enriched = true;
+        }
+    }
+    enriched
 }
 
 fn state_accounts_for_provider_credential(state: &SessionCredentialState, id: &str) -> bool {
@@ -198,23 +268,28 @@ async fn queue_uncommitted(
         terminal_observed |= current.retired;
         let credential_is_accounted_for =
             state_accounts_for_provider_credential(&current, &credential.id);
+        let before = current.clone();
+        let authority_enriched = enrich_accounted_revocation_authority(&mut current, credential);
 
         if terminal_observed {
             if current.retired
+                && current.request_bound_credential.is_none()
                 && current.current.is_none()
                 && current.pending.is_none()
                 && current.lease.is_none()
                 && credential_is_accounted_for
+                && !authority_enriched
             {
                 return Ok(());
             }
-            let before = current.clone();
             if let Some(held) = current.current.take() {
                 queue_debt(&mut current, &held);
             }
             if let Some(held) = current.pending.take() {
                 queue_debt(&mut current, &held);
             }
+            retain_request_bound_revocation_authority(&mut current);
+            current.request_bound_credential = None;
             current.lease = None;
             current.retired = true;
             queue_debt(&mut current, credential);
@@ -225,9 +300,14 @@ async fn queue_uncommitted(
         }
 
         if credential_is_accounted_for {
-            return Ok(());
+            if !authority_enriched {
+                return Ok(());
+            }
+            if replace_state(store, &before, current, budget).await? {
+                return Ok(());
+            }
+            continue;
         }
-        let before = current.clone();
         queue_debt(&mut current, credential);
         if replace_state(store, &before, current, budget).await? {
             return Ok(());
@@ -290,6 +370,7 @@ async fn finish_mint(
     session: SessionId,
     subject: SubjectId,
     owner_token: String,
+    revocation_credential: Option<String>,
     services: Vec<ServiceId>,
     fingerprint: String,
     holder: String,
@@ -316,6 +397,7 @@ async fn finish_mint(
         issued_at: SystemTime::now(),
         expires_at: None,
         scope_fingerprint: fingerprint,
+        revocation_credential: revocation_credential.map(SecretValue::new),
     };
 
     match commit_mint(
@@ -402,13 +484,14 @@ async fn retire_state(store: Arc<dyn AuthStore>, session: SessionId) -> Result<(
             return Ok(());
         }
         let before = current.clone();
-        current.request_bound_credential = None;
         if let Some(held) = current.current.take() {
             queue_debt(&mut current, &held);
         }
         if let Some(held) = current.pending.take() {
             queue_debt(&mut current, &held);
         }
+        retain_request_bound_revocation_authority(&mut current);
+        current.request_bound_credential = None;
         current.lease = None;
         current.retired = true;
         if replace_state(&store, &before, current, None).await? {
@@ -422,13 +505,14 @@ async fn retire_reconciled_state_once(
     mut current: SessionCredentialState,
 ) -> Result<bool, StoreError> {
     let before = current.clone();
-    current.request_bound_credential = None;
     if let Some(held) = current.current.take() {
         queue_debt(&mut current, &held);
     }
     if let Some(held) = current.pending.take() {
         queue_debt(&mut current, &held);
     }
+    retain_request_bound_revocation_authority(&mut current);
+    current.request_bound_credential = None;
     current.lease = None;
     current.retired = true;
     replace_state(store, &before, current, None).await
@@ -817,10 +901,38 @@ impl AuthState {
         replacement: bool,
         budget: Option<AuthOperationBudget>,
     ) -> Result<Option<String>, StoreError> {
+        let fingerprint = scope_fingerprint(services);
         let Some(issuer) = self.issuer.read().await.clone() else {
             loop {
                 let current = ensure_state(&self.store, session, budget.as_ref()).await?;
                 if current.retired {
+                    return Ok(None);
+                }
+                if let Some(pending) = current.pending.as_ref() {
+                    let Some(held) = current.current.as_ref() else {
+                        return Ok(None);
+                    };
+                    validate_credential_grant(held, subject, &fingerprint)?;
+                    validate_credential_grant(pending, subject, &fingerprint)?;
+                    let effective = if replacement { pending } else { held };
+                    return Ok(Some(effective.value.expose().to_owned()));
+                }
+                if let Some(held) = current.current.as_ref() {
+                    validate_credential_grant(held, subject, &fingerprint)?;
+                    if replacement {
+                        // Without an issuer there is no way to create a new
+                        // replacement. A recorded pending value is handled above.
+                        return Ok(None);
+                    }
+                    return Ok(Some(held.value.expose().to_owned()));
+                }
+                if replacement {
+                    return Ok(None);
+                }
+                // A scoped mint is still in flight but cannot be completed
+                // without its issuer. Falling back would silently widen the
+                // session while its frozen reach reports the narrower grant.
+                if current.lease.is_some() {
                     return Ok(None);
                 }
                 if let Some(credential) = current.request_bound_credential {
@@ -864,7 +976,7 @@ impl AuthState {
         } else {
             None
         };
-        let fingerprint = scope_fingerprint(services);
+        let mut revocation_credential = pinned_request_credential.clone();
         let mut owner_token = pinned_request_credential
             .or_else(|| caller_credential.map(|credential| credential.as_ref().to_owned()));
 
@@ -873,25 +985,23 @@ impl AuthState {
             if current.retired {
                 return Ok(None);
             }
-            if replacement {
-                if let Some(pending) = current.pending {
-                    return Ok(Some(pending.value.into_inner()));
-                }
+            if let Some(pending) = current.pending.as_ref() {
                 let Some(held) = current.current.as_ref() else {
                     return Ok(None);
                 };
-                if held.scope_fingerprint != fingerprint {
-                    return Err(StoreError::Malformed(
-                        "recorded credential does not match the session grant".into(),
-                    ));
-                }
-            } else if let Some(held) = current.current {
-                if held.scope_fingerprint != fingerprint {
-                    return Err(StoreError::Malformed(
-                        "recorded credential does not match the session grant".into(),
-                    ));
-                }
-                return Ok(Some(held.value.into_inner()));
+                validate_credential_grant(held, subject, &fingerprint)?;
+                validate_credential_grant(pending, subject, &fingerprint)?;
+                let effective = if replacement { pending } else { held };
+                return Ok(Some(effective.value.expose().to_owned()));
+            }
+            if replacement {
+                let Some(held) = current.current.as_ref() else {
+                    return Ok(None);
+                };
+                validate_credential_grant(held, subject, &fingerprint)?;
+            } else if let Some(held) = current.current.as_ref() {
+                validate_credential_grant(held, subject, &fingerprint)?;
+                return Ok(Some(held.value.expose().to_owned()));
             }
 
             if current
@@ -907,10 +1017,11 @@ impl AuthState {
             }
 
             if owner_token.is_none() {
-                owner_token = current
-                    .request_bound_credential
-                    .as_ref()
-                    .map(|credential| credential.expose().to_owned());
+                if let Some(credential) = current.request_bound_credential.as_ref() {
+                    let credential = credential.expose().to_owned();
+                    revocation_credential = Some(credential.clone());
+                    owner_token = Some(credential);
+                }
                 if owner_token.is_none() {
                     take_operation(budget.as_ref(), 1, "credential owner token read")?;
                     owner_token = self.access_token(subject).await?;
@@ -942,6 +1053,7 @@ impl AuthState {
             session.clone(),
             subject.clone(),
             owner_token.expect("a mint lease is acquired only with an owner token"),
+            revocation_credential,
             services.to_vec(),
             fingerprint,
             holder,
@@ -1070,7 +1182,9 @@ impl AuthState {
                 }
             };
             let debt = work.debt;
-            let token = if let Some(cached) = owner_tokens.get(&debt.owner) {
+            let token = if let Some(credential) = debt.revocation_credential.as_ref() {
+                Some(credential.expose().to_owned())
+            } else if let Some(cached) = owner_tokens.get(&debt.owner) {
                 cached.clone()
             } else {
                 match self.access_token(&debt.owner).await {
@@ -1117,6 +1231,17 @@ impl AuthState {
                 proposed = next_epoch;
                 continue;
             }
+            // A legacy terminal debt can borrow the top-level request bearer
+            // during projection. Keep it while other debts still need that
+            // fallback, then release it so terminal retention can begin.
+            if current.retired
+                && current.current.is_none()
+                && current.pending.is_none()
+                && current.revoke_debt.is_empty()
+                && current.lease.is_none()
+            {
+                current.request_bound_credential = None;
+            }
             match replace_state(&self.store, &before, current, None).await {
                 Ok(true) => taken += 1,
                 Ok(false) => {}
@@ -1154,12 +1279,12 @@ impl AuthState {
         provider_budget: &AuthOperationBudget,
     ) -> Result<usize, StoreError> {
         let _sweep = self.credential_sweep.lock().await;
-        let Some(issuer) = self.issuer.read().await.clone() else {
-            return Ok(0);
-        };
         let active = self
             .reconcile_active_credential_page(service, active_budget)
             .await;
+        let Some(issuer) = self.issuer.read().await.clone() else {
+            return active.map(|()| 0);
+        };
         let provider = self
             .reconcile_provider_orphans(service, &issuer, provider_budget)
             .await;
@@ -1192,11 +1317,13 @@ impl layer2_core::CredentialSource for AuthState {
         if self.issuer.read().await.is_some() {
             return Ok(false);
         }
-        Ok(self
-            .store
-            .credential(session)
-            .await?
-            .is_none_or(|state| state.request_bound_credential.is_none()))
+        Ok(self.store.credential(session).await?.is_none_or(|state| {
+            !state.retired
+                && state.request_bound_credential.is_none()
+                && state.current.is_none()
+                && state.pending.is_none()
+                && state.lease.is_none()
+        }))
     }
 
     async fn release(&self, session: &SessionId) -> Result<(), StoreError> {
@@ -1214,3 +1341,6 @@ mod tests;
 #[cfg(test)]
 #[path = "reclaim_tests.rs"]
 mod reclaim_tests;
+
+#[cfg(test)]
+pub(crate) use reclaim_tests::empty_session_service;

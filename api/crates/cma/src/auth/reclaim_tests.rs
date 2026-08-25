@@ -62,6 +62,7 @@ fn current_state(session: &SessionId, owner: &SubjectId) -> SessionCredentialSta
             issued_at: SystemTime::now(),
             expires_at: None,
             scope_fingerprint: "scope".into(),
+            revocation_credential: None,
         }),
         pending: None,
         revoke_debt: Vec::new(),
@@ -81,6 +82,7 @@ fn debt_state(session: &SessionId, id: &str, owner: &SubjectId) -> SessionCreden
             id: id.into(),
             owner: owner.clone(),
             queued_at: SystemTime::now(),
+            revocation_credential: None,
         }],
         lease: None,
         retired: true,
@@ -336,6 +338,206 @@ async fn a_failed_provider_delete_leaves_durable_debt() {
 }
 
 #[tokio::test]
+async fn bearer_only_revoke_debt_keeps_authority_across_failure_and_restart() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = auth(Arc::clone(&store));
+    let owner = SubjectId("bearer-only-owner".into());
+    let session = SessionId("sesn_bearer_only_debt".into());
+    let mut custody = current_state(&session, &owner);
+    custody.request_bound_credential = Some(SecretValue::new("owner-access".into()));
+    store
+        .insert_credential(custody)
+        .await
+        .expect("bearer-only custody persists");
+
+    first.release(&session).await.expect("retirement persists");
+    let retired = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("retired custody remains");
+    assert!(retired.request_bound_credential.is_none());
+    assert_eq!(retired.revoke_debt.len(), 1);
+    assert_eq!(
+        retired.revoke_debt[0]
+            .revocation_credential
+            .as_ref()
+            .expect("debt owns its non-renewable authority")
+            .expose(),
+        "owner-access"
+    );
+
+    let (failed_base, failed_platform, failed_server) =
+        revocation_platform(StatusCode::SERVICE_UNAVAILABLE).await;
+    configure_issuer(&first, failed_base).await;
+    assert_eq!(
+        first
+            .revoke_retired_credentials()
+            .await
+            .expect("provider refusal leaves retryable debt"),
+        0
+    );
+    assert_eq!(
+        failed_platform
+            .deleted
+            .lock()
+            .expect("delete log lock")
+            .as_slice(),
+        ["provider-key"]
+    );
+    assert_eq!(
+        store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("debt remains")
+            .revoke_debt
+            .len(),
+        1
+    );
+    failed_server.abort();
+    drop(first);
+
+    let (success_base, success_platform, success_server) =
+        revocation_platform(StatusCode::NO_CONTENT).await;
+    let restarted = auth(Arc::clone(&store));
+    configure_issuer(&restarted, success_base).await;
+    assert_eq!(
+        restarted
+            .revoke_retired_credentials()
+            .await
+            .expect("restart settles debt with debt-owned authority"),
+        1
+    );
+    assert!(store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("terminal fence remains")
+        .revoke_debt
+        .is_empty());
+    assert_eq!(
+        success_platform
+            .deleted
+            .lock()
+            .expect("delete log lock")
+            .as_slice(),
+        ["provider-key"]
+    );
+    success_server.abort();
+}
+
+#[tokio::test]
+async fn legacy_existing_debt_keeps_request_authority_through_retirement() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = auth(Arc::clone(&store));
+    let owner = SubjectId("legacy-bearer-owner".into());
+    let session = SessionId("sesn_legacy_existing_debt".into());
+    let mut custody = debt_state(&session, "provider-key", &owner);
+    custody.retired = false;
+    custody.request_bound_credential = Some(SecretValue::new("owner-access".into()));
+    store
+        .insert_credential(custody)
+        .await
+        .expect("legacy bearer custody persists");
+
+    let (failed_base, failed_platform, failed_server) =
+        revocation_platform(StatusCode::SERVICE_UNAVAILABLE).await;
+    configure_issuer(&first, failed_base).await;
+    assert_eq!(
+        first
+            .revoke_retired_credentials()
+            .await
+            .expect("projected legacy fallback reaches the provider"),
+        0
+    );
+    assert_eq!(
+        failed_platform
+            .deleted
+            .lock()
+            .expect("delete log lock")
+            .as_slice(),
+        ["provider-key"]
+    );
+    failed_server.abort();
+
+    first.release(&session).await.expect("retirement persists");
+    let retired = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("terminal custody remains");
+    assert!(retired.request_bound_credential.is_none());
+    assert_eq!(retired.revoke_debt.len(), 1);
+    assert_eq!(
+        retired.revoke_debt[0]
+            .revocation_credential
+            .as_ref()
+            .expect("terminal debt owns the legacy request authority")
+            .expose(),
+        "owner-access"
+    );
+    drop(first);
+
+    let (success_base, success_platform, success_server) =
+        revocation_platform(StatusCode::NO_CONTENT).await;
+    let restarted = auth(Arc::clone(&store));
+    configure_issuer(&restarted, success_base).await;
+    assert_eq!(
+        restarted
+            .revoke_retired_credentials()
+            .await
+            .expect("restart settles enriched legacy debt"),
+        1
+    );
+    assert_eq!(
+        success_platform
+            .deleted
+            .lock()
+            .expect("delete log lock")
+            .as_slice(),
+        ["provider-key"]
+    );
+    success_server.abort();
+}
+
+#[tokio::test]
+async fn settling_legacy_terminal_debt_releases_its_fallback_authority() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(Arc::clone(&store));
+    let owner = SubjectId("legacy-terminal-owner".into());
+    let session = SessionId("sesn_legacy_terminal_debt".into());
+    let mut custody = debt_state(&session, "provider-key", &owner);
+    custody.request_bound_credential = Some(SecretValue::new("owner-access".into()));
+    store
+        .insert_credential(custody)
+        .await
+        .expect("legacy terminal custody persists");
+
+    let (base, platform, server) = revocation_platform(StatusCode::NO_CONTENT).await;
+    configure_issuer(&auth, base).await;
+    assert_eq!(
+        auth.revoke_retired_credentials()
+            .await
+            .expect("legacy fallback settles the terminal debt"),
+        1
+    );
+    let settled = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("terminal fence remains");
+    assert!(settled.request_bound_credential.is_none());
+    assert!(settled.revoke_debt.is_empty());
+    assert!(settled.is_settled_retired());
+    assert_eq!(
+        platform.deleted.lock().expect("delete log lock").as_slice(),
+        ["provider-key"]
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_store_outage_during_debt_enumeration_leaves_debt_untouched() {
     let store = Arc::new(MemoryAuthStore::default());
     let auth = auth(Arc::clone(&store));
@@ -574,6 +776,57 @@ fn session_service(store: Arc<dyn SessionStore>) -> Arc<SessionService> {
 
 pub(super) fn unavailable_session_service() -> Arc<SessionService> {
     session_service(Arc::new(ObservedSessions::unavailable()))
+}
+
+pub(crate) fn empty_session_service() -> Arc<SessionService> {
+    session_service(Arc::new(ObservedSessions::default()))
+}
+
+#[tokio::test]
+async fn no_issuer_reconciliation_retries_and_releases_abandoned_request_custody() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(Arc::clone(&store));
+    let session = SessionId("sesn_abandoned_request_custody".into());
+    let mut custody = current_state(&session, &SubjectId("owner".into()));
+    custody.current = None;
+    custody.request_bound_credential = Some(SecretValue::new("request-only-bearer".into()));
+    store
+        .insert_credential(custody)
+        .await
+        .expect("request custody persists");
+
+    let sessions = Arc::new(ObservedSessions::unavailable());
+    let service = session_service(Arc::clone(&sessions) as Arc<dyn SessionStore>);
+    assert!(matches!(
+        auth.reclaim_unrecorded_credentials(&service).await,
+        Err(StoreError::Unavailable(_))
+    ));
+    let retained = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains after failed claim read");
+    assert!(!retained.retired);
+    assert_eq!(
+        retained.request_bound_credential.unwrap().expose(),
+        "request-only-bearer"
+    );
+
+    sessions.unavailable.store(false, Ordering::SeqCst);
+    assert_eq!(
+        auth.reclaim_unrecorded_credentials(&service)
+            .await
+            .expect("later reconciliation succeeds without an issuer"),
+        0
+    );
+    let retired = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("terminal fence remains");
+    assert!(retired.retired);
+    assert!(retired.request_bound_credential.is_none());
+    assert!(retired.is_settled_retired());
 }
 
 #[tokio::test]
