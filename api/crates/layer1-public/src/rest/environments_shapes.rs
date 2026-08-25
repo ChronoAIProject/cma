@@ -350,8 +350,8 @@ pub struct ProfileView {
     mandatory: MandatoryView,
     created_at: String,
     updated_at: String,
-    /// Whether its owner's sessions start from this profile unless told
-    /// otherwise. At most one of theirs carries it.
+    /// Whether clients should preselect this profile for its owner. At most one
+    /// of theirs carries it; the server does not use it for session creation.
     preferred: bool,
 }
 
