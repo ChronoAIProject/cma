@@ -32,7 +32,7 @@ const READING = {
 
 describe('a whole resource replacement', () => {
   it('carries all fourteen figures and tells null from a real zero', () => {
-    const state = reduce(EMPTY, delta(0, { op: 'replace', path: PATHS.resources, value: READING }));
+    const state = reduce(EMPTY, delta(1, { op: 'replace', path: PATHS.resources, value: READING }));
 
     expect(Object.keys(state.resources ?? {})).toHaveLength(14);
     expect(state.resources).toMatchObject({
@@ -46,10 +46,10 @@ describe('a whole resource replacement', () => {
   });
 
   it('replaces rather than merging two readings', () => {
-    const first = reduce(EMPTY, delta(0, { op: 'replace', path: PATHS.resources, value: READING }));
+    const first = reduce(EMPTY, delta(1, { op: 'replace', path: PATHS.resources, value: READING }));
     const second = reduce(
       first,
-      delta(0, {
+      delta(2, {
         op: 'replace',
         path: PATHS.resources,
         value: { memoryBytesUsed: 12_345 },
@@ -85,10 +85,12 @@ describe('durable memory-pressure state', () => {
     });
   });
 
-  it.each([
-    { op: 'replace', path: PATHS.memoryPressure, value: null },
-    { op: 'replace', path: PATHS.memoryPressure },
-  ] satisfies readonly JsonPatch[])('clears on null or a missing value', (patch) => {
+  it('clears on the canonical null value', () => {
+    const patch = {
+      op: 'replace',
+      path: PATHS.memoryPressure,
+      value: null,
+    } satisfies JsonPatch;
     const state = reduce(reduce(EMPTY, opened), delta(9, patch));
     expect(state.memoryPressure).toBeUndefined();
   });

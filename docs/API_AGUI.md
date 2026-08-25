@@ -143,6 +143,45 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
 | State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
 
+### Canonical initial state
+
+```json
+{
+  "usage": {
+    "inputTokens": null,
+    "outputTokens": null,
+    "contextUsed": null,
+    "contextWindow": null
+  },
+  "mode": null,
+  "plan": null,
+  "configOptions": null,
+  "availableCommands": null,
+  "signIn": null,
+  "gaps": [],
+  "planeChanges": [],
+  "contextCompactions": [],
+  "runtimeLosses": [],
+  "memoryPressure": null,
+  "resources": null
+}
+```
+
+`STATE_SNAPSHOT` is not emitted. Create this document once for each session and
+apply every `STATE_DELTA` to it, in stream order, with RFC 6902 semantics. The
+parents and replace targets are present deliberately: applying the same patches
+to `{}` is invalid JSON Patch. For report-valued members, an initial `null`
+means no value has been reported. Zero input and output token counts and an empty
+command list are real reports, arriving as `0` and `[]` rather than remaining
+unknown. `/usage/contextUsed` is different only at the core event boundary:
+zero there is the established "no context reading" sentinel, so its projection
+omits that operation and preserves the canonical `null` or last positive value.
+For `/memoryPressure`, `null` means no pressure episode is currently open.
+
+For a replay from the beginning, discard the old state and start from this
+document again. When resuming after a cursor, retain the state already folded
+through that cursor and apply only the later deltas.
+
 Not emitted **today**: `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim.
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively. That includes an unknown durable frame with no SSE `id`: an older client cannot know whether a future kind is a leading frame, so it retains the frame and groups it with the next numbered final just as it does a known leading frame.
@@ -257,7 +296,7 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
-**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. The current reading is written at `/usage/contextUsed`; the ceiling it is drawn from is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
+**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A positive current reading is written at `/usage/contextUsed`. Core turn accounting uses zero in that field to mean that it carried no context reading; that sentinel is not projected, so the initial `null` or prior positive reading remains. The ceiling is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
 
 Memory pressure is durable state folded from those ephemeral readings. An
 opening edge replaces `/memoryPressure` with `usedBytes`, `limitBytes`,
@@ -446,7 +485,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 
   Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.
 - **The events route identifies replay, not a run.** Route provenance is authoritative: every AG-UI event frame in both its initial history and followed tail carries the effective `threadId` as `runId`, because no one run owns the whole session history. The run route rejects explicit blank identifiers and `runId == threadId`, and its generated identifiers are also kept distinct, so equality is an exclusive replay-envelope signature on accepted responses. Do not derive conversation or per-run rendering state from it. The repository TypeScript SDK follows this rule: `AguiConnection` assembles each complete durable projection around its numbered final frame, preserves an unacknowledged projection for exact retry, and advances the cursor only after every callback accepts it; the conversation fold ignores `runId`, so run-stream and replay envelopes render the same conversation.
-- **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
+- **`STATE_DELTA` patches, it does not replace.** Apply deltas in order to the canonical initial state defined in §3; no `STATE_SNAPSHOT` arrives.
 
 ---
 

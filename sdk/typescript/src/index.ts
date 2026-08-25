@@ -192,6 +192,8 @@ export {
   PRICING_WIRE,
   STATE_DELTA_PATCHES,
   frameKey,
+  initialState,
+  type AguiState,
 } from './wire.js';
 
 /*
@@ -203,6 +205,7 @@ export {
   AguiConnection,
   AguiOperations,
   NO_CAPABILITIES,
+  applyStateDelta,
   createAguiTransport,
   createOperationTransport,
   fetchTransport,
@@ -216,14 +219,17 @@ export {
   type ConnectionOptions,
   type Interrupt,
   type InterruptOption,
+  type JsonPatch,
   type LinkFailure,
   type LinkStatus,
   type OperationTransport,
   type SessionCapabilities,
+  type StateDelta,
 } from './agui/index.js';
 export {
   EMPTY,
   fold,
+  initialConversation,
   reduce,
   type Conversation,
   type AvailableCommand,
