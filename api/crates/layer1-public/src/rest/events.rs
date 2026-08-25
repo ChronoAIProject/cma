@@ -36,9 +36,26 @@ use super::RequestFailure;
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Cursor {
     /// Resume after this sequence. Absent means from the beginning.
-    after: Option<u64>,
+    ///
+    /// Named as the client sends it. The name is part of the contract and is
+    /// documented; a server reading a different one silently replays
+    /// everything on every reconnect, which is what happened here.
+    #[serde(default, alias = "after")]
+    starting_after: Option<u64>,
+}
+
+impl Cursor {
+    /// Where this client is resuming from.
+    ///
+    /// Read through a method so a test asserts the parsed query rather than
+    /// the struct's shape: the bug this guards was a name the server never
+    /// read, and a test that constructs the struct directly cannot see one.
+    fn starting_after(&self) -> Option<u64> {
+        self.starting_after
+    }
 }
 
 /// Stream a session's events, resuming from a cursor.
@@ -59,7 +76,7 @@ pub(super) async fn stream(
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok())
-        .or(cursor.after)
+        .or(cursor.starting_after())
         .unwrap_or(0);
 
     // Authorised once, here, so a stream cannot outlive the caller's right to
@@ -135,6 +152,17 @@ fn event_payload(event: &layer2_core::Event) -> serde_json::Value {
 mod tests {
     use super::*;
     use layer2_core::{Event, EventKind, RuntimeLossCause, SessionStatus};
+
+    #[test]
+    fn both_cursor_spellings_parse_to_the_same_resume_position() {
+        for query in ["starting_after=42", "after=42"] {
+            let cursor: Cursor = serde_urlencoded::from_str(query).expect("cursor parses");
+            assert_eq!(cursor.starting_after(), Some(42), "for {query}");
+        }
+
+        let cursor: Cursor = serde_urlencoded::from_str("").expect("an absent cursor parses");
+        assert_eq!(cursor.starting_after(), None);
+    }
 
     #[test]
     fn the_frame_id_is_the_sequence_so_a_client_can_resume() {

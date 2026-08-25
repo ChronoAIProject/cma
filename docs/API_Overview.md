@@ -123,7 +123,8 @@ Every terminal or paused state carries one: `end_turn`, `user_terminated`, `idle
 The event log is the single source of truth and the reason every interface can be a lossless projection.
 
 - **Append-only**, with a **monotonic `seq` per session**. Not a global sequence.
-- Resumable: `?starting_after=<seq>` replays from a cursor. One integer of server state; no `Last-Event-ID` plumbing.
+- **Resumable.** `?starting_after=<seq>` means “send durable events after this sequence.” REST also accepts `?after=<seq>` as a compatibility alias. On `GET /api/v1/sessions/{id}/events`, a valid `Last-Event-ID` header takes precedence over either query spelling, so an automatically reconnecting browser continues after the last frame it received.
+- **REST replay is SSE, not a separate JSON page.** The events route replays and then follows the same stream; it has no `Link`-paged history surface. Each durable frame uses SSE's default event type, carries its sequence as `id`, and carries `data` keyed `{seq, session_id, event}`. An `EventSource` client receives these frames through `onmessage`, not a named-event listener.
 - **Durable events are semantic.** The complete set, which is what `EventKind` holds and nothing more:
 
   | | |
@@ -142,7 +143,7 @@ The event log is the single source of truth and the reason every interface can b
 
 - **Ephemeral events are deltas.** Token-level message pieces and terminal bytes are streamed for liveness and never persisted — deliberately, because numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time. A client that misses them recovers from the committed message, or from a screen snapshot.
 
-Clients reconnect by opening the stream first, then reading history, then deduplicating on event id — never by assuming the stream replays.
+Clients reconnect the interface's event stream from the last durable cursor and deduplicate on that cursor. REST's one events route performs both the replay and the follow; it does not require a second history request.
 
 ---
 
