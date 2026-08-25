@@ -59,6 +59,9 @@ const SESSION_METADATA_KEY: &str = "cma/session";
 /// Historical session key, kept while old-only sandboxes remain live.
 const LEGACY_SESSION_METADATA_KEY: &str = "chrono-bot/session";
 
+/// Durable runtime generation used to fence stale provider census rows.
+const GENERATION_METADATA_KEY: &str = "cma/runtime-generation";
+
 /// Canonical metadata key naming which kernel a sandbox is running.
 const KERNEL_METADATA_KEY: &str = "cma/kernel";
 
@@ -87,6 +90,10 @@ fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, S
         ),
         (KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
         (LEGACY_KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
+        (
+            GENERATION_METADATA_KEY.to_string(),
+            spec.generation.to_string(),
+        ),
     ]);
     if let Some(creator) = spec.created_by.as_ref() {
         metadata.insert(CREATOR_METADATA_KEY.to_string(), creator.clone());
@@ -615,6 +622,10 @@ impl HostedKernel {
                     SESSION_METADATA_KEY,
                     LEGACY_SESSION_METADATA_KEY,
                 ),
+                generation: s
+                    .metadata
+                    .get(GENERATION_METADATA_KEY)
+                    .and_then(|value| value.parse().ok()),
                 created_by: correlation_value(
                     &s.metadata,
                     CREATOR_METADATA_KEY,
