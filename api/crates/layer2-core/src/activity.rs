@@ -48,19 +48,7 @@ impl std::fmt::Display for ActivityId {
 /// A closed set rather than free text. An open one would fill with whatever
 /// string the surface that received the request happened to have to hand, and
 /// a log nobody can group or filter is a log nobody reads.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    utoipa::ToSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityAction {
     /// A subject established a signed-in identity.
@@ -148,7 +136,7 @@ pub enum ActivityAction {
 /// Absent for actions that address a collection rather than one thing: listing
 /// sessions has no target, and inventing one would be a lie about what was
 /// asked for.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum ActivityTarget {
     /// One session, by identifier.
@@ -175,7 +163,7 @@ impl ActivityTarget {
 /// Four answers rather than a status code, because the distinction that
 /// matters to whoever reads this is whether the caller was turned away, sent
 /// something unusable, or hit a failure that was not their doing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityOutcome {
     /// It was carried out.

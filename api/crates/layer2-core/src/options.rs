@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// A spectrum rather than a boolean because the trade is real: more thinking
 /// costs time and money on work that did not need it, and less produces
 /// confident answers to hard questions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
     /// Barely any. For mechanical work where latency dominates.
@@ -54,7 +54,7 @@ impl ReasoningEffort {
 /// the mechanism differs per runtime: one asks for approval per command, one
 /// confines writes to a workspace, one does both. What a person is choosing is
 /// how much rope to give it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionMode {
     /// Ask before anything that touches the world outside the workspace.
@@ -85,7 +85,7 @@ impl PermissionMode {
 }
 
 /// Whose credential the agent spends on model calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialMode {
     /// The platform's, on the owner's behalf.
@@ -111,7 +111,7 @@ pub enum CredentialMode {
 /// and got the other would be broken in a way no error message could rescue,
 /// so this is fixed at creation and checked against the runtime before a
 /// session exists at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionMode {
     /// A human-facing terminal, driven by keystrokes and read as a screen.

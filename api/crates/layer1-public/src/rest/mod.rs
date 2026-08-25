@@ -26,6 +26,7 @@ mod allowance;
 mod deployment_capacity;
 mod events;
 mod openapi;
+mod openapi_shapes;
 mod operate;
 mod problems;
 mod tickets;
@@ -54,6 +55,11 @@ const CONFORMS_TO: &[&str] = &[
 
 const BUILD_SHA: &str = match option_env!("CHRONO_BUILD_SHA") {
     Some(sha) => sha,
+    None => "development",
+};
+
+const SERVICE_VERSION: &str = match option_env!("CHRONO_BUILD") {
+    Some(version) => version,
     None => "development",
 };
 
@@ -268,9 +274,12 @@ impl From<Option<Quote>> for PricingQuoteView {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SessionView {
     id: String,
+    #[schema(value_type = openapi_shapes::SessionStatus)]
     status: layer2_core::SessionStatus,
+    #[schema(value_type = openapi_shapes::RecoveryState)]
     recovery_state: layer2_core::RecoveryState,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::StopReason>)]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
     /// How this session's agent was configured, settled when it was created.
@@ -303,6 +312,7 @@ pub struct SessionView {
     /// A client renders what it is given and never falls back to the subject
     /// identifier, which is not a name and reads as a fault when shown as one.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::PublicIdentity>)]
     creator: Option<PublicIdentity>,
     /// What this particular session can be asked to do.
     ///
@@ -396,13 +406,17 @@ pub struct AgentView {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     /// How much the agent may do before asking.
+    #[schema(value_type = openapi_shapes::PermissionMode)]
     permission: layer2_core::PermissionMode,
     /// How hard it thinks.
+    #[schema(value_type = openapi_shapes::ReasoningEffort)]
     reasoning_effort: layer2_core::ReasoningEffort,
     /// Whose account the model calls are spent against.
+    #[schema(value_type = openapi_shapes::CredentialMode)]
     credential: layer2_core::CredentialMode,
     /// How much this session reserves, or absent for the deployment's own.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::SessionSize>)]
     size: Option<layer2_core::SessionSize>,
     /// The skills this session was given, or absent where none was recorded.
     ///
@@ -1236,6 +1250,7 @@ async fn stop(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PlaneRequest {
     /// The plane to move to. Naming the one it is already on changes nothing.
+    #[schema(value_type = openapi_shapes::SessionMode)]
     pub plane: layer2_core::SessionMode,
 }
 
@@ -1313,12 +1328,17 @@ async fn revive(
 /// Served as an octet stream rather than JSON because it is an escape-sequence
 /// stream: encoding it as a string would mean deciding how to escape it, and
 /// the client only has to write it to a terminal.
+#[allow(dead_code)]
+#[derive(ToSchema)]
+#[schema(value_type = String, format = Binary)]
+struct TranscriptBody(Vec<u8>);
+
 #[utoipa::path(
     get,
     path = "/api/v1/sessions/{id}/transcript",
     tag = "sessions",
     params(("id" = String, Path)),
-    responses((status = 200, description = "Terminal byte transcript", body = Vec<u8>, content_type = "application/octet-stream"))
+    responses((status = 200, description = "Terminal byte transcript", body = TranscriptBody, content_type = "application/octet-stream"))
 )]
 async fn transcript(
     State(service): State<Arc<SessionService>>,
@@ -1390,7 +1410,7 @@ struct ConformanceView {
 async fn conformance() -> Json<ConformanceView> {
     Json(ConformanceView {
         conforms_to: CONFORMS_TO,
-        version: env!("CARGO_PKG_VERSION"),
+        version: SERVICE_VERSION,
         build_sha: BUILD_SHA,
     })
 }
@@ -1398,6 +1418,7 @@ async fn conformance() -> Json<ConformanceView> {
 #[derive(Debug, Serialize, ToSchema)]
 struct KernelOffering {
     id: String,
+    #[schema(value_type = Vec<openapi_shapes::SessionMode>)]
     modes: Vec<layer2_core::SessionMode>,
 }
 

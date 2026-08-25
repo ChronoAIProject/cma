@@ -49,7 +49,7 @@ pub struct TicketView {
     path = "/api/v1/sessions/{id}/terminal-ticket",
     tag = "terminal",
     params(("id" = String, Path)),
-    request_body(content = Option<TicketRequest>, content_type = "application/json"),
+    request_body(content = TicketRequest, content_type = "application/json"),
     responses((status = 200, description = "Single-use terminal attachment ticket", body = TicketView))
 )]
 pub(super) async fn terminal_ticket(

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 /// The constructor refuses combinations that would turn a sustained signal
 /// into repeated crossings. Fields stay private because their invariants are
 /// relational rather than properties of any one number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "PressurePolicyWire", try_from = "PressurePolicyWire")]
 pub struct MemoryPressurePolicy {
     enter_permille: u16,

@@ -36,6 +36,7 @@ use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
+use crate::rest::openapi_shapes;
 use crate::rest::pagination::AdminSessionPageParams;
 use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
 
@@ -176,9 +177,12 @@ pub struct ActivityView {
     at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<String>,
+    #[schema(value_type = openapi_shapes::ActivityAction)]
     action: layer2_core::ActivityAction,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::ActivityTarget>)]
     target: Option<layer2_core::ActivityTarget>,
+    #[schema(value_type = openapi_shapes::ActivityOutcome)]
     outcome: layer2_core::ActivityOutcome,
     /// The parameters that were allowed to be kept. Never a secret: the core's
     /// allowlist is what decides, and there is no key for one.
@@ -211,9 +215,12 @@ pub struct AdminSessionView {
     /// How the owner should be shown, when the directory knows a name for them.
     #[serde(skip_serializing_if = "Option::is_none")]
     owner_label: Option<String>,
+    #[schema(value_type = openapi_shapes::SessionStatus)]
     status: layer2_core::SessionStatus,
+    #[schema(value_type = openapi_shapes::RecoveryState)]
     recovery_state: layer2_core::RecoveryState,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::StopReason>)]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
     last_seq: u64,
@@ -248,6 +255,7 @@ pub struct RuntimeView {
     #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::SessionStatus>)]
     status: Option<layer2_core::SessionStatus>,
     /// Whether nothing in the record accounts for this runtime.
     unaccounted: bool,
