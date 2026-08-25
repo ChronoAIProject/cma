@@ -114,6 +114,7 @@ fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
                 header::CONTENT_TYPE,
                 header::AUTHORIZATION,
                 HeaderName::from_static("last-event-id"),
+                HeaderName::from_static("idempotency-key"),
                 X_REQUEST_ID,
             ])
             .allow_methods([
@@ -243,6 +244,7 @@ async fn main() {
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
+    let operation_store = Arc::new(stores.operations) as Arc<dyn layer2_core::OperationStore>;
     let ticket_store =
         Arc::new(stores.tickets) as Arc<dyn layer1_public::tickets::TerminalTicketStore>;
     let auth_store = Arc::new(stores.auth) as Arc<dyn auth::persistence::AuthStore>;
@@ -443,6 +445,7 @@ async fn main() {
         users: Arc::clone(&users),
         tickets: Arc::clone(&tickets),
         environments: Arc::clone(&environments),
+        operations: operation_store,
     };
     let rest = rest_api_router(
         public_state.clone(),

@@ -251,11 +251,12 @@ mod route_resume {
     use layer2_core::{
         AgentConfiguration, Authorization, Baseline, Capability, Deployment, DirectoryQuery,
         EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-        EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind, KernelId, Page,
-        PageRequest, PlatformSettingsService, RecoveryState, RegisteredUser, Reserved,
-        ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionMode,
-        SessionPorts, SessionRecord, SessionService, SessionStatus, SessionStore, StoreError,
-        StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+        EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind, KernelId,
+        OperationClaim, OperationReservation, OperationStore, Page, PageRequest,
+        PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, Session,
+        SessionCapabilities, SessionId, SessionListQuery, SessionMode, SessionPorts, SessionRecord,
+        SessionService, SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId,
+        TerminalGeometry, UserDirectory, UserDirectoryStore,
     };
     use serde::Deserialize;
     use serde_json::{json, Value};
@@ -270,6 +271,30 @@ mod route_resume {
 
     struct ReplayStore {
         state: tokio::sync::RwLock<ReplayState>,
+    }
+
+    struct NoOperations;
+
+    #[async_trait::async_trait]
+    impl OperationStore for NoOperations {
+        async fn reserve(
+            &self,
+            _claim: &OperationClaim,
+        ) -> Result<OperationReservation, StoreError> {
+            Err(StoreError::Unavailable(
+                "the replay fixture has no operation routes".into(),
+            ))
+        }
+
+        async fn complete(
+            &self,
+            _claim: &OperationClaim,
+            _outcome: Vec<u8>,
+        ) -> Result<(), StoreError> {
+            Err(StoreError::Unavailable(
+                "the replay fixture has no operation routes".into(),
+            ))
+        }
     }
 
     impl ReplayStore {
@@ -602,6 +627,7 @@ mod route_resume {
             users: UserDirectory::new(Arc::new(NoDirectory)),
             tickets: TerminalTickets::in_memory(),
             environments,
+            operations: Arc::new(NoOperations),
         };
 
         let app = agui::router(state)

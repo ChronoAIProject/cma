@@ -40,7 +40,7 @@ on that code and the status, never on its prose.
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
-| Idempotency | **Not implemented.** No route reads `Idempotency-Key`; sending one is harmless and does nothing. This row previously said it was required on every side-effecting `POST`, which was never true — §10 asks for an absence to be declared rather than discovered |
+| Idempotency | Optional `Idempotency-Key` is honoured by `POST /sessions` and `POST /sessions/{id}/input`. Claims remain for 24 hours from the first request |
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
@@ -48,6 +48,37 @@ Every response carries `X-Request-Id`, including authentication failures and
 unmatched routes. A supplied value is echoed; otherwise CMA mints a UUID. The
 same value is attached to the request's tracing span. Include it in any support
 report.
+
+### Idempotent retries
+
+`POST /api/v1/sessions` and `POST /api/v1/sessions/{id}/input` are the two
+operations that read `Idempotency-Key`. They are the operations where a lost
+response would otherwise provision a second billed sandbox or deliver the same
+prompt twice. Other routes do not read the header.
+
+A key contains 1 to 255 visible ASCII bytes. It is scoped to the authenticated
+subject and the particular operation, so one subject cannot consume another's
+key and a session-create key does not collide with a session-input key. The
+first request reserves the key durably before doing any work. Its status,
+headers, and body are retained until that claim expires, 24 hours after the
+first reservation. A retry with the exact same request body bytes receives the
+same status and byte-identical response body without performing the operation
+again.
+
+Three refusals make ambiguous retries explicit:
+
+| Status and code | Meaning |
+|---|---|
+| `400 invalid_idempotency_key` | The key is empty, longer than 255 bytes, contains non-visible ASCII, or was supplied more than once |
+| `409 idempotency_in_flight` | The first request still owns the reservation. Retry shortly with the same key and body |
+| `422 idempotency_key_reused` | The key already names a different request body. Mint a new key; replaying the first response would be incorrect |
+
+If the durable claim store cannot be reached while reserving a key, the request
+fails with `503` and code `store_failed` before the session or prompt operation
+starts. The service never falls back to unprotected execution. If recording the
+result fails after the operation, the response is `503` and the pending claim
+continues to block duplicate execution. After 24 hours the claim expires and
+the key may be used again.
 
 ---
 
@@ -503,11 +534,11 @@ Content-Type: application/json
 **These four are the whole body.** An earlier version of this section
 documented `llm_source` as required, along with `environment`, `workspace`,
 `concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
-side-effecting `POST`. None of them has ever existed in the service. They were
-accepted and discarded in silence, so a caller who built to that contract got a
-working session and no indication that most of what they sent went nowhere.
-They are now refused by name, which is why the list above is exact rather than
-aspirational.
+side-effecting `POST`. The body fields have never existed in the service and are
+now refused by name. Idempotency is now deliberately narrower and real: the
+header is honoured on session creation and session input as described in
+[Idempotent retries](#idempotent-retries), rather than claimed for operations
+that do not read it.
 
 The profile is the whole description of the session — which agent, which model,
 how freely it acts, whose access it spends, what it carries, and how much CPU
@@ -1287,15 +1318,15 @@ X-Request-Id: 94ea38a2-c2cb-4a43-9fe2-d25a60b59ec5
 
 | Status | When |
 |---|---|
-| `400` | Malformed JSON (`code: "malformed_json"`) or query parameters that do not match the route (`code: "invalid_query"`) |
+| `400` | Malformed JSON (`code: "malformed_json"`), invalid query parameters (`code: "invalid_query"`), or an invalid operation key (`code: "invalid_idempotency_key"`) |
 | `401` | Missing or invalid NyxID credential (`code: "not_authenticated"`) |
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
 | `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
-| `409` | Conflicts with current state — session terminated, live-session limit reached, or the quoted rate card is no longer in force |
+| `409` | Conflicts with current state — session terminated, live-session limit reached, quoted rate card changed, or an operation with this key is still running (`code: "idempotency_in_flight"`) |
 | `413` | The request body exceeds the service's accepted limit (`code: "request_too_large"`) |
 | `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
-| `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |
+| `422` | Well-formed but semantically invalid — zero terminal dimension, invalid session size, or an operation key reused with another body (`code: "idempotency_key_reused"`) |
 | `429` | Rate limited; observe `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
 | `503` | Control plane recovering or failing over; retry |
