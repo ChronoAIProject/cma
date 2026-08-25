@@ -96,7 +96,9 @@ fn caller(id: &str) -> Caller {
 /// The whole point of the mint is that what the runtime presents is not what
 /// the person presented, so a fake that echoed the caller's token back would
 /// pass whether or not the mint happened.
-struct MintingSource;
+struct MintingSource {
+    observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
+}
 
 #[async_trait::async_trait]
 impl crate::store::CredentialSource for MintingSource {
@@ -105,7 +107,14 @@ impl crate::store::CredentialSource for MintingSource {
         session: &crate::SessionId,
         _subject: &crate::SubjectId,
         _services: &[crate::environment::ServiceId],
+        caller_credential: Option<&str>,
     ) -> Result<Option<String>, crate::store::StoreError> {
+        if let Some(observed) = &self.observed_callers {
+            observed
+                .lock()
+                .await
+                .push(caller_credential.map(str::to_owned));
+        }
         Ok(Some(format!("minted-for-{}", session.0)))
     }
 
@@ -116,12 +125,13 @@ impl crate::store::CredentialSource for MintingSource {
 }
 
 fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
-    service_with_store(sent, Arc::new(FakeStore::default()))
+    service_with_store(sent, Arc::new(FakeStore::default()), None)
 }
 
 fn service_with_store(
     sent: Arc<tokio::sync::Mutex<Vec<String>>>,
     store: Arc<FakeStore>,
+    observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
 ) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
@@ -135,7 +145,7 @@ fn service_with_store(
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
         store,
         crate::service::SessionPorts {
-            credentials: Some(Arc::new(MintingSource)),
+            credentials: Some(Arc::new(MintingSource { observed_callers })),
             ..Default::default()
         },
         crate::environment_service::EnvironmentProfileService::new(
@@ -170,7 +180,12 @@ async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
      * was actually handed, and "first-token" appearing in it is the defect.
      */
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let svc = service(Arc::clone(&sent));
+    let observed_callers = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let svc = service_with_store(
+        Arc::clone(&sent),
+        Arc::new(FakeStore::default()),
+        Some(Arc::clone(&observed_callers)),
+    );
     let owner = caller("subject-a");
     let session = svc
         .create_session(
@@ -198,6 +213,11 @@ async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
     assert!(
         !seen.iter().any(|c| c == "first-token"),
         "the caller's own credential must never reach the runtime, got {seen:?}"
+    );
+    assert_eq!(
+        *observed_callers.lock().await,
+        vec![Some("first-token".to_string())],
+        "the credential source needs the initiating request's authority to mint custody"
     );
 }
 
@@ -431,6 +451,7 @@ mod what_still_claims_a_credential {
         let svc = service_with_store(
             Arc::new(tokio::sync::Mutex::new(Vec::new())),
             Arc::clone(&store),
+            None,
         );
         store.fail_everything().await;
 
