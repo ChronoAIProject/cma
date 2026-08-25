@@ -14,7 +14,11 @@ use std::time::Duration;
 
 use layer2_core::SessionService;
 
-use crate::auth::AuthState;
+use crate::auth::{
+    AuthOperationBudget, AuthPassBudget, AuthState, AUTH_REFRESH_ATTEMPT_BUDGET,
+    AUTH_REISSUE_ATTEMPT_BUDGET, AUTH_RENEWAL_PASS_BUDGET, AUTH_SWEEP_BATCH_SIZE,
+    AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+};
 
 /// How often to look for credentials approaching expiry.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
@@ -27,22 +31,19 @@ const RENEW_MARGIN: Duration = Duration::from_secs(300);
 
 /// Run the renewal loop until the process ends.
 pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
-    if !auth.requires_credential() {
-        // Nothing to renew when identity is not coming from a provider.
-        tracing::info!("credential renewal not started: no identity provider configured");
-        return;
-    }
+    let provider_renewal = auth.requires_credential();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(SWEEP_INTERVAL);
         loop {
             ticker.tick().await;
-            sweep_once(&auth, &service).await;
+            let _ = sweep_once(&auth, &service).await;
         }
     });
     tracing::info!(
         sweep_seconds = SWEEP_INTERVAL.as_secs(),
         margin_seconds = RENEW_MARGIN.as_secs(),
-        "credential renewal started"
+        provider_renewal,
+        "authentication maintenance started"
     );
 }
 
@@ -54,7 +55,26 @@ pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
 const CREDENTIAL_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// One pass: renew what is close to expiry, then push it into live sessions.
-async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
+async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usize {
+    let pass = AuthPassBudget::new(AUTH_RENEWAL_PASS_BUDGET);
+    let schema_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+    let active_reconciliation_budget = pass.lane(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
+    let provider_reconciliation_budget = pass.lane(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
+    let revoke_debt_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+    let reissue_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+    let refresh_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+
+    if let Err(error) = auth.maintain_schema(&schema_budget).await {
+        tracing::error!(error = %error, "could not maintain durable authentication schema");
+    }
+
+    // Trusted mode has no provider tokens or provider credential lifecycle, but
+    // it can still open a database containing more compatibility work than one
+    // bounded store-open batch. Keep the recurring maintenance lane alive.
+    if !auth.requires_credential() {
+        return pass.used();
+    }
+
     // Credentials this deployment minted that no session accounts for.
     //
     // A control plane that stopped between minting and releasing leaves one
@@ -64,7 +84,14 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
     // until that owner signs in again the key stays valid. This sweep is the
     // only thing that takes it back, so a pass it cannot make is a credential
     // still open, not a tidy-up postponed.
-    let credentials_reconciled = match auth.reclaim_orphaned_credentials(service).await {
+    match auth
+        .reclaim_orphaned_credentials_with_budgets(
+            service,
+            &active_reconciliation_budget,
+            &provider_reconciliation_budget,
+        )
+        .await
+    {
         Ok(reclaimed) => {
             if reclaimed > 0 {
                 tracing::info!(
@@ -72,90 +99,131 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
                     "reclaimed credentials no session accounts for"
                 );
             }
-            true
         }
         Err(error) => {
             tracing::error!(error = %error, "could not reconcile unrecorded credentials");
-            false
+        }
+    }
+
+    let taken = match auth
+        .revoke_retired_credentials_with_budget(&revoke_debt_budget)
+        .await
+    {
+        Ok(taken) => taken,
+        Err(error) => {
+            tracing::error!(error = %error, "could not process durable credential revoke debt");
+            0
         }
     };
+    if taken > 0 {
+        tracing::info!(count = taken, "took back retired session credentials");
+    }
 
-    // Reconciliation reads every durable session claim before any DELETE. If
-    // that authority is unavailable, skip all session-credential work so an
-    // unreadable claim can never masquerade as an unclaimed credential. The
-    // independent subject-token refresh below can still proceed.
-    if credentials_reconciled {
-        let taken = match auth.revoke_retired_credentials().await {
-            Ok(taken) => taken,
-            Err(error) => {
-                tracing::error!(error = %error, "could not process durable credential revoke debt");
-                0
+    // Sessions whose own credential is old enough to swap. Distinct from the
+    // subject refresh below: that keeps this service able to mint, this keeps
+    // the sessions able to act.
+    let due_for_reissue = if reissue_budget.remaining() > 0 {
+        match auth
+            .sessions_due_for_reissue_with_budget(CREDENTIAL_LIFETIME, &reissue_budget)
+            .await
+        {
+            Ok(batch) => {
+                if let Some(error) = batch.first_error {
+                    tracing::error!(
+                        error = %error,
+                        "one credential replacement record could not be read"
+                    );
+                }
+                batch.work
             }
-        };
-        if taken > 0 {
-            tracing::info!(count = taken, "took back retired session credentials");
-        }
-
-        // Sessions whose own credential is old enough to swap. Distinct from the
-        // subject refresh below: that keeps this service able to mint, this keeps
-        // the sessions able to act.
-        let due_for_reissue = match auth.sessions_due_for_reissue(CREDENTIAL_LIFETIME).await {
-            Ok(due) => due,
             Err(error) => {
                 tracing::error!(error = %error, "could not list credentials due for replacement");
                 Vec::new()
             }
+        }
+    } else {
+        Vec::new()
+    };
+    for (session, owner) in due_for_reissue {
+        let item_budget = AuthOperationBudget::standalone(AUTH_REISSUE_ATTEMPT_BUDGET);
+        // A current session carries its granted services directly. A legacy
+        // session can require one additional environment-profile read.
+        if !item_budget.take(2) {
+            continue;
+        }
+        let services = service.session_services(&session).await;
+        let value = match auth
+            .reissue_with_budget(&session, &owner, &services, item_budget.clone())
+            .await
+        {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                tracing::warn!(session_id = %session, "could not mint a replacement credential");
+                continue;
+            }
+            Err(error) => {
+                tracing::error!(
+                    session_id = %session,
+                    error = %error,
+                    "could not update durable credential replacement state"
+                );
+                continue;
+            }
         };
-        for (session, owner) in due_for_reissue {
-            let services = service.session_services(&session).await;
-            let value = match auth.reissue(&session, &owner, &services).await {
-                Ok(Some(value)) => value,
-                Ok(None) => {
-                    tracing::warn!(session_id = %session, "could not mint a replacement credential");
-                    continue;
+        if !item_budget.take(1) {
+            tracing::warn!(session_id = %session, "replacement remains pending because this pass exhausted its operation allowance");
+            continue;
+        }
+        if service.push_session_credential(&session, value).await {
+            match auth
+                .confirm_reissue_with_budget(&session, &item_budget)
+                .await
+            {
+                Ok(true) => {
+                    tracing::info!(session_id = %session, "session credential replaced");
+                }
+                Ok(false) => {
+                    // Release may have won the race after delivery. Its
+                    // durable retirement owns both values in that case.
+                    tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
                 }
                 Err(error) => {
                     tracing::error!(
                         session_id = %session,
                         error = %error,
-                        "could not update durable credential replacement state"
+                        "could not confirm durable credential replacement"
                     );
-                    continue;
                 }
-            };
-            if service.push_session_credential(&session, value).await {
-                match auth.confirm_reissue(&session).await {
-                    Ok(true) => {
-                        tracing::info!(session_id = %session, "session credential replaced");
-                    }
-                    Ok(false) => {
-                        // Release may have won the race after delivery. Its
-                        // durable retirement owns both values in that case.
-                        tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
-                    }
-                    Err(error) => {
-                        tracing::error!(
-                            session_id = %session,
-                            error = %error,
-                            "could not confirm durable credential replacement"
-                        );
-                    }
-                }
-            } else {
-                tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
             }
+        } else {
+            tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
         }
     }
 
-    let due = match auth.subjects_needing_refresh(RENEW_MARGIN).await {
-        Ok(due) => due,
-        Err(error) => {
-            tracing::error!(error = %error, "could not list subjects needing credential renewal");
-            return;
+    let due = if refresh_budget.remaining() > 0 {
+        match auth
+            .subjects_needing_refresh_with_budget(RENEW_MARGIN, &refresh_budget)
+            .await
+        {
+            Ok(batch) => {
+                if let Some(error) = batch.first_error {
+                    tracing::error!(
+                        error = %error,
+                        "one subject renewal record could not be read"
+                    );
+                }
+                batch.work
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "could not list subjects needing credential renewal");
+                return pass.used();
+            }
         }
+    } else {
+        Vec::new()
     };
     if due.is_empty() {
-        return;
+        return pass.used();
     }
     tracing::debug!(subjects = due.len(), "renewing delegated credentials");
 
@@ -173,8 +241,19 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
      * rotation that belongs to a session rather than to a person.
      */
     let sessions_run_on_own_keys = auth.sessions_hold_own_credentials().await;
-    for (subject, refresh_token) in due {
-        match auth.refresh(&subject, &refresh_token).await {
+    for due in due {
+        let subject = due.subject;
+        let item_budget = AuthOperationBudget::standalone(AUTH_REFRESH_ATTEMPT_BUDGET);
+        match auth
+            .refresh_with_budget(
+                &subject,
+                &due.refresh_token,
+                &due.incarnation,
+                due.token_generation,
+                &item_budget,
+            )
+            .await
+        {
             Ok(access_token) => {
                 if sessions_run_on_own_keys {
                     // Said out loud rather than at debug. This is the branch
@@ -187,6 +266,10 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
                         %subject,
                         "renewed this owner's token; their sessions keep their own credentials"
                     );
+                    continue;
+                }
+                if !item_budget.take(1) {
+                    tracing::warn!(%subject, "renewed credential was not pushed because this pass exhausted its operation allowance");
                     continue;
                 }
                 let pushed = service
@@ -203,13 +286,20 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) {
             }
         }
     }
+    pass.used()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::persistence::{
+        AuthStore, CredentialLease, DurableCredential, MemoryAuthStore, SecretValue,
+        SessionCredentialState, SubjectRefreshLease,
+    };
     use crate::auth::{AuthMode, SubjectTokens};
-    use layer2_core::SubjectId;
+    use layer2_core::{SessionId, SubjectId};
+    use std::collections::HashSet;
+    use std::time::SystemTime;
 
     fn tokens(expires_in: Duration, refresh: Option<&str>) -> SubjectTokens {
         SubjectTokens {
@@ -299,12 +389,423 @@ mod tests {
             .subjects_needing_refresh(RENEW_MARGIN)
             .await
             .expect("subject state loads");
-        let subjects: Vec<_> = due.iter().map(|(s, _)| s.as_str().to_string()).collect();
+        let subjects: Vec<_> = due
+            .iter()
+            .map(|refresh| refresh.subject.as_str().to_string())
+            .collect();
         assert!(subjects.contains(&"has-refresh".to_string()));
         assert!(
             !subjects.contains(&"no-refresh".to_string()),
             "a subject with no refresh token cannot be renewed and must not be retried"
         );
+    }
+
+    #[tokio::test]
+    async fn due_subject_pages_advance_and_wrap_without_head_of_line_starvation() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "c".into(),
+                client_secret: "s".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+            store,
+        );
+        for number in 0..(crate::auth::AUTH_SWEEP_BATCH_SIZE + 2) {
+            auth.store_tokens(
+                &SubjectId(format!("subject-{number:03}")),
+                tokens(Duration::ZERO, Some("refresh")),
+            )
+            .await
+            .expect("due subject persists");
+        }
+
+        let first = auth
+            .subjects_needing_refresh(Duration::ZERO)
+            .await
+            .expect("first page loads");
+        assert_eq!(first.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
+        assert_eq!(first.first().unwrap().subject.as_str(), "subject-000");
+        assert_eq!(first.last().unwrap().subject.as_str(), "subject-099");
+
+        for number in 0..crate::auth::AUTH_SWEEP_BATCH_SIZE {
+            auth.store_tokens(
+                &SubjectId(format!("tail-{number:03}")),
+                tokens(Duration::ZERO, Some("refresh")),
+            )
+            .await
+            .expect("growing tail persists");
+        }
+
+        let second = auth
+            .subjects_needing_refresh(Duration::ZERO)
+            .await
+            .expect("second page loads");
+        assert_eq!(second.len(), 2);
+        assert_eq!(second.first().unwrap().subject.as_str(), "subject-100");
+        assert_eq!(second.last().unwrap().subject.as_str(), "subject-101");
+
+        let wrapped = auth
+            .subjects_needing_refresh(Duration::ZERO)
+            .await
+            .expect("scan wraps");
+        assert_eq!(wrapped.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
+        assert_eq!(wrapped.first().unwrap().subject.as_str(), "subject-000");
+    }
+
+    #[tokio::test]
+    async fn mixed_refresh_lanes_share_capacity_and_advance_independently() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "c".into(),
+                client_secret: "s".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+            store.clone(),
+        );
+        let lane_work = crate::auth::AUTH_SWEEP_BATCH_SIZE / 2 + 2;
+        for number in 0..lane_work {
+            auth.store_tokens(
+                &SubjectId(format!("unleased-{number:03}")),
+                tokens(Duration::ZERO, Some("refresh")),
+            )
+            .await
+            .expect("unleased subject persists");
+
+            let subject = SubjectId(format!("expired-lease-{number:03}"));
+            auth.store_tokens(&subject, tokens(Duration::ZERO, Some("refresh")))
+                .await
+                .expect("leased subject persists");
+            let mut state = store
+                .subject(&subject)
+                .await
+                .expect("store works")
+                .expect("leased subject exists");
+            let revision = state.revision;
+            state.revision += 1;
+            state.refresh_lease = Some(SubjectRefreshLease {
+                holder: "abandoned-worker".into(),
+                expires_at: SystemTime::now() - Duration::from_secs(1),
+            });
+            assert!(store
+                .replace_subject(revision, state)
+                .await
+                .expect("expired lease persists"));
+        }
+
+        let first = auth
+            .subjects_needing_refresh(Duration::ZERO)
+            .await
+            .expect("first mixed page loads");
+        assert_eq!(first.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
+        assert_eq!(
+            first
+                .iter()
+                .filter(|work| work.subject.as_str().starts_with("unleased-"))
+                .count(),
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 2
+        );
+        assert_eq!(
+            first
+                .iter()
+                .filter(|work| work.subject.as_str().starts_with("expired-lease-"))
+                .count(),
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 2
+        );
+
+        let second = auth
+            .subjects_needing_refresh(Duration::ZERO)
+            .await
+            .expect("second mixed page loads");
+        assert_eq!(second.len(), 4);
+        assert_eq!(
+            second
+                .iter()
+                .filter(|work| work.subject.as_str().starts_with("unleased-"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            second
+                .iter()
+                .filter(|work| work.subject.as_str().starts_with("expired-lease-"))
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_later_refresh_lane_does_not_publish_the_earlier_epoch() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "c".into(),
+                client_secret: "s".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+            store.clone(),
+        );
+        for number in 0..60 {
+            auth.store_tokens(
+                &SubjectId(format!("unleased-{number:03}")),
+                tokens(Duration::ZERO, Some("refresh")),
+            )
+            .await
+            .expect("unleased subject persists");
+        }
+        let leased = SubjectId("expired-lease".into());
+        auth.store_tokens(&leased, tokens(Duration::ZERO, Some("refresh")))
+            .await
+            .expect("leased subject persists");
+        let mut state = store
+            .subject(&leased)
+            .await
+            .unwrap()
+            .expect("leased subject exists");
+        let revision = state.revision;
+        state.revision += 1;
+        state.refresh_lease = Some(SubjectRefreshLease {
+            holder: "abandoned-worker".into(),
+            expires_at: SystemTime::now() - Duration::from_secs(1),
+        });
+        assert!(store.replace_subject(revision, state).await.unwrap());
+
+        store.fail_scan_on_call(4);
+        assert!(matches!(
+            auth.subjects_needing_refresh(Duration::ZERO).await,
+            Err(layer2_core::store::StoreError::Unavailable(_))
+        ));
+        store.clear_scan_failure();
+
+        let retry = auth
+            .subjects_needing_refresh(Duration::ZERO)
+            .await
+            .expect("retry starts from the unpublished epoch");
+        assert!(retry
+            .iter()
+            .any(|work| work.subject.as_str() == "unleased-000"));
+    }
+
+    #[tokio::test]
+    async fn mixed_reissue_lanes_share_capacity_and_advance_independently() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store.clone(),
+        );
+        let owner = SubjectId("owner".into());
+        let issued_at = SystemTime::now() - Duration::from_secs(60);
+        let credential = |id: String| DurableCredential {
+            id,
+            value: SecretValue::new("credential-value".into()),
+            owner: owner.clone(),
+            issued_at,
+            expires_at: None,
+            scope_fingerprint: "scope".into(),
+        };
+        let ordinary_lane_work = crate::auth::AUTH_SWEEP_BATCH_SIZE / 3 + 2;
+        for number in 0..ordinary_lane_work {
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("current-{number:03}")),
+                    generation: 0,
+                    current: Some(credential(format!("provider-current-{number:03}"))),
+                    pending: None,
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .expect("current state persists"));
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("pending-{number:03}")),
+                    generation: 0,
+                    current: Some(credential(format!("provider-old-{number:03}"))),
+                    pending: Some(credential(format!("provider-pending-{number:03}"))),
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .expect("pending state persists"));
+        }
+        let lease_lane_size =
+            crate::auth::AUTH_SWEEP_BATCH_SIZE - 2 * (crate::auth::AUTH_SWEEP_BATCH_SIZE / 3);
+        for number in 0..(lease_lane_size + 2) {
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("expired-lease-{number:03}")),
+                    generation: 0,
+                    current: Some(credential(format!("provider-leased-{number:03}"))),
+                    pending: None,
+                    revoke_debt: Vec::new(),
+                    lease: Some(CredentialLease {
+                        holder: "abandoned-worker".into(),
+                        fence: 1,
+                        acquired_at: issued_at,
+                        expires_at: SystemTime::now() - Duration::from_secs(1),
+                        scope_fingerprint: "scope".into(),
+                    }),
+                    retired: false,
+                })
+                .await
+                .expect("expired lease state persists"));
+        }
+
+        let first = auth
+            .sessions_due_for_reissue(Duration::ZERO)
+            .await
+            .expect("first mixed page loads");
+        assert_eq!(first.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
+        assert_eq!(
+            first
+                .iter()
+                .filter(|(session, _)| session.as_str().starts_with("current-"))
+                .count(),
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 3
+        );
+        assert_eq!(
+            first
+                .iter()
+                .filter(|(session, _)| session.as_str().starts_with("pending-"))
+                .count(),
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 3
+        );
+        assert_eq!(
+            first
+                .iter()
+                .filter(|(session, _)| session.as_str().starts_with("expired-lease-"))
+                .count(),
+            lease_lane_size
+        );
+
+        for number in 0..crate::auth::AUTH_SWEEP_BATCH_SIZE {
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("pending-tail-{number:03}")),
+                    generation: 0,
+                    current: Some(credential(format!("provider-tail-old-{number:03}"))),
+                    pending: Some(credential(format!("provider-tail-pending-{number:03}"))),
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .expect("growing pending tail persists"));
+        }
+
+        let second = auth
+            .sessions_due_for_reissue(Duration::ZERO)
+            .await
+            .expect("second mixed page loads");
+        assert_eq!(second.len(), 6);
+        assert_eq!(
+            second
+                .iter()
+                .filter(|(session, _)| session.as_str().starts_with("current-"))
+                .count(),
+            2
+        );
+
+        let wrapped = auth
+            .sessions_due_for_reissue(Duration::ZERO)
+            .await
+            .expect("finite epochs wrap despite a sustained tail");
+        assert_eq!(wrapped.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
+        assert!(wrapped
+            .iter()
+            .any(|(session, _)| session.as_str() == "pending-000"));
+        assert_eq!(
+            second
+                .iter()
+                .filter(|(session, _)| session.as_str().starts_with("expired-lease-"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            second
+                .iter()
+                .filter(|(session, _)| session.as_str().starts_with("pending-"))
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_later_reissue_lane_does_not_publish_the_earlier_epoch() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store.clone(),
+        );
+        let owner = SubjectId("owner".into());
+        let issued_at = SystemTime::now() - Duration::from_secs(60);
+        let credential = |id: String| DurableCredential {
+            id,
+            value: SecretValue::new("credential-value".into()),
+            owner: owner.clone(),
+            issued_at,
+            expires_at: None,
+            scope_fingerprint: "scope".into(),
+        };
+        for number in 0..40 {
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("current-{number:03}")),
+                    generation: 0,
+                    current: Some(credential(format!("provider-current-{number:03}"))),
+                    pending: None,
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .unwrap());
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("pending-{number:03}")),
+                    generation: 0,
+                    current: Some(credential(format!("provider-old-{number:03}"))),
+                    pending: Some(credential(format!("provider-pending-{number:03}"))),
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .unwrap());
+        }
+
+        store.fail_scan_on_call(5);
+        assert!(matches!(
+            auth.sessions_due_for_reissue(Duration::ZERO).await,
+            Err(layer2_core::store::StoreError::Unavailable(_))
+        ));
+        store.clear_scan_failure();
+
+        let retry = auth
+            .sessions_due_for_reissue(Duration::ZERO)
+            .await
+            .expect("retry starts from the unpublished epochs");
+        assert!(retry
+            .iter()
+            .any(|(session, _)| session.as_str() == "pending-000"));
+        assert!(retry
+            .iter()
+            .any(|(session, _)| session.as_str() == "current-000"));
     }
 
     #[tokio::test]
@@ -324,6 +825,151 @@ mod tests {
             auth.access_token(&s).await.expect("state loads").as_deref(),
             Some("access")
         );
+    }
+
+    #[tokio::test]
+    async fn shared_pass_budget_caps_saturated_lanes_while_fair_cursors_progress() {
+        const REISSUE_PER_SUBLANE: usize = 6;
+        const REFRESH_PER_SUBLANE: usize = 12;
+
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "c".into(),
+                client_secret: "s".into(),
+                public_url: "http://service.invalid".into(),
+            },
+            None,
+            store.clone(),
+        );
+        let owner = SubjectId("owner".into());
+        let issued_at = SystemTime::now() - Duration::from_secs(60);
+        let credential = |id: String| DurableCredential {
+            id,
+            value: SecretValue::new("value".into()),
+            owner: owner.clone(),
+            issued_at,
+            expires_at: None,
+            scope_fingerprint: "scope".into(),
+        };
+        for number in 0..REISSUE_PER_SUBLANE {
+            for (kind, pending, lease) in [
+                ("current", false, false),
+                ("pending", true, false),
+                ("lease", false, true),
+            ] {
+                let session = SessionId(format!("{kind}-{number:03}"));
+                assert!(store
+                    .insert_credential(SessionCredentialState {
+                        session,
+                        generation: 0,
+                        current: Some(credential(format!("provider-{kind}-{number:03}"))),
+                        pending: pending
+                            .then(|| credential(format!("provider-pending-{number:03}"))),
+                        revoke_debt: Vec::new(),
+                        lease: lease.then(|| CredentialLease {
+                            holder: "expired-worker".into(),
+                            fence: 1,
+                            acquired_at: issued_at,
+                            expires_at: SystemTime::now() - Duration::from_secs(1),
+                            scope_fingerprint: "scope".into(),
+                        }),
+                        retired: false,
+                    })
+                    .await
+                    .expect("credential work persists"));
+            }
+        }
+        for number in 0..REFRESH_PER_SUBLANE {
+            auth.store_tokens(
+                &SubjectId(format!("unleased-{number:03}")),
+                tokens(Duration::ZERO, Some("refresh")),
+            )
+            .await
+            .expect("unleased refresh work persists");
+            let subject = SubjectId(format!("leased-{number:03}"));
+            auth.store_tokens(&subject, tokens(Duration::ZERO, Some("refresh")))
+                .await
+                .expect("leased refresh work persists");
+            let mut state = store.subject(&subject).await.unwrap().unwrap();
+            let revision = state.revision;
+            state.revision += 1;
+            state.refresh_lease = Some(SubjectRefreshLease {
+                holder: "expired-worker".into(),
+                expires_at: SystemTime::now() - Duration::from_secs(1),
+            });
+            assert!(store.replace_subject(revision, state).await.unwrap());
+        }
+
+        let mut reissued = HashSet::new();
+        let mut refreshed = HashSet::new();
+        for _ in 0..3 {
+            let pass = AuthPassBudget::new(AUTH_RENEWAL_PASS_BUDGET);
+            let schema = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+            let active = pass.lane(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
+            let provider = pass.lane(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
+            let debt = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+            let reissue = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+            let refresh = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+            assert!(schema.take(AUTH_SWEEP_BATCH_SIZE));
+            assert!(active.take(AUTH_SWEEP_TWO_LANE_BATCH_SIZE));
+            assert!(provider.take(AUTH_SWEEP_TWO_LANE_BATCH_SIZE));
+            assert!(debt.take(AUTH_SWEEP_BATCH_SIZE));
+
+            let due_reissue = auth
+                .sessions_due_for_reissue_with_budget(Duration::ZERO, &reissue)
+                .await
+                .expect("bounded reissue selection succeeds");
+            for (session, _) in due_reissue {
+                assert!(
+                    reissued.insert(session.0),
+                    "cursor must not repeat before wrap"
+                );
+            }
+            let due_refresh = auth
+                .subjects_needing_refresh_with_budget(Duration::ZERO, &refresh)
+                .await
+                .expect("bounded refresh selection succeeds");
+            for due in due_refresh {
+                assert!(
+                    refreshed.insert(due.subject.0),
+                    "cursor must not repeat before wrap"
+                );
+            }
+            assert!(pass.used() <= AUTH_RENEWAL_PASS_BUDGET);
+
+            let reissue_remaining = reissue.remaining();
+            let refresh_remaining = refresh.remaining();
+            assert!(reissue.take(reissue_remaining));
+            assert!(refresh.take(refresh_remaining));
+            assert_eq!(
+                pass.used(),
+                AUTH_RENEWAL_PASS_BUDGET,
+                "even fully saturated lanes share one hard pass ceiling"
+            );
+        }
+
+        assert_eq!(reissued.len(), REISSUE_PER_SUBLANE * 3);
+        assert_eq!(refreshed.len(), REFRESH_PER_SUBLANE * 2);
+        for prefix in ["current-", "pending-", "lease-"] {
+            assert_eq!(
+                reissued
+                    .iter()
+                    .filter(|session| session.starts_with(prefix))
+                    .count(),
+                REISSUE_PER_SUBLANE
+            );
+        }
+        for prefix in ["unleased-", "leased-"] {
+            assert_eq!(
+                refreshed
+                    .iter()
+                    .filter(|subject| subject.starts_with(prefix))
+                    .count(),
+                REFRESH_PER_SUBLANE
+            );
+        }
     }
 
     #[tokio::test]
