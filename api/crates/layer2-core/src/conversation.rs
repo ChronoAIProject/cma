@@ -291,11 +291,25 @@ impl SessionService {
         if record.session.status.is_rotating() {
             return Err(CoreError::SessionRotating);
         }
-        if !self.entries.read().await.contains_key(id) {
+        let entries = self.entries.read().await;
+        if !entries.contains_key(id) {
+            let rotation_in_progress = self.rotation_in_progress(id).await;
+            drop(entries);
+            if rotation_in_progress {
+                return Err(CoreError::SessionRotating);
+            }
             self.readopt(&record).await?;
+        } else {
+            drop(entries);
         }
         let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+        let Some(entry) = entries.get(id) else {
+            let rotation_in_progress = self.rotation_in_progress(id).await;
+            drop(entries);
+            return Err(self
+                .missing_live_session_error(caller, id, rotation_in_progress)
+                .await);
+        };
         // Recheck the live entry after readoption and after the durable read.
         // A handover may have begun while either awaited operation was in
         // flight, and its outgoing channel remains present until teardown.

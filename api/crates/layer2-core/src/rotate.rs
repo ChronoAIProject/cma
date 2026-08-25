@@ -265,6 +265,7 @@ impl SessionService {
                 "this session's handover could not be recorded, so it has not been moved".into(),
             ));
         };
+        self.rotations_in_progress.write().await.insert(id.clone());
 
         // Taken again, because the first was read before input stopped and
         // anything typed since belongs to the session too. The rehearsal

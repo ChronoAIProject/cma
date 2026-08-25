@@ -237,6 +237,12 @@ pub struct SessionService {
     /// sandbox. A restarted process asks again, which is right - by then the
     /// runtime may well have been replaced by other means.
     pub(crate) rotation_refused: RwLock<HashSet<SessionId>>,
+    /// Sessions whose outgoing runtime is being replaced.
+    ///
+    /// Unlike the durable `Rotating` status, this spans the final installation
+    /// boundary where readiness is committed just before the replacement entry
+    /// becomes live. It is consulted only after a live lookup misses.
+    pub(crate) rotations_in_progress: RwLock<HashSet<SessionId>>,
     /// Who this control plane says it is, on the runtimes it creates.
     ///
     /// A sandbox provider is shared: one key sees everything provisioned
@@ -279,6 +285,12 @@ pub struct SessionService {
     /// Held here rather than as a constant so a test can exercise the retry
     /// path without waiting out a delay meant for a provider under load.
     pub(crate) retry_backoff_ms: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    pub(crate) pause_next_live_install: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(crate) live_install_paused: tokio::sync::Notify,
+    #[cfg(test)]
+    pub(crate) live_install_resume: tokio::sync::Notify,
 }
 
 /// What a session service reaches outside itself, beyond its own store.
