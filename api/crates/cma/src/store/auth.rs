@@ -40,12 +40,23 @@ const CREDENTIAL_CURRENT_INDEX: &str = "auth_credential_current_due";
 const CREDENTIAL_PENDING_INDEX: &str = "auth_credential_pending_due";
 const CREDENTIAL_EXPIRED_LEASE_INDEX: &str = "auth_credential_expired_mint_lease";
 const CREDENTIAL_DEBT_INDEX: &str = "auth_credential_revoke_debt";
-const CREDENTIAL_DEBT_ORDER_INDEX: &str = "auth_credential_revoke_debt_order";
+// Mongo cannot replace a same-named index whose keys changed. Keep the v2 name
+// distinct so a Recreate rollout can open a database that still has v1's index.
+const CREDENTIAL_DEBT_ORDER_INDEX: &str = "auth_credential_revoke_debt_order_v2";
+#[cfg(test)]
+const LEGACY_CREDENTIAL_DEBT_ORDER_INDEX: &str = "auth_credential_revoke_debt_order";
 const CREDENTIAL_RECONCILIATION_INDEX: &str = "auth_active_credential_reconciliation";
 const SUBJECT_MIGRATION_INDEX: &str = "auth_subject_schema_migration";
 const CREDENTIAL_MIGRATION_INDEX: &str = "auth_credential_schema_migration";
 const DUPLICATE_KEY: i32 = 11000;
-const AUTH_SCHEMA_VERSION: i64 = 1;
+/// Persisted shape written by this binary.
+///
+/// Version 2 adds request-bound revocation custody. The deployment's `Recreate`
+/// strategy is a hard writer boundary: a version-1 binary uses whole-document
+/// replacement and cannot preserve version-2 fields if both versions write at
+/// once. Migration fences operations that predate the cutover, but does not
+/// claim arbitrary mixed-version rolling-writer compatibility.
+const AUTH_SCHEMA_VERSION: i64 = 2;
 const AUTH_MIGRATION_LANE_BATCH_SIZE: usize = 50;
 const AUTH_SCHEMA_OPEN_BUDGET: usize = 2 * (AUTH_MIGRATION_LANE_BATCH_SIZE + 2) + 2;
 
@@ -69,8 +80,10 @@ const VERIFIER_FIELD: &str = "verifier";
 const ACCESS_TOKEN_FIELD: &str = "tokens.access_token";
 const REFRESH_TOKEN_FIELD: &str = "tokens.refresh_token";
 const CURRENT_VALUE_FIELD: &str = "current.value";
+const CURRENT_REVOCATION_FIELD: &str = "current.revocation_credential";
 const REQUEST_BOUND_VALUE_FIELD: &str = "request_bound_credential";
 const PENDING_VALUE_FIELD: &str = "pending.value";
+const PENDING_REVOCATION_FIELD: &str = "pending.revocation_credential";
 
 #[derive(Serialize, Deserialize)]
 struct BrowserSessionDoc {
@@ -134,6 +147,8 @@ struct SubjectRefreshLeaseDoc {
 struct CredentialDoc {
     id: String,
     value: CipherEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revocation_credential: Option<CipherEnvelope>,
     owner: String,
     issued_at: DateTime,
     expires_at: Option<DateTime>,
@@ -145,12 +160,18 @@ struct RevokeDebtDoc {
     id: String,
     owner: String,
     queued_at: DateTime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revocation_credential: Option<CipherEnvelope>,
 }
 
 #[derive(Deserialize)]
 struct RevokeDebtPageDoc {
     #[serde(rename = "_id")]
     id: String,
+    #[serde(default)]
+    auth_schema_version: i64,
+    #[serde(default)]
+    request_bound_credential: Option<CipherEnvelope>,
     revoke_debt: Vec<RevokeDebtDoc>,
 }
 
@@ -383,7 +404,11 @@ impl MongoAuthStore {
             .map_err(|_| unavailable("credential revoke-debt query index"))?;
         self.credentials
             .create_index(query_index(
-                doc! { "revoke_debt_ordered": 1, "_id": 1 },
+                doc! {
+                    "auth_schema_version": 1,
+                    "revoke_debt_ordered": 1,
+                    "_id": 1,
+                },
                 CREDENTIAL_DEBT_ORDER_INDEX,
                 doc! { "revoke_debt.0": { "$exists": true } },
             ))
@@ -440,13 +465,12 @@ impl MongoAuthStore {
         let mut failed = false;
         for (id, sequence) in ids.into_iter().zip(sequences) {
             let incarnation = uuid::Uuid::new_v4().simple().to_string();
+            let mut filter = legacy_schema_filter();
+            filter.insert("_id", id);
             if self
                 .subjects
                 .update_one(
-                    doc! {
-                        "_id": id,
-                        "auth_schema_version": { "$ne": AUTH_SCHEMA_VERSION },
-                    },
+                    filter,
                     subject_migration_update(retention_millis, &incarnation, sequence),
                 )
                 .await
@@ -486,13 +510,12 @@ impl MongoAuthStore {
         let sequences = self.allocate_sweep_sequences(ids.len()).await?;
         let mut failed = false;
         for (id, sequence) in ids.into_iter().zip(sequences) {
+            let mut filter = legacy_schema_filter();
+            filter.insert("_id", id);
             if self
                 .credentials
                 .update_one(
-                    doc! {
-                        "_id": id,
-                        "auth_schema_version": { "$ne": AUTH_SCHEMA_VERSION },
-                    },
+                    filter,
                     credential_migration_update(retention_millis, sequence),
                 )
                 .await
@@ -510,9 +533,11 @@ impl MongoAuthStore {
     }
 
     async fn normalize_one_revoke_debt_order(&self) -> Result<(), StoreError> {
-        // An old replica in a rolling deployment can replace a record without
-        // preserving the marker. Admit one such record per sweep call so the
-        // compatibility work and its array sort remain bounded by one document.
+        // A pre-cutover writer can replace a record without preserving the
+        // marker before Recreate has completed the writer handoff. Admit one
+        // such record per sweep call so the compatibility work and its array
+        // sort remain bounded by one document. Future schema versions are never
+        // rewritten by this binary.
         let sequence = self.next_sweep_sequence().await?;
         self.credentials
             .update_one(
@@ -646,16 +671,35 @@ impl AuthStore for MongoAuthStore {
 
     async fn replace_subject(
         &self,
+        expected_incarnation: &str,
         expected_revision: u64,
-        state: SubjectAuthState,
+        mut state: SubjectAuthState,
     ) -> Result<bool, StoreError> {
         validate_next(expected_revision, state.revision, "subject auth")?;
         let expected = stored_counter(expected_revision, "subject auth revision")?;
+        if expected_incarnation.is_empty() && state.incarnation.is_empty() {
+            state.incarnation = uuid::Uuid::new_v4().simple().to_string();
+        }
         let mut stored = subject_to_doc(state, &self.cipher)?;
         stored.sweep_sequence = self.next_sweep_sequence().await?;
+        let mut filter = doc! {
+            "_id": &stored.id,
+            "revision": expected,
+        };
+        if expected_incarnation.is_empty() {
+            filter.insert(
+                "$or",
+                vec![
+                    doc! { "incarnation": { "$exists": false } },
+                    doc! { "incarnation": "" },
+                ],
+            );
+        } else {
+            filter.insert("incarnation", expected_incarnation);
+        }
         let result = self
             .subjects
-            .replace_one(doc! { "_id": &stored.id, "revision": expected }, &stored)
+            .replace_one(filter, &stored)
             .await
             .map_err(|_| unavailable("replace subject authentication"))?;
         Ok(result.matched_count == 1)
@@ -932,7 +976,7 @@ impl AuthStore for MongoAuthStore {
                     .await
                     .map_err(|error| read_failure("resume credential revoke debt", &error))?;
                 if let Some(stored) = stored {
-                    let next = revoke_debt_page_item(stored)?;
+                    let next = revoke_debt_page_item(stored, &self.cipher)?;
                     position = Some(next.cursor.clone());
                     work.push(next);
                     continue;
@@ -956,7 +1000,7 @@ impl AuthStore for MongoAuthStore {
             else {
                 break;
             };
-            let next = revoke_debt_page_item(stored)?;
+            let next = revoke_debt_page_item(stored, &self.cipher)?;
             position = Some(next.cursor.clone());
             work.push(next);
         }
@@ -1035,7 +1079,7 @@ async fn migration_ids(
     limit: usize,
 ) -> Result<Vec<String>, StoreError> {
     let mut cursor = collection
-        .find(doc! { "auth_schema_version": { "$ne": AUTH_SCHEMA_VERSION } })
+        .find(legacy_schema_filter())
         .projection(doc! { "_id": 1 })
         .hint(Hint::Name(index.to_string()))
         .limit(mongo_limit(limit))
@@ -1050,6 +1094,24 @@ async fn migration_ids(
         ids.push(stored.id);
     }
     Ok(ids)
+}
+
+fn legacy_schema_filter() -> Document {
+    doc! {
+        "$or": [
+            { "auth_schema_version": { "$exists": false } },
+            { "auth_schema_version": 1_i64 },
+        ]
+    }
+}
+
+fn supported_schema_filter() -> Document {
+    doc! {
+        "$or": [
+            { "auth_schema_version": { "$exists": false } },
+            { "auth_schema_version": { "$in": [1_i64, AUTH_SCHEMA_VERSION] } },
+        ]
+    }
 }
 
 fn subject_migration_update(
@@ -1111,6 +1173,21 @@ fn subject_migration_update(
 fn credential_migration_update(retention_millis: i64, sweep_sequence: i64) -> Vec<Document> {
     vec![doc! {
         "$set": {
+            "request_bound_credential": {
+                "$cond": [
+                    {
+                        "$and": [
+                            { "$eq": ["$retired", true] },
+                            { "$eq": [{ "$ifNull": ["$current", Bson::Null] }, Bson::Null] },
+                            { "$eq": [{ "$ifNull": ["$pending", Bson::Null] }, Bson::Null] },
+                            { "$eq": [{ "$ifNull": ["$lease", Bson::Null] }, Bson::Null] },
+                            { "$eq": [{ "$size": { "$ifNull": ["$revoke_debt", []] } }, 0] },
+                        ]
+                    },
+                    "$$REMOVE",
+                    { "$ifNull": ["$request_bound_credential", "$$REMOVE"] },
+                ]
+            },
             "revoke_debt": {
                 "$sortArray": {
                     "input": { "$ifNull": ["$revoke_debt", []] },
@@ -1440,10 +1517,10 @@ fn revoke_debt_after_filter(after: &RevokeDebtCursor, through_sequence: u64) -> 
 }
 
 fn unordered_revoke_debt_filter() -> Document {
-    doc! {
-        "revoke_debt.0": { "$exists": true },
-        "revoke_debt_ordered": { "$ne": true },
-    }
+    let mut filter = supported_schema_filter();
+    filter.insert("revoke_debt.0", doc! { "$exists": true });
+    filter.insert("revoke_debt_ordered", doc! { "$ne": true });
+    filter
 }
 
 fn revoke_debt_order_update(sweep_sequence: i64) -> Vec<Document> {
@@ -1464,6 +1541,8 @@ fn revoke_debt_order_update(sweep_sequence: i64) -> Vec<Document> {
 fn revoke_debt_after_projection(after_id: &str) -> Document {
     doc! {
         "_id": 1,
+        "auth_schema_version": 1,
+        "request_bound_credential": 1,
         "sweep_sequence": 1,
         "revoke_debt": {
             "$elemMatch": { "id": { "$gt": after_id } },
@@ -1472,38 +1551,78 @@ fn revoke_debt_after_projection(after_id: &str) -> Document {
 }
 
 fn first_revoke_debt_projection() -> Document {
-    doc! { "_id": 1, "sweep_sequence": 1, "revoke_debt": { "$slice": 1 } }
+    doc! {
+        "_id": 1,
+        "auth_schema_version": 1,
+        "request_bound_credential": 1,
+        "sweep_sequence": 1,
+        "revoke_debt": { "$slice": 1 },
+    }
 }
 
 #[cfg(test)]
 fn last_revoke_debt_projection() -> Document {
-    doc! { "_id": 1, "sweep_sequence": 1, "revoke_debt": { "$slice": -1 } }
+    doc! {
+        "_id": 1,
+        "auth_schema_version": 1,
+        "request_bound_credential": 1,
+        "sweep_sequence": 1,
+        "revoke_debt": { "$slice": -1 },
+    }
 }
 
-fn revoke_debt_page_work(mut stored: RevokeDebtPageDoc) -> Result<RevokeDebtWork, StoreError> {
+fn revoke_debt_page_work(
+    mut stored: RevokeDebtPageDoc,
+    cipher: &AuthCipher,
+) -> Result<RevokeDebtWork, StoreError> {
+    validate_schema_version(stored.auth_schema_version, "credential revoke debt")?;
     if stored.revoke_debt.len() != 1 {
         return Err(StoreError::Malformed(
             "projected credential revoke-debt page must contain exactly one entry".into(),
         ));
     }
     let debt = stored.revoke_debt.pop().unwrap();
+    let revocation_field = revoke_debt_revocation_field(&debt.id);
+    let revocation_credential = match debt.revocation_credential {
+        Some(value) => Some(SecretValue::new(cipher.open(
+            CREDENTIAL_KIND,
+            stored.id.as_bytes(),
+            &revocation_field,
+            value,
+        )?)),
+        None => stored
+            .request_bound_credential
+            .map(|value| {
+                cipher
+                    .open(
+                        CREDENTIAL_KIND,
+                        stored.id.as_bytes(),
+                        REQUEST_BOUND_VALUE_FIELD,
+                        value,
+                    )
+                    .map(SecretValue::new)
+            })
+            .transpose()?,
+    };
     Ok(RevokeDebtWork {
-        session: SessionId(stored.id),
+        session: SessionId(stored.id.clone()),
         debt: RevokeDebt {
             id: debt.id,
             owner: SubjectId(debt.owner),
             queued_at: debt.queued_at.to_system_time(),
+            revocation_credential,
         },
     })
 }
 
 fn revoke_debt_page_item(
     stored: Document,
+    cipher: &AuthCipher,
 ) -> Result<AuthSweepItem<RevokeDebtCursor, RevokeDebtWork>, StoreError> {
     let cursor = revoke_debt_cursor_from_document(&stored)?;
     let state = mongodb::bson::deserialize_from_document::<RevokeDebtPageDoc>(stored)
         .map_err(|_| StoreError::Malformed("stored credential revoke debt is malformed".into()))
-        .and_then(revoke_debt_page_work);
+        .and_then(|stored| revoke_debt_page_work(stored, cipher));
     Ok(AuthSweepItem { cursor, state })
 }
 
@@ -1553,6 +1672,19 @@ fn stored_counter(value: u64, name: &str) -> Result<i64, StoreError> {
 fn read_counter(value: i64, name: &str) -> Result<u64, StoreError> {
     u64::try_from(value)
         .map_err(|_| StoreError::Malformed(format!("stored {name} must not be negative")))
+}
+
+fn validate_schema_version(version: i64, record: &str) -> Result<(), StoreError> {
+    if !(0..=AUTH_SCHEMA_VERSION).contains(&version) {
+        return Err(StoreError::Malformed(format!(
+            "stored {record} uses unsupported authentication schema version {version}"
+        )));
+    }
+    Ok(())
+}
+
+fn revoke_debt_revocation_field(credential_id: &str) -> String {
+    format!("revoke_debt.{credential_id}.revocation_credential")
 }
 
 fn document_string(stored: &Document, field: &str, record: &str) -> Result<String, StoreError> {
@@ -1843,7 +1975,7 @@ fn subject_from_doc(
     cipher: &AuthCipher,
 ) -> Result<SubjectAuthState, StoreError> {
     let _retention_deadline = stored.delete_after;
-    let _schema_version = stored.auth_schema_version;
+    validate_schema_version(stored.auth_schema_version, "subject authentication")?;
     let id = stored.id;
     let tokens = stored
         .tokens
@@ -1922,19 +2054,44 @@ fn credential_state_to_doc(
             })
             .transpose()?,
         current: current
-            .map(|value| credential_to_doc(value, cipher, &id, CURRENT_VALUE_FIELD))
+            .map(|value| {
+                credential_to_doc(
+                    value,
+                    cipher,
+                    &id,
+                    CURRENT_VALUE_FIELD,
+                    CURRENT_REVOCATION_FIELD,
+                )
+            })
             .transpose()?,
         pending: pending
-            .map(|value| credential_to_doc(value, cipher, &id, PENDING_VALUE_FIELD))
+            .map(|value| {
+                credential_to_doc(
+                    value,
+                    cipher,
+                    &id,
+                    PENDING_VALUE_FIELD,
+                    PENDING_REVOCATION_FIELD,
+                )
+            })
             .transpose()?,
         revoke_debt: revoke_debt
             .into_iter()
-            .map(|debt| RevokeDebtDoc {
-                id: debt.id,
-                owner: debt.owner.0,
-                queued_at: DateTime::from_system_time(debt.queued_at),
+            .map(|debt| {
+                let field = revoke_debt_revocation_field(&debt.id);
+                Ok(RevokeDebtDoc {
+                    revocation_credential: debt
+                        .revocation_credential
+                        .map(|value| {
+                            cipher.seal(CREDENTIAL_KIND, id.as_bytes(), &field, value.expose())
+                        })
+                        .transpose()?,
+                    id: debt.id,
+                    owner: debt.owner.0,
+                    queued_at: DateTime::from_system_time(debt.queued_at),
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>, StoreError>>()?,
         revoke_debt_ordered: true,
         lease: lease
             .map(|lease| {
@@ -1960,20 +2117,40 @@ fn credential_to_doc(
     credential: DurableCredential,
     cipher: &AuthCipher,
     record_id: &str,
-    field: &str,
+    value_field: &str,
+    revocation_field: &str,
 ) -> Result<CredentialDoc, StoreError> {
+    let DurableCredential {
+        id,
+        value,
+        owner,
+        issued_at,
+        expires_at,
+        scope_fingerprint,
+        revocation_credential,
+    } = credential;
     Ok(CredentialDoc {
-        id: credential.id,
+        id,
         value: cipher.seal(
             CREDENTIAL_KIND,
             record_id.as_bytes(),
-            field,
-            credential.value.expose(),
+            value_field,
+            value.expose(),
         )?,
-        owner: credential.owner.0,
-        issued_at: DateTime::from_system_time(credential.issued_at),
-        expires_at: credential.expires_at.map(DateTime::from_system_time),
-        scope_fingerprint: credential.scope_fingerprint,
+        revocation_credential: revocation_credential
+            .map(|value| {
+                cipher.seal(
+                    CREDENTIAL_KIND,
+                    record_id.as_bytes(),
+                    revocation_field,
+                    value.expose(),
+                )
+            })
+            .transpose()?,
+        owner: owner.0,
+        issued_at: DateTime::from_system_time(issued_at),
+        expires_at: expires_at.map(DateTime::from_system_time),
+        scope_fingerprint,
     })
 }
 
@@ -1982,17 +2159,28 @@ fn credential_state_from_doc(
     cipher: &AuthCipher,
 ) -> Result<SessionCredentialState, StoreError> {
     let _retention_deadline = stored.delete_after;
-    let _schema_version = stored.auth_schema_version;
+    validate_schema_version(stored.auth_schema_version, "session credential")?;
     let id = stored.id;
     let mut revoke_debt = stored
         .revoke_debt
         .into_iter()
-        .map(|debt| RevokeDebt {
-            id: debt.id,
-            owner: SubjectId(debt.owner),
-            queued_at: debt.queued_at.to_system_time(),
+        .map(|debt| {
+            let field = revoke_debt_revocation_field(&debt.id);
+            Ok(RevokeDebt {
+                revocation_credential: debt
+                    .revocation_credential
+                    .map(|value| {
+                        cipher
+                            .open(CREDENTIAL_KIND, id.as_bytes(), &field, value)
+                            .map(SecretValue::new)
+                    })
+                    .transpose()?,
+                id: debt.id,
+                owner: SubjectId(debt.owner),
+                queued_at: debt.queued_at.to_system_time(),
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, StoreError>>()?;
     if !stored.revoke_debt_ordered {
         revoke_debt.sort_by(|left, right| left.id.cmp(&right.id));
     }
@@ -2012,11 +2200,27 @@ fn credential_state_from_doc(
             .transpose()?,
         current: stored
             .current
-            .map(|value| credential_from_doc(value, cipher, &id, CURRENT_VALUE_FIELD))
+            .map(|value| {
+                credential_from_doc(
+                    value,
+                    cipher,
+                    &id,
+                    CURRENT_VALUE_FIELD,
+                    CURRENT_REVOCATION_FIELD,
+                )
+            })
             .transpose()?,
         pending: stored
             .pending
-            .map(|value| credential_from_doc(value, cipher, &id, PENDING_VALUE_FIELD))
+            .map(|value| {
+                credential_from_doc(
+                    value,
+                    cipher,
+                    &id,
+                    PENDING_VALUE_FIELD,
+                    PENDING_REVOCATION_FIELD,
+                )
+            })
             .transpose()?,
         revoke_debt,
         lease: stored
@@ -2041,20 +2245,42 @@ fn credential_from_doc(
     stored: CredentialDoc,
     cipher: &AuthCipher,
     record_id: &str,
-    field: &str,
+    value_field: &str,
+    revocation_field: &str,
 ) -> Result<DurableCredential, StoreError> {
+    let CredentialDoc {
+        id,
+        value,
+        revocation_credential,
+        owner,
+        issued_at,
+        expires_at,
+        scope_fingerprint,
+    } = stored;
     Ok(DurableCredential {
-        id: stored.id,
+        id,
         value: SecretValue::new(cipher.open(
             CREDENTIAL_KIND,
             record_id.as_bytes(),
-            field,
-            stored.value,
+            value_field,
+            value,
         )?),
-        owner: SubjectId(stored.owner),
-        issued_at: stored.issued_at.to_system_time(),
-        expires_at: stored.expires_at.map(|value| value.to_system_time()),
-        scope_fingerprint: stored.scope_fingerprint,
+        revocation_credential: revocation_credential
+            .map(|value| {
+                cipher
+                    .open(
+                        CREDENTIAL_KIND,
+                        record_id.as_bytes(),
+                        revocation_field,
+                        value,
+                    )
+                    .map(SecretValue::new)
+            })
+            .transpose()?,
+        owner: SubjectId(owner),
+        issued_at: issued_at.to_system_time(),
+        expires_at: expires_at.map(|value| value.to_system_time()),
+        scope_fingerprint,
     })
 }
 

@@ -182,6 +182,7 @@ fn credential_state() -> SessionCredentialState {
             issued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
             expires_at: None,
             scope_fingerprint: "scope-a".into(),
+            revocation_credential: Some(SecretValue::new("current-revoke-plaintext".into())),
         }),
         pending: Some(DurableCredential {
             id: "provider-pending".into(),
@@ -190,11 +191,13 @@ fn credential_state() -> SessionCredentialState {
             issued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_001),
             expires_at: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_001)),
             scope_fingerprint: "scope-b".into(),
+            revocation_credential: Some(SecretValue::new("pending-revoke-plaintext".into())),
         }),
         revoke_debt: vec![RevokeDebt {
             id: "provider-retired".into(),
             owner: SubjectId("subject-a".into()),
             queued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_002),
+            revocation_credential: Some(SecretValue::new("debt-revoke-plaintext".into())),
         }],
         lease: Some(CredentialLease {
             holder: "worker-a".into(),
@@ -296,7 +299,11 @@ fn recurring_auth_queries_have_named_supporting_indexes() {
             },
         ),
         (
-            doc! { "revoke_debt_ordered": 1, "_id": 1 },
+            doc! {
+                "auth_schema_version": 1,
+                "revoke_debt_ordered": 1,
+                "_id": 1,
+            },
             CREDENTIAL_DEBT_ORDER_INDEX,
             doc! { "revoke_debt.0": { "$exists": true } },
         ),
@@ -434,6 +441,10 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
     assert_eq!(
         unordered_revoke_debt_filter(),
         doc! {
+            "$or": [
+                { "auth_schema_version": { "$exists": false } },
+                { "auth_schema_version": { "$in": [1_i64, AUTH_SCHEMA_VERSION] } },
+            ],
             "revoke_debt.0": { "$exists": true },
             "revoke_debt_ordered": { "$ne": true },
         }
@@ -442,6 +453,8 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
         revoke_debt_after_projection("provider-m"),
         doc! {
             "_id": 1,
+            "auth_schema_version": 1,
+            "request_bound_credential": 1,
             "sweep_sequence": 1,
             "revoke_debt": {
                 "$elemMatch": { "id": { "$gt": "provider-m" } },
@@ -450,11 +463,23 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
     );
     assert_eq!(
         first_revoke_debt_projection(),
-        doc! { "_id": 1, "sweep_sequence": 1, "revoke_debt": { "$slice": 1 } }
+        doc! {
+            "_id": 1,
+            "auth_schema_version": 1,
+            "request_bound_credential": 1,
+            "sweep_sequence": 1,
+            "revoke_debt": { "$slice": 1 },
+        }
     );
     assert_eq!(
         last_revoke_debt_projection(),
-        doc! { "_id": 1, "sweep_sequence": 1, "revoke_debt": { "$slice": -1 } }
+        doc! {
+            "_id": 1,
+            "auth_schema_version": 1,
+            "request_bound_credential": 1,
+            "sweep_sequence": 1,
+            "revoke_debt": { "$slice": -1 },
+        }
     );
 }
 
@@ -506,6 +531,7 @@ fn only_a_fully_settled_retired_credential_gets_ttl_cleanup() {
         id: "late-provider-key".into(),
         owner: SubjectId("subject-a".into()),
         queued_at: SystemTime::now(),
+        revocation_credential: None,
     });
     assert_eq!(
         credential_state_to_doc(settled, &cipher)
@@ -573,6 +599,50 @@ fn legacy_subject_bson_defaults_incarnation_generation_and_retention() {
 }
 
 #[test]
+fn schema_compatibility_accepts_v1_and_rejects_future_documents() {
+    let cipher = cipher();
+
+    let mut legacy_subject = subject_to_doc(subject_state(), &cipher).unwrap();
+    legacy_subject.auth_schema_version = 1;
+    assert!(subject_from_doc(legacy_subject, &cipher).is_ok());
+    let mut future_subject = subject_to_doc(subject_state(), &cipher).unwrap();
+    future_subject.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
+    assert!(matches!(
+        subject_from_doc(future_subject, &cipher),
+        Err(StoreError::Malformed(_))
+    ));
+
+    let mut legacy_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    legacy_credential.auth_schema_version = 1;
+    assert!(credential_state_from_doc(legacy_credential, &cipher).is_ok());
+    let mut future_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    future_credential.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
+    assert!(matches!(
+        credential_state_from_doc(future_credential, &cipher),
+        Err(StoreError::Malformed(_))
+    ));
+
+    assert_eq!(
+        legacy_schema_filter(),
+        doc! {
+            "$or": [
+                { "auth_schema_version": { "$exists": false } },
+                { "auth_schema_version": 1_i64 },
+            ]
+        }
+    );
+    assert_eq!(
+        supported_schema_filter(),
+        doc! {
+            "$or": [
+                { "auth_schema_version": { "$exists": false } },
+                { "auth_schema_version": { "$in": [1_i64, AUTH_SCHEMA_VERSION] } },
+            ]
+        }
+    );
+}
+
+#[test]
 fn moving_subject_ciphertext_to_another_field_fails_closed() {
     let cipher = cipher();
     let mut stored = subject_to_doc(subject_state(), &cipher).unwrap();
@@ -600,6 +670,9 @@ fn credential_values_are_encrypted_and_bound_to_current_or_pending() {
     assert!(!rendered.contains("current-plaintext"));
     assert!(!rendered.contains("pending-plaintext"));
     assert!(!rendered.contains("request-bound-plaintext"));
+    assert!(!rendered.contains("current-revoke-plaintext"));
+    assert!(!rendered.contains("pending-revoke-plaintext"));
+    assert!(!rendered.contains("debt-revoke-plaintext"));
 
     let current = stored.current.as_mut().unwrap();
     let pending = stored.pending.as_mut().unwrap();
@@ -620,6 +693,88 @@ fn credential_values_are_encrypted_and_bound_to_current_or_pending() {
         credential_state_from_doc(stored, &cipher),
         Err(StoreError::Malformed(_))
     ));
+
+    let mut stored = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    let current_revocation = stored
+        .current
+        .as_mut()
+        .unwrap()
+        .revocation_credential
+        .take()
+        .unwrap();
+    let pending_revocation = stored
+        .pending
+        .as_mut()
+        .unwrap()
+        .revocation_credential
+        .take()
+        .unwrap();
+    stored.current.as_mut().unwrap().revocation_credential = Some(pending_revocation);
+    stored.pending.as_mut().unwrap().revocation_credential = Some(current_revocation);
+    assert!(matches!(
+        credential_state_from_doc(stored, &cipher),
+        Err(StoreError::Malformed(_))
+    ));
+
+    let mut stored = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    stored.revoke_debt[0].id = "provider-moved".into();
+    assert!(matches!(
+        credential_state_from_doc(stored, &cipher),
+        Err(StoreError::Malformed(_))
+    ));
+}
+
+#[test]
+fn projected_revoke_debt_decrypts_its_bound_authority() {
+    let cipher = cipher();
+    let stored = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    let work = revoke_debt_page_work(
+        RevokeDebtPageDoc {
+            id: stored.id,
+            auth_schema_version: stored.auth_schema_version,
+            request_bound_credential: stored.request_bound_credential,
+            revoke_debt: stored.revoke_debt,
+        },
+        &cipher,
+    )
+    .unwrap();
+
+    assert_eq!(work.session.as_str(), "sesn_a");
+    assert_eq!(work.debt.id, "provider-retired");
+    assert_eq!(
+        work.debt
+            .revocation_credential
+            .expect("projected debt retains revocation authority")
+            .expose(),
+        "debt-revoke-plaintext"
+    );
+}
+
+#[test]
+fn projected_legacy_revoke_debt_uses_request_bound_authority() {
+    let cipher = cipher();
+    let mut state = credential_state();
+    state.request_bound_credential = Some(SecretValue::new("legacy-request-bound".into()));
+    state.revoke_debt[0].revocation_credential = None;
+    let stored = credential_state_to_doc(state, &cipher).unwrap();
+    let work = revoke_debt_page_work(
+        RevokeDebtPageDoc {
+            id: stored.id,
+            auth_schema_version: 1,
+            request_bound_credential: stored.request_bound_credential,
+            revoke_debt: stored.revoke_debt,
+        },
+        &cipher,
+    )
+    .unwrap();
+
+    assert_eq!(
+        work.debt
+            .revocation_credential
+            .expect("legacy projected debt borrows retained request authority")
+            .expose(),
+        "legacy-request-bound"
+    );
 }
 
 #[test]
@@ -636,15 +791,27 @@ fn credential_state_round_trips_every_durable_transition_fact() {
         restored.request_bound_credential.unwrap().expose(),
         "request-bound"
     );
+    let current = restored.current.unwrap();
+    assert_eq!(current.value.expose(), "current-plaintext");
     assert_eq!(
-        restored.current.unwrap().value.expose(),
-        "current-plaintext"
+        current.revocation_credential.unwrap().expose(),
+        "current-revoke-plaintext"
     );
+    let pending = restored.pending.unwrap();
+    assert_eq!(pending.value.expose(), "pending-plaintext");
     assert_eq!(
-        restored.pending.unwrap().value.expose(),
-        "pending-plaintext"
+        pending.revocation_credential.unwrap().expose(),
+        "pending-revoke-plaintext"
     );
     assert_eq!(restored.revoke_debt[0].id, "provider-retired");
+    assert_eq!(
+        restored.revoke_debt[0]
+            .revocation_credential
+            .as_ref()
+            .unwrap()
+            .expose(),
+        "debt-revoke-plaintext"
+    );
     assert_eq!(restored.lease.unwrap().fence, 9);
     assert!(!restored.retired);
 }
@@ -659,6 +826,7 @@ fn credential_storage_and_legacy_reads_order_revoke_debt_for_bounded_projection(
             id: id.into(),
             owner: SubjectId("subject-a".into()),
             queued_at: SystemTime::UNIX_EPOCH,
+            revocation_credential: None,
         })
         .collect();
     let mut stored = credential_state_to_doc(state, &cipher).unwrap();
@@ -807,7 +975,7 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
         .await
         .unwrap();
 
-    let mut credentials = Vec::with_capacity(HISTORICAL * 6 + 2);
+    let mut credentials = Vec::with_capacity(HISTORICAL * 7 + 2);
     for position in 0..HISTORICAL {
         credentials.push(doc! {
             "_id": format!("current-old-{position:04}"),
@@ -860,6 +1028,21 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
             "current": Bson::Null,
             "pending": Bson::Null,
             "revoke_debt": [],
+            "lease": Bson::Null,
+            "retired": true,
+        });
+        credentials.push(doc! {
+            "_id": format!("future-unordered-debt-{position:04}"),
+            "auth_schema_version": AUTH_SCHEMA_VERSION + 1,
+            "generation": 0,
+            "current": Bson::Null,
+            "pending": Bson::Null,
+            "revoke_debt": [{
+                "id": format!("future-provider-debt-{position:04}"),
+                "owner": "future-debt-owner",
+                "queued_at": old_date,
+            }],
+            "revoke_debt_ordered": false,
             "lease": Bson::Null,
             "retired": true,
         });
@@ -922,7 +1105,7 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
         &client,
         &database_name,
         SUBJECTS,
-        doc! { "auth_schema_version": { "$ne": AUTH_SCHEMA_VERSION } },
+        legacy_schema_filter(),
         Document::new(),
         SUBJECT_MIGRATION_INDEX,
         PAGE_SIZE,
@@ -933,7 +1116,7 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
         &client,
         &database_name,
         CREDENTIALS,
-        doc! { "auth_schema_version": { "$ne": AUTH_SCHEMA_VERSION } },
+        legacy_schema_filter(),
         Document::new(),
         CREDENTIAL_MIGRATION_INDEX,
         PAGE_SIZE,
@@ -1223,7 +1406,7 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
-async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_safe() {
+async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
     const LEGACY_RECORDS: usize = AUTH_MIGRATION_LANE_BATCH_SIZE + 2;
 
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
@@ -1240,13 +1423,19 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
     let mut subjects = Vec::with_capacity(LEGACY_RECORDS);
     let mut credentials = Vec::with_capacity(LEGACY_RECORDS);
     for number in 0..LEGACY_RECORDS {
+        let is_v1 = number == LEGACY_RECORDS - 1;
         let mut subject = subject_state();
         subject.subject = SubjectId(format!("legacy-subject-{number:03}"));
         subject.revision = 0;
         let mut subject =
             mongodb::bson::serialize_to_document(&subject_to_doc(subject, &legacy_cipher).unwrap())
                 .unwrap();
-        subject.remove("auth_schema_version");
+        if is_v1 {
+            subject.insert("auth_schema_version", 1_i64);
+        } else {
+            subject.remove("auth_schema_version");
+            subject.remove("incarnation");
+        }
         subject.remove("delete_after");
         subjects.push(subject);
 
@@ -1258,11 +1447,19 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
         credential.revoke_debt.clear();
         credential.lease = None;
         credential.retired = true;
+        if is_v1 {
+            credential.retired = false;
+            credential.request_bound_credential = Some(SecretValue::new("v1-request-bound".into()));
+        }
         let mut credential = mongodb::bson::serialize_to_document(
             &credential_state_to_doc(credential, &legacy_cipher).unwrap(),
         )
         .unwrap();
-        credential.remove("auth_schema_version");
+        if is_v1 {
+            credential.insert("auth_schema_version", 1_i64);
+        } else {
+            credential.remove("auth_schema_version");
+        }
         credential.remove("delete_after");
         credential.remove("revoke_debt_ordered");
         credentials.push(credential);
@@ -1299,6 +1496,30 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
         u64::try_from(AUTH_MIGRATION_LANE_BATCH_SIZE).unwrap()
     );
 
+    let backlog_subject_id = SubjectId(format!(
+        "legacy-subject-{:03}",
+        AUTH_MIGRATION_LANE_BATCH_SIZE
+    ));
+    let mut backlog_subject = store
+        .subject(&backlog_subject_id)
+        .await
+        .expect("read a legacy subject beyond the bounded startup batch")
+        .expect("legacy backlog subject remains present");
+    assert!(backlog_subject.incarnation.is_empty());
+    let backlog_revision = backlog_subject.revision;
+    backlog_subject.revision += 1;
+    assert!(store
+        .replace_subject("", backlog_revision, backlog_subject)
+        .await
+        .expect("replace a legacy subject before migration reaches it"));
+    assert!(!store
+        .subject(&backlog_subject_id)
+        .await
+        .expect("read the upgraded legacy subject")
+        .expect("upgraded legacy subject remains present")
+        .incarnation
+        .is_empty());
+
     store
         .maintain_auth_schema(AUTH_SCHEMA_OPEN_BUDGET)
         .await
@@ -1311,6 +1532,18 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
             .unwrap(),
         u64::try_from(LEGACY_RECORDS).unwrap()
     );
+    let v1_session = SessionId(format!("sesn_legacy_{:03}", LEGACY_RECORDS - 1));
+    assert_eq!(
+        store
+            .credential(&v1_session)
+            .await
+            .expect("v1 credential reads after migration")
+            .expect("v1 credential remains")
+            .request_bound_credential
+            .expect("migration preserves the v1 request-bound field")
+            .expose(),
+        "v1-request-bound"
+    );
     assert_eq!(
         database
             .collection::<Document>(CREDENTIALS)
@@ -1319,6 +1552,62 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
             .unwrap(),
         u64::try_from(LEGACY_RECORDS).unwrap()
     );
+
+    let mut future_subject = mongodb::bson::serialize_to_document(
+        &subject_to_doc(subject_state(), &legacy_cipher).unwrap(),
+    )
+    .unwrap();
+    future_subject.insert("auth_schema_version", AUTH_SCHEMA_VERSION + 1);
+    future_subject.insert("future_marker", "subject-must-remain-untouched");
+    let mut future_credential = mongodb::bson::serialize_to_document(
+        &credential_state_to_doc(credential_state(), &legacy_cipher).unwrap(),
+    )
+    .unwrap();
+    future_credential.insert("auth_schema_version", AUTH_SCHEMA_VERSION + 1);
+    future_credential.insert("revoke_debt_ordered", false);
+    future_credential.insert("future_marker", "credential-must-remain-untouched");
+    let future_subject_id = future_subject.get_str("_id").unwrap().to_string();
+    let future_credential_id = future_credential.get_str("_id").unwrap().to_string();
+    database
+        .collection::<Document>(SUBJECTS)
+        .insert_one(future_subject.clone())
+        .await
+        .unwrap();
+    database
+        .collection::<Document>(CREDENTIALS)
+        .insert_one(future_credential.clone())
+        .await
+        .unwrap();
+    store
+        .maintain_auth_schema(AUTH_SCHEMA_OPEN_BUDGET)
+        .await
+        .expect("future schemas are ignored rather than downgraded");
+    assert_eq!(
+        database
+            .collection::<Document>(SUBJECTS)
+            .find_one(doc! { "_id": &future_subject_id })
+            .await
+            .unwrap()
+            .unwrap(),
+        future_subject
+    );
+    assert_eq!(
+        database
+            .collection::<Document>(CREDENTIALS)
+            .find_one(doc! { "_id": &future_credential_id })
+            .await
+            .unwrap()
+            .unwrap(),
+        future_credential
+    );
+    assert!(matches!(
+        store.subject(&SubjectId(future_subject_id)).await,
+        Err(StoreError::Malformed(_))
+    ));
+    assert!(matches!(
+        store.credential(&SessionId(future_credential_id)).await,
+        Err(StoreError::Malformed(_))
+    ));
 
     database
         .collection::<Document>(SUBJECTS)
@@ -1630,6 +1919,7 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
         issued_at,
         expires_at: None,
         scope_fingerprint: "scope".into(),
+        revocation_credential: None,
     };
     let mut current_a = credential_state();
     current_a.session = SessionId("sesn_current_a".into());
@@ -1747,6 +2037,7 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
             id: format!("provider-debt-{number:03}"),
             owner: owner.clone(),
             queued_at: first_ready,
+            revocation_credential: None,
         })
         .collect();
     assert!(store.insert_credential(debt).await.unwrap());
@@ -2142,6 +2433,7 @@ async fn real_mongo_malformed_revoke_debt_does_not_block_later_healthy_rows() {
             id: format!("provider-debt-{number}"),
             owner: owner.clone(),
             queued_at: SystemTime::now(),
+            revocation_credential: None,
         }];
         assert!(store.insert_credential(state).await.unwrap());
     }
@@ -2206,6 +2498,8 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     legacy_credential.revoke_debt.clear();
     legacy_credential.lease = None;
     legacy_credential.retired = true;
+    legacy_credential.request_bound_credential =
+        Some(SecretValue::new("legacy-terminal-only".into()));
     let mut legacy_credential = mongodb::bson::serialize_to_document(
         &credential_state_to_doc(legacy_credential, &legacy_cipher).unwrap(),
     )
@@ -2216,6 +2510,16 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
         .database(&database_name)
         .collection::<Document>(CREDENTIALS)
         .insert_one(legacy_credential)
+        .await
+        .unwrap();
+    client
+        .database(&database_name)
+        .collection::<Document>(CREDENTIALS)
+        .create_index(query_index(
+            doc! { "revoke_debt_ordered": 1, "_id": 1 },
+            LEGACY_CREDENTIAL_DEBT_ORDER_INDEX,
+            doc! { "revoke_debt.0": { "$exists": true } },
+        ))
         .await
         .unwrap();
 
@@ -2278,6 +2582,7 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     assert!(raw_legacy_credential
         .get_bool("revoke_debt_ordered")
         .unwrap());
+    assert!(!raw_legacy_credential.contains_key("request_bound_credential"));
     assert_eq!(
         stored_integer(&raw_legacy_credential, "auth_schema_version"),
         AUTH_SCHEMA_VERSION
@@ -2319,79 +2624,95 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
         (
             SUBJECTS,
             SUBJECT_REFRESH_INDEX,
-            doc! { "tokens.expires_at": 1, "_id": 1 },
+            doc! { "tokens.expires_at": 1, "sweep_sequence": 1, "_id": 1 },
             doc! {
                 "tokens.refresh_token": { "$type": "object" },
                 "refresh_lease": Bson::Null,
+                "sweep_sequence": { "$type": "long" },
             },
         ),
         (
             SUBJECTS,
             SUBJECT_EXPIRED_REFRESH_LEASE_INDEX,
-            doc! { "refresh_lease.expires_at": 1, "_id": 1 },
+            doc! { "refresh_lease.expires_at": 1, "sweep_sequence": 1, "_id": 1 },
             doc! {
                 "tokens.refresh_token": { "$type": "object" },
                 "refresh_lease.expires_at": { "$type": "date" },
+                "sweep_sequence": { "$type": "long" },
             },
         ),
         (
             SUBJECTS,
             SUBJECT_OWNER_INDEX,
-            doc! { "_id": 1, "tokens.expires_at": 1 },
-            doc! { "tokens": { "$type": "object" } },
+            doc! { "sweep_sequence": 1, "_id": 1 },
+            doc! {
+                "tokens": { "$type": "object" },
+                "sweep_sequence": { "$type": "long" },
+            },
         ),
         (
             CREDENTIALS,
             CREDENTIAL_CURRENT_INDEX,
-            doc! { "current.issued_at": 1, "_id": 1 },
+            doc! { "current.issued_at": 1, "sweep_sequence": 1, "_id": 1 },
             doc! {
                 "retired": false,
                 "lease": Bson::Null,
                 "pending": Bson::Null,
                 "current.issued_at": { "$type": "date" },
+                "sweep_sequence": { "$type": "long" },
             },
         ),
         (
             CREDENTIALS,
             CREDENTIAL_PENDING_INDEX,
-            doc! { "_id": 1, "pending.issued_at": 1 },
+            doc! { "sweep_sequence": 1, "_id": 1 },
             doc! {
                 "retired": false,
                 "lease": Bson::Null,
                 "pending.issued_at": { "$type": "date" },
+                "sweep_sequence": { "$type": "long" },
             },
         ),
         (
             CREDENTIALS,
             CREDENTIAL_EXPIRED_LEASE_INDEX,
-            doc! { "lease.expires_at": 1, "_id": 1 },
+            doc! { "lease.expires_at": 1, "sweep_sequence": 1, "_id": 1 },
             doc! {
                 "retired": false,
                 "pending": Bson::Null,
                 "current.issued_at": { "$type": "date" },
                 "lease.expires_at": { "$type": "date" },
+                "sweep_sequence": { "$type": "long" },
             },
         ),
         (
             CREDENTIALS,
             CREDENTIAL_DEBT_INDEX,
-            doc! { "_id": 1, "revoke_debt.id": 1 },
+            doc! { "sweep_sequence": 1, "_id": 1, "revoke_debt.id": 1 },
             doc! {
                 "revoke_debt.0": { "$exists": true },
                 "revoke_debt_ordered": true,
+                "sweep_sequence": { "$type": "long" },
             },
         ),
         (
             CREDENTIALS,
             CREDENTIAL_DEBT_ORDER_INDEX,
-            doc! { "revoke_debt_ordered": 1, "_id": 1 },
+            doc! {
+                "auth_schema_version": 1,
+                "revoke_debt_ordered": 1,
+                "_id": 1,
+            },
             doc! { "revoke_debt.0": { "$exists": true } },
         ),
         (
             CREDENTIALS,
             CREDENTIAL_RECONCILIATION_INDEX,
-            doc! { "_id": 1, "generation": 1 },
-            doc! { "retired": false },
+            doc! { "sweep_sequence": 1, "_id": 1 },
+            doc! {
+                "retired": false,
+                "sweep_sequence": { "$type": "long" },
+            },
         ),
     ] {
         let indexes = client
@@ -2554,8 +2875,8 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     changed_by_second.revision = 1;
     changed_by_second.profile.display_name = Some("second".into());
     let (left, right) = tokio::join!(
-        first.replace_subject(0, changed_by_first),
-        second.replace_subject(0, changed_by_second)
+        first.replace_subject("subject-incarnation-a", 0, changed_by_first),
+        second.replace_subject("subject-incarnation-a", 0, changed_by_second)
     );
     assert_eq!(
         [left.unwrap(), right.unwrap()]
@@ -2563,6 +2884,54 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
             .filter(|won| *won)
             .count(),
         1
+    );
+
+    let aba_subject = SubjectId("subject-ttl-recreation-aba".into());
+    let mut lifecycle_a = subject_state();
+    lifecycle_a.subject = aba_subject.clone();
+    lifecycle_a.incarnation = "ttl-lifecycle-a".into();
+    lifecycle_a.revision = 0;
+    lifecycle_a.profile.display_name = Some("lifecycle-a".into());
+    assert!(first.insert_subject(lifecycle_a).await.unwrap());
+    let mut stale_lifecycle_a = first
+        .subject(&aba_subject)
+        .await
+        .unwrap()
+        .expect("lifecycle A exists before TTL deletion");
+    assert_eq!(
+        client
+            .database(&database_name)
+            .collection::<Document>(SUBJECTS)
+            .delete_one(doc! { "_id": aba_subject.as_str() })
+            .await
+            .unwrap()
+            .deleted_count,
+        1
+    );
+
+    let mut lifecycle_b = subject_state();
+    lifecycle_b.subject = aba_subject.clone();
+    lifecycle_b.incarnation = "ttl-lifecycle-b".into();
+    lifecycle_b.revision = 0;
+    lifecycle_b.profile.display_name = Some("lifecycle-b".into());
+    assert!(second.insert_subject(lifecycle_b).await.unwrap());
+
+    stale_lifecycle_a.revision = 1;
+    stale_lifecycle_a.profile.display_name = Some("stale-lifecycle-a-write".into());
+    assert!(!first
+        .replace_subject("ttl-lifecycle-a", 0, stale_lifecycle_a)
+        .await
+        .unwrap());
+    let preserved_lifecycle_b = second
+        .subject(&aba_subject)
+        .await
+        .unwrap()
+        .expect("lifecycle B survives the stale lifecycle-A CAS");
+    assert_eq!(preserved_lifecycle_b.incarnation, "ttl-lifecycle-b");
+    assert_eq!(preserved_lifecycle_b.revision, 0);
+    assert_eq!(
+        preserved_lifecycle_b.profile.display_name.as_deref(),
+        Some("lifecycle-b")
     );
 
     drop(first);
