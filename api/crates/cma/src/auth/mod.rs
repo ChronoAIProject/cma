@@ -8,6 +8,7 @@
 //! Endpoints are discovered from the provider's metadata document rather than
 //! hard-coded, so a provider that moves a route does not break this service.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -16,11 +17,13 @@ pub mod persistence;
 pub mod profile;
 
 use layer2_core::store::StoreError;
-use layer2_core::{Authorization, SubjectId};
+use layer2_core::{Authorization, SessionId, SubjectId};
 use tokio::sync::{Mutex, RwLock};
 
 use persistence::{
-    AuthStore, BrowserSession, DurableSubjectTokens, SecretDigest, SubjectAuthState,
+    AuthStore, AuthSweepItem, BrowserSession, CredentialLeaseCursor, CredentialMutationCursor,
+    CredentialReissueCursor, DurableSubjectTokens, RevokeDebtCursor, SecretDigest,
+    SubjectAuthState, SubjectOwnerCursor, SubjectRefreshCursor,
 };
 #[cfg(test)]
 use persistence::{MemoryAuthStore, SecretValue};
@@ -34,6 +37,106 @@ pub(crate) const LEGACY_SESSION_COOKIE: &str = "chrono_bot_session";
 
 const BROWSER_SESSION_DOMAIN: &str = "browser-session";
 const BROWSER_SESSION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+/// Maximum actionable authentication records selected by one renewal lane.
+pub(super) const AUTH_SWEEP_BATCH_SIZE: usize = 100;
+/// Five independently fair lanes share this explicit top-level pass ceiling.
+pub(super) const AUTH_RENEWAL_PASS_BUDGET: usize = 5 * AUTH_SWEEP_BATCH_SIZE;
+pub(super) const AUTH_SWEEP_TWO_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 2;
+const AUTH_SWEEP_THREE_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 3;
+#[cfg(test)]
+const AUTH_SWEEP_LEASE_LANE_BATCH_SIZE: usize =
+    AUTH_SWEEP_BATCH_SIZE - (2 * AUTH_SWEEP_THREE_LANE_BATCH_SIZE);
+/// Maximum external operations available to one selected recurring reissue.
+///
+/// The service-scope lookup can read both the session and its legacy
+/// environment profile. The remaining thirteen units cover custody, provider
+/// resolution and minting, runtime delivery, and pending promotion.
+pub(super) const AUTH_REISSUE_ATTEMPT_BUDGET: usize = 15;
+/// Maximum external operations available to one selected recurring refresh.
+pub(super) const AUTH_REFRESH_ATTEMPT_BUDGET: usize = 10;
+
+struct AuthPassBudgetState {
+    remaining: AtomicUsize,
+    used: AtomicUsize,
+}
+
+/// One pass-wide operation counter shared by every independently fair lane.
+pub(super) struct AuthPassBudget {
+    state: Arc<AuthPassBudgetState>,
+}
+
+/// A bounded view of the shared pass counter carried into one lane or task.
+#[derive(Clone)]
+pub(super) struct AuthOperationBudget {
+    state: Arc<AuthPassBudgetState>,
+    remaining: Arc<AtomicUsize>,
+}
+
+impl AuthPassBudget {
+    pub(super) fn new(limit: usize) -> Self {
+        Self {
+            state: Arc::new(AuthPassBudgetState {
+                remaining: AtomicUsize::new(limit),
+                used: AtomicUsize::new(0),
+            }),
+        }
+    }
+
+    pub(super) fn lane(&self, limit: usize) -> AuthOperationBudget {
+        AuthOperationBudget {
+            state: Arc::clone(&self.state),
+            remaining: Arc::new(AtomicUsize::new(limit)),
+        }
+    }
+
+    pub(super) fn used(&self) -> usize {
+        self.state.used.load(Ordering::SeqCst)
+    }
+}
+
+impl AuthOperationBudget {
+    pub(super) fn standalone(limit: usize) -> Self {
+        AuthPassBudget::new(limit).lane(limit)
+    }
+
+    pub(super) fn remaining(&self) -> usize {
+        self.remaining
+            .load(Ordering::SeqCst)
+            .min(self.state.remaining.load(Ordering::SeqCst))
+    }
+
+    pub(super) fn take(&self, amount: usize) -> bool {
+        if amount == 0 {
+            return true;
+        }
+        if !subtract_atomic(&self.remaining, amount) {
+            return false;
+        }
+        if !subtract_atomic(&self.state.remaining, amount) {
+            self.remaining.fetch_add(amount, Ordering::SeqCst);
+            return false;
+        }
+        self.state.used.fetch_add(amount, Ordering::SeqCst);
+        true
+    }
+
+    pub(super) fn refund(&self, amount: usize) {
+        if amount == 0 {
+            return;
+        }
+        self.remaining.fetch_add(amount, Ordering::SeqCst);
+        self.state.remaining.fetch_add(amount, Ordering::SeqCst);
+        self.state.used.fetch_sub(amount, Ordering::SeqCst);
+    }
+}
+
+fn subtract_atomic(value: &AtomicUsize, amount: usize) -> bool {
+    value
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            current.checked_sub(amount)
+        })
+        .is_ok()
+}
 
 /// How the service establishes who is calling.
 #[derive(Debug, Clone)]
@@ -64,6 +167,91 @@ pub enum AuthMode {
     },
 }
 
+#[derive(Clone)]
+struct SweepEpoch<C> {
+    cutoff: Option<SystemTime>,
+    through_sequence: u64,
+    after: Option<C>,
+}
+
+#[derive(Clone, Default)]
+struct RefreshSweepEpochs {
+    unleased: Option<SweepEpoch<SubjectRefreshCursor>>,
+    expired_lease: Option<SweepEpoch<SubjectRefreshCursor>>,
+}
+
+#[derive(Clone, Default)]
+struct ReissueSweepEpochs {
+    pending: Option<SweepEpoch<CredentialMutationCursor>>,
+    current: Option<SweepEpoch<CredentialReissueCursor>>,
+    expired_lease: Option<SweepEpoch<CredentialLeaseCursor>>,
+}
+
+#[derive(Clone, Default)]
+struct OrphanReconciliationSweep {
+    owners: Option<SweepEpoch<SubjectOwnerCursor>>,
+    current_owner: Option<OrphanOwnerSweep>,
+}
+
+#[derive(Clone)]
+struct OrphanOwnerSweep {
+    subject: SubjectId,
+    remaining_credentials: Option<std::collections::VecDeque<(String, SessionId)>>,
+    owners_after_completion: Option<SweepEpoch<SubjectOwnerCursor>>,
+}
+
+#[derive(Debug)]
+pub struct SweepBatch<T> {
+    pub(super) work: Vec<T>,
+    pub(super) first_error: Option<StoreError>,
+}
+
+#[cfg(test)]
+impl<T> SweepBatch<T> {
+    pub(super) fn len(&self) -> usize {
+        self.work.len()
+    }
+
+    pub(super) fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.work.iter()
+    }
+
+    pub(super) fn first(&self) -> Option<&T> {
+        self.work.first()
+    }
+
+    pub(super) fn last(&self) -> Option<&T> {
+        self.work.last()
+    }
+
+    pub(super) fn pop(&mut self) -> Option<T> {
+        self.work.pop()
+    }
+}
+
+impl<T> IntoIterator for SweepBatch<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.work.into_iter()
+    }
+}
+
+#[cfg(test)]
+impl<T: PartialEq> PartialEq<Vec<T>> for SweepBatch<T> {
+    fn eq(&self, other: &Vec<T>) -> bool {
+        self.work == *other
+    }
+}
+
+fn remember_sweep_item_error(slot: &mut Option<StoreError>, error: StoreError, operation: &str) {
+    tracing::warn!(error = %error, operation, "bounded authentication sweep item failed");
+    if slot.is_none() {
+        *slot = Some(error);
+    }
+}
+
 /// Auth state shared across handlers.
 pub struct AuthState {
     mode: AuthMode,
@@ -81,6 +269,15 @@ pub struct AuthState {
     /// Avoid duplicate provider deletes within one replica. Durable debt and
     /// generation CAS remain the authority across replicas.
     credential_sweep: Mutex<()>,
+    /// Fairness-only page positions. Durable facts, leases, and CAS remain the
+    /// authority; losing these hints merely restarts a bounded scan at the
+    /// beginning after a process restart.
+    refresh_sweep_epochs: Mutex<RefreshSweepEpochs>,
+    active_credential_sweep_epoch:
+        Mutex<Option<SweepEpoch<persistence::CredentialReconciliationCursor>>>,
+    orphan_reconciliation_sweep: Mutex<OrphanReconciliationSweep>,
+    reissue_sweep_epochs: Mutex<ReissueSweepEpochs>,
+    revoke_debt_sweep_epoch: Mutex<Option<SweepEpoch<RevokeDebtCursor>>>,
     /// What the provider has said about bearer tokens, briefly.
     ///
     /// Separate from `sessions` because the two are different credentials with
@@ -94,6 +291,14 @@ pub struct AuthState {
     /// so there is genuinely nothing to record rather than somewhere missing
     /// to record it.
     records: Option<records::SignInRecords>,
+}
+
+/// A token generation observed by one renewal sweep.
+pub(super) struct DueSubjectRefresh {
+    pub(super) subject: SubjectId,
+    pub(super) refresh_token: String,
+    pub(super) incarnation: String,
+    pub(super) token_generation: u64,
 }
 
 /// Derive the PKCE challenge for a verifier, per S256.
@@ -128,6 +333,11 @@ impl AuthState {
             metadata: RwLock::new(None),
             issuer: RwLock::new(None),
             credential_sweep: Mutex::new(()),
+            refresh_sweep_epochs: Mutex::new(RefreshSweepEpochs::default()),
+            active_credential_sweep_epoch: Mutex::new(None),
+            orphan_reconciliation_sweep: Mutex::new(OrphanReconciliationSweep::default()),
+            reissue_sweep_epochs: Mutex::new(ReissueSweepEpochs::default()),
+            revoke_debt_sweep_epoch: Mutex::new(None),
             bearer: bearer::BearerCache::default(),
         })
     }
@@ -270,33 +480,327 @@ impl AuthState {
         self.issuer.read().await.is_some()
     }
 
+    /// Advance one bounded lane of durable authentication schema maintenance.
+    pub(super) async fn maintain_schema(
+        &self,
+        budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
+        let reserved = budget.remaining();
+        if reserved == 0 || !budget.take(reserved) {
+            return Ok(0);
+        }
+        match self.store.maintain_auth_schema(reserved).await {
+            Ok(used) if used <= reserved => {
+                budget.refund(reserved - used);
+                Ok(used)
+            }
+            Ok(_) => Err(StoreError::Malformed(
+                "authentication schema maintenance exceeded its operation allowance".into(),
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Sessions whose credential has been held longer than `lifetime`.
     ///
     /// Age rather than a stated expiry, because the platform does not return
     /// or request one when it mints. The caller chooses a local rotation
     /// cadence independently of how long the provider accepts the key.
+    #[cfg(test)]
     pub async fn sessions_due_for_reissue(
         &self,
         lifetime: std::time::Duration,
-    ) -> Result<Vec<(layer2_core::SessionId, SubjectId)>, StoreError> {
+    ) -> Result<SweepBatch<(layer2_core::SessionId, SubjectId)>, StoreError> {
         let now = SystemTime::now();
-        Ok(self
+        let issued_before = now.checked_sub(lifetime).unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut epochs = self.reissue_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        if proposed.pending.is_none()
+            || proposed.current.is_none()
+            || proposed.expired_lease.is_none()
+        {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.pending.get_or_insert(SweepEpoch {
+                cutoff: None,
+                through_sequence,
+                after: None,
+            });
+            proposed.current.get_or_insert(SweepEpoch {
+                cutoff: Some(issued_before),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let mut pending = if let Some(epoch) = proposed.pending.clone() {
+            let states = self
+                .store
+                .pending_credentials_due_for_reissue(
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.pending = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                &epoch,
+                pending_reissue_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let pending_lane_full = pending.len() == AUTH_SWEEP_THREE_LANE_BATCH_SIZE;
+
+        let mut current = if let Some(epoch) = proposed.current.clone() {
+            let cutoff = epoch.cutoff.expect("current reissue epoch has a cutoff");
+            let states = self
+                .store
+                .current_credentials_due_for_reissue(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.current = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                &epoch,
+                current_reissue_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let current_lane_full = current.len() == AUTH_SWEEP_THREE_LANE_BATCH_SIZE;
+
+        let mut expired_leases = if let Some(epoch) = proposed.expired_lease.clone() {
+            let cutoff = epoch
+                .cutoff
+                .expect("expired credential lease epoch has a cutoff");
+            let states = self
+                .store
+                .credentials_with_expired_mint_leases(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_LEASE_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.expired_lease = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_LEASE_LANE_BATCH_SIZE,
+                &epoch,
+                expired_credential_lease_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let expired_lane_full = expired_leases.len() == AUTH_SWEEP_LEASE_LANE_BATCH_SIZE;
+
+        let mut remaining =
+            AUTH_SWEEP_BATCH_SIZE - pending.len() - current.len() - expired_leases.len();
+        if remaining > 0 && expired_lane_full {
+            if let Some(epoch) = proposed.expired_lease.clone() {
+                let cutoff = epoch
+                    .cutoff
+                    .expect("expired credential lease epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .credentials_with_expired_mint_leases(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.expired_lease =
+                    finish_sweep_page(&extra, remaining, &epoch, expired_credential_lease_position);
+                remaining -= extra.len();
+                expired_leases.append(&mut extra);
+            }
+        }
+        if remaining > 0 && pending_lane_full {
+            if let Some(epoch) = proposed.pending.clone() {
+                let mut extra = self
+                    .store
+                    .pending_credentials_due_for_reissue(
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.pending =
+                    finish_sweep_page(&extra, remaining, &epoch, pending_reissue_position);
+                remaining -= extra.len();
+                pending.append(&mut extra);
+            }
+        }
+        if remaining > 0 && current_lane_full {
+            if let Some(epoch) = proposed.current.clone() {
+                let cutoff = epoch.cutoff.expect("current reissue epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .current_credentials_due_for_reissue(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.current =
+                    finish_sweep_page(&extra, remaining, &epoch, current_reissue_position);
+                current.append(&mut extra);
+            }
+        }
+
+        // Publish the proposed epochs only after every lane read needed for
+        // this batch succeeds. A later read failure therefore returns no work
+        // and advances no earlier lane.
+        *epochs = proposed;
+        drop(epochs);
+
+        Ok(credential_reissue_batch(expired_leases, pending, current))
+    }
+
+    /// Select recurring reissue work while prepaying a bounded attempt for
+    /// every returned row before any epoch cursor is published.
+    pub(super) async fn sessions_due_for_reissue_with_budget(
+        &self,
+        lifetime: std::time::Duration,
+        budget: &AuthOperationBudget,
+    ) -> Result<SweepBatch<(SessionId, SubjectId)>, StoreError> {
+        const ROW_OPERATIONS: usize = 1 + AUTH_REISSUE_ATTEMPT_BUDGET;
+        const PAGE_LIMIT: usize = (AUTH_SWEEP_THREE_LANE_BATCH_SIZE - 1) / ROW_OPERATIONS;
+
+        let now = SystemTime::now();
+        let issued_before = now.checked_sub(lifetime).unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut epochs = self.reissue_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        let needs_high_water = proposed.pending.is_none()
+            || proposed.current.is_none()
+            || proposed.expired_lease.is_none();
+        let reserved = usize::from(needs_high_water) + 3 + 3 * PAGE_LIMIT * ROW_OPERATIONS;
+        if PAGE_LIMIT == 0 || !budget.take(reserved) {
+            return Ok(SweepBatch {
+                work: Vec::new(),
+                first_error: None,
+            });
+        }
+
+        if needs_high_water {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.pending.get_or_insert(SweepEpoch {
+                cutoff: None,
+                through_sequence,
+                after: None,
+            });
+            proposed.current.get_or_insert(SweepEpoch {
+                cutoff: Some(issued_before),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let pending_epoch = proposed
+            .pending
+            .clone()
+            .expect("pending reissue epoch was initialized above");
+        let pending = self
             .store
-            .credentials()
-            .await?
-            .into_iter()
-            .filter(|state| !state.retired && state.lease.is_none())
-            .filter_map(|state| {
-                if let Some(pending) = state.pending {
-                    return Some((state.session, pending.owner));
-                }
-                let current = state.current?;
-                let age = now
-                    .duration_since(current.issued_at)
-                    .unwrap_or(Duration::ZERO);
-                (age >= lifetime).then_some((state.session, current.owner))
-            })
-            .collect())
+            .pending_credentials_due_for_reissue(
+                pending_epoch.after.as_ref(),
+                pending_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if pending.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "pending credential store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.pending = finish_sweep_page(
+            &pending,
+            PAGE_LIMIT,
+            &pending_epoch,
+            pending_reissue_position,
+        );
+
+        let current_epoch = proposed
+            .current
+            .clone()
+            .expect("current reissue epoch was initialized above");
+        let current_cutoff = current_epoch
+            .cutoff
+            .expect("current reissue epoch has a cutoff");
+        let current = self
+            .store
+            .current_credentials_due_for_reissue(
+                current_cutoff,
+                current_epoch.after.as_ref(),
+                current_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if current.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "current credential store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.current = finish_sweep_page(
+            &current,
+            PAGE_LIMIT,
+            &current_epoch,
+            current_reissue_position,
+        );
+
+        let lease_epoch = proposed
+            .expired_lease
+            .clone()
+            .expect("expired credential lease epoch was initialized above");
+        let lease_cutoff = lease_epoch
+            .cutoff
+            .expect("expired credential lease epoch has a cutoff");
+        let expired_leases = self
+            .store
+            .credentials_with_expired_mint_leases(
+                lease_cutoff,
+                lease_epoch.after.as_ref(),
+                lease_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if expired_leases.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "expired credential lease store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.expired_lease = finish_sweep_page(
+            &expired_leases,
+            PAGE_LIMIT,
+            &lease_epoch,
+            expired_credential_lease_position,
+        );
+
+        let returned = pending.len() + current.len() + expired_leases.len();
+        let used = usize::from(needs_high_water) + 3 + returned * ROW_OPERATIONS;
+        budget.refund(reserved - used);
+        *epochs = proposed;
+        drop(epochs);
+        Ok(credential_reissue_batch(expired_leases, pending, current))
     }
 
     /// Mint, or resume delivering, a fresh credential for one session.
@@ -306,6 +810,7 @@ impl AuthState {
     /// for the next sweep, rather than becoming an unowned no-expiry key. The
     /// current credential remains issued until [`Self::confirm_reissue`] says
     /// the runtime accepted this value.
+    #[cfg(test)]
     pub async fn reissue(
         &self,
         session: &layer2_core::SessionId,
@@ -316,10 +821,22 @@ impl AuthState {
             .await
     }
 
+    pub(super) async fn reissue_with_budget(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[layer2_core::ServiceId],
+        budget: AuthOperationBudget,
+    ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential_with_budget(session, subject, services, true, budget)
+            .await
+    }
+
     /// Promote a pending replacement after its runtime accepted the new value.
     ///
     /// A generation compare-and-swap moves the old current value to durable
     /// revoke debt in the same transition that promotes the replacement.
+    #[cfg(test)]
     pub async fn confirm_reissue(
         &self,
         session: &layer2_core::SessionId,
@@ -327,22 +844,37 @@ impl AuthState {
         self.promote_pending_credential(session).await
     }
 
-    /// Take back credentials queued on an earlier pass or release.
-    pub async fn revoke_retired_credentials(&self) -> Result<usize, StoreError> {
-        self.revoke_credential_debt().await
+    pub(super) async fn confirm_reissue_with_budget(
+        &self,
+        session: &SessionId,
+        budget: &AuthOperationBudget,
+    ) -> Result<bool, StoreError> {
+        self.promote_pending_credential_with_budget(session, budget)
+            .await
     }
 
-    /// Take back credentials this deployment minted for sessions that are gone.
-    ///
-    /// Provider listings remain the reconciliation backstop for credentials
-    /// minted before durable custody existed, and for the response-loss window
-    /// tracked by #528. Only keys whose name says this deployment minted them
-    /// are touched; the account is shared with other control planes.
-    pub async fn reclaim_orphaned_credentials(
+    /// Take back credentials queued on an earlier pass or release.
+    #[cfg(test)]
+    pub async fn revoke_retired_credentials(&self) -> Result<usize, StoreError> {
+        let budget = AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE);
+        self.revoke_credential_debt(&budget).await
+    }
+
+    pub(super) async fn revoke_retired_credentials_with_budget(
+        &self,
+        budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
+        self.revoke_credential_debt(budget).await
+    }
+
+    pub(super) async fn reclaim_orphaned_credentials_with_budgets(
         &self,
         service: &Arc<layer2_core::SessionService>,
+        active_budget: &AuthOperationBudget,
+        provider_budget: &AuthOperationBudget,
     ) -> Result<usize, StoreError> {
-        self.reclaim_unrecorded_credentials(service).await
+        self.reclaim_unrecorded_credentials_with_budgets(service, active_budget, provider_budget)
+            .await
     }
 
     /// Replace a subject fact with revision-CAS, retrying a concurrent writer.
@@ -352,19 +884,21 @@ impl AuthState {
         mut update: F,
     ) -> Result<(), StoreError>
     where
-        F: FnMut(&mut SubjectAuthState),
+        F: FnMut(&mut SubjectAuthState) -> Result<(), StoreError>,
     {
         loop {
             let current = self.store.subject(subject).await?;
             let mut next = current.clone().unwrap_or_else(|| SubjectAuthState {
                 subject: subject.clone(),
+                incarnation: random_token(),
                 revision: 0,
+                token_generation: 0,
                 tokens: None,
                 refresh_lease: None,
                 authorization: Authorization::none(),
                 profile: profile::Profile::default(),
             });
-            update(&mut next);
+            update(&mut next)?;
             let written = match current {
                 Some(current) => {
                     next.revision = current.revision.checked_add(1).ok_or_else(|| {
@@ -397,10 +931,12 @@ impl AuthState {
         profile: profile::Profile,
     ) -> Result<(), StoreError> {
         self.replace_subject_fact(subject, |state| {
+            state.token_generation = next_token_generation(state.token_generation)?;
             state.tokens = Some(tokens.clone());
             state.refresh_lease = None;
             state.authorization = authorization.clone();
             state.profile = profile.clone();
+            Ok(())
         })
         .await
     }
@@ -421,8 +957,10 @@ impl AuthState {
             expires_at: SystemTime::now() + remaining,
         };
         self.replace_subject_fact(subject, |state| {
+            state.token_generation = next_token_generation(state.token_generation)?;
             state.tokens = Some(durable.clone());
             state.refresh_lease = None;
+            Ok(())
         })
         .await
     }
@@ -446,33 +984,224 @@ impl AuthState {
     }
 
     /// Subjects whose access token is close enough to expiry to renew.
+    #[cfg(test)]
     pub async fn subjects_needing_refresh(
         &self,
         margin: std::time::Duration,
-    ) -> Result<Vec<(SubjectId, String)>, StoreError> {
-        let refresh_at = SystemTime::now() + margin;
-        Ok(self
+    ) -> Result<SweepBatch<DueSubjectRefresh>, StoreError> {
+        let now = SystemTime::now();
+        let refresh_at = now + margin;
+        let mut epochs = self.refresh_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        if proposed.unleased.is_none() || proposed.expired_lease.is_none() {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.unleased.get_or_insert(SweepEpoch {
+                cutoff: Some(refresh_at),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let mut states = if let Some(epoch) = proposed.unleased.clone() {
+            let cutoff = epoch.cutoff.expect("unleased refresh epoch has a cutoff");
+            let states = self
+                .store
+                .unleased_subjects_due_for_refresh(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.unleased = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                &epoch,
+                subject_refresh_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let unleased_lane_full = states.len() == AUTH_SWEEP_TWO_LANE_BATCH_SIZE;
+
+        let mut expired_leases = if let Some(epoch) = proposed.expired_lease.clone() {
+            let cutoff = epoch
+                .cutoff
+                .expect("expired refresh lease epoch has a cutoff");
+            let states = self
+                .store
+                .subjects_with_expired_refresh_leases(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.expired_lease = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                &epoch,
+                subject_refresh_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let expired_lane_full = expired_leases.len() == AUTH_SWEEP_TWO_LANE_BATCH_SIZE;
+
+        let remaining = AUTH_SWEEP_BATCH_SIZE - states.len() - expired_leases.len();
+        if remaining > 0 && unleased_lane_full {
+            if let Some(epoch) = proposed.unleased.clone() {
+                let cutoff = epoch.cutoff.expect("unleased refresh epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .unleased_subjects_due_for_refresh(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.unleased =
+                    finish_sweep_page(&extra, remaining, &epoch, subject_refresh_position);
+                states.append(&mut extra);
+            }
+        } else if remaining > 0 && expired_lane_full {
+            if let Some(epoch) = proposed.expired_lease.clone() {
+                let cutoff = epoch
+                    .cutoff
+                    .expect("expired refresh lease epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .subjects_with_expired_refresh_leases(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.expired_lease =
+                    finish_sweep_page(&extra, remaining, &epoch, subject_refresh_position);
+                expired_leases.append(&mut extra);
+            }
+        }
+
+        // Publish the proposed epochs only after every lane read needed for
+        // this batch succeeds. A later read failure therefore returns no work
+        // and advances no earlier lane.
+        *epochs = proposed;
+        drop(epochs);
+
+        states.append(&mut expired_leases);
+        Ok(subject_refresh_batch(states))
+    }
+
+    /// Select recurring refresh work while prepaying a bounded attempt for
+    /// every returned row before either lane cursor is published.
+    pub(super) async fn subjects_needing_refresh_with_budget(
+        &self,
+        margin: std::time::Duration,
+        budget: &AuthOperationBudget,
+    ) -> Result<SweepBatch<DueSubjectRefresh>, StoreError> {
+        const ROW_OPERATIONS: usize = 1 + AUTH_REFRESH_ATTEMPT_BUDGET;
+        const PAGE_LIMIT: usize = (AUTH_SWEEP_TWO_LANE_BATCH_SIZE - 1) / ROW_OPERATIONS;
+
+        let now = SystemTime::now();
+        let refresh_at = now + margin;
+        let mut epochs = self.refresh_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        let needs_high_water = proposed.unleased.is_none() || proposed.expired_lease.is_none();
+        let reserved = usize::from(needs_high_water) + 2 + 2 * PAGE_LIMIT * ROW_OPERATIONS;
+        if PAGE_LIMIT == 0 || !budget.take(reserved) {
+            return Ok(SweepBatch {
+                work: Vec::new(),
+                first_error: None,
+            });
+        }
+
+        if needs_high_water {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.unleased.get_or_insert(SweepEpoch {
+                cutoff: Some(refresh_at),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let unleased_epoch = proposed
+            .unleased
+            .clone()
+            .expect("unleased refresh epoch was initialized above");
+        let unleased_cutoff = unleased_epoch
+            .cutoff
+            .expect("unleased refresh epoch has a cutoff");
+        let mut states = self
             .store
-            .subjects()
-            .await?
-            .into_iter()
-            .filter_map(|state| {
-                if state
-                    .refresh_lease
-                    .as_ref()
-                    .is_some_and(|lease| lease.expires_at > SystemTime::now())
-                {
-                    return None;
-                }
-                let tokens = state.tokens?;
-                if tokens.expires_at > refresh_at {
-                    return None;
-                }
-                tokens
-                    .refresh_token
-                    .map(|refresh| (state.subject, refresh.into_inner()))
-            })
-            .collect())
+            .unleased_subjects_due_for_refresh(
+                unleased_cutoff,
+                unleased_epoch.after.as_ref(),
+                unleased_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if states.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "subject refresh store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.unleased = finish_sweep_page(
+            &states,
+            PAGE_LIMIT,
+            &unleased_epoch,
+            subject_refresh_position,
+        );
+
+        let lease_epoch = proposed
+            .expired_lease
+            .clone()
+            .expect("expired refresh lease epoch was initialized above");
+        let lease_cutoff = lease_epoch
+            .cutoff
+            .expect("expired refresh lease epoch has a cutoff");
+        let mut expired_leases = self
+            .store
+            .subjects_with_expired_refresh_leases(
+                lease_cutoff,
+                lease_epoch.after.as_ref(),
+                lease_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if expired_leases.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "expired subject refresh lease store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.expired_lease = finish_sweep_page(
+            &expired_leases,
+            PAGE_LIMIT,
+            &lease_epoch,
+            subject_refresh_position,
+        );
+
+        let returned = states.len() + expired_leases.len();
+        let used = usize::from(needs_high_water) + 2 + returned * ROW_OPERATIONS;
+        budget.refund(reserved - used);
+        *epochs = proposed;
+        drop(epochs);
+        states.append(&mut expired_leases);
+        Ok(subject_refresh_batch(states))
     }
 
     async fn issue_session(&self, subject: SubjectId) -> Result<String, StoreError> {
@@ -487,6 +1216,109 @@ impl AuthState {
         tracing::info!(subject = %subject, "session issued");
         Ok(token)
     }
+}
+
+fn subject_refresh_batch(
+    states: Vec<AuthSweepItem<SubjectRefreshCursor, SubjectAuthState>>,
+) -> SweepBatch<DueSubjectRefresh> {
+    let mut first_error = None;
+    let mut work = Vec::new();
+    for item in states {
+        let state = match item.state {
+            Ok(state) => state,
+            Err(error) => {
+                remember_sweep_item_error(&mut first_error, error, "read subject refresh item");
+                continue;
+            }
+        };
+        let Some(tokens) = state.tokens else {
+            continue;
+        };
+        let Some(refresh) = tokens.refresh_token else {
+            continue;
+        };
+        work.push(DueSubjectRefresh {
+            subject: state.subject,
+            refresh_token: refresh.into_inner(),
+            incarnation: state.incarnation,
+            token_generation: state.token_generation,
+        });
+    }
+    SweepBatch { work, first_error }
+}
+
+fn credential_reissue_batch(
+    expired_leases: Vec<AuthSweepItem<CredentialLeaseCursor, persistence::SessionCredentialState>>,
+    pending: Vec<AuthSweepItem<CredentialMutationCursor, persistence::SessionCredentialState>>,
+    current: Vec<AuthSweepItem<CredentialReissueCursor, persistence::SessionCredentialState>>,
+) -> SweepBatch<(SessionId, SubjectId)> {
+    let mut first_error = None;
+    let mut work = Vec::new();
+    for state in expired_leases
+        .into_iter()
+        .map(|item| item.state)
+        .chain(pending.into_iter().map(|item| item.state))
+        .chain(current.into_iter().map(|item| item.state))
+    {
+        let state = match state {
+            Ok(state) => state,
+            Err(error) => {
+                remember_sweep_item_error(&mut first_error, error, "read credential reissue item");
+                continue;
+            }
+        };
+        if let Some(pending) = state.pending {
+            work.push((state.session, pending.owner));
+        } else if let Some(current) = state.current {
+            work.push((state.session, current.owner));
+        }
+    }
+    SweepBatch { work, first_error }
+}
+
+fn finish_sweep_page<T, C: Clone>(
+    states: &[T],
+    limit: usize,
+    epoch: &SweepEpoch<C>,
+    position: fn(&T) -> Option<C>,
+) -> Option<SweepEpoch<C>> {
+    if states.len() < limit {
+        return None;
+    }
+    let mut next = epoch.clone();
+    next.after = states.last().and_then(position);
+    next.after.as_ref()?;
+    Some(next)
+}
+
+fn pending_reissue_position(
+    item: &AuthSweepItem<CredentialMutationCursor, persistence::SessionCredentialState>,
+) -> Option<CredentialMutationCursor> {
+    Some(item.cursor.clone())
+}
+
+fn current_reissue_position(
+    item: &AuthSweepItem<CredentialReissueCursor, persistence::SessionCredentialState>,
+) -> Option<CredentialReissueCursor> {
+    Some(item.cursor.clone())
+}
+
+fn expired_credential_lease_position(
+    item: &AuthSweepItem<CredentialLeaseCursor, persistence::SessionCredentialState>,
+) -> Option<CredentialLeaseCursor> {
+    Some(item.cursor.clone())
+}
+
+fn subject_refresh_position(
+    item: &AuthSweepItem<SubjectRefreshCursor, SubjectAuthState>,
+) -> Option<SubjectRefreshCursor> {
+    Some(item.cursor.clone())
+}
+
+fn next_token_generation(current: u64) -> Result<u64, StoreError> {
+    current
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed("subject token generation exhausted".into()))
 }
 
 /// Move a URL onto another origin, keeping its path and query.

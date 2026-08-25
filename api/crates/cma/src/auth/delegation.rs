@@ -1,6 +1,6 @@
 //! Durable custody for the credential one session presents.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -9,14 +9,39 @@ use layer2_core::{ServiceId, SessionId, SubjectId};
 use sha2::{Digest, Sha256};
 
 use super::persistence::{
-    AuthStore, CredentialLease, DurableCredential, RevokeDebt, SecretValue, SessionCredentialState,
+    AuthStore, CredentialLease, DurableCredential, RevokeDebt, RevokeDebtCursor, RevokeDebtWork,
+    SecretValue, SessionCredentialState,
 };
-use super::{random_token, AuthState};
+#[cfg(test)]
+use super::AUTH_SWEEP_TWO_LANE_BATCH_SIZE;
+use super::{
+    finish_sweep_page, random_token, AuthOperationBudget, AuthState, OrphanOwnerSweep, SweepEpoch,
+};
 
 /// Longer than the issuer's HTTP deadline, so an ordinary slow response never
 /// allows a second worker to overlap the first provider mint.
 const MINT_LEASE_LIFETIME: Duration = Duration::from_secs(45);
 const LEASE_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+fn remember_pass_error(slot: &mut Option<StoreError>, error: StoreError, operation: &str) {
+    tracing::warn!(error = %error, operation, "bounded credential reconciliation item failed");
+    if slot.is_none() {
+        *slot = Some(error);
+    }
+}
+
+fn take_operation(
+    budget: Option<&AuthOperationBudget>,
+    amount: usize,
+    operation: &str,
+) -> Result<(), StoreError> {
+    if budget.is_some_and(|budget| !budget.take(amount)) {
+        return Err(StoreError::Unavailable(format!(
+            "recurring authentication operation budget exhausted before {operation}"
+        )));
+    }
+    Ok(())
+}
 
 fn empty_state(session: &SessionId) -> SessionCredentialState {
     SessionCredentialState {
@@ -68,22 +93,42 @@ fn queue_debt(state: &mut SessionCredentialState, credential: &DurableCredential
     {
         return;
     }
-    state.revoke_debt.push(RevokeDebt {
+    let debt = RevokeDebt {
         id: credential.id.clone(),
         owner: credential.owner.clone(),
         queued_at: SystemTime::now(),
-    });
+    };
+    let position = state
+        .revoke_debt
+        .binary_search_by(|queued| queued.id.cmp(&debt.id))
+        .unwrap_or_else(|position| position);
+    state.revoke_debt.insert(position, debt);
+}
+
+fn state_accounts_for_provider_credential(state: &SessionCredentialState, id: &str) -> bool {
+    state.current.as_ref().is_some_and(|held| held.id == id)
+        || state.pending.as_ref().is_some_and(|held| held.id == id)
+        || state.revoke_debt.iter().any(|debt| debt.id == id)
+}
+
+fn revoke_debt_work_position(
+    item: &super::persistence::AuthSweepItem<RevokeDebtCursor, RevokeDebtWork>,
+) -> Option<RevokeDebtCursor> {
+    Some(item.cursor.clone())
 }
 
 async fn ensure_state(
     store: &Arc<dyn AuthStore>,
     session: &SessionId,
+    budget: Option<&AuthOperationBudget>,
 ) -> Result<SessionCredentialState, StoreError> {
     loop {
+        take_operation(budget, 1, "credential custody read")?;
         if let Some(state) = store.credential(session).await? {
             return Ok(state);
         }
         let state = empty_state(session);
+        take_operation(budget, 2, "credential custody insert")?;
         if store.insert_credential(state.clone()).await? {
             return Ok(state);
         }
@@ -94,8 +139,10 @@ async fn replace_state(
     store: &Arc<dyn AuthStore>,
     current: &SessionCredentialState,
     mut next: SessionCredentialState,
+    budget: Option<&AuthOperationBudget>,
 ) -> Result<bool, StoreError> {
     next.generation = next_generation(current.generation)?;
+    take_operation(budget, 2, "credential custody replacement")?;
     store.replace_credential(current.generation, next).await
 }
 
@@ -104,8 +151,10 @@ async fn clear_owned_lease(
     session: &SessionId,
     holder: &str,
     fence: u64,
+    budget: Option<&AuthOperationBudget>,
 ) -> Result<(), StoreError> {
     loop {
+        take_operation(budget, 1, "mint lease cleanup read")?;
         let Some(current) = store.credential(session).await? else {
             return Ok(());
         };
@@ -114,7 +163,7 @@ async fn clear_owned_lease(
         }
         let mut next = current.clone();
         next.lease = None;
-        if replace_state(store, &current, next).await? {
+        if replace_state(store, &current, next, budget).await? {
             return Ok(());
         }
     }
@@ -124,27 +173,62 @@ async fn queue_uncommitted(
     store: &Arc<dyn AuthStore>,
     session: &SessionId,
     credential: &DurableCredential,
+    mut terminal_observed: bool,
+    budget: Option<&AuthOperationBudget>,
 ) -> Result<(), StoreError> {
     loop {
-        let mut current = ensure_state(store, session).await?;
-        if current
-            .current
-            .as_ref()
-            .is_some_and(|held| held.id == credential.id)
-            || current
-                .pending
-                .as_ref()
-                .is_some_and(|held| held.id == credential.id)
-            || current
-                .revoke_debt
-                .iter()
-                .any(|debt| debt.id == credential.id)
-        {
+        take_operation(budget, 1, "uncommitted credential custody read")?;
+        let Some(mut current) = store.credential(session).await? else {
+            terminal_observed = true;
+            // A settled retired tombstone can be TTL-deleted before an
+            // arbitrarily delayed mint task wakes. Recreate the terminal fence
+            // together with its debt; an empty active record would resurrect a
+            // session that release already made terminal.
+            let mut retired = empty_state(session);
+            retired.retired = true;
+            queue_debt(&mut retired, credential);
+            take_operation(budget, 2, "uncommitted credential custody insert")?;
+            if store.insert_credential(retired).await? {
+                return Ok(());
+            }
+            continue;
+        };
+
+        terminal_observed |= current.retired;
+        let credential_is_accounted_for =
+            state_accounts_for_provider_credential(&current, &credential.id);
+
+        if terminal_observed {
+            if current.retired
+                && current.current.is_none()
+                && current.pending.is_none()
+                && current.lease.is_none()
+                && credential_is_accounted_for
+            {
+                return Ok(());
+            }
+            let before = current.clone();
+            if let Some(held) = current.current.take() {
+                queue_debt(&mut current, &held);
+            }
+            if let Some(held) = current.pending.take() {
+                queue_debt(&mut current, &held);
+            }
+            current.lease = None;
+            current.retired = true;
+            queue_debt(&mut current, credential);
+            if replace_state(store, &before, current, budget).await? {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if credential_is_accounted_for {
             return Ok(());
         }
         let before = current.clone();
         queue_debt(&mut current, credential);
-        if replace_state(store, &before, current).await? {
+        if replace_state(store, &before, current, budget).await? {
             return Ok(());
         }
     }
@@ -157,11 +241,20 @@ async fn commit_mint(
     fence: u64,
     credential: DurableCredential,
     replacement: bool,
+    budget: Option<&AuthOperationBudget>,
 ) -> Result<Option<String>, StoreError> {
     loop {
-        let mut current = ensure_state(store, session).await?;
-        if current.retired || !lease_matches(&current, holder, fence) {
-            queue_uncommitted(store, session, &credential).await?;
+        take_operation(budget, 1, "mint commit custody read")?;
+        let Some(mut current) = store.credential(session).await? else {
+            queue_uncommitted(store, session, &credential, true, budget).await?;
+            return Ok(None);
+        };
+        if current.retired {
+            queue_uncommitted(store, session, &credential, true, budget).await?;
+            return Ok(None);
+        }
+        if !lease_matches(&current, holder, fence) {
+            queue_uncommitted(store, session, &credential, false, budget).await?;
             return Ok(None);
         }
 
@@ -177,13 +270,13 @@ async fn commit_mint(
             current.current = Some(credential.clone());
         } else {
             queue_debt(&mut current, &credential);
-            if replace_state(store, &before, current).await? {
+            if replace_state(store, &before, current, budget).await? {
                 return Ok(None);
             }
             continue;
         }
 
-        if replace_state(store, &before, current).await? {
+        if replace_state(store, &before, current, budget).await? {
             return Ok(Some(value));
         }
     }
@@ -201,12 +294,18 @@ async fn finish_mint(
     holder: String,
     fence: u64,
     replacement: bool,
+    budget: Option<AuthOperationBudget>,
 ) -> Result<Option<String>, StoreError> {
+    take_operation(
+        budget.as_ref(),
+        2,
+        "provider service resolution and credential mint",
+    )?;
     let Some(minted) = issuer
         .mint(&session, &subject, &owner_token, &services)
         .await
     else {
-        clear_owned_lease(&store, &session, &holder, fence).await?;
+        clear_owned_lease(&store, &session, &holder, fence, budget.as_ref()).await?;
         return Ok(None);
     };
     let credential = DurableCredential {
@@ -225,20 +324,65 @@ async fn finish_mint(
         fence,
         credential.clone(),
         replacement,
+        budget.as_ref(),
     )
     .await
     {
         Ok(result) => Ok(result),
         Err(error) => {
             // A store failure after provider success is the response-loss case
-            // tracked by #528. Best-effort revoke narrows it; neither the key
-            // value nor provider identifier is emitted at this boundary.
-            if !issuer.revoke(&credential.id, &owner_token).await {
-                tracing::error!(
+            // tracked by #528. The failed response is ambiguous: Mongo may
+            // have applied the write and lost only its acknowledgement. Confirm
+            // custody before DELETE so cleanup cannot destroy a recorded key.
+            let accounted_for =
+                if take_operation(budget.as_ref(), 1, "failed mint custody confirmation read")
+                    .is_ok()
+                {
+                    match store.credential(&session).await {
+                        Ok(Some(state)) => Some(state_accounts_for_provider_credential(
+                            &state,
+                            &credential.id,
+                        )),
+                        Ok(None) => Some(false),
+                        Err(read_error) => {
+                            tracing::warn!(
+                                session_id = %session,
+                                %subject,
+                                error = %read_error,
+                                "could not confirm whether failed mint custody was recorded"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+            match accounted_for {
+                Some(true) => tracing::warn!(
                     session_id = %session,
                     %subject,
-                    "a minted credential could neither be persisted nor revoked"
-                );
+                    "mint custody was recorded although its acknowledgement was lost"
+                ),
+                Some(false) => {
+                    let revoke_attempted = take_operation(
+                        budget.as_ref(),
+                        1,
+                        "uncommitted provider credential revocation",
+                    )
+                    .is_ok();
+                    if !revoke_attempted || !issuer.revoke(&credential.id, &owner_token).await {
+                        tracing::error!(
+                            session_id = %session,
+                            %subject,
+                            "a minted credential could neither be persisted nor revoked"
+                        );
+                    }
+                }
+                None => tracing::error!(
+                    session_id = %session,
+                    %subject,
+                    "mint cleanup deferred because its durable outcome is unknown"
+                ),
             }
             Err(error)
         }
@@ -247,7 +391,7 @@ async fn finish_mint(
 
 async fn retire_state(store: Arc<dyn AuthStore>, session: SessionId) -> Result<(), StoreError> {
     loop {
-        let mut current = ensure_state(&store, &session).await?;
+        let mut current = ensure_state(&store, &session, None).await?;
         if current.retired
             && current.current.is_none()
             && current.pending.is_none()
@@ -264,13 +408,353 @@ async fn retire_state(store: Arc<dyn AuthStore>, session: SessionId) -> Result<(
         }
         current.lease = None;
         current.retired = true;
-        if replace_state(&store, &before, current).await? {
+        if replace_state(&store, &before, current, None).await? {
             return Ok(());
         }
     }
 }
 
+async fn retire_reconciled_state_once(
+    store: &Arc<dyn AuthStore>,
+    mut current: SessionCredentialState,
+) -> Result<bool, StoreError> {
+    let before = current.clone();
+    if let Some(held) = current.current.take() {
+        queue_debt(&mut current, &held);
+    }
+    if let Some(held) = current.pending.take() {
+        queue_debt(&mut current, &held);
+    }
+    current.lease = None;
+    current.retired = true;
+    replace_state(store, &before, current, None).await
+}
+
+fn custody_protects_provider_credential(
+    state: &SessionCredentialState,
+    id: &str,
+    now: SystemTime,
+) -> bool {
+    state_accounts_for_provider_credential(state, id)
+        || state
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.expires_at > now)
+}
+
 impl AuthState {
+    async fn reconcile_active_credential_page(
+        &self,
+        service: &Arc<layer2_core::SessionService>,
+        budget: &AuthOperationBudget,
+    ) -> Result<(), StoreError> {
+        let mut epoch = self.active_credential_sweep_epoch.lock().await;
+        let mut proposed = epoch.clone();
+        if proposed.is_none() {
+            if !budget.take(1) {
+                return Ok(());
+            }
+            proposed = Some(SweepEpoch {
+                cutoff: None,
+                through_sequence: self.store.auth_sweep_high_water().await?,
+                after: None,
+            });
+        }
+        let current = proposed
+            .clone()
+            .expect("active epoch was initialized above");
+
+        // One list call plus, per returned row: the reconciliation attempt,
+        // isolated body read, session claim, and at most a sequence allocation
+        // plus generation-CAS retirement write.
+        let limit = budget.remaining().saturating_sub(1) / 5;
+        if limit == 0 {
+            *epoch = proposed;
+            return Ok(());
+        }
+        if !budget.take(1) {
+            *epoch = proposed;
+            return Ok(());
+        }
+        let cursors = self
+            .store
+            .active_credentials_for_reconciliation(
+                current.after.as_ref(),
+                current.through_sequence,
+                limit,
+            )
+            .await?;
+        if !budget.take(cursors.len()) {
+            return Err(StoreError::Malformed(
+                "credential reconciliation store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed = finish_sweep_page(&cursors, limit, &current, |cursor| Some(cursor.clone()));
+
+        let mut first_error = None;
+        for cursor in cursors {
+            if !budget.take(1) {
+                return Err(StoreError::Malformed(
+                    "credential reconciliation read budget invariant was violated".into(),
+                ));
+            }
+            let state = match self.store.credential(&cursor.session).await {
+                Ok(Some(state)) if !state.retired => state,
+                Ok(_) => continue,
+                Err(error) => {
+                    remember_pass_error(&mut first_error, error, "read active credential custody");
+                    continue;
+                }
+            };
+            if !budget.take(1) {
+                return Err(StoreError::Malformed(
+                    "credential reconciliation claim budget invariant was violated".into(),
+                ));
+            }
+            match service.session_claims_credential(&state.session).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    if !budget.take(2) {
+                        return Err(StoreError::Malformed(
+                            "credential reconciliation retirement budget invariant was violated"
+                                .into(),
+                        ));
+                    }
+                    if let Err(error) = retire_reconciled_state_once(&self.store, state).await {
+                        remember_pass_error(
+                            &mut first_error,
+                            error,
+                            "retire unclaimed credential custody",
+                        );
+                    }
+                }
+                Err(error) => remember_pass_error(
+                    &mut first_error,
+                    error,
+                    "read session claim for credential custody",
+                ),
+            }
+        }
+        *epoch = proposed;
+        first_error.map_or(Ok(()), Err)
+    }
+
+    async fn reconcile_provider_orphans(
+        &self,
+        service: &Arc<layer2_core::SessionService>,
+        issuer: &Arc<super::keys::KeyIssuer>,
+        budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
+        let mut sweep = self.orphan_reconciliation_sweep.lock().await;
+        let mut proposed = sweep.clone();
+        let mut first_error = None;
+        let mut reclaimed = 0;
+
+        while budget.remaining() > 0 {
+            if proposed.current_owner.is_none() {
+                if proposed.owners.is_none() {
+                    if !budget.take(1) {
+                        break;
+                    }
+                    proposed.owners = Some(SweepEpoch {
+                        cutoff: None,
+                        through_sequence: match self.store.auth_sweep_high_water().await {
+                            Ok(through) => through,
+                            Err(error) => {
+                                remember_pass_error(
+                                    &mut first_error,
+                                    error,
+                                    "find orphan-owner high water",
+                                );
+                                break;
+                            }
+                        },
+                        after: None,
+                    });
+                }
+
+                let owner_epoch = proposed
+                    .owners
+                    .clone()
+                    .expect("an owner epoch was initialized above");
+                if !budget.take(1) {
+                    break;
+                }
+                let mut owners = match self
+                    .store
+                    .subjects_with_tokens(
+                        owner_epoch.after.as_ref(),
+                        owner_epoch.through_sequence,
+                        1,
+                    )
+                    .await
+                {
+                    Ok(owners) => owners,
+                    Err(error) => {
+                        remember_pass_error(&mut first_error, error, "read next orphan owner");
+                        break;
+                    }
+                };
+                let owners_after_completion =
+                    finish_sweep_page(&owners, 1, &owner_epoch, |cursor| Some(cursor.clone()));
+                let Some(owner) = owners.pop() else {
+                    proposed.owners = owners_after_completion;
+                    if proposed.owners.is_none() {
+                        break;
+                    }
+                    continue;
+                };
+                if !budget.take(1) {
+                    return Err(StoreError::Malformed(
+                        "orphan-owner store exceeded its requested page limit".into(),
+                    ));
+                }
+                proposed.current_owner = Some(OrphanOwnerSweep {
+                    subject: owner.subject,
+                    remaining_credentials: None,
+                    owners_after_completion,
+                });
+            }
+
+            let mut current = proposed
+                .current_owner
+                .clone()
+                .expect("the current owner was initialized above");
+            if !budget.take(1) {
+                break;
+            }
+            let owner = match self.store.subject(&current.subject).await {
+                Ok(Some(owner)) => owner,
+                Ok(None) => {
+                    proposed.owners = current.owners_after_completion;
+                    proposed.current_owner = None;
+                    if proposed.owners.is_none() {
+                        break;
+                    }
+                    continue;
+                }
+                Err(error) => {
+                    remember_pass_error(&mut first_error, error, "reload orphan owner token");
+                    proposed.owners = current.owners_after_completion;
+                    proposed.current_owner = None;
+                    if proposed.owners.is_none() {
+                        break;
+                    }
+                    continue;
+                }
+            };
+            let Some(tokens) = owner.tokens else {
+                proposed.owners = current.owners_after_completion;
+                proposed.current_owner = None;
+                if proposed.owners.is_none() {
+                    break;
+                }
+                continue;
+            };
+            let token = tokens.access_token.into_inner();
+            if current.remaining_credentials.is_none() {
+                if !budget.take(1) {
+                    proposed.current_owner = Some(current);
+                    break;
+                }
+                let mut minted = match issuer.minted_here(&token).await {
+                    Ok(minted) => minted,
+                    Err(_) => {
+                        remember_pass_error(
+                            &mut first_error,
+                            StoreError::Unavailable(
+                                "provider credential listing failed during orphan reconciliation"
+                                    .into(),
+                            ),
+                            "list provider credentials for owner",
+                        );
+                        proposed.owners = current.owners_after_completion;
+                        proposed.current_owner = None;
+                        if proposed.owners.is_none() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                minted.sort_by(|left, right| left.0.cmp(&right.0));
+                minted.dedup_by(|left, right| left.0 == right.0);
+                current.remaining_credentials = Some(minted.into());
+            }
+
+            while let Some((id, session)) = current
+                .remaining_credentials
+                .as_mut()
+                .expect("the provider snapshot was initialized above")
+                .pop_front()
+            {
+                // A candidate costs one reconciliation attempt and can require
+                // one custody read, one session claim, and one provider DELETE.
+                // Reserve all four before removing it from the durable cursor.
+                if !budget.take(4) {
+                    current
+                        .remaining_credentials
+                        .as_mut()
+                        .expect("the provider snapshot remains initialized")
+                        .push_front((id, session));
+                    break;
+                }
+
+                let custody = match self.store.credential(&session).await {
+                    Ok(custody) => custody,
+                    Err(error) => {
+                        remember_pass_error(
+                            &mut first_error,
+                            error,
+                            "read provider candidate custody",
+                        );
+                        continue;
+                    }
+                };
+                match custody {
+                    Some(state)
+                        if custody_protects_provider_credential(&state, &id, SystemTime::now()) => {
+                    }
+                    Some(_) => {
+                        if issuer.revoke(&id, &token).await {
+                            reclaimed += 1;
+                        }
+                    }
+                    None => match service.session_claims_credential(&session).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            if issuer.revoke(&id, &token).await {
+                                reclaimed += 1;
+                            }
+                        }
+                        Err(error) => remember_pass_error(
+                            &mut first_error,
+                            error,
+                            "read provider candidate session claim",
+                        ),
+                    },
+                }
+            }
+
+            if current
+                .remaining_credentials
+                .as_ref()
+                .is_some_and(std::collections::VecDeque::is_empty)
+            {
+                proposed.owners = current.owners_after_completion;
+                proposed.current_owner = None;
+                if proposed.owners.is_none() {
+                    break;
+                }
+            } else {
+                proposed.current_owner = Some(current);
+                break;
+            }
+        }
+
+        *sweep = proposed;
+        first_error.map_or(Ok(reclaimed), Err)
+    }
+
     pub(super) async fn mint_session_credential(
         &self,
         session: &SessionId,
@@ -278,14 +762,39 @@ impl AuthState {
         services: &[ServiceId],
         replacement: bool,
     ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential_inner(session, subject, services, replacement, None)
+            .await
+    }
+
+    pub(super) async fn mint_session_credential_with_budget(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        replacement: bool,
+        budget: AuthOperationBudget,
+    ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential_inner(session, subject, services, replacement, Some(budget))
+            .await
+    }
+
+    async fn mint_session_credential_inner(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        replacement: bool,
+        budget: Option<AuthOperationBudget>,
+    ) -> Result<Option<String>, StoreError> {
         let Some(issuer) = self.issuer.read().await.clone() else {
+            take_operation(budget.as_ref(), 1, "subject access-token read")?;
             return self.access_token(subject).await;
         };
         let fingerprint = scope_fingerprint(services);
         let mut owner_token = None;
 
         let (holder, fence) = loop {
-            let current = ensure_state(&self.store, session).await?;
+            let current = ensure_state(&self.store, session, budget.as_ref()).await?;
             if current.retired {
                 return Ok(None);
             }
@@ -315,11 +824,15 @@ impl AuthState {
                 .as_ref()
                 .is_some_and(|lease| lease.expires_at > SystemTime::now())
             {
+                if budget.is_some() {
+                    return Ok(None);
+                }
                 tokio::time::sleep(LEASE_POLL_INTERVAL).await;
                 continue;
             }
 
             if owner_token.is_none() {
+                take_operation(budget.as_ref(), 1, "credential owner token read")?;
                 owner_token = self.access_token(subject).await?;
                 if owner_token.is_none() {
                     return Ok(None);
@@ -337,7 +850,7 @@ impl AuthState {
                 expires_at: now + MINT_LEASE_LIFETIME,
                 scope_fingerprint: fingerprint.clone(),
             });
-            if replace_state(&self.store, &current, next).await? {
+            if replace_state(&self.store, &current, next, budget.as_ref()).await? {
                 break (holder, fence);
             }
         };
@@ -353,17 +866,37 @@ impl AuthState {
             holder,
             fence,
             replacement,
+            budget,
         ));
         task.await.map_err(|error| {
             StoreError::Unavailable(format!("credential mint task failed: {error}"))
         })?
     }
 
+    #[cfg(test)]
     pub(super) async fn promote_pending_credential(
         &self,
         session: &SessionId,
     ) -> Result<bool, StoreError> {
+        self.promote_pending_credential_inner(session, None).await
+    }
+
+    pub(super) async fn promote_pending_credential_with_budget(
+        &self,
+        session: &SessionId,
+        budget: &AuthOperationBudget,
+    ) -> Result<bool, StoreError> {
+        self.promote_pending_credential_inner(session, Some(budget))
+            .await
+    }
+
+    async fn promote_pending_credential_inner(
+        &self,
+        session: &SessionId,
+        budget: Option<&AuthOperationBudget>,
+    ) -> Result<bool, StoreError> {
         loop {
+            take_operation(budget, 1, "pending credential promotion read")?;
             let Some(mut current) = self.store.credential(session).await? else {
                 return Ok(false);
             };
@@ -373,7 +906,7 @@ impl AuthState {
             let before = current.clone();
             if current.retired {
                 queue_debt(&mut current, &replacement);
-                if replace_state(&self.store, &before, current).await? {
+                if replace_state(&self.store, &before, current, budget).await? {
                     return Ok(false);
                 }
                 continue;
@@ -381,139 +914,183 @@ impl AuthState {
             if let Some(displaced) = current.current.replace(replacement) {
                 queue_debt(&mut current, &displaced);
             }
-            if replace_state(&self.store, &before, current).await? {
+            if replace_state(&self.store, &before, current, budget).await? {
                 return Ok(true);
             }
         }
     }
 
-    pub(super) async fn revoke_credential_debt(&self) -> Result<usize, StoreError> {
+    pub(super) async fn revoke_credential_debt(
+        &self,
+        budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
         let _sweep = self.credential_sweep.lock().await;
         let Some(issuer) = self.issuer.read().await.clone() else {
             return Ok(0);
         };
-        let states = self.store.credentials().await?;
+        let mut epoch = self.revoke_debt_sweep_epoch.lock().await;
+        let mut proposed = epoch.clone();
+        if proposed.is_none() {
+            if !budget.take(1) {
+                return Ok(0);
+            }
+            proposed = Some(SweepEpoch {
+                cutoff: None,
+                through_sequence: self.store.auth_sweep_high_water().await?,
+                after: None,
+            });
+        }
         let mut taken = 0;
         let mut owner_tokens: HashMap<SubjectId, Option<String>> = HashMap::new();
-        for state in states {
-            for debt in state.revoke_debt {
-                let token = if let Some(cached) = owner_tokens.get(&debt.owner) {
-                    cached.clone()
-                } else {
-                    let loaded = self.access_token(&debt.owner).await?;
-                    owner_tokens.insert(debt.owner.clone(), loaded.clone());
-                    loaded
-                };
-                let Some(token) = token else {
-                    continue;
-                };
-                if !issuer.revoke(&debt.id, &token).await {
-                    continue;
-                }
-
-                loop {
-                    let Some(mut current) = self.store.credential(&state.session).await? else {
-                        break;
-                    };
-                    let before = current.clone();
-                    let old_len = current.revoke_debt.len();
-                    current.revoke_debt.retain(|queued| queued.id != debt.id);
-                    if current.revoke_debt.len() == old_len {
-                        break;
-                    }
-                    if replace_state(&self.store, &before, current).await? {
-                        taken += 1;
-                        break;
-                    }
-                }
+        let mut first_error = None;
+        while let Some(current) = proposed.clone() {
+            // Mongo's indexed traversal performs at most two reads to locate
+            // one debt. The remaining six units cover the returned-item
+            // attempt, owner read, provider DELETE, custody read, and the
+            // sequence allocation plus CAS write used to settle it.
+            if !budget.take(8) {
+                break;
             }
+            let mut page = match self
+                .store
+                .revoke_debts(current.after.as_ref(), current.through_sequence, 1)
+                .await
+            {
+                Ok(page) => page,
+                Err(error) => {
+                    remember_pass_error(
+                        &mut first_error,
+                        error,
+                        "read next credential revoke debt",
+                    );
+                    break;
+                }
+            };
+            if page.len() > 1 {
+                return Err(StoreError::Malformed(
+                    "credential revoke-debt store exceeded its requested page limit".into(),
+                ));
+            }
+            let next_epoch = finish_sweep_page(&page, 1, &current, revoke_debt_work_position);
+            let Some(item) = page.pop() else {
+                proposed = None;
+                break;
+            };
+            let work = match item.state {
+                Ok(work) => work,
+                Err(error) => {
+                    remember_pass_error(
+                        &mut first_error,
+                        error,
+                        "read credential revoke-debt item",
+                    );
+                    proposed = next_epoch;
+                    continue;
+                }
+            };
+            let debt = work.debt;
+            let token = if let Some(cached) = owner_tokens.get(&debt.owner) {
+                cached.clone()
+            } else {
+                match self.access_token(&debt.owner).await {
+                    Ok(loaded) => {
+                        owner_tokens.insert(debt.owner.clone(), loaded.clone());
+                        loaded
+                    }
+                    Err(error) => {
+                        remember_pass_error(
+                            &mut first_error,
+                            error,
+                            "read revoke-debt owner token",
+                        );
+                        owner_tokens.insert(debt.owner.clone(), None);
+                        None
+                    }
+                }
+            };
+            let Some(token) = token else {
+                proposed = next_epoch;
+                continue;
+            };
+            if !issuer.revoke(&debt.id, &token).await {
+                proposed = next_epoch;
+                continue;
+            }
+
+            let mut current = match self.store.credential(&work.session).await {
+                Ok(Some(current)) => current,
+                Ok(None) => {
+                    proposed = next_epoch;
+                    continue;
+                }
+                Err(error) => {
+                    remember_pass_error(&mut first_error, error, "read revoked credential custody");
+                    proposed = next_epoch;
+                    continue;
+                }
+            };
+            let before = current.clone();
+            let old_len = current.revoke_debt.len();
+            current.revoke_debt.retain(|queued| queued.id != debt.id);
+            if current.revoke_debt.len() == old_len {
+                proposed = next_epoch;
+                continue;
+            }
+            match replace_state(&self.store, &before, current, None).await {
+                Ok(true) => taken += 1,
+                Ok(false) => {}
+                Err(error) => remember_pass_error(
+                    &mut first_error,
+                    error,
+                    "settle revoked credential custody",
+                ),
+            }
+            proposed = next_epoch;
         }
-        Ok(taken)
+        // The page position is published only after every item was attempted.
+        // Failed items recur after this finite epoch wraps, while later healthy
+        // items are never trapped behind a deterministic first-row failure.
+        *epoch = proposed;
+        drop(epoch);
+        first_error.map_or(Ok(taken), Err)
     }
 
+    #[cfg(test)]
     pub(super) async fn reclaim_unrecorded_credentials(
         &self,
         service: &Arc<layer2_core::SessionService>,
     ) -> Result<usize, StoreError> {
+        let active_budget = AuthOperationBudget::standalone(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
+        let provider_budget = AuthOperationBudget::standalone(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
+        self.reclaim_unrecorded_credentials_with_budgets(service, &active_budget, &provider_budget)
+            .await
+    }
+
+    pub(super) async fn reclaim_unrecorded_credentials_with_budgets(
+        &self,
+        service: &Arc<layer2_core::SessionService>,
+        active_budget: &AuthOperationBudget,
+        provider_budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
+        let _sweep = self.credential_sweep.lock().await;
         let Some(issuer) = self.issuer.read().await.clone() else {
             return Ok(0);
         };
-        let states = self.store.credentials().await?;
+        let active = self
+            .reconcile_active_credential_page(service, active_budget)
+            .await;
+        let provider = self
+            .reconcile_provider_orphans(service, &issuer, provider_budget)
+            .await;
 
-        // Read every claim before mutating custody or calling DELETE. If even
-        // one session record cannot be read, this pass knows nothing is safe to
-        // revoke and leaves all current values and debt untouched for retry.
-        let mut unclaimed = Vec::new();
-        for state in states.iter().filter(|state| !state.retired) {
-            if !service.session_claims_credential(&state.session).await? {
-                unclaimed.push(state.session.clone());
+        match (active, provider) {
+            (Ok(()), Ok(reclaimed)) => Ok(reclaimed),
+            (Err(error), Ok(_)) | (Ok(()), Err(error)) => Err(error),
+            (Err(first), Err(second)) => {
+                tracing::warn!(error = %second, "provider orphan lane also failed this pass");
+                Err(first)
             }
         }
-        for session in unclaimed {
-            retire_state(Arc::clone(&self.store), session).await?;
-        }
-
-        // Refresh after retirement so the keys just moved to debt are treated
-        // as accounted for by the provider-listing orphan pass below.
-        let states = self.store.credentials().await?;
-        let mut accounted_ids = HashSet::new();
-        let mut tracked_sessions = HashSet::new();
-        for state in &states {
-            if state.current.is_some() || state.pending.is_some() || state.lease.is_some() {
-                tracked_sessions.insert(state.session.clone());
-            }
-            if let Some(current) = &state.current {
-                accounted_ids.insert(current.id.clone());
-            }
-            if let Some(pending) = &state.pending {
-                accounted_ids.insert(pending.id.clone());
-            }
-            accounted_ids.extend(state.revoke_debt.iter().map(|debt| debt.id.clone()));
-        }
-
-        let owners = self.store.subjects().await?;
-        let mut revocations = Vec::new();
-        for owner in owners {
-            let Some(tokens) = owner.tokens else {
-                continue;
-            };
-            let token = tokens.access_token.into_inner();
-            let minted = match issuer.minted_here(&token).await {
-                Ok(minted) => minted,
-                Err(error) => {
-                    tracing::warn!(
-                        subject = %owner.subject,
-                        error = %error,
-                        "could not inspect an owner's credentials for orphan reclaim"
-                    );
-                    continue;
-                }
-            };
-
-            // Determine the whole owner listing before any DELETE. A session
-            // store outage therefore defers every revocation from this read,
-            // instead of turning an unreadable session into an unclaimed one.
-            let mut candidates = Vec::new();
-            for (id, session) in minted {
-                if accounted_ids.contains(&id) || tracked_sessions.contains(&session) {
-                    continue;
-                }
-                match service.session_claims_credential(&session).await {
-                    Ok(true) => {}
-                    Ok(false) => candidates.push(id),
-                    Err(error) => return Err(error),
-                }
-            }
-            revocations.extend(candidates.into_iter().map(|id| (id, token.clone())));
-        }
-
-        let mut reclaimed = 0;
-        for (id, token) in revocations {
-            if issuer.revoke(&id, &token).await {
-                reclaimed += 1;
-            }
-        }
-        Ok(reclaimed)
     }
 }
 
