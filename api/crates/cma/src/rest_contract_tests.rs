@@ -1806,6 +1806,18 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             "problem schema does not require {required}: {problem}"
         );
     }
+    for optional in ["field", "path"] {
+        assert!(
+            problem["properties"].get(optional).is_some(),
+            "problem schema is missing the emitted {optional} extension: {problem}"
+        );
+        assert!(
+            !problem["required"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == optional)),
+            "problem extension {optional} must remain optional: {problem}"
+        );
+    }
     assert_eq!(
         document["components"]["responses"]["Problem"]["content"]["application/problem+json"]
             ["schema"]["$ref"],

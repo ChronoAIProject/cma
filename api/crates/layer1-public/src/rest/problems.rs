@@ -25,6 +25,10 @@ pub struct ProblemDocument {
     detail: String,
     code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     capability: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dimension: Option<String>,
@@ -240,6 +244,8 @@ pub(crate) fn problem_document(
         status: status.as_u16(),
         detail: detail.to_string(),
         code: code.to_string(),
+        field: None,
+        path: None,
         capability: None,
         dimension: None,
         requested: None,
