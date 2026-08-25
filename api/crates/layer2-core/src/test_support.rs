@@ -12,6 +12,9 @@ use layer3_adapter::KernelAdapter;
 use tokio::sync::Mutex;
 
 use crate::authz::{Authorization, Caller, Capability};
+use crate::coordination::{
+    RuntimeAuthority, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
+};
 use crate::environment_service::EnvironmentProfileService;
 use crate::event::{Event, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
@@ -32,6 +35,8 @@ pub(crate) struct FakeStore {
     transaction: Mutex<()>,
     pub(crate) sessions: Mutex<HashMap<String, SessionRecord>>,
     pub(crate) events: Mutex<Vec<StoredEvent>>,
+    /// Durable runtime authority, leases, and reservations shared by replicas.
+    coordination: Mutex<HashMap<String, FakeCoordination>>,
     /// Durable receipts for whole record/event transactions, including empty batches.
     write_receipts: Mutex<HashMap<String, (SessionId, u64)>>,
     /// Successful record writes, so idempotent migrations can be asserted.
@@ -39,6 +44,50 @@ pub(crate) struct FakeStore {
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct FakeLease {
+    lease: SessionLease,
+    expires_at: tokio::time::Instant,
+}
+
+#[derive(Debug, Clone)]
+struct FakeReservation {
+    reservation: RuntimeReservation,
+    lease_token: String,
+}
+
+#[derive(Debug, Clone)]
+struct FakeCoordination {
+    authority: RuntimeAuthority,
+    lease: Option<FakeLease>,
+    next_generation: u64,
+    reservations: HashMap<String, FakeReservation>,
+}
+
+impl FakeCoordination {
+    fn legacy(record: &SessionRecord) -> Self {
+        Self {
+            authority: RuntimeAuthority {
+                generation: 0,
+                runtime_id: record.runtime_id.clone(),
+            },
+            lease: None,
+            next_generation: 0,
+            reservations: HashMap::new(),
+        }
+    }
+
+    fn expire_lease(&mut self, now: tokio::time::Instant) {
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(|held| held.expires_at <= now)
+        {
+            self.lease = None;
+        }
+    }
 }
 
 impl FakeStore {
@@ -52,6 +101,10 @@ impl FakeStore {
             .lock()
             .await
             .insert(record.session.id.0.clone(), record.clone());
+        self.coordination.lock().await.insert(
+            record.session.id.0.clone(),
+            FakeCoordination::legacy(record),
+        );
         Ok(())
     }
 
@@ -207,6 +260,242 @@ impl SessionStore for FakeStore {
         Ok(self.sessions.lock().await.get(&id.0).cloned())
     }
 
+    async fn runtime_authority(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<RuntimeAuthority>, StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&id.0).cloned() else {
+            return Ok(None);
+        };
+        let mut coordination = self.coordination.lock().await;
+        let state = coordination
+            .entry(id.0.clone())
+            .or_insert_with(|| FakeCoordination::legacy(&record));
+        if state.authority.runtime_id != record.runtime_id {
+            return Err(StoreError::Malformed(format!(
+                "session {id} record and runtime authority disagree"
+            )));
+        }
+        Ok(Some(state.authority.clone()))
+    }
+
+    async fn acquire_session_lease(
+        &self,
+        request: &SessionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self
+            .sessions
+            .lock()
+            .await
+            .get(&request.session_id.0)
+            .cloned()
+        else {
+            return Err(StoreError::SessionDeleted {
+                id: request.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let state = coordination
+            .entry(request.session_id.0.clone())
+            .or_insert_with(|| FakeCoordination::legacy(&record));
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        if state.authority.runtime_id != record.runtime_id || current != request.boundary {
+            return Err(StoreError::SessionAuthorityChanged {
+                id: request.session_id.clone(),
+            });
+        }
+
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let lease = SessionLease {
+            session_id: request.session_id.clone(),
+            holder: request.holder.clone(),
+            token: request.token.clone(),
+            boundary: request.boundary.clone(),
+            operation: request.operation,
+        };
+        if let Some(held) = state.lease.as_mut() {
+            if held.lease != lease {
+                return Err(StoreError::SessionLeaseHeld {
+                    id: request.session_id.clone(),
+                });
+            }
+            held.expires_at = now
+                .checked_add(request.ttl)
+                .ok_or_else(|| StoreError::Malformed("session lease expiry overflow".into()))?;
+            return Ok(held.lease.clone());
+        }
+        state.lease = Some(FakeLease {
+            lease: lease.clone(),
+            expires_at: now
+                .checked_add(request.ttl)
+                .ok_or_else(|| StoreError::Malformed("session lease expiry overflow".into()))?,
+        });
+        Ok(lease)
+    }
+
+    async fn renew_session_lease(
+        &self,
+        lease: &SessionLease,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        let Some(held) = state.lease.as_mut() else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        if held.lease != *lease || current != lease.boundary {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        held.expires_at = now
+            .checked_add(ttl)
+            .ok_or_else(|| StoreError::Malformed("session lease expiry overflow".into()))?;
+        Ok(())
+    }
+
+    async fn advance_session_lease(
+        &self,
+        lease: &mut SessionLease,
+        boundary: &SessionBoundary,
+    ) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        let Some(held) = state.lease.as_mut() else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        if held.lease != *lease || current != *boundary {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        held.lease.boundary = boundary.clone();
+        lease.boundary = boundary.clone();
+        Ok(())
+    }
+
+    async fn release_session_lease(&self, lease: &SessionLease) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        if state.lease.as_ref().map(|held| &held.lease) != Some(lease) || current != lease.boundary
+        {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        state.lease = None;
+        Ok(())
+    }
+
+    async fn reserve_runtime_generation(
+        &self,
+        lease: &SessionLease,
+        reservation_token: &str,
+    ) -> Result<RuntimeReservation, StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        if state.lease.as_ref().map(|held| &held.lease) != Some(lease) || current != lease.boundary
+        {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        if let Some(existing) = state.reservations.get(reservation_token) {
+            if existing.lease_token == lease.token {
+                return Ok(existing.reservation.clone());
+            }
+            return Err(StoreError::RuntimeReservationChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+        let generation = state
+            .next_generation
+            .max(state.authority.generation)
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("runtime generation overflow".into()))?;
+        state.next_generation = generation;
+        let reservation = RuntimeReservation {
+            session_id: lease.session_id.clone(),
+            generation: std::num::NonZeroU64::new(generation).ok_or_else(|| {
+                StoreError::Malformed("runtime generation must be non-zero".into())
+            })?,
+            token: reservation_token.to_string(),
+        };
+        state.reservations.insert(
+            reservation_token.to_string(),
+            FakeReservation {
+                reservation: reservation.clone(),
+                lease_token: lease.token.clone(),
+            },
+        );
+        Ok(reservation)
+    }
+
     async fn list_for(
         &self,
         owner: &SubjectId,
@@ -252,6 +541,7 @@ impl SessionStore for FakeStore {
         let _transaction = self.transaction.lock().await;
         self.sessions.lock().await.remove(&id.0);
         self.events.lock().await.retain(|e| &e.session_id != id);
+        self.coordination.lock().await.remove(&id.0);
         self.write_receipts
             .lock()
             .await
