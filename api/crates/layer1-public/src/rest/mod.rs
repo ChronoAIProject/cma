@@ -644,8 +644,8 @@ async fn skilled(
     }
 
     // Preserve first-seen order while deduplicating the whole rendered page.
-    // The adapter may issue one bounded detail read per entry, so duplicates
-    // here would otherwise become duplicate upstream calls.
+    // The adapter may issue one bounded metadata search per entry, so
+    // duplicates here would otherwise become duplicate upstream calls.
     let mut seen = std::collections::HashSet::new();
     let mut requested = Vec::new();
     for view in views.iter() {

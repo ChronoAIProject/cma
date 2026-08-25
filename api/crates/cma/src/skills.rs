@@ -54,17 +54,18 @@ const CATALOG_SKILL_LIMIT: usize = PAGE_SIZE * CATALOG_PAGE_LIMIT;
 /// Maximum length the registry accepts for an opaque cursor.
 const CURSOR_LENGTH_LIMIT: usize = 2_048;
 
-/// Single-skill reads run concurrently, but never without a ceiling.
+/// Targeted metadata searches run concurrently, but never without a ceiling.
 const DESCRIPTION_LOOKUP_CONCURRENCY: usize = 8;
 
-/// Maximum single-skill detail reads one CMA request may make.
+/// Maximum targeted metadata searches one CMA response may make.
 ///
-/// A profile may record at most 100 skills. The bounded session collection may
-/// contain 200 rows, so using every distinct grant on that page could otherwise
-/// turn one read into 20,000 provider calls. One profile's complete grant set is
-/// a useful enrichment budget; grants beyond it still render from their durable
-/// identifiers and versions.
-const DESCRIPTION_LOOKUP_LIMIT: usize = 100;
+/// Ornn permits 60 skill searches per caller per minute. Fifty leaves headroom
+/// for the caller's own picker/search traffic while still covering far more
+/// than the handful of grants a session normally carries. The bounded session
+/// collection may contain 200 rows, so using every distinct grant on that page
+/// could otherwise turn one read into thousands of provider calls. Grants after
+/// this first-seen budget still render from their durable ids and versions.
+const DESCRIPTION_LOOKUP_LIMIT: usize = 50;
 
 /// A skill as the registry describes it.
 ///
@@ -163,6 +164,7 @@ impl PlatformSkillCatalog {
         &self,
         url: &str,
         bearer: &str,
+        query: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<SearchPage, CatalogError> {
         let limit = PAGE_SIZE.to_string();
@@ -173,6 +175,9 @@ impl PlatformSkillCatalog {
         ]);
         if let Some(cursor) = cursor {
             request = request.query(&[("cursor", cursor)]);
+        }
+        if let Some(query) = query {
+            request = request.query(&[("q", query)]);
         }
         let response = request
             .bearer_auth(bearer)
@@ -194,48 +199,74 @@ impl PlatformSkillCatalog {
             .ok_or_else(|| CatalogError::Malformed("skill search response has no data".into()))
     }
 
-    /// Read one skill's display metadata by id or slug.
+    /// Find one skill's display metadata without materializing its package.
+    ///
+    /// Ornn's `/skills/{idOrName}` detail route records every authenticated GET
+    /// as a pull in Mongo and PostHog. Keyword search has no such side effect,
+    /// but it is fuzzy, so only an exact GUID or slug is accepted from its
+    /// bounded first page. An unresolved fuzzy page leaves the durable grant
+    /// untouched instead of attaching another skill's metadata.
     async fn describe_one(
         &self,
+        url: &str,
         bearer: &str,
         skill: SkillId,
     ) -> Result<Option<CatalogSkill>, CatalogError> {
-        let mut url = reqwest::Url::parse(&format!("{}{PACK_PATH}", self.base_url))
-            .map_err(|e| CatalogError::Malformed(format!("skill detail URL is not usable: {e}")))?;
-        url.path_segments_mut()
-            .map_err(|_| CatalogError::Malformed("skill detail URL cannot carry a path".into()))?
-            .push(&skill.0);
-        let response = self
-            .http
-            .get(url.clone())
-            .bearer_auth(bearer)
-            .send()
-            .await
-            .map_err(|e| CatalogError::Unavailable(format!("GET {url}: {e}")))?;
-        let status = response.status();
-        // A recorded grant can outlive the catalogue row or the caller's
-        // access to it. That one unresolved identifier must not erase display
-        // metadata for every other grant on the rendered session page.
-        if status == reqwest::StatusCode::NOT_FOUND {
-            tracing::debug!(skill = %skill, "recorded skill is no longer visible in the catalogue");
-            return Ok(None);
+        let page = self.search_page(url, bearer, Some(&skill.0), None).await?;
+        let meta = page.meta.ok_or_else(|| {
+            CatalogError::Malformed(format!(
+                "skill search for {} has no pagination metadata",
+                skill.0
+            ))
+        })?;
+        if meta.limit == 0 || meta.limit > PAGE_SIZE {
+            return Err(CatalogError::Malformed(format!(
+                "skill search for {} reported invalid limit {}",
+                skill.0, meta.limit
+            )));
         }
-        if !status.is_success() {
-            return Err(CatalogError::Unavailable(format!(
-                "skill {} returned {status}",
+        if page.items.len() > meta.limit {
+            return Err(CatalogError::Malformed(format!(
+                "skill search for {} returned {} items for limit {}",
+                skill.0,
+                page.items.len(),
+                meta.limit
+            )));
+        }
+
+        let mut identities = HashSet::new();
+        let mut exact = None;
+        for item in page.items {
+            let candidate = item.into_catalog()?;
+            if !identities.insert(candidate.id.0.clone()) {
+                return Err(CatalogError::Malformed(format!(
+                    "skill search for {} repeated identity {}",
+                    skill.0, candidate.id.0
+                )));
+            }
+            if (candidate.id.0 == skill.0 || candidate.name == skill.0)
+                && exact.replace(candidate).is_some()
+            {
+                return Err(CatalogError::Malformed(format!(
+                    "skill search for {} returned more than one exact match",
+                    skill.0
+                )));
+            }
+        }
+
+        if exact.is_none() && meta.has_more {
+            return Err(CatalogError::Malformed(format!(
+                "skill search for {} did not resolve within {PAGE_SIZE} matches",
                 skill.0
             )));
         }
-        let body: DetailResponse = response
-            .json()
-            .await
-            .map_err(|e| CatalogError::Malformed(format!("skill {} response: {e}", skill.0)))?;
-        body.data
-            .ok_or_else(|| {
-                CatalogError::Malformed(format!("skill {} response has no data", skill.0))
-            })?
-            .into_catalog()
-            .map(Some)
+        if exact.is_none() {
+            // A recorded grant can outlive the catalogue row or the caller's
+            // access to it. That one unresolved identifier must not erase
+            // display metadata for every other grant on the rendered page.
+            tracing::debug!(skill = %skill, "recorded skill is no longer visible in the catalogue");
+        }
+        Ok(exact)
     }
 
     /// The credential this request should present.
@@ -270,7 +301,9 @@ impl SkillCatalog for PlatformSkillCatalog {
         let mut skills = Vec::new();
 
         for page_number in 1..=CATALOG_PAGE_LIMIT {
-            let page = self.search_page(&url, &bearer, cursor.as_deref()).await?;
+            let page = self
+                .search_page(&url, &bearer, None, cursor.as_deref())
+                .await?;
             let meta = page.meta.ok_or_else(|| {
                 CatalogError::Malformed(format!(
                     "skill search page {page_number} has no pagination metadata"
@@ -347,6 +380,7 @@ impl SkillCatalog for PlatformSkillCatalog {
         credential: Option<&str>,
         skills: &[SkillId],
     ) -> Result<Vec<CatalogSkill>, CatalogError> {
+        let url = self.search_url();
         let bearer = self.bearer(credential).await?;
         let mut seen = HashSet::new();
         let mut requested: Vec<SkillId> = skills
@@ -360,7 +394,8 @@ impl SkillCatalog for PlatformSkillCatalog {
         let described: Vec<Option<CatalogSkill>> =
             stream::iter(requested.into_iter().map(|skill| {
                 let bearer = &bearer;
-                async move { self.describe_one(bearer, skill).await }
+                let url = &url;
+                async move { self.describe_one(url, bearer, skill).await }
             }))
             .buffered(DESCRIPTION_LOOKUP_CONCURRENCY)
             .try_collect()
@@ -520,13 +555,6 @@ const PACK_PATH: &str = "/api/v1/skills";
 struct PackResponse {
     #[serde(default)]
     data: Option<PackBody>,
-}
-
-/// The registry's metadata-only answer for one skill.
-#[derive(Debug, serde::Deserialize)]
-struct DetailResponse {
-    #[serde(default)]
-    data: Option<RegistrySkill>,
 }
 
 #[derive(Debug, serde::Deserialize)]
