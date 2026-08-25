@@ -103,6 +103,49 @@ async fn a_session_becomes_ready_once_its_runtime_is_up() {
 }
 
 #[tokio::test]
+async fn awaiting_settlement_spans_durable_readiness_and_live_publication() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_ready_commit));
+    let caller = user("publication-boundary-owner");
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+
+    // Hold bring-up after Ready is committed but before start_runtime can
+    // construct and publish the live entry.
+    store.pause_after_next();
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    store.wait_until_held().await;
+    assert_eq!(
+        inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("the ready record is durable")
+            .session
+            .status,
+        SessionStatus::Ready
+    );
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+
+    // Holding this lock makes one poll deterministic. The old helper returned
+    // Ready from the durable record; the correct helper waits on this claim.
+    let starting = svc.starting.write().await;
+    let mut settled = std::pin::pin!(await_settled(&svc, &caller, &created.id));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(matches!(
+        std::future::Future::poll(settled.as_mut(), &mut context),
+        std::task::Poll::Pending
+    ));
+    drop(starting);
+    store.release();
+
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(2), settled)
+        .await
+        .expect("settlement follows live publication");
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert!(svc.entries.read().await.contains_key(&created.id));
+}
+
+#[tokio::test]
 async fn a_conflicted_ready_commit_publishes_only_the_successful_runtime() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_ready_commit));
