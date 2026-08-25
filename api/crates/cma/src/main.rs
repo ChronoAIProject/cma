@@ -129,6 +129,8 @@ fn with_request_context(router: Router) -> Router {
     router
         // Added in reverse wrapping order: the setter must run before tracing,
         // while propagation must see the response produced by every handler.
+        // Validation wraps the setter so an unusable caller value is absent by
+        // the time the UUID fallback decides whether it needs to mint one.
         .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
         .layer(
             TraceLayer::new_for_http()
@@ -137,6 +139,18 @@ fn with_request_context(router: Router) -> Router {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
         .layer(SetRequestIdLayer::new(X_REQUEST_ID, MakeRequestUuid))
+        .layer(axum::middleware::from_fn(discard_unusable_request_id))
+}
+
+async fn discard_unusable_request_id(mut request: Request, next: Next) -> Response {
+    let usable = request
+        .headers()
+        .get(&X_REQUEST_ID)
+        .is_none_or(|value| value.to_str().is_ok_and(|text| !text.trim().is_empty()));
+    if !usable {
+        request.headers_mut().remove(&X_REQUEST_ID);
+    }
+    next.run(request).await
 }
 
 fn request_span(request: &Request) -> tracing::Span {
@@ -149,7 +163,7 @@ fn request_span(request: &Request) -> tracing::Span {
         "http.request",
         request_id = %request_id,
         method = %request.method(),
-        uri = %request.uri(),
+        path = %request.uri().path(),
     )
 }
 
@@ -502,7 +516,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_span_records_the_correlation_id() {
+    fn request_span_records_correlation_without_query_credentials() {
         use tracing::{field::Visit, span::Attributes, Subscriber};
         use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer};
 
@@ -537,10 +551,14 @@ mod tests {
         let fields = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::registry().with(Capture(Arc::clone(&fields)));
         tracing::subscriber::with_default(subscriber, || {
-            let request = Request::get("/api/v1/conformance")
-                .header("x-request-id", "support-case-488")
-                .body(axum::body::Body::empty())
-                .expect("request builds");
+            let request = Request::get(
+                "/api/v1/sessions/sesn_trace_canary/terminal\
+                 ?ticket=pty-ticket-secret-488&code=oauth-code-secret-488\
+                 &state=oauth-state-secret-488",
+            )
+            .header("x-request-id", "support-case-488")
+            .body(axum::body::Body::empty())
+            .expect("request builds");
             let _span = request_span(&request);
         });
         let fields = fields.lock().expect("capture lock is usable");
@@ -549,6 +567,26 @@ mod tests {
                 .iter()
                 .any(|(name, value)| name == "request_id" && value.contains("support-case-488")),
             "request span must carry the support correlation id: {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path" && value.contains("/api/v1/sessions/sesn_trace_canary/terminal")
+            }),
+            "request span must carry the request path: {fields:?}"
+        );
+        for secret in [
+            "pty-ticket-secret-488",
+            "oauth-code-secret-488",
+            "oauth-state-secret-488",
+        ] {
+            assert!(
+                fields.iter().all(|(_, value)| !value.contains(secret)),
+                "request span leaked query credential {secret}: {fields:?}"
+            );
+        }
+        assert!(
+            fields.iter().all(|(name, _)| name != "uri"),
+            "request span must not imply that it records a full URI: {fields:?}"
         );
     }
 
