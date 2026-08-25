@@ -18,7 +18,6 @@ use axum::{
     extract::{FromRequest, Path, Query, State},
     http::{header, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, put},
     Json, Router,
 };
 use layer2_core::{
