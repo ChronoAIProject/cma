@@ -23,10 +23,11 @@ for await (const frame of cma.streamEvents('sesn_example', { startingAfter: curs
 }
 ```
 
-Every reconnect sends the last validated sequence as both REST's `after` query and
-the standard `Last-Event-ID` header. One overlapping frame is deduplicated. A frame
-that moves behind the cursor, names another session, disagrees with its SSE id, or
-malforms a known event is a `ProtocolError`; the SDK does not skip it silently.
+Every reconnect sends the last validated sequence as both REST's canonical
+`starting_after` query and the standard `Last-Event-ID` header. One overlapping
+frame is deduplicated. A frame that moves behind the cursor, names another session,
+disagrees with its SSE id, or malforms a known event is a `ProtocolError`; the SDK
+does not skip it silently.
 
 The stream is one logical operation for request correlation. Its
 `requestIdProvider` runs once before the first connection, and the SDK reuses that
@@ -93,7 +94,7 @@ AG-UI is a separate, run-shaped projection for conversation frontends. Use
 `AguiConnection` and `AguiOperations` when building that surface; use
 `streamEvents` when consuming the durable session log. See the
 [AG-UI contract](../../../docs/API_AGUI.md) and
-[REST replay contract](../../../docs/API_REST.md#4-events).
+[REST replay contract](../../../docs/API_REST.md#5-events).
 
 ## Why the SDK owns the patches
 

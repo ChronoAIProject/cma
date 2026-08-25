@@ -631,7 +631,7 @@ impl Client {
         let mut url = self.endpoint(&["sessions", session_id.as_str(), "events"])?;
         if cursor > 0 {
             url.query_pairs_mut()
-                .append_pair("after", &cursor.to_string());
+                .append_pair("starting_after", &cursor.to_string());
         }
         let mut request = RequestSpec::new(Method::GET, url, None, true);
         if cursor > 0 {

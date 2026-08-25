@@ -225,7 +225,7 @@ async function connect(
     timedOut = true;
     controller.abort();
   }, timeoutMs);
-  const query = cursor === 0 ? '' : `?after=${String(cursor)}`;
+  const query = cursor === 0 ? '' : `?starting_after=${String(cursor)}`;
 
   try {
     const response = await raceWithAbortSignal(controller.signal, async () => {
