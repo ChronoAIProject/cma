@@ -209,15 +209,15 @@ impl SessionService {
         change: Handover,
     ) -> Result<Session, CoreError> {
         let id = record.session.id.clone();
-        let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
+        if !self.adapters.contains_key(&record.session.kernel) {
             return Err(CoreError::RuntimeUnavailable(format!(
                 "this deployment no longer runs {}",
                 record.session.kernel.as_str()
             )));
-        };
-        let Some(old) = record.runtime_id.clone().map(RuntimeHandle) else {
+        }
+        if record.runtime_id.is_none() {
             return Err(CoreError::InvalidState);
-        };
+        }
         if self.rotation_refused.read().await.contains(&id) {
             // This runtime has already said it cannot hand its conversation
             // over. Asking again every few minutes would achieve nothing and
@@ -230,6 +230,40 @@ impl SessionService {
             // Something else already has this session in hand.
             return Err(CoreError::InvalidState);
         }
+
+        // From the first local claim onward this work belongs to the service,
+        // not to the HTTP request that happened to trigger it. A disconnected
+        // caller drops only this receiver; the handover still records or rolls
+        // back its durable claim and releases `starting` in its own task.
+        let (finished, result) = tokio::sync::oneshot::channel();
+        let service = Arc::clone(self);
+        tokio::spawn(async move {
+            let outcome = service.carry_over_claimed(record, change).await;
+            let _ = finished.send(outcome);
+        });
+        result.await.map_err(|_| {
+            CoreError::RuntimeUnavailable("this session's handover task stopped".into())
+        })?
+    }
+
+    /// A service-owned handover after `starting` has been claimed.
+    async fn carry_over_claimed(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        change: Handover,
+    ) -> Result<Session, CoreError> {
+        let id = record.session.id.clone();
+        let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(format!(
+                "this deployment no longer runs {}",
+                record.session.kernel.as_str()
+            )));
+        };
+        let Some(old) = record.runtime_id.clone().map(RuntimeHandle) else {
+            self.finish_start(&id).await;
+            return Err(CoreError::InvalidState);
+        };
 
         // Tried before anything is announced, because capturing changes
         // nothing and failing to capture means the move is off. Announcing
@@ -286,6 +320,7 @@ impl SessionService {
 
         let mut moved = rotating.clone();
         moved.runtime_id = None;
+        moved.rotation_claim = None;
         match &change {
             Handover::Version(wanted) => moved.session.runtime_version = Some(wanted.clone()),
             Handover::Plane { mode, capabilities } => {
@@ -317,7 +352,10 @@ impl SessionService {
         } else {
             Vec::new()
         };
-        if let Err(e) = self.persist_durably(&mut moved, events).await {
+        if let Err(e) = self
+            .complete_handover_durably(&mut moved, &rotating, events)
+            .await
+        {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
             self.restore_after_failed_move(&record, &rotating).await;
             self.finish_start(&id).await;
@@ -388,6 +426,7 @@ impl SessionService {
         let mut restored = rotating.clone();
         restored.session.status = original.session.status;
         restored.session.stop_reason = original.session.stop_reason;
+        restored.rotation_claim = None;
         let event = Event {
             session_id: id.clone(),
             seq: 0,
@@ -402,7 +441,10 @@ impl SessionService {
             },
             appended_at: String::new(),
         };
-        match self.persist_durably(&mut restored, vec![event]).await {
+        match self
+            .roll_back_handover_durably(&mut restored, rotating, vec![event])
+            .await
+        {
             Ok(()) => {
                 self.mark_entry(id, original.session.status, restored.session.last_seq)
                     .await;
@@ -426,6 +468,7 @@ impl SessionService {
         let mut rotating = record.clone();
         rotating.session.status = SessionStatus::Rotating;
         rotating.session.stop_reason = None;
+        rotating.rotation_claim = Some(format!("rotn_{}", uuid::Uuid::new_v4().simple()));
         let id = rotating.session.id.clone();
         if let Err(e) = self
             .persist_durably(
@@ -447,6 +490,13 @@ impl SessionService {
             tracing::error!(session_id = %id, error = %e, "cannot record the handover");
             return None;
         }
+        // `persist_durably` is an exact write, so it does not advance the
+        // semantic lineage used by later inheriting commits. Seed that lineage
+        // with the record that owns this claim before conversation folds can
+        // queue history-only snapshots whose entry does not carry the private
+        // claim field. The final move can then clear this exact token while
+        // still rebasing over all history written during the second snapshot.
+        self.event_logs.lane(&id).observe_record(&rotating);
         let seq = rotating.session.last_seq;
         self.mark_entry(&id, SessionStatus::Rotating, seq).await;
         Some(rotating)

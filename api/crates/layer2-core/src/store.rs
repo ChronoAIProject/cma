@@ -47,6 +47,15 @@ pub struct SessionRecord {
     pub runtime_id: Option<String>,
     /// Where this session's accumulated agent context is stored, if any.
     pub context_ref: Option<String>,
+    /// Unique owner of an in-progress runtime handover.
+    ///
+    /// Kept on the durable record rather than the public session because it is
+    /// a compare token, not user-visible lifecycle state. History may advance a
+    /// record's revision while a runtime is being captured; this claim lets the
+    /// handover rebase over that history without mistaking a later rotation of
+    /// the same runtime for its own work.
+    #[doc(hidden)]
+    pub rotation_claim: Option<String>,
     /// Store-owned optimistic revision.
     ///
     /// Zero means the record has not been created yet. Stores increment this
@@ -64,6 +73,7 @@ impl SessionRecord {
             session,
             runtime_id: None,
             context_ref: None,
+            rotation_claim: None,
             revision: 0,
         }
     }

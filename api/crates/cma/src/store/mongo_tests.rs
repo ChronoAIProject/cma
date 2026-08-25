@@ -167,6 +167,35 @@ fn session_pricing_round_trips_exactly() {
 }
 
 #[test]
+fn a_rotation_claim_round_trips_exactly() {
+    let mut expected = record_with(None);
+    expected.rotation_claim = Some("rotn_durable_owner".into());
+
+    let stored = to_doc(&expected).expect("rotation claim can be stored");
+    let read = from_doc(stored).expect("rotation claim can be read");
+
+    assert_eq!(read.rotation_claim, expected.rotation_claim);
+}
+
+#[test]
+fn a_document_without_a_rotation_claim_reads_as_unclaimed() {
+    let mut current = record_with(None);
+    current.rotation_claim = Some("rotn_not_present_in_legacy".into());
+    let stored = to_doc(&current).expect("record can be stored");
+    let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
+    assert!(document.remove("rotation_claim").is_some());
+    let legacy: SessionDoc =
+        mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
+
+    assert_eq!(
+        from_doc(legacy)
+            .expect("legacy record decodes")
+            .rotation_claim,
+        None
+    );
+}
+
+#[test]
 fn a_document_without_pricing_reads_as_unpriced() {
     let stored = to_doc(&record_with(Some(pricing()))).expect("price can be stored");
     let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
