@@ -29,7 +29,7 @@ use serde::Deserialize;
 
 use super::project::project;
 use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
-use super::SessionsState;
+use super::{SessionsState, KEEPALIVE_INTERVAL};
 use crate::auth::AuthenticatedCaller;
 use crate::rest::Problem;
 
@@ -240,7 +240,7 @@ pub(super) async fn replay(
     // session's stream was torn down by an intermediary after roughly two
     // minutes and the surface silently stopped updating. This is the stream a
     // client holds open across turns, so idle is its normal state.
-    .keep_alive(KeepAlive::default()))
+    .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
 }
 
 #[cfg(test)]
