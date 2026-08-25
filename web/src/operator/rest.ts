@@ -2,6 +2,7 @@ import {
   ApiError,
   ProtocolError,
   request,
+  requestPages,
   resolveConfig,
   type RequestOptions,
 } from '@chronoai/cma-sdk';
@@ -418,7 +419,9 @@ export function createRestOperatorStore(): OperatorStore {
     },
 
     async sessions(): Promise<readonly AdminSession[]> {
-      return list(await call(`${BASE}/sessions`), 'session list').map(toAdminSession);
+      return requestPages(config, `${BASE}/sessions`, (payload) =>
+        list(payload, 'session list').map(toAdminSession),
+      );
     },
 
     async stopSession(id: string): Promise<void> {

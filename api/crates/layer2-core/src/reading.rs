@@ -12,6 +12,7 @@ use crate::event::{Event, StoredEvent};
 use crate::ids::SessionId;
 use crate::service::{store_failed, SessionService};
 use crate::session::Session;
+use crate::store::{Page, SessionListQuery};
 
 impl SessionService {
     /// Read a session, scoped to its owner.
@@ -24,21 +25,25 @@ impl SessionService {
     }
 
     /// List the sessions visible to the caller, newest first.
-    pub async fn list_sessions(&self, caller: &Caller) -> Result<Vec<Session>, CoreError> {
+    pub async fn list_sessions(
+        &self,
+        caller: &Caller,
+        query: &SessionListQuery,
+    ) -> Result<Page<Session>, CoreError> {
         // A privileged reader sees every session; everyone else sees only their
         // own. The filter is here rather than in an interface so no interface
         // can forget it, and it is pushed into the query rather than applied
         // after so a large deployment does not read every record to show one.
         let result = if caller.authorization.allows(Capability::ReadAllSessions) {
-            self.store.list_all().await
+            self.store.list_all(query).await
         } else {
-            self.store.list_for(&caller.subject).await
+            self.store.list_for(&caller.subject, query).await
         };
         let records = result.map_err(|e| {
             tracing::error!(reader = %caller.subject, error = %e, "cannot list sessions");
             store_failed(e)
         })?;
-        Ok(records.into_iter().map(|r| r.session).collect())
+        Ok(records.map(|record| record.session))
     }
 
     /// The caller's current live-session allowance.
@@ -69,15 +74,19 @@ impl SessionService {
     /// Distinct from `list_sessions` because it refuses a caller who is not
     /// entitled to see across subjects instead of quietly narrowing to their
     /// own work.
-    pub async fn list_all_sessions(&self, caller: &Caller) -> Result<Vec<Session>, CoreError> {
+    pub async fn list_all_sessions(
+        &self,
+        caller: &Caller,
+        query: &SessionListQuery,
+    ) -> Result<Page<Session>, CoreError> {
         caller.authorization.require(Capability::ReadAllSessions)?;
-        let records = self.store.list_all().await.map_err(store_failed)?;
+        let records = self.store.list_all(query).await.map_err(store_failed)?;
         tracing::info!(
             reader = %caller.subject,
-            returned = records.len(),
+            returned = records.items.len(),
             "every session was listed"
         );
-        Ok(records.into_iter().map(|r| r.session).collect())
+        Ok(records.map(|record| record.session))
     }
 
     /// Durable events for a session, optionally from a cursor.

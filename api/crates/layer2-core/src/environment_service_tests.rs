@@ -27,6 +27,10 @@ fn admin() -> Caller {
     )
 }
 
+fn first_page() -> PageRequest {
+    PageRequest::new(200, None)
+}
+
 #[tokio::test]
 async fn a_created_profile_is_readable_by_its_owner() {
     let service = environments(Arc::new(FakeProfileStore::default()));
@@ -41,7 +45,15 @@ async fn a_created_profile_is_readable_by_its_owner() {
 
     let read = service.get(&owner, &created.id).await.expect("reads");
     assert_eq!(read.id, created.id);
-    assert_eq!(service.list(&owner).await.expect("lists").len(), 1);
+    assert_eq!(
+        service
+            .list(&owner, &first_page())
+            .await
+            .expect("lists")
+            .items
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -124,9 +136,12 @@ async fn listing_shows_only_the_callers_own_profiles() {
         .await
         .expect("creates");
 
-    let mine = service.list(&caller("subject-a")).await.expect("lists");
-    assert_eq!(mine.len(), 2);
-    assert!(mine.iter().all(|p| p.owner.as_str() == "subject-a"));
+    let mine = service
+        .list(&caller("subject-a"), &first_page())
+        .await
+        .expect("lists");
+    assert_eq!(mine.items.len(), 2);
+    assert!(mine.items.iter().all(|p| p.owner.as_str() == "subject-a"));
 }
 
 #[tokio::test]
@@ -177,7 +192,10 @@ async fn a_caller_without_the_capability_is_refused_every_operation() {
         CoreError::Forbidden
     );
     assert_eq!(
-        service.list(&unarmed).await.expect_err("refused"),
+        service
+            .list(&unarmed, &first_page())
+            .await
+            .expect_err("refused"),
         CoreError::Forbidden
     );
     assert_eq!(
@@ -234,7 +252,12 @@ async fn a_removed_profile_is_gone() {
         service.get(&owner, &created.id).await.expect_err("gone"),
         CoreError::EnvironmentProfileNotFound
     );
-    assert!(service.list(&owner).await.expect("lists").is_empty());
+    assert!(service
+        .list(&owner, &first_page())
+        .await
+        .expect("lists")
+        .items
+        .is_empty());
 }
 
 #[tokio::test]
@@ -297,6 +320,49 @@ async fn choosing_a_default_clears_the_one_before_it() {
         .map(|p| &p.id)
         .collect();
     assert_eq!(held, vec![&second.id], "exactly one, and it is the new one");
+    assert_eq!(after.len(), 2, "only the two visibly changed rows return");
+}
+
+#[tokio::test]
+async fn preference_changes_stay_bounded_beyond_a_complete_store_page() {
+    use std::sync::atomic::Ordering;
+
+    use crate::store::MAX_PAGE_SIZE;
+
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments(Arc::clone(&store));
+    let owner = caller("subject-a");
+    let mut ids = Vec::new();
+    for sequence in 0..=MAX_PAGE_SIZE {
+        let profile = service
+            .create(&owner, profile_spec(&format!("profile {sequence}")))
+            .await
+            .expect("creates");
+        ids.push(profile.id);
+    }
+
+    service
+        .prefer(&owner, ids.first())
+        .await
+        .expect("sets the first preference");
+    let changed = service
+        .prefer(&owner, ids.last())
+        .await
+        .expect("moves the preference across the page boundary");
+
+    assert_eq!(changed.len(), 2);
+    assert!(!changed[0].preferred);
+    assert!(changed[1].preferred);
+    assert_eq!(changed[1].id, *ids.last().expect("a final id"));
+    assert_eq!(store.list_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(store.preference_writes.load(Ordering::SeqCst), 2);
+    let stored = store.profiles.lock().await;
+    let held: Vec<_> = stored
+        .values()
+        .filter(|profile| profile.preferred)
+        .map(|profile| profile.id.clone())
+        .collect();
+    assert_eq!(held, vec![ids.last().expect("a final id").clone()]);
 }
 
 #[tokio::test]
@@ -344,13 +410,20 @@ async fn a_default_survives_an_edit_of_the_profile_holding_it() {
 
 #[tokio::test]
 async fn a_profile_somebody_else_owns_cannot_be_made_their_default() {
-    let service = environments(Arc::new(FakeProfileStore::default()));
+    use std::sync::atomic::Ordering;
+
+    let store = Arc::new(FakeProfileStore::default());
+    let service = environments(Arc::clone(&store));
     let owner = caller("subject-a");
     let stranger = caller("subject-b");
     let theirs = service
         .create(&owner, profile_spec("theirs"))
         .await
         .expect("creates");
+    service
+        .prefer(&owner, Some(&theirs.id))
+        .await
+        .expect("the owner may select it");
 
     let refused = service.prefer(&stranger, Some(&theirs.id)).await;
 
@@ -358,6 +431,17 @@ async fn a_profile_somebody_else_owns_cannot_be_made_their_default() {
         matches!(refused, Err(CoreError::EnvironmentProfileNotFound)),
         "not yours and does not exist collapse to one answer, so a stranger \
          cannot probe for what exists"
+    );
+    assert_eq!(store.preference_writes.load(Ordering::SeqCst), 1);
+    assert!(
+        store
+            .profiles
+            .lock()
+            .await
+            .get(&theirs.id.0)
+            .expect("the profile remains")
+            .preferred,
+        "validation happens before the existing preference is cleared"
     );
 }
 
@@ -391,12 +475,34 @@ async fn two_profiles_claiming_the_default_are_settled_on_read() {
         store.upsert(&claim).await.expect("writes");
     }
 
-    let listed = service.list(&owner).await.expect("lists");
+    let listed = service.list(&owner, &first_page()).await.expect("lists");
 
     let held: Vec<_> = listed
+        .items
         .iter()
         .filter(|p| p.preferred)
         .map(|p| &p.id)
         .collect();
     assert_eq!(held, vec![&newer.id], "one claim survives, the most recent");
+
+    let changed = service
+        .prefer(&owner, None)
+        .await
+        .expect("clears legacy claims");
+    assert_eq!(
+        changed.len(),
+        1,
+        "only the previously visible winner changed"
+    );
+    assert_eq!(changed[0].id, newer.id);
+    assert!(!changed[0].preferred);
+    assert!(
+        store
+            .profiles
+            .lock()
+            .await
+            .values()
+            .all(|profile| !profile.preferred),
+        "raw legacy claims are all cleared without returning hidden rows"
+    );
 }

@@ -14,7 +14,7 @@ use std::{
 
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
-    store::{SessionRecord, SessionStore, StoreError},
+    store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError},
     Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StoredEvent,
     SubjectId,
 };
@@ -1829,7 +1829,7 @@ fn bson_values_equivalent(left: &Bson, right: &Bson) -> bool {
     }
 }
 
-fn required_indexes() -> [RequiredIndex; 4] {
+fn required_indexes() -> [RequiredIndex; 7] {
     [
         RequiredIndex {
             collection: EVENTS,
@@ -1845,8 +1845,26 @@ fn required_indexes() -> [RequiredIndex; 4] {
         },
         RequiredIndex {
             collection: SESSIONS,
-            name: "owner_1_created_at_-1",
-            keys: doc! { "owner": 1, "created_at": -1 },
+            name: "owner_1_created_at_-1__id_-1",
+            keys: doc! { "owner": 1, "created_at": -1, "_id": -1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: SESSIONS,
+            name: "owner_1_status_1_created_at_-1__id_-1",
+            keys: doc! { "owner": 1, "status": 1, "created_at": -1, "_id": -1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: SESSIONS,
+            name: "created_at_-1__id_-1",
+            keys: doc! { "created_at": -1, "_id": -1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: SESSIONS,
+            name: "status_1_created_at_-1__id_-1",
+            keys: doc! { "status": 1, "created_at": -1, "_id": -1 },
             unique: false,
         },
         RequiredIndex {
@@ -2972,10 +2990,13 @@ fn tombstone_lookup_stage() -> Document {
 fn visible_sessions_pipeline(filter: Document) -> Vec<Document> {
     vec![
         doc! { "$match": filter },
+        // Filtering a sorted stream preserves its order. Keep the sort next to
+        // the base match so Mongo can serve it from the pagination index
+        // instead of sorting every row after the tombstone join.
+        doc! { "$sort": session_page_sort() },
         tombstone_lookup_stage(),
         doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } },
         doc! { "$project": { "_cma_tombstones": 0 } },
-        doc! { "$sort": { "created_at": -1 } },
     ]
 }
 
@@ -3104,11 +3125,20 @@ impl SessionStore for MongoSessionStore {
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        Ok(self.query(doc! { "_id": &id.0 }).await?.into_iter().next())
+        Ok(self
+            .query(doc! { "_id": &id.0 }, &SessionListQuery::default())
+            .await?
+            .items
+            .into_iter()
+            .next())
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-        self.query(doc! { "owner": &owner.0 }).await
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
+        self.query(doc! { "owner": &owner.0 }, query).await
     }
 
     async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
@@ -3153,8 +3183,8 @@ impl SessionStore for MongoSessionStore {
         reserved_from_optional_doc(aggregate)
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        self.query(doc! {}).await
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
+        self.query(doc! {}, query).await
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
@@ -3666,10 +3696,14 @@ impl MongoSessionStore {
         stored_event_tail(found)
     }
 
-    async fn query(&self, filter: Document) -> Result<Vec<SessionRecord>, StoreError> {
+    async fn query(
+        &self,
+        filter: Document,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
         let mut cursor = self
             .sessions
-            .aggregate(visible_sessions_pipeline(filter))
+            .aggregate(session_page_pipeline(filter, query)?)
             .await
             .map_err(|e| StoreError::Unavailable(format!("list: {e}")))?;
         let mut out = Vec::new();
@@ -3682,7 +3716,15 @@ impl MongoSessionStore {
                 .map_err(|e| StoreError::Malformed(format!("session document: {e}")))?;
             out.push(from_doc(stored)?);
         }
-        Ok(out)
+        let has_more = out.len() > query.page.limit() as usize;
+        if has_more {
+            out.pop();
+        }
+        let next = has_more.then(|| {
+            let last = out.last().expect("a non-empty bounded page has a last row");
+            PageCursor::new(&last.session.created_at, last.session.id.as_str())
+        });
+        Ok(Page { items: out, next })
     }
 
     async fn is_tombstoned(&self, id: &SessionId) -> Result<bool, StoreError> {
@@ -3694,6 +3736,45 @@ impl MongoSessionStore {
                 StoreError::Unavailable(format!("read session deletion fence: {error}"))
             })
     }
+}
+
+fn session_page_sort() -> Document {
+    doc! { "created_at": -1, "_id": -1 }
+}
+
+fn session_page_fetch_limit(query: &SessionListQuery) -> i64 {
+    i64::from(query.page.limit().saturating_add(1))
+}
+
+fn session_page_pipeline(
+    filter: Document,
+    query: &SessionListQuery,
+) -> Result<Vec<Document>, StoreError> {
+    let mut pipeline = visible_sessions_pipeline(session_page_filter(filter, query)?);
+    pipeline.push(doc! { "$limit": session_page_fetch_limit(query) });
+    Ok(pipeline)
+}
+
+fn session_page_filter(
+    mut filter: Document,
+    query: &SessionListQuery,
+) -> Result<Document, StoreError> {
+    if let Some(status) = query.status {
+        filter.insert("status", serde_plain_string(&status)?);
+    }
+    if let Some(cursor) = query.page.cursor() {
+        filter.insert(
+            "$or",
+            vec![
+                doc! { "created_at": { "$lt": &cursor.created_at } },
+                doc! {
+                    "created_at": &cursor.created_at,
+                    "_id": { "$lt": &cursor.id },
+                },
+            ],
+        );
+    }
+    Ok(filter)
 }
 
 #[cfg(test)]
