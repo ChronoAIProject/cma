@@ -17,6 +17,7 @@ mod capacity_bounds;
 pub mod clock;
 pub mod conversation;
 mod conversation_log;
+mod coordination;
 mod credentials;
 pub mod deployment_capacity;
 pub mod directory;
@@ -132,6 +133,10 @@ pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, Usage};
+pub use coordination::{
+    RuntimeAuthority, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
+    SessionOperation,
+};
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,

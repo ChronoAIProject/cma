@@ -15,6 +15,9 @@
 use std::collections::HashSet;
 
 use crate::activity::{ActivityQuery, ActivityRecord};
+use crate::coordination::{
+    RuntimeAuthority, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
+};
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
@@ -238,6 +241,33 @@ pub enum StoreError {
         /// Revision currently durable.
         actual: u64,
     },
+    /// This store is running in a compatibility stage without coordination.
+    #[error("durable session coordination is not enabled")]
+    CoordinationDisabled,
+    /// Another unexpired operation currently owns this session.
+    #[error("session {id} is held by another operation")]
+    SessionLeaseHeld {
+        /// Session whose exclusive lease is occupied.
+        id: SessionId,
+    },
+    /// The session no longer has the authority or status the caller observed.
+    #[error("session {id} authority changed")]
+    SessionAuthorityChanged {
+        /// Session whose boundary no longer matches.
+        id: SessionId,
+    },
+    /// This lease expired or was replaced by a later holder.
+    #[error("session {id} lease is no longer authoritative")]
+    SessionLeaseLost {
+        /// Session whose lease no longer matches.
+        id: SessionId,
+    },
+    /// This runtime reservation expired, was replaced, or belongs to another lease.
+    #[error("session {id} runtime reservation is no longer authoritative")]
+    RuntimeReservationChanged {
+        /// Session whose reservation no longer matches.
+        id: SessionId,
+    },
 }
 
 /// Durable session records and their event history.
@@ -252,6 +282,56 @@ pub trait SessionStore: Send + Sync {
 
     /// Read one session, whoever owns it. Ownership is decided above this.
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError>;
+
+    /// Read the separately stored runtime generation and handle.
+    ///
+    /// A compatibility-stage store returns [`StoreError::CoordinationDisabled`].
+    async fn runtime_authority(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Option<RuntimeAuthority>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Acquire the one durable operation lease for a session.
+    async fn acquire_session_lease(
+        &self,
+        _request: &SessionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend a lease using the store's authoritative clock.
+    async fn renew_session_lease(
+        &self,
+        _lease: &SessionLease,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Move a held lease onto a status boundary this holder just committed.
+    async fn advance_session_lease(
+        &self,
+        _lease: &mut SessionLease,
+        _boundary: &SessionBoundary,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Release only this exact lease; a stale holder cannot release a successor.
+    async fn release_session_lease(&self, _lease: &SessionLease) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Reserve a never-reused runtime generation while holding a lease.
+    async fn reserve_runtime_generation(
+        &self,
+        _lease: &SessionLease,
+        _reservation_token: &str,
+    ) -> Result<RuntimeReservation, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
 
     /// One bounded page of a subject's sessions, newest first.
     async fn list_for(
