@@ -1,6 +1,7 @@
 //! Public PTY WebSocket contract tests at the composed control-plane boundary.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,20 +11,35 @@ use layer2_core::{
     Deployment, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
     EnvironmentProfileSpec, EnvironmentProfileStore, Event, KernelId, Page, PageCursor,
     PageRequest, PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
-    SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionSpec,
-    SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry,
+    SessionId, SessionListQuery, SessionMode, SessionPorts, SessionRecord, SessionService,
+    SessionSpec, SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry,
 };
 use layer3_adapter::{
-    AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeSpec, TerminalChannel,
-    TerminalInput, TerminalOutput,
+    AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, KernelAdapter,
+    KernelCapabilities, RuntimeHandle, RuntimeListing, RuntimeOptions, RuntimeSpec,
+    TerminalChannel, TerminalInput, TerminalOutput,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio_tungstenite::tungstenite::{self, Message};
 
 const KERNEL: &str = "wire-test";
 
 #[derive(Default)]
-struct MemorySessions(Mutex<HashMap<SessionId, SessionRecord>>);
+struct MemorySessions {
+    records: Mutex<HashMap<SessionId, SessionRecord>>,
+}
+
+impl MemorySessions {
+    async fn set_runtime_version(&self, id: &SessionId, version: &str) {
+        self.records
+            .lock()
+            .await
+            .get_mut(id)
+            .expect("the test session is durable")
+            .session
+            .runtime_version = Some(version.into());
+    }
+}
 
 #[async_trait::async_trait]
 impl SessionStore for MemorySessions {
@@ -32,7 +48,7 @@ impl SessionStore for MemorySessions {
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        Ok(self.0.lock().await.get(id).cloned())
+        Ok(self.records.lock().await.get(id).cloned())
     }
 
     async fn list_for(
@@ -41,7 +57,7 @@ impl SessionStore for MemorySessions {
         query: &SessionListQuery,
     ) -> Result<Page<SessionRecord>, StoreError> {
         Ok(page_sessions(
-            self.0
+            self.records
                 .lock()
                 .await
                 .values()
@@ -58,13 +74,13 @@ impl SessionStore for MemorySessions {
 
     async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
         Ok(page_sessions(
-            self.0.lock().await.values().cloned().collect(),
+            self.records.lock().await.values().cloned().collect(),
             query,
         ))
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
-        self.0.lock().await.remove(id);
+        self.records.lock().await.remove(id);
         Ok(())
     }
 
@@ -87,7 +103,7 @@ impl SessionStore for MemorySessions {
         if let Some(last) = events.last() {
             durable.session.last_seq = last.seq;
         }
-        self.0
+        self.records
             .lock()
             .await
             .insert(record.session.id.clone(), durable);
@@ -232,6 +248,16 @@ impl ScreenModel for MemoryScreen {
 #[derive(Default)]
 struct WireAdapter {
     outputs: Mutex<Vec<mpsc::Sender<TerminalOutput>>>,
+    conversations: Mutex<Vec<mpsc::Sender<ConversationUpdate>>>,
+    runtimes: Mutex<HashMap<String, String>>,
+    next_runtime: AtomicUsize,
+    snapshot_calls: AtomicUsize,
+    pause_second_snapshot: AtomicBool,
+    second_snapshot_started: Notify,
+    resume_second_snapshot: Notify,
+    pause_terminate: AtomicBool,
+    terminate_started: Notify,
+    resume_terminate: Notify,
 }
 
 impl WireAdapter {
@@ -247,6 +273,37 @@ impl WireAdapter {
     async fn lose_transport(&self) {
         self.outputs.lock().await.clear();
     }
+
+    fn pause_next_rotation_snapshot(&self) {
+        assert!(!self.pause_second_snapshot.swap(true, Ordering::SeqCst));
+    }
+
+    async fn wait_until_rotation_paused(&self) {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            self.second_snapshot_started.notified(),
+        )
+        .await
+        .expect("the rotation reaches its second snapshot");
+    }
+
+    fn resume_rotation(&self) {
+        self.resume_second_snapshot.notify_one();
+    }
+
+    fn pause_next_termination(&self) {
+        assert!(!self.pause_terminate.swap(true, Ordering::SeqCst));
+    }
+
+    async fn wait_until_termination_paused(&self) {
+        tokio::time::timeout(Duration::from_secs(2), self.terminate_started.notified())
+            .await
+            .expect("supersession reaches old-runtime termination");
+    }
+
+    fn resume_termination(&self) {
+        self.resume_terminate.notify_one();
+    }
 }
 
 #[async_trait::async_trait]
@@ -257,6 +314,7 @@ impl KernelAdapter for WireAdapter {
 
     fn capabilities(&self) -> KernelCapabilities {
         KernelCapabilities {
+            conversation: true,
             terminal: true,
             snapshot: true,
             ..KernelCapabilities::default()
@@ -264,7 +322,13 @@ impl KernelAdapter for WireAdapter {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        Ok(RuntimeHandle(format!("runtime-{}", spec.session_id)))
+        let ordinal = self.next_runtime.fetch_add(1, Ordering::SeqCst);
+        let handle = RuntimeHandle(format!("runtime-{}-{ordinal}", spec.session_id));
+        self.runtimes
+            .lock()
+            .await
+            .insert(handle.0.clone(), spec.session_id.clone());
+        Ok(handle)
     }
 
     async fn attach_terminal(
@@ -281,6 +345,32 @@ impl KernelAdapter for WireAdapter {
         })
     }
 
+    async fn open_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+        _options: &RuntimeOptions,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<ConversationChannel, AdapterError> {
+        self.conversations.lock().await.push(updates);
+        Ok(ConversationChannel {
+            input: ConversationInputSender::spawn(8, |_input| async { Ok(()) }),
+            conversation_id: Some("pty-wire-conversation".into()),
+        })
+    }
+
+    async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
+        if self.snapshot_calls.fetch_add(1, Ordering::SeqCst) == 1
+            && self.pause_second_snapshot.swap(false, Ordering::SeqCst)
+        {
+            // Rotation publishes its durable and live `Rotating` state before
+            // this second capture. Hold that exact refusal window open while
+            // the already-established public socket is exercised.
+            self.second_snapshot_started.notify_one();
+            self.resume_second_snapshot.notified().await;
+        }
+        Ok(Some(b"pty-wire-snapshot".to_vec()))
+    }
+
     async fn refresh_credential(
         &self,
         _handle: &RuntimeHandle,
@@ -289,20 +379,50 @@ impl KernelAdapter for WireAdapter {
         Ok(())
     }
 
-    async fn terminate(&self, _handle: &RuntimeHandle) -> Result<(), AdapterError> {
+    async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
+        if self.pause_terminate.swap(false, Ordering::SeqCst) {
+            // Supersession is broadcast immediately before this call. Holding
+            // termination keeps the durable rotation marker present while the
+            // accepted socket operation resumes and obtains its typed refusal.
+            self.terminate_started.notify_one();
+            self.resume_terminate.notified().await;
+        }
+        self.runtimes.lock().await.remove(&handle.0);
         Ok(())
+    }
+
+    async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
+        Ok(self
+            .runtimes
+            .lock()
+            .await
+            .iter()
+            .map(|(handle, session)| RuntimeListing {
+                handle: RuntimeHandle(handle.clone()),
+                session: Some(session.clone()),
+                created_by: None,
+                serving: true,
+                lost_because: None,
+            })
+            .collect())
     }
 }
 
 struct Fixture {
     service: Arc<SessionService>,
     adapter: Arc<WireAdapter>,
+    store: Arc<MemorySessions>,
     caller: Caller,
 }
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_runtime_version(None)
+    }
+
+    fn with_runtime_version(runtime_version: Option<&str>) -> Self {
         let adapter = Arc::new(WireAdapter::default());
+        let store = Arc::new(MemorySessions::default());
         let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
         adapters.insert(KernelId::new(KERNEL), adapter.clone());
 
@@ -326,21 +446,26 @@ impl Fixture {
         let service = SessionService::new(
             adapters,
             screens,
-            Arc::new(MemorySessions::default()),
+            store.clone(),
             SessionPorts::default(),
             profiles,
-            Deployment::default(),
+            Deployment {
+                runtime_version: runtime_version.map(str::to_string),
+                ..Deployment::default()
+            },
         );
         let caller = Caller::new(
             SubjectId("wire-owner".into()),
             Authorization::from_capabilities([
                 Capability::CreateSession,
                 Capability::UseOwnSessions,
+                Capability::TerminateOwnSession,
             ]),
         );
         Self {
             service,
             adapter,
+            store,
             caller,
         }
     }
@@ -438,6 +563,217 @@ async fn next_message(socket: &mut ClientSocket) -> Message {
         .expect("the public socket responds in time")
         .expect("the public socket remains present")
         .expect("the public socket frame is readable")
+}
+
+async fn expect_session_rotating(socket: &mut ClientSocket, operation: &str) {
+    let Message::Text(frame) = next_message(socket).await else {
+        panic!("{operation} must receive a typed error on the established socket");
+    };
+    let frame: serde_json::Value =
+        serde_json::from_str(&frame).expect("the refusal is a JSON control frame");
+    assert_eq!(
+        frame["t"], "error",
+        "{operation} received the wrong control frame: {frame}"
+    );
+    assert_eq!(
+        frame["code"], "session_rotating",
+        "{operation} did not preserve the retryable core refusal: {frame}"
+    );
+    assert!(
+        frame["detail"]
+            .as_str()
+            .is_some_and(|detail| !detail.is_empty()),
+        "{operation} must carry a useful refusal detail: {frame}"
+    );
+}
+
+#[tokio::test]
+async fn established_socket_names_every_operation_refused_during_rotation() {
+    let fixture = Fixture::new();
+    let id = fixture.create_ready_session().await;
+    let (mut socket, _server) = public_socket(&fixture, &id).await;
+    fixture.adapter.pause_next_rotation_snapshot();
+
+    let mut rotating = tokio::spawn({
+        let service = Arc::clone(&fixture.service);
+        let caller = fixture.caller.clone();
+        let id = id.clone();
+        async move {
+            service
+                .change_plane(&caller, &id, SessionMode::Conversation)
+                .await
+        }
+    });
+    tokio::select! {
+        _ = fixture.adapter.wait_until_rotation_paused() => {}
+        result = &mut rotating => {
+            panic!("the plane change ended before publishing Rotating: {result:?}");
+        }
+    }
+
+    socket
+        .send(Message::Binary(b"refused keystroke".to_vec()))
+        .await
+        .expect("binary input reaches the established socket");
+    expect_session_rotating(&mut socket, "binary input").await;
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({ "t": "resize", "cols": 132, "rows": 44 }).to_string(),
+        ))
+        .await
+        .expect("resize reaches the established socket");
+    expect_session_rotating(&mut socket, "resize").await;
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({ "t": "signal", "sig": "INT" }).to_string(),
+        ))
+        .await
+        .expect("signal reaches the established socket");
+    expect_session_rotating(&mut socket, "signal").await;
+
+    fixture.adapter.resume_rotation();
+    rotating
+        .await
+        .expect("the rotation task completes")
+        .expect("the rotation continues after refusing old-runtime input");
+
+    let Message::Close(Some(close)) = next_message(&mut socket).await else {
+        panic!("the typed refusals must still be followed by the rotation close");
+    };
+    assert_eq!(u16::from(close.code), 4001);
+    assert!(
+        close.reason.contains("conversation"),
+        "the close still names the plane the session moved to"
+    );
+}
+
+#[derive(Clone, Copy)]
+enum HeldOperation {
+    Input,
+    Resize,
+    Signal,
+}
+
+impl HeldOperation {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Resize => "resize",
+            Self::Signal => "signal",
+        }
+    }
+
+    fn frame(self) -> Message {
+        match self {
+            Self::Input => Message::Binary(b"accepted-before-supersession".to_vec()),
+            Self::Resize => Message::Text(
+                serde_json::json!({ "t": "resize", "cols": 138, "rows": 46 }).to_string(),
+            ),
+            Self::Signal => Message::Text(
+                serde_json::json!({ "t": "signal", "sig": "INT" }).to_string(),
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RotationEnding {
+    PlaneChanged,
+    RuntimeReplaced,
+}
+
+impl RotationEnding {
+    fn close_code(self) -> u16 {
+        match self {
+            Self::PlaneChanged => 4001,
+            Self::RuntimeReplaced => 4002,
+        }
+    }
+}
+
+async fn assert_accepted_operation_precedes_close(
+    operation: HeldOperation,
+    ending: RotationEnding,
+) {
+    let fixture = match ending {
+        RotationEnding::PlaneChanged => Fixture::new(),
+        RotationEnding::RuntimeReplaced => Fixture::with_runtime_version(Some("runtime:new")),
+    };
+    let id = fixture.create_ready_session().await;
+    let (mut socket, _server) = public_socket(&fixture, &id).await;
+    if matches!(ending, RotationEnding::RuntimeReplaced) {
+        // The attach above durably applies its initial geometry. Mark the
+        // resulting record old only afterwards so that write cannot restore the
+        // current version before reconciliation reads it.
+        fixture
+            .store
+            .set_runtime_version(&id, "runtime:old")
+            .await;
+    }
+    let receipt = layer1_public::pty::OperationGate::install(&id, operation.name());
+
+    socket
+        .send(operation.frame())
+        .await
+        .expect("the operation reaches the established socket");
+    tokio::time::timeout(Duration::from_secs(2), receipt.wait_until_received())
+        .await
+        .expect("the server removes the operation from the socket before rotation");
+
+    fixture.adapter.pause_next_termination();
+    let rotation = tokio::spawn({
+        let service = Arc::clone(&fixture.service);
+        let caller = fixture.caller.clone();
+        let id = id.clone();
+        async move {
+            match ending {
+                RotationEnding::PlaneChanged => service
+                    .change_plane(&caller, &id, SessionMode::Conversation)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.to_string()),
+                RotationEnding::RuntimeReplaced => {
+                    let reclaimed = service.reconcile().await;
+                    (reclaimed.rotated_sessions == 1).then_some(()).ok_or_else(|| {
+                        format!("expected one runtime rotation, got {reclaimed:?}")
+                    })
+                }
+            }
+        }
+    });
+    fixture.adapter.wait_until_termination_paused().await;
+
+    // Supersession has now been broadcast while the operation selected from the
+    // socket is still in flight. Releasing it exercises the precise close race:
+    // the sole writer must drain this result before writing the queued ending.
+    receipt.release();
+    expect_session_rotating(&mut socket, operation.name()).await;
+    let Message::Close(Some(close)) = next_message(&mut socket).await else {
+        panic!("the drained refusal must be followed by its rotation close");
+    };
+    assert_eq!(u16::from(close.code), ending.close_code());
+
+    fixture.adapter.resume_termination();
+    rotation
+        .await
+        .expect("the rotation task completes")
+        .expect("the rotation continues after the socket drains");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_operation_read_before_supersession_is_refused_before_its_close() {
+    // Exercise every operation shape accepted on the established socket and
+    // both rotation endings. Each case owns a fresh runtime and socket so its
+    // gate and close cannot be satisfied by another case.
+    for (operation, ending) in [
+        (HeldOperation::Input, RotationEnding::PlaneChanged),
+        (HeldOperation::Resize, RotationEnding::RuntimeReplaced),
+        (HeldOperation::Signal, RotationEnding::PlaneChanged),
+    ] {
+        assert_accepted_operation_precedes_close(operation, ending).await;
+    }
 }
 
 #[tokio::test]
