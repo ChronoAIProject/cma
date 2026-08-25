@@ -257,8 +257,14 @@ async fn conformance_discovery_is_typed_anonymous_and_correlated() {
     .await;
     let observed = Arc::new(StdMutex::new(Vec::<ResponseMetadata>::new()));
     let observer_values = Arc::clone(&observed);
+    let credential_calls = Arc::new(AtomicUsize::new(0));
+    let provider_calls = Arc::clone(&credential_calls);
     let client = Client::builder(&stub.base_url)
         .expect("stub URL is valid")
+        .credential_provider(move || {
+            provider_calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>("must-not-leave-the-client".to_owned())
+        })
         .request_id_provider(|| Ok::<_, Infallible>("caller-conformance-488".to_owned()))
         .response_observer(move |metadata| {
             observer_values
@@ -293,6 +299,7 @@ async fn conformance_discovery_is_typed_anonymous_and_correlated() {
     assert_eq!(requests[0].method, Method::GET);
     assert_eq!(requests[0].uri.path(), "/proxy/api/v1/conformance");
     assert_eq!(requests[0].authorization, None);
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         requests[0].request_id.as_deref(),
         Some("caller-conformance-488")
