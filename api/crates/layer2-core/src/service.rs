@@ -527,6 +527,12 @@ impl SessionService {
         if entry.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        // `is_interactive` also excludes provisioning and idle sessions, whose
+        // existing missing-runtime answers remain unchanged. Rotation alone
+        // still holds an outgoing channel that must not receive new input.
+        if entry.session.status.is_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
         Ok(())
     }
 
