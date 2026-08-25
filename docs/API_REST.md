@@ -256,9 +256,12 @@ Content-Type: application/json
 { "profile": "envp_01K3" }
 ```
 
-`profile` names one profile the caller owns. `null` clears the choice and
-returns later sessions to the deployment's defaults. The selected profile is
-validated before the existing preference is changed.
+`profile` names one profile the caller owns. It is client-facing preselection
+state: a client starts its session form on that profile and sends the selected
+id explicitly in `POST /api/v1/sessions`. `null` clears the preselection. The
+service never substitutes a preferred id into an unqualified create request;
+omitting `environment_profile` always uses the deployment's defaults. The
+selected profile is validated before the existing preference is changed.
 
 The `200 OK` body is the complete post-write profile collection, newest first,
 with exactly the selected row carrying `preferred: true`. Clearing the choice

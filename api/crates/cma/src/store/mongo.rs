@@ -2990,10 +2990,13 @@ fn tombstone_lookup_stage() -> Document {
 fn visible_sessions_pipeline(filter: Document) -> Vec<Document> {
     vec![
         doc! { "$match": filter },
+        // Filtering a sorted stream preserves its order. Keep the sort next to
+        // the base match so Mongo can serve it from the pagination index
+        // instead of sorting every row after the tombstone join.
+        doc! { "$sort": session_page_sort() },
         tombstone_lookup_stage(),
         doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } },
         doc! { "$project": { "_cma_tombstones": 0 } },
-        doc! { "$sort": session_page_sort() },
     ]
 }
 
