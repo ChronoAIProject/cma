@@ -101,7 +101,7 @@ pub struct AgentConfiguration {
 }
 
 /// What a caller supplies when creating or replacing a profile.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentProfileSpec {
     /// Name the owner recognises it by.
     pub name: String,

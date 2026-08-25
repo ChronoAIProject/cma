@@ -415,11 +415,20 @@ impl EnvironmentProfileService {
         // Applied again on every write: this is what makes removing a mandatory
         // entry impossible rather than merely discouraged.
         self.baseline.apply(&mut spec);
+        self.settle_kernel(&mut spec);
+        spec.name = spec.name.trim().to_string();
+
+        // PUT remains a full replacement, but replacing a resource with its
+        // current normalized contents changes nothing. Avoiding the write also
+        // keeps its last-modified timestamp stable for an exact GET echo.
+        if existing.to_spec() == spec {
+            return Ok(existing);
+        }
 
         let profile = EnvironmentProfile {
             id: existing.id,
             owner: existing.owner,
-            name: spec.name.trim().to_string(),
+            name: spec.name,
             variables: spec.variables,
             packages: spec.packages,
             agent: spec.agent,
