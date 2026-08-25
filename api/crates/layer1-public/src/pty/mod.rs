@@ -35,7 +35,7 @@ mod test_support;
 
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
-pub use test_support::OperationGate;
+pub use test_support::{DisconnectGate, OperationGate, OutboundGate};
 
 use attach::serve;
 
