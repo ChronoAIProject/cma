@@ -12,6 +12,7 @@ use serde_json::Value;
 /// The projection test derives the emitted set by exercising the durable and
 /// live lanes, then compares it with this table. The documentation test pins
 /// the public table to the same vocabulary.
+#[cfg(test)]
 pub(super) const STATE_DELTA_PATHS: &[&str] = &[
     "/availableCommands",
     "/configOptions",
