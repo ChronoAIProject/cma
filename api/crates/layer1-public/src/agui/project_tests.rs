@@ -28,6 +28,23 @@ fn kinds(p: &Projected) -> Vec<&'static str> {
     p.events.iter().map(|e| e.kind).collect()
 }
 
+/// Assert the resume point is projection completion, never a leading frame.
+fn assert_only_final_carries_cursor(projected: &Projected) {
+    let (last, leading) = projected
+        .events
+        .split_last()
+        .expect("the tested event has an AG-UI projection");
+    assert!(
+        leading.iter().all(|frame| frame.seq.is_none()),
+        "leading projection frames must not advance replay: {:?}",
+        leading
+            .iter()
+            .map(|frame| (frame.kind, frame.seq))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(last.seq, Some(7), "the final frame completes sequence 7");
+}
+
 #[test]
 fn a_turn_beginning_starts_the_run() {
     let p = projected(EventKind::TurnStarted);
@@ -59,6 +76,7 @@ fn a_committed_message_arrives_whole_rather_than_as_pieces() {
         p.events.iter().all(|e| e.body["messageId"] == id),
         "one message is one identifier"
     );
+    assert_only_final_carries_cursor(&p);
 }
 
 #[test]
@@ -112,6 +130,7 @@ fn an_owner_message_arrives_as_a_user_turn() {
         p.events.iter().all(|e| e.body["messageId"] == id),
         "one message is one identifier"
     );
+    assert_only_final_carries_cursor(&p);
 }
 
 #[test]
@@ -145,6 +164,7 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
         arguments: None,
     });
     assert_eq!(kinds(&p), vec!["TOOL_CALL_START"]);
+    assert_eq!(p.events[0].seq, Some(7));
     assert_eq!(p.events[0].body["toolCallId"], "call-1");
     // `toolCallName` is the protocol's own field, and this assertion was
     // always right. What nothing checked was whether the *client* read it —
@@ -156,6 +176,49 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
         p.events[0].body["cma:toolKind"],
         "a-kind-this-build-has-never-seen"
     );
+}
+
+#[test]
+fn a_tool_call_start_with_arguments_advances_only_after_the_arguments() {
+    let p = projected(EventKind::ToolCallStarted {
+        call_id: "call-1".into(),
+        title: "read notes".into(),
+        kind: "read".into(),
+        arguments: Some(layer2_core::event::ToolBody {
+            text: r#"{"path":"notes.md"}"#.into(),
+            truncated: false,
+        }),
+    });
+
+    assert_eq!(kinds(&p), vec!["TOOL_CALL_START", "TOOL_CALL_ARGS"]);
+    assert_only_final_carries_cursor(&p);
+}
+
+#[test]
+fn a_tool_call_update_with_a_result_advances_only_after_the_result() {
+    let p = projected(EventKind::ToolCallUpdated {
+        call_id: "call-1".into(),
+        status: "completed".into(),
+        result: Some(layer2_core::event::ToolBody {
+            text: "the notes".into(),
+            truncated: false,
+        }),
+    });
+
+    assert_eq!(kinds(&p), vec!["TOOL_CALL_END", "TOOL_CALL_RESULT"]);
+    assert_only_final_carries_cursor(&p);
+}
+
+#[test]
+fn a_tool_call_update_without_a_result_advances_on_the_end() {
+    let p = projected(EventKind::ToolCallUpdated {
+        call_id: "call-1".into(),
+        status: "completed".into(),
+        result: None,
+    });
+
+    assert_eq!(kinds(&p), vec!["TOOL_CALL_END"]);
+    assert_eq!(p.events[0].seq, Some(7));
 }
 
 #[test]
@@ -682,6 +745,28 @@ async fn a_durable_frame_carries_its_sequence_as_the_sse_id() {
     let wire = on_the_wire(&projected.events[0]).await;
 
     assert!(wire.contains("id: 41"), "{wire:?}");
+}
+
+#[tokio::test]
+async fn a_leading_durable_projection_frame_carries_no_sse_id() {
+    let projected = project(
+        &logged(
+            41,
+            EventKind::MessageCommitted {
+                content: "the complete answer".into(),
+            },
+        ),
+        "run_1",
+        "sesn_1",
+    );
+    let wire = on_the_wire(&projected.events[0]).await;
+
+    assert!(!wire.contains("id:"), "{wire:?}");
+    assert!(
+        !wire.contains("\"cma:live\":true"),
+        "a cursorless projection frame is still durable history: {wire:?}"
+    );
+    assert!(wire.contains("\"type\":\"TEXT_MESSAGE_START\""), "{wire:?}");
 }
 
 #[tokio::test]
