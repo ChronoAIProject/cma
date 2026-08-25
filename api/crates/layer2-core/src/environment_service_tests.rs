@@ -6,7 +6,7 @@
 use super::*;
 use crate::authz::Authorization;
 use crate::environment::EnvironmentVariable;
-use crate::ids::SubjectId;
+use crate::ids::{KernelId, SubjectId};
 use crate::test_support::{environments, profile_spec, FakeProfileStore};
 
 fn caller(subject: &str) -> Caller {
@@ -239,7 +239,7 @@ async fn an_update_replaces_contents_but_keeps_identity_and_creation_time() {
 }
 
 #[tokio::test]
-async fn echoing_normalized_contents_keeps_the_last_modification_time() {
+async fn a_legacy_read_echo_projects_current_defaults_without_rewriting() {
     let store = Arc::new(FakeProfileStore::default());
     let service = environments(Arc::clone(&store));
     let owner = caller("subject-a");
@@ -249,18 +249,46 @@ async fn echoing_normalized_contents_keeps_the_last_modification_time() {
         .expect("creates");
     let mut historical = created.clone();
     historical.updated_at = "2025-01-01T00:00:00Z".into();
+    historical.packages.clear();
+    historical.agent.kernel = KernelId::default();
+    historical.agent.skills.clear();
     store
         .upsert(&historical)
         .await
         .expect("seeds old timestamp");
 
+    let read = service
+        .get(&owner, &historical.id)
+        .await
+        .expect("legacy profile reads");
+    assert_eq!(read.agent.kernel, KernelId::new("fake"));
+    assert_eq!(read.packages, service.baseline().packages());
+    assert_eq!(read.agent.skills, service.baseline().skills());
+    let listed = service
+        .list(&owner, &first_page())
+        .await
+        .expect("legacy profile lists");
+    assert_eq!(listed.items.len(), 1);
+    assert_eq!(listed.items[0].to_spec(), read.to_spec());
+
     let echoed = service
-        .update(&owner, &historical.id, historical.to_spec())
+        .update(&owner, &historical.id, read.to_spec())
         .await
         .expect("an echo succeeds");
 
     assert_eq!(echoed.updated_at, historical.updated_at);
-    assert_eq!(echoed.to_spec(), historical.to_spec());
+    assert_eq!(echoed.to_spec(), read.to_spec());
+    assert_eq!(
+        store
+            .profiles
+            .lock()
+            .await
+            .get(historical.id.as_str())
+            .expect("legacy record remains")
+            .to_spec(),
+        historical.to_spec(),
+        "read normalization and an exact echo do not migrate raw storage"
+    );
 }
 
 #[tokio::test]
@@ -298,17 +326,11 @@ async fn removing_something_that_never_existed_is_reported_not_ignored() {
     assert_eq!(err, CoreError::EnvironmentProfileNotFound);
 }
 
-/*
- * Which profile an owner's sessions start from — #371.
- *
- * At most one of theirs holds it, and none is a real answer rather than a
- * missing one: it means they have not chosen, and their sessions start from
- * the deployment's own defaults.
- */
+/* Client-side profile preselection. At most one profile per owner carries it. */
 
 #[tokio::test]
-async fn a_new_profile_is_not_its_owners_default() {
-    // Authoring a profile must not move where every later session starts.
+async fn a_new_profile_is_not_preselected_for_its_owner() {
+    // Authoring a profile does not also choose the client's initial selection.
     let service = environments(Arc::new(FakeProfileStore::default()));
     let owner = caller("subject-a");
 
@@ -321,7 +343,7 @@ async fn a_new_profile_is_not_its_owners_default() {
 }
 
 #[tokio::test]
-async fn choosing_a_default_clears_the_one_before_it() {
+async fn choosing_a_preselection_clears_the_one_before_it() {
     let service = environments(Arc::new(FakeProfileStore::default()));
     let owner = caller("subject-a");
     let first = service
@@ -391,9 +413,7 @@ async fn preference_changes_stay_bounded_beyond_a_complete_store_page() {
 }
 
 #[tokio::test]
-async fn clearing_the_default_is_a_choice_rather_than_an_omission() {
-    // It returns the owner to the deployment's own defaults, which is
-    // something somebody decides rather than a state they fall into.
+async fn an_explicit_null_clears_the_client_preselection() {
     let service = environments(Arc::new(FakeProfileStore::default()));
     let owner = caller("subject-a");
     let profile = service
@@ -411,9 +431,8 @@ async fn clearing_the_default_is_a_choice_rather_than_an_omission() {
 }
 
 #[tokio::test]
-async fn a_default_survives_an_edit_of_the_profile_holding_it() {
-    // Editing a profile is not choosing where sessions start from, and
-    // clearing it silently would move that the next time somebody fixed a typo.
+async fn a_preselection_survives_an_edit_of_the_profile_holding_it() {
+    // Editing a profile is independent of the client's initial selection.
     let service = environments(Arc::new(FakeProfileStore::default()));
     let owner = caller("subject-a");
     let profile = service
@@ -434,7 +453,7 @@ async fn a_default_survives_an_edit_of_the_profile_holding_it() {
 }
 
 #[tokio::test]
-async fn a_profile_somebody_else_owns_cannot_be_made_their_default() {
+async fn a_profile_somebody_else_owns_cannot_be_preselected() {
     use std::sync::atomic::Ordering;
 
     let store = Arc::new(FakeProfileStore::default());
@@ -471,7 +490,7 @@ async fn a_profile_somebody_else_owns_cannot_be_made_their_default() {
 }
 
 #[tokio::test]
-async fn two_profiles_claiming_the_default_are_settled_on_read() {
+async fn two_profiles_claiming_preselection_are_settled_on_read() {
     /*
      * There is no transaction across the store port, so a `prefer` that
      * half-succeeds can leave two claims. The read settles it rather than

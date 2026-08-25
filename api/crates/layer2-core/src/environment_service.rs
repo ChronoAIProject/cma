@@ -207,6 +207,27 @@ impl EnvironmentProfileService {
         }
     }
 
+    /// Project a stored profile through today's deployment-owned defaults.
+    ///
+    /// Profiles written before a baseline entry was introduced, or before
+    /// kernels were settled on write, must expose the same writable shape as a
+    /// newly stored profile. This is a read projection only: old records are
+    /// not rewritten just because somebody viewed them.
+    fn normalize_profile(&self, profile: EnvironmentProfile) -> EnvironmentProfile {
+        let mut spec = profile.to_spec();
+        self.baseline.apply(&mut spec);
+        self.settle_kernel(&mut spec);
+        EnvironmentProfile {
+            name: spec.name,
+            agent: spec.agent,
+            variables: spec.variables,
+            packages: spec.packages,
+            services: spec.services,
+            agent_notes: spec.agent_notes,
+            ..profile
+        }
+    }
+
     /// Which services a session started with this selection may reach.
     ///
     /// Always includes what the deployment mandates, whichever profile is
@@ -286,9 +307,8 @@ impl EnvironmentProfileService {
             agent_notes: spec.agent_notes,
             created_at: now.clone(),
             updated_at: now,
-            // A new profile is not its owner's default. Making one so is a
-            // decision they take, and taking it for them would move where
-            // every later session starts as a side effect of authoring.
+            // Authoring a profile does not also make it the client's initial
+            // selection. Preselection is a separate choice.
             preferred: false,
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
@@ -317,7 +337,7 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
-        self.owned(caller, id).await
+        Ok(self.normalize_profile(self.owned(caller, id).await?))
     }
 
     /// One bounded page of profiles the caller owns, newest first.
@@ -343,19 +363,24 @@ impl EnvironmentProfileService {
         for profile in &mut profiles.items {
             profile.preferred = preferred.as_ref() == Some(&profile.id);
         }
+        profiles.items = profiles
+            .items
+            .into_iter()
+            .map(|profile| self.normalize_profile(profile))
+            .collect();
         Ok(profiles)
     }
 
-    /// Make one of the caller's profiles the one their sessions start from.
+    /// Record the profile a client should preselect for this caller.
     ///
     /// The answer is a bounded change set rather than another profile listing:
     /// it contains the previously visible preference when that row was cleared,
     /// followed by the selected row when there is one. It therefore contains at
     /// most two profiles regardless of how many the caller owns.
     ///
-    /// Passing `None` clears the preference, which is a real choice: it returns
-    /// the caller to the deployment's own defaults rather than being the
-    /// absence of one.
+    /// Passing `None` clears the preselection. The service never consults this
+    /// state while creating a session; an unqualified create continues to use
+    /// the deployment defaults.
     pub async fn prefer(
         &self,
         caller: &Caller,
@@ -394,7 +419,7 @@ impl EnvironmentProfileService {
         tracing::info!(
             owner = %caller.subject,
             profile_id = id.map(|chosen| chosen.0.as_str()).unwrap_or("<none>"),
-            "the profile this owner's sessions start from"
+            "the environment profile this owner's clients should preselect"
         );
         debug_assert!(changed.len() <= 2);
         Ok(changed)
@@ -421,25 +446,25 @@ impl EnvironmentProfileService {
         // PUT remains a full replacement, but replacing a resource with its
         // current normalized contents changes nothing. Avoiding the write also
         // keeps its last-modified timestamp stable for an exact GET echo.
-        if existing.to_spec() == spec {
-            return Ok(existing);
+        let normalized_existing = self.normalize_profile(existing);
+        if normalized_existing.to_spec() == spec {
+            return Ok(normalized_existing);
         }
 
         let profile = EnvironmentProfile {
-            id: existing.id,
-            owner: existing.owner,
+            id: normalized_existing.id,
+            owner: normalized_existing.owner,
             name: spec.name,
             variables: spec.variables,
             packages: spec.packages,
             agent: spec.agent,
             services: spec.services,
             agent_notes: spec.agent_notes,
-            created_at: existing.created_at,
+            created_at: normalized_existing.created_at,
             updated_at: now_rfc3339(),
-            // Carried across an edit. Editing a profile is not choosing where
-            // sessions start from, and silently clearing it would move that
-            // the next time somebody fixed a typo in its name.
-            preferred: existing.preferred,
+            // Carried across an edit. Editing a profile is not changing the
+            // client's preselection.
+            preferred: normalized_existing.preferred,
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
         self.warn_ungranted(caller, None, &profile.services).await;
