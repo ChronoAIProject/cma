@@ -25,7 +25,11 @@ export class ApiError extends CmaError {
 
   /** Whether a later request could plausibly receive a different answer. */
   get isRetryable(): boolean {
-    return this.status === 429 || this.status >= 500;
+    return (
+      (this.status === 409 && this.code === 'session_rotating') ||
+      this.status === 429 ||
+      this.status >= 500
+    );
   }
 }
 
