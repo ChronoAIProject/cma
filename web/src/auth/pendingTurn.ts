@@ -16,6 +16,8 @@
  * anywhere else in web storage.
  */
 
+import { observeBrowserCompatibility } from '../observability/browserCompatibility';
+
 const KEY = 'cma:pending-turn';
 const LEGACY_KEY = 'chrono-bot:pending-turn';
 
@@ -42,19 +44,41 @@ function storage(): Storage | null {
   }
 }
 
-function readPendingTurn(store: Storage, key: string): string | null {
+function readPendingTurn(
+  store: Storage,
+  key: string,
+  observeCanonical: boolean = false,
+): string | null {
   try {
-    return store.getItem(key);
+    const value = store.getItem(key);
+    if (observeCanonical) {
+      observeBrowserCompatibility(['pending-turn', 'canonical', 'read-ok']);
+    }
+    return value;
   } catch {
+    if (observeCanonical) {
+      observeBrowserCompatibility(['pending-turn', 'canonical', 'read-blocked']);
+    }
     return null;
   }
 }
 
 function removePendingTurns(store: Storage): void {
   for (const key of [KEY, LEGACY_KEY]) {
+    const generation = key === KEY ? 'canonical' : 'historical-key';
     try {
       store.removeItem(key);
+      if (generation === 'canonical') {
+        observeBrowserCompatibility(['pending-turn', 'canonical', 'clear-ok']);
+      } else {
+        observeBrowserCompatibility(['pending-turn', 'historical-key', 'clear-ok']);
+      }
     } catch {
+      if (generation === 'canonical') {
+        observeBrowserCompatibility(['pending-turn', 'canonical', 'clear-blocked']);
+      } else {
+        observeBrowserCompatibility(['pending-turn', 'historical-key', 'clear-blocked']);
+      }
       // Try both names even when one removal is blocked.
     }
   }
@@ -102,11 +126,15 @@ export function capturePendingTurn(raw: string, now: number = Date.now()): strin
     try {
       const payload: PendingTurn = { text: clipped, capturedAt: now };
       store.setItem(KEY, JSON.stringify(payload));
+      observeBrowserCompatibility(['pending-turn', 'canonical', 'write-ok']);
     } catch {
+      observeBrowserCompatibility(['pending-turn', 'canonical', 'write-blocked']);
       // Quota or private-mode failure. The redirect still proceeds; the
       // visitor simply retypes. Never block sign-in on storage.
       return clipped;
     }
+  } else {
+    observeBrowserCompatibility(['pending-turn', 'canonical', 'write-blocked']);
   }
   return clipped;
 }
@@ -118,14 +146,26 @@ export function capturePendingTurn(raw: string, now: number = Date.now()): strin
 export function consumePendingTurn(now: number = Date.now()): string | null {
   const store = storage();
   if (!store) {
+    observeBrowserCompatibility(['pending-turn', 'canonical', 'read-blocked']);
+    observeBrowserCompatibility(['pending-turn', 'canonical', 'clear-blocked']);
+    observeBrowserCompatibility(['pending-turn', 'historical-key', 'clear-blocked']);
     return null;
   }
 
-  const canonical = readPendingTurn(store, KEY);
+  const canonical = readPendingTurn(store, KEY, true);
   const historical = readPendingTurn(store, LEGACY_KEY);
   removePendingTurns(store);
 
-  return parsePendingTurn(canonical, now) ?? parsePendingTurn(historical, now);
+  const canonicalTurn = parsePendingTurn(canonical, now);
+  if (canonicalTurn !== null) {
+    return canonicalTurn;
+  }
+
+  const historicalTurn = parsePendingTurn(historical, now);
+  if (historicalTurn !== null) {
+    observeBrowserCompatibility(['pending-turn', 'historical-key', 'consumed']);
+  }
+  return historicalTurn;
 }
 
 /** Drop any stored prompt without reading it. */
@@ -133,5 +173,8 @@ export function clearPendingTurn(): void {
   const store = storage();
   if (store !== null) {
     removePendingTurns(store);
+  } else {
+    observeBrowserCompatibility(['pending-turn', 'canonical', 'clear-blocked']);
+    observeBrowserCompatibility(['pending-turn', 'historical-key', 'clear-blocked']);
   }
 }
