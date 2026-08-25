@@ -98,6 +98,7 @@ fn caller(id: &str) -> Caller {
 /// pass whether or not the mint happened.
 struct MintingSource {
     observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
+    tracks_subject: bool,
 }
 
 #[async_trait::async_trait]
@@ -107,13 +108,13 @@ impl crate::store::CredentialSource for MintingSource {
         session: &crate::SessionId,
         _subject: &crate::SubjectId,
         _services: &[crate::environment::ServiceId],
-        caller_credential: Option<&str>,
+        caller_credential: Option<&crate::session::CallerCredential>,
     ) -> Result<Option<String>, crate::store::StoreError> {
         if let Some(observed) = &self.observed_callers {
             observed
                 .lock()
                 .await
-                .push(caller_credential.map(str::to_owned));
+                .push(caller_credential.map(|credential| credential.as_ref().to_owned()));
         }
         Ok(Some(format!("minted-for-{}", session.0)))
     }
@@ -122,16 +123,24 @@ impl crate::store::CredentialSource for MintingSource {
     async fn release(&self, _session: &crate::SessionId) -> Result<(), crate::store::StoreError> {
         Ok(())
     }
+
+    async fn tracks_subject_credential(
+        &self,
+        _session: &crate::SessionId,
+    ) -> Result<bool, crate::store::StoreError> {
+        Ok(self.tracks_subject)
+    }
 }
 
 fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
-    service_with_store(sent, Arc::new(FakeStore::default()), None)
+    service_with_store(sent, Arc::new(FakeStore::default()), None, true)
 }
 
 fn service_with_store(
     sent: Arc<tokio::sync::Mutex<Vec<String>>>,
     store: Arc<FakeStore>,
     observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
+    tracks_subject: bool,
 ) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
@@ -145,7 +154,10 @@ fn service_with_store(
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
         store,
         crate::service::SessionPorts {
-            credentials: Some(Arc::new(MintingSource { observed_callers })),
+            credentials: Some(Arc::new(MintingSource {
+                observed_callers,
+                tracks_subject,
+            })),
             ..Default::default()
         },
         crate::environment_service::EnvironmentProfileService::new(
@@ -185,6 +197,7 @@ async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
         Arc::clone(&sent),
         Arc::new(FakeStore::default()),
         Some(Arc::clone(&observed_callers)),
+        true,
     );
     let owner = caller("subject-a");
     let session = svc
@@ -269,6 +282,47 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
         .await
         .expect("session still exists");
     assert_eq!(after.id, session.id);
+}
+
+#[tokio::test]
+async fn a_subject_renewal_does_not_replace_a_request_bound_session_credential() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let svc = service_with_store(
+        Arc::clone(&sent),
+        Arc::new(FakeStore::default()),
+        None,
+        false,
+    );
+    let owner = caller("subject-a");
+    let session = svc
+        .create_session(
+            &owner,
+            SessionSpec {
+                environment_profile: None,
+                geometry: None,
+                options: Default::default(),
+                caller_credential: Some(crate::CallerCredential::request_bound(
+                    "bearer-token".into(),
+                )),
+                runtime_credential: None,
+                requested_mode: None,
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("session created");
+    await_settled(&svc, &owner, &session.id).await;
+
+    let pushed = svc
+        .refresh_subject_credential(&owner.subject, "browser-renewal".into())
+        .await;
+    assert_eq!(pushed, 0);
+    assert!(
+        !credentials_seen(&sent)
+            .await
+            .contains(&"browser-renewal".to_string()),
+        "a browser renewal must not overwrite request-bound authority"
+    );
 }
 
 #[tokio::test]
@@ -452,6 +506,7 @@ mod what_still_claims_a_credential {
             Arc::new(tokio::sync::Mutex::new(Vec::new())),
             Arc::clone(&store),
             None,
+            true,
         );
         store.fail_everything().await;
 

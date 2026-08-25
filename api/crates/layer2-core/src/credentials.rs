@@ -58,7 +58,7 @@ impl SessionService {
         session: &SessionId,
         owner: &SubjectId,
         services: &[crate::environment::ServiceId],
-        caller_credential: Option<&str>,
+        caller_credential: Option<&crate::session::CallerCredential>,
     ) -> Result<Option<String>, crate::store::StoreError> {
         let Some(source) = self.credentials.as_ref() else {
             return Ok(None);
@@ -229,17 +229,40 @@ impl SessionService {
         subject: &SubjectId,
         credential: String,
     ) -> usize {
-        let targets: Vec<SessionId> = {
-            let mut entries = self.entries.write().await;
+        let candidates: Vec<SessionId> = {
+            let entries = self.entries.read().await;
             entries
-                .values_mut()
+                .values()
                 .filter(|e| e.session.is_owned_by(subject) && !e.session.status.is_terminal())
-                .map(|e| {
-                    e.subject_credential = Some(credential.clone());
-                    e.session.id.clone()
-                })
+                .map(|e| e.session.id.clone())
                 .collect()
         };
+
+        let mut targets = Vec::new();
+        for id in candidates {
+            let tracks_subject = match self.credentials.as_ref() {
+                Some(source) => match source.tracks_subject_credential(&id).await {
+                    Ok(tracks) => tracks,
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %id,
+                            error = %error,
+                            "could not determine credential provenance; renewal was not pushed"
+                        );
+                        false
+                    }
+                },
+                None => false,
+            };
+            if tracks_subject {
+                if let Some(entry) = self.entries.write().await.get_mut(&id).filter(|entry| {
+                    entry.session.is_owned_by(subject) && !entry.session.status.is_terminal()
+                }) {
+                    entry.subject_credential = Some(credential.clone());
+                    targets.push(id);
+                }
+            }
+        }
 
         let mut delivered = 0;
         for id in targets {

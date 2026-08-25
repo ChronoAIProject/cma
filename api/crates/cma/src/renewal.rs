@@ -619,6 +619,7 @@ mod tests {
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("current-{number:03}")),
                     generation: 0,
+                    request_bound_credential: None,
                     current: Some(credential(format!("provider-current-{number:03}"))),
                     pending: None,
                     revoke_debt: Vec::new(),
@@ -631,6 +632,7 @@ mod tests {
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("pending-{number:03}")),
                     generation: 0,
+                    request_bound_credential: None,
                     current: Some(credential(format!("provider-old-{number:03}"))),
                     pending: Some(credential(format!("provider-pending-{number:03}"))),
                     revoke_debt: Vec::new(),
@@ -647,6 +649,7 @@ mod tests {
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("expired-lease-{number:03}")),
                     generation: 0,
+                    request_bound_credential: None,
                     current: Some(credential(format!("provider-leased-{number:03}"))),
                     pending: None,
                     revoke_debt: Vec::new(),
@@ -695,6 +698,7 @@ mod tests {
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("pending-tail-{number:03}")),
                     generation: 0,
+                    request_bound_credential: None,
                     current: Some(credential(format!("provider-tail-old-{number:03}"))),
                     pending: Some(credential(format!("provider-tail-pending-{number:03}"))),
                     revoke_debt: Vec::new(),
@@ -767,6 +771,7 @@ mod tests {
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("current-{number:03}")),
                     generation: 0,
+                    request_bound_credential: None,
                     current: Some(credential(format!("provider-current-{number:03}"))),
                     pending: None,
                     revoke_debt: Vec::new(),
@@ -779,6 +784,7 @@ mod tests {
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("pending-{number:03}")),
                     generation: 0,
+                    request_bound_credential: None,
                     current: Some(credential(format!("provider-old-{number:03}"))),
                     pending: Some(credential(format!("provider-pending-{number:03}"))),
                     revoke_debt: Vec::new(),
@@ -864,6 +870,7 @@ mod tests {
                     .insert_credential(SessionCredentialState {
                         session,
                         generation: 0,
+                        request_bound_credential: None,
                         current: Some(credential(format!("provider-{kind}-{number:03}"))),
                         pending: pending
                             .then(|| credential(format!("provider-pending-{number:03}"))),

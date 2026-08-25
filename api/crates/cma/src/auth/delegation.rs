@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::store::StoreError;
-use layer2_core::{ServiceId, SessionId, SubjectId};
+use layer2_core::{CallerCredential, ServiceId, SessionId, SubjectId};
 use sha2::{Digest, Sha256};
 
 use super::persistence::{
@@ -47,6 +47,7 @@ fn empty_state(session: &SessionId) -> SessionCredentialState {
     SessionCredentialState {
         session: session.clone(),
         generation: 0,
+        request_bound_credential: None,
         current: None,
         pending: None,
         revoke_debt: Vec::new(),
@@ -393,6 +394,7 @@ async fn retire_state(store: Arc<dyn AuthStore>, session: SessionId) -> Result<(
     loop {
         let mut current = ensure_state(&store, &session, None).await?;
         if current.retired
+            && current.request_bound_credential.is_none()
             && current.current.is_none()
             && current.pending.is_none()
             && current.lease.is_none()
@@ -400,6 +402,7 @@ async fn retire_state(store: Arc<dyn AuthStore>, session: SessionId) -> Result<(
             return Ok(());
         }
         let before = current.clone();
+        current.request_bound_credential = None;
         if let Some(held) = current.current.take() {
             queue_debt(&mut current, &held);
         }
@@ -419,6 +422,7 @@ async fn retire_reconciled_state_once(
     mut current: SessionCredentialState,
 ) -> Result<bool, StoreError> {
     let before = current.clone();
+    current.request_bound_credential = None;
     if let Some(held) = current.current.take() {
         queue_debt(&mut current, &held);
     }
@@ -772,7 +776,7 @@ impl AuthState {
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
-        caller_credential: Option<&str>,
+        caller_credential: Option<&CallerCredential>,
     ) -> Result<Option<String>, StoreError> {
         self.mint_session_credential_inner(
             session,
@@ -809,19 +813,60 @@ impl AuthState {
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
-        caller_credential: Option<&str>,
+        caller_credential: Option<&CallerCredential>,
         replacement: bool,
         budget: Option<AuthOperationBudget>,
     ) -> Result<Option<String>, StoreError> {
         let Some(issuer) = self.issuer.read().await.clone() else {
-            if let Some(credential) = caller_credential {
-                return Ok(Some(credential.to_string()));
+            loop {
+                let current = ensure_state(&self.store, session, budget.as_ref()).await?;
+                if current.retired {
+                    return Ok(None);
+                }
+                if let Some(credential) = current.request_bound_credential {
+                    return Ok(Some(credential.into_inner()));
+                }
+                if let Some(credential) = caller_credential {
+                    if !credential.is_request_bound() {
+                        return Ok(Some(credential.as_ref().to_owned()));
+                    }
+                    let mut next = current.clone();
+                    next.request_bound_credential =
+                        Some(SecretValue::new(credential.as_ref().to_owned()));
+                    if replace_state(&self.store, &current, next, budget.as_ref()).await? {
+                        return Ok(Some(credential.as_ref().to_owned()));
+                    }
+                    continue;
+                }
+                take_operation(budget.as_ref(), 1, "subject access-token read")?;
+                return self.access_token(subject).await;
             }
-            take_operation(budget.as_ref(), 1, "subject access-token read")?;
-            return self.access_token(subject).await;
+        };
+        let pinned_request_credential = if caller_credential
+            .is_some_and(CallerCredential::is_request_bound)
+        {
+            loop {
+                let current = ensure_state(&self.store, session, budget.as_ref()).await?;
+                if current.retired {
+                    return Ok(None);
+                }
+                if let Some(credential) = current.request_bound_credential {
+                    break Some(credential.into_inner());
+                }
+                let credential = caller_credential.expect("request-bound credential is present");
+                let mut next = current.clone();
+                next.request_bound_credential =
+                    Some(SecretValue::new(credential.as_ref().to_owned()));
+                if replace_state(&self.store, &current, next, budget.as_ref()).await? {
+                    break Some(credential.as_ref().to_owned());
+                }
+            }
+        } else {
+            None
         };
         let fingerprint = scope_fingerprint(services);
-        let mut owner_token = caller_credential.map(str::to_string);
+        let mut owner_token = pinned_request_credential
+            .or_else(|| caller_credential.map(|credential| credential.as_ref().to_owned()));
 
         let (holder, fence) = loop {
             let current = ensure_state(&self.store, session, budget.as_ref()).await?;
@@ -862,8 +907,14 @@ impl AuthState {
             }
 
             if owner_token.is_none() {
-                take_operation(budget.as_ref(), 1, "credential owner token read")?;
-                owner_token = self.access_token(subject).await?;
+                owner_token = current
+                    .request_bound_credential
+                    .as_ref()
+                    .map(|credential| credential.expose().to_owned());
+                if owner_token.is_none() {
+                    take_operation(budget.as_ref(), 1, "credential owner token read")?;
+                    owner_token = self.access_token(subject).await?;
+                }
                 if owner_token.is_none() {
                     return Ok(None);
                 }
@@ -1131,10 +1182,21 @@ impl layer2_core::CredentialSource for AuthState {
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
-        caller_credential: Option<&str>,
+        caller_credential: Option<&CallerCredential>,
     ) -> Result<Option<String>, StoreError> {
         self.mint_session_credential_for_request(session, subject, services, caller_credential)
             .await
+    }
+
+    async fn tracks_subject_credential(&self, session: &SessionId) -> Result<bool, StoreError> {
+        if self.issuer.read().await.is_some() {
+            return Ok(false);
+        }
+        Ok(self
+            .store
+            .credential(session)
+            .await?
+            .is_none_or(|state| state.request_bound_credential.is_none()))
     }
 
     async fn release(&self, session: &SessionId) -> Result<(), StoreError> {
