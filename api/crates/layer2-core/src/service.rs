@@ -69,6 +69,7 @@ impl SessionService {
             event_logs,
             starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
+            rotations_in_progress: RwLock::new(HashSet::new()),
             adapters,
             screen_factory,
             store,
@@ -84,6 +85,12 @@ impl SessionService {
             retry_backoff_ms: std::sync::atomic::AtomicU64::new(
                 crate::provision::DEFAULT_RETRY_BACKOFF_MS,
             ),
+            #[cfg(test)]
+            pause_next_live_install: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            live_install_paused: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            live_install_resume: tokio::sync::Notify::new(),
         })
     }
 
@@ -98,7 +105,48 @@ impl SessionService {
 
     /// Release a bring-up claim, whatever its outcome.
     pub(crate) async fn finish_start(&self, id: &SessionId) {
+        self.rotations_in_progress.write().await.remove(id);
         self.starting.write().await.remove(id);
+    }
+
+    pub(crate) async fn rotation_in_progress(&self, id: &SessionId) -> bool {
+        self.rotations_in_progress.read().await.contains(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_next_live_install(&self) {
+        assert!(
+            !self
+                .pause_next_live_install
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a live installation pause is already armed"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_until_live_install_paused(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.live_install_paused.notified(),
+        )
+        .await
+        .expect("readiness was committed before the replacement entry was installed");
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resume_live_install(&self) {
+        self.live_install_resume.notify_one();
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn pause_live_install_if_armed(&self) {
+        if self
+            .pause_next_live_install
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.live_install_paused.notify_one();
+            self.live_install_resume.notified().await;
+        }
     }
 
     /// The environment profiles this service resolves sessions against.
@@ -521,20 +569,57 @@ impl SessionService {
     /// operations, which are meaningless without a runtime to drive.
     pub(crate) async fn authorize(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
         let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !entry.session.is_owned_by(&caller.subject) {
-            return Err(CoreError::Forbidden);
+        if let Some(entry) = entries.get(id) {
+            if !entry.session.is_owned_by(&caller.subject) {
+                return Err(CoreError::Forbidden);
+            }
+            if entry.session.status.is_terminal() {
+                return Err(CoreError::SessionTerminated);
+            }
+            // `is_interactive` also excludes provisioning and idle sessions, whose
+            // existing missing-runtime answers remain unchanged. Rotation alone
+            // still holds an outgoing channel that must not receive new input.
+            if entry.session.status.is_rotating() {
+                return Err(CoreError::SessionRotating);
+            }
+            return Ok(());
         }
-        if entry.session.status.is_terminal() {
-            return Err(CoreError::SessionTerminated);
+        let rotation_in_progress = self.rotation_in_progress(id).await;
+        drop(entries);
+        Err(self
+            .missing_live_session_error(caller, id, rotation_in_progress)
+            .await)
+    }
+
+    /// Classify an operation whose live runtime entry disappeared.
+    ///
+    /// Rotation deliberately removes the outgoing entry before provisioning its
+    /// replacement. The durable record identifies most of that interval; the
+    /// in-process marker spans the final boundary where readiness is durable but
+    /// the replacement entry is not installed yet. Both are consulted only after
+    /// the live lookup misses so ordinary terminal input retains its in-memory
+    /// path. Ownership is checked before lifecycle state so this fallback cannot
+    /// disclose another owner's session.
+    pub(crate) async fn missing_live_session_error(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+        rotation_in_progress: bool,
+    ) -> CoreError {
+        let record = match self.record(id).await {
+            Ok(record) => record,
+            Err(error) => return error,
+        };
+        if !record.session.is_owned_by(&caller.subject) {
+            return CoreError::Forbidden;
         }
-        // `is_interactive` also excludes provisioning and idle sessions, whose
-        // existing missing-runtime answers remain unchanged. Rotation alone
-        // still holds an outgoing channel that must not receive new input.
-        if entry.session.status.is_rotating() {
-            return Err(CoreError::SessionRotating);
+        if record.session.status.is_terminal() {
+            return CoreError::SessionTerminated;
         }
-        Ok(())
+        if record.session.status.is_rotating() || rotation_in_progress {
+            return CoreError::SessionRotating;
+        }
+        CoreError::SessionNotFound
     }
 
     pub(crate) async fn forward_input(&self, id: &SessionId, input: TerminalInput) {

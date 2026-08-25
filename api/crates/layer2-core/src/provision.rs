@@ -411,6 +411,8 @@ impl SessionService {
                     "the runtime became usable but readiness could not be recorded: {error}"
                 ))
             })?;
+        #[cfg(test)]
+        self.pause_live_install_if_armed().await;
 
         let durable = ready.clone();
         let seeded = ready.session;
