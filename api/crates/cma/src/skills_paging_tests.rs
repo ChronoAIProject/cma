@@ -1,10 +1,7 @@
 //! Contract tests for Ornn's cursor-paged skill catalogue.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::collections::VecDeque;
+use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::{Request, State};
@@ -18,7 +15,7 @@ use layer2_core::{
     EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
     EnvironmentProfileStore, Page, PageRequest, PlatformSettingsService, StoreError,
 };
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 use super::*;
@@ -50,17 +47,13 @@ impl Reply {
         }
     }
 
-    fn search(query: &str, status: StatusCode, body: serde_json::Value) -> Self {
+    fn search_status(status: StatusCode, body: serde_json::Value) -> Self {
         Self {
             path: Some(SEARCH_FIXTURE_PATH.to_string()),
-            query: Some(query.to_string()),
+            query: None,
             status,
             body,
         }
-    }
-
-    fn search_ok(query: &str, body: serde_json::Value) -> Self {
-        Self::search(query, StatusCode::OK, body)
     }
 }
 
@@ -68,18 +61,6 @@ impl Reply {
 struct RegistryFixture {
     replies: Arc<Mutex<VecDeque<Reply>>>,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
-}
-
-struct BlockedSearch {
-    skill: String,
-    release: oneshot::Sender<()>,
-}
-
-#[derive(Clone)]
-struct BlockingRegistryFixture {
-    started: mpsc::UnboundedSender<BlockedSearch>,
-    current: Arc<AtomicUsize>,
-    maximum: Arc<AtomicUsize>,
 }
 
 fn query_from_uri(uri: &str, key: &str) -> Option<String> {
@@ -117,37 +98,6 @@ async fn answer(State(fixture): State<RegistryFixture>, request: Request) -> imp
     (reply.status, Json(reply.body))
 }
 
-async fn answer_blocked_search(
-    State(fixture): State<BlockingRegistryFixture>,
-    request: Request,
-) -> impl IntoResponse {
-    assert_eq!(request.uri().path(), SEARCH_FIXTURE_PATH);
-    let skill = query_from_uri(&request.uri().to_string(), "q")
-        .expect("targeted search carries the recorded skill as q");
-    let current = fixture.current.fetch_add(1, Ordering::SeqCst) + 1;
-    fixture.maximum.fetch_max(current, Ordering::SeqCst);
-    let (release, blocked) = oneshot::channel();
-    fixture
-        .started
-        .send(BlockedSearch {
-            skill: skill.clone(),
-            release,
-        })
-        .expect("the concurrency test is receiving starts");
-    let _ = blocked.await;
-    fixture.current.fetch_sub(1, Ordering::SeqCst);
-
-    Json(page(
-        vec![serde_json::json!({
-            "guid": format!("guid-{skill}"),
-            "name": skill,
-            "description": "blocked search response"
-        })],
-        false,
-        None,
-    ))
-}
-
 async fn registry(
     replies: Vec<Reply>,
 ) -> (
@@ -171,42 +121,6 @@ async fn registry(
             .expect("serve registry fixture");
     });
     (format!("http://{address}"), requests, server)
-}
-
-async fn blocking_registry() -> (
-    String,
-    mpsc::UnboundedReceiver<BlockedSearch>,
-    Arc<AtomicUsize>,
-    Arc<AtomicUsize>,
-    tokio::task::JoinHandle<()>,
-) {
-    let (started, receiver) = mpsc::unbounded_channel();
-    let current = Arc::new(AtomicUsize::new(0));
-    let maximum = Arc::new(AtomicUsize::new(0));
-    let fixture = BlockingRegistryFixture {
-        started,
-        current: Arc::clone(&current),
-        maximum: Arc::clone(&maximum),
-    };
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind blocking registry fixture");
-    let address = listener.local_addr().expect("fixture address");
-    let app = Router::new()
-        .fallback(any(answer_blocked_search))
-        .with_state(fixture);
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("serve blocking registry fixture");
-    });
-    (
-        format!("http://{address}"),
-        receiver,
-        current,
-        maximum,
-        server,
-    )
 }
 
 struct EmptyProfiles;
@@ -305,21 +219,6 @@ fn rows(start: usize, count: usize) -> Vec<serde_json::Value> {
     (start..start + count).map(row).collect()
 }
 
-fn search_replies(count: usize) -> Vec<Reply> {
-    (0..count)
-        .map(|number| {
-            let skill = format!("skill-{number}");
-            Reply::search_ok(&skill, page(vec![row(number)], false, None))
-        })
-        .collect()
-}
-
-fn skill_ids(count: usize) -> Vec<SkillId> {
-    (0..count)
-        .map(|number| SkillId::new(format!("skill-{number}")))
-        .collect()
-}
-
 fn page(
     items: Vec<serde_json::Value>,
     has_more: bool,
@@ -350,11 +249,11 @@ fn query(request: &RecordedRequest, key: &str) -> Option<String> {
     query_from_uri(&request.uri, key)
 }
 
-fn assert_targeted_search(request: &RecordedRequest, skill: &str) {
+fn assert_catalogue_search(request: &RecordedRequest) {
     let parsed = parsed(request);
     assert_eq!(parsed.path(), SEARCH_FIXTURE_PATH);
     assert!(!parsed.path().starts_with(DETAIL_FIXTURE_PREFIX));
-    assert_eq!(query(request, "q").as_deref(), Some(skill));
+    assert_eq!(query(request, "q"), None);
     assert_eq!(query(request, "query"), None, "legacy query is not emitted");
     assert_eq!(query(request, "scope").as_deref(), Some(SCOPE));
     assert_eq!(query(request, "mode").as_deref(), Some("keyword"));
@@ -690,21 +589,22 @@ async fn missing_data_is_a_failure_not_an_empty_catalogue() {
 }
 
 #[tokio::test]
-async fn describing_an_out_of_page_slug_uses_safe_search_and_never_calls_detail() {
-    let fuzzy = serde_json::json!({
-        "guid": "guid-fuzzy",
-        "name": "outside-first-page-helper",
-        "description": "A fuzzy result must not win"
-    });
+async fn an_exact_slug_after_more_than_one_hundred_rows_is_described_without_detail_gets() {
+    let mut second = rows(PAGE_SIZE, 2);
     let exact = serde_json::json!({
         "guid": "guid-outside",
         "name": "outside-first-page",
         "description": "Description from side-effect-free search"
     });
-    let (base, requests, server) = registry(vec![Reply::search_ok(
-        "outside-first-page",
-        page(vec![fuzzy, exact], false, None),
-    )])
+    second.push(exact);
+    let (base, requests, server) = registry(vec![
+        Reply::ok(page(
+            rows(0, PAGE_SIZE),
+            true,
+            Some("description-page-two".into()),
+        )),
+        Reply::ok(page(second, false, None)),
+    ])
     .await;
 
     let described = catalog(&base)
@@ -720,17 +620,22 @@ async fn describing_an_out_of_page_slug_uses_safe_search_and_never_calls_detail(
         .expect("targeted metadata search");
 
     assert_eq!(described.len(), 1, "duplicate grants are fetched once");
+    assert_eq!(described[0].requested.0, "outside-first-page");
     assert_eq!(
-        described[0].description,
+        described[0].skill.description,
         "Description from side-effect-free search"
     );
     let requests = requests.lock().await;
-    assert_eq!(requests.len(), 1);
-    assert_targeted_search(&requests[0], "outside-first-page");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(query(&requests[0], "cursor"), None);
     assert_eq!(
-        requests[0].authorization.as_deref(),
-        Some("Bearer caller-token")
+        query(&requests[1], "cursor").as_deref(),
+        Some("description-page-two")
     );
+    assert!(requests.iter().all(|request| {
+        assert_catalogue_search(request);
+        request.authorization.as_deref() == Some("Bearer caller-token")
+    }));
     server.abort();
 }
 
@@ -741,11 +646,7 @@ async fn fuzzy_only_search_hits_never_enrich_a_recorded_grant() {
         "name": "requested-skill-helper",
         "description": "Mentions requested-skill but is not it"
     });
-    let (base, requests, server) = registry(vec![Reply::search_ok(
-        "requested-skill",
-        page(vec![fuzzy], false, None),
-    )])
-    .await;
+    let (base, requests, server) = registry(vec![Reply::ok(page(vec![fuzzy], false, None))]).await;
 
     let described = catalog(&base)
         .describe(
@@ -759,27 +660,21 @@ async fn fuzzy_only_search_hits_never_enrich_a_recorded_grant() {
     assert!(described.is_empty());
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 1);
-    assert_targeted_search(&requests[0], "requested-skill");
+    assert_catalogue_search(&requests[0]);
     server.abort();
 }
 
 #[tokio::test]
 async fn one_missing_grant_does_not_hide_another_grants_description() {
-    let (base, requests, server) = registry(vec![
-        Reply::search_ok("removed-skill", page(Vec::new(), false, None)),
-        Reply::search_ok(
-            "visible-skill",
-            page(
-                vec![serde_json::json!({
-                    "guid": "guid-visible",
-                    "name": "visible-skill",
-                    "description": "This description remains available"
-                })],
-                false,
-                None,
-            ),
-        ),
-    ])
+    let (base, requests, server) = registry(vec![Reply::ok(page(
+        vec![serde_json::json!({
+            "guid": "guid-visible",
+            "name": "visible-skill",
+            "description": "This description remains available"
+        })],
+        false,
+        None,
+    ))])
     .await;
 
     let described = catalog(&base)
@@ -792,28 +687,22 @@ async fn one_missing_grant_does_not_hide_another_grants_description() {
         .expect("one missing row is not a catalogue outage");
 
     assert_eq!(described.len(), 1);
-    assert_eq!(described[0].name, "visible-skill");
+    assert_eq!(described[0].requested.0, "visible-skill");
+    assert_eq!(described[0].skill.name, "visible-skill");
     assert_eq!(
-        described[0].description,
+        described[0].skill.description,
         "This description remains available"
     );
     let requests = requests.lock().await;
-    assert_eq!(requests.len(), 2);
-    for skill in ["removed-skill", "visible-skill"] {
-        let request = requests
-            .iter()
-            .find(|request| query(request, "q").as_deref() == Some(skill))
-            .expect("each distinct grant is searched once");
-        assert_targeted_search(request, skill);
-    }
+    assert_eq!(requests.len(), 1);
+    assert_catalogue_search(&requests[0]);
     server.abort();
 }
 
 #[tokio::test]
 async fn a_non_successful_metadata_search_remains_a_loud_catalogue_error() {
     const PRIVATE_UPSTREAM_MARKER: &str = "provider-body-must-not-be-consumed";
-    let (base, requests, server) = registry(vec![Reply::search(
-        "unavailable-skill",
+    let (base, requests, server) = registry(vec![Reply::search_status(
         StatusCode::BAD_GATEWAY,
         serde_json::json!({ "error": PRIVATE_UPSTREAM_MARKER }),
     )])
@@ -836,118 +725,228 @@ async fn a_non_successful_metadata_search_remains_a_loud_catalogue_error() {
     assert!(!error.to_string().contains(PRIVATE_UPSTREAM_MARKER));
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 1);
-    assert_targeted_search(&requests[0], "unavailable-skill");
+    assert_catalogue_search(&requests[0]);
     server.abort();
 }
 
 #[tokio::test]
-async fn a_fuzzy_page_with_more_results_is_not_treated_as_exactly_missing() {
-    let fuzzy = serde_json::json!({
-        "guid": "guid-fuzzy",
-        "name": "requested-skill-helper",
-        "description": "fuzzy"
-    });
-    let (base, requests, server) = registry(vec![Reply::search_ok(
-        "requested-skill",
-        page(vec![fuzzy], true, Some("more-fuzzy-results".into())),
-    )])
+async fn an_ambiguous_slug_does_not_hide_a_separately_requested_guid() {
+    let (base, requests, server) = registry(vec![Reply::ok(page(
+        vec![
+            serde_json::json!({
+                "guid": "guid-a",
+                "name": "shared",
+                "description": "first shared row"
+            }),
+            serde_json::json!({
+                "guid": "guid-b",
+                "name": "shared",
+                "description": "second shared row"
+            }),
+            serde_json::json!({
+                "guid": "guid-visible",
+                "name": "visible",
+                "description": "independent metadata"
+            }),
+        ],
+        false,
+        None,
+    ))])
     .await;
-
-    let error = catalog(&base)
-        .describe(
-            &SubjectId("subject-a".into()),
-            Some("caller-token"),
-            &[SkillId::new("requested-skill")],
-        )
-        .await
-        .expect_err("an exact match may remain outside the bounded search page");
-
-    assert!(matches!(error, CatalogError::Malformed(_)), "got {error:?}");
-    assert!(error
-        .to_string()
-        .contains("did not resolve within 100 matches"));
-    let requests = requests.lock().await;
-    assert_eq!(requests.len(), 1);
-    assert_targeted_search(&requests[0], "requested-skill");
-    server.abort();
-}
-
-#[tokio::test]
-async fn description_lookups_below_the_ceiling_call_every_distinct_skill_once() {
-    let count = 3;
-    let (base, requests, server) = registry(search_replies(count)).await;
 
     let described = catalog(&base)
         .describe(
             &SubjectId("subject-a".into()),
             Some("caller-token"),
-            &skill_ids(count),
+            &[
+                SkillId::new("guid-a"),
+                SkillId::new("shared"),
+                SkillId::new("guid-visible"),
+            ],
         )
         .await
-        .expect("all metadata searches fit below the ceiling");
+        .expect("ambiguity is isolated to its requested identifier");
 
-    let requests = requests.lock().await;
-    assert_eq!(requests.len(), count);
-    for number in 0..count {
-        let skill = format!("skill-{number}");
-        let request = requests
-            .iter()
-            .find(|request| query(request, "q").as_deref() == Some(skill.as_str()))
-            .expect("each distinct skill is searched once");
-        assert_targeted_search(request, &skill);
-    }
     assert_eq!(
         described
             .iter()
-            .map(|skill| skill.name.as_str())
+            .map(|description| description.requested.0.as_str())
             .collect::<Vec<_>>(),
-        ["skill-0", "skill-1", "skill-2"]
+        ["guid-a", "guid-visible"]
     );
+    assert_eq!(described[0].skill.name, "shared");
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_catalogue_search(&requests[0]);
     server.abort();
 }
 
 #[tokio::test]
-async fn description_lookups_at_the_ceiling_call_every_distinct_skill_once() {
-    assert_eq!(DESCRIPTION_LOOKUP_LIMIT, 50);
-    let (base, requests, server) = registry(search_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
+async fn a_later_transport_failure_preserves_prior_exact_guid_metadata() {
+    const PRIVATE_UPSTREAM_MARKER: &str = "transport-body-must-not-be-consumed";
+    let (base, requests, server) = registry(vec![
+        Reply::ok(page(
+            vec![serde_json::json!({
+                "guid": "guid-safe",
+                "name": "safe-slug",
+                "description": "metadata collected before the outage"
+            })],
+            true,
+            Some("failing-page-two".into()),
+        )),
+        Reply::search_status(
+            StatusCode::BAD_GATEWAY,
+            serde_json::json!({ "error": PRIVATE_UPSTREAM_MARKER }),
+        ),
+    ])
+    .await;
 
     let described = catalog(&base)
         .describe(
             &SubjectId("subject-a".into()),
             Some("caller-token"),
-            &skill_ids(DESCRIPTION_LOOKUP_LIMIT),
+            &[
+                SkillId::new("guid-safe"),
+                SkillId::new("safe-slug"),
+                SkillId::new("unresolved-after-outage"),
+            ],
         )
         .await
-        .expect("the exact ceiling is accepted");
+        .expect("an exact GUID found before a later outage remains safe");
 
-    let requests = requests.lock().await;
-    assert_eq!(requests.len(), DESCRIPTION_LOOKUP_LIMIT);
-    assert!(requests
+    assert_eq!(described.len(), 1);
+    assert_eq!(described[0].requested.0, "guid-safe");
+    assert!(described
         .iter()
-        .all(|request| parsed(request).path() == SEARCH_FIXTURE_PATH));
-    assert!(requests
-        .iter()
-        .all(|request| !parsed(request).path().starts_with(DETAIL_FIXTURE_PREFIX)));
-    assert_eq!(described.len(), DESCRIPTION_LOOKUP_LIMIT);
-    assert_eq!(described.first().expect("first").name, "skill-0");
+        .all(|description| description.requested.0 != "safe-slug"));
     assert_eq!(
-        described.last().expect("last").name,
-        format!("skill-{}", DESCRIPTION_LOOKUP_LIMIT - 1)
+        described[0].skill.description,
+        "metadata collected before the outage"
     );
+    assert!(!format!("{described:?}").contains(PRIVATE_UPSTREAM_MARKER));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        assert_catalogue_search(request);
+    }
     server.abort();
 }
 
 #[tokio::test]
-async fn description_lookups_over_the_ceiling_use_the_first_distinct_skills_only() {
-    let (base, requests, server) = registry(search_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
-    let mut requested = vec![
-        SkillId::new("skill-0"),
-        SkillId::new("skill-1"),
-        SkillId::new("skill-0"),
-    ];
-    requested.extend(
-        (2..DESCRIPTION_LOOKUP_LIMIT + 2).map(|number| SkillId::new(format!("skill-{number}"))),
+async fn a_malformed_later_page_cannot_contribute_metadata_from_that_page() {
+    let (base, requests, server) = registry(vec![
+        Reply::ok(page(
+            vec![serde_json::json!({
+                "guid": "guid-prior",
+                "name": "prior-skill",
+                "description": "metadata from a validated page"
+            })],
+            true,
+            Some("malformed-page-two".into()),
+        )),
+        Reply::ok(serde_json::json!({
+            "data": {
+                "items": [{
+                    "guid": "guid-on-malformed-page",
+                    "name": "malformed-page-skill",
+                    "description": "must be discarded with its page"
+                }]
+            },
+            "error": null
+        })),
+    ])
+    .await;
+
+    let described = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &[
+                SkillId::new("guid-prior"),
+                SkillId::new("guid-on-malformed-page"),
+            ],
+        )
+        .await
+        .expect("only metadata from the validated page survives");
+
+    assert_eq!(described.len(), 1);
+    assert_eq!(described[0].requested.0, "guid-prior");
+    assert_eq!(
+        described[0].skill.description,
+        "metadata from a validated page"
     );
+    assert!(described
+        .iter()
+        .all(|description| description.requested.0 != "guid-on-malformed-page"));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        assert_catalogue_search(request);
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn one_malformed_identifier_does_not_discard_valid_metadata() {
+    let (base, requests, server) = registry(vec![Reply::ok(page(
+        vec![
+            serde_json::json!({
+                "guid": "",
+                "name": "malformed-skill",
+                "description": "must never attach"
+            }),
+            serde_json::json!({
+                "guid": "guid-valid",
+                "name": "valid-skill",
+                "description": "valid metadata survives"
+            }),
+        ],
+        false,
+        None,
+    ))])
+    .await;
+
+    let described = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &[SkillId::new("malformed-skill"), SkillId::new("valid-skill")],
+        )
+        .await
+        .expect("one malformed candidate is isolated");
+
+    assert_eq!(described.len(), 1);
+    assert_eq!(described[0].requested.0, "valid-skill");
+    assert_eq!(described[0].skill.description, "valid metadata survives");
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_catalogue_search(&requests[0]);
+    server.abort();
+}
+
+#[tokio::test]
+async fn one_hundred_caller_skills_plus_the_mandatory_skill_are_all_described() {
+    let mut items = vec![serde_json::json!({
+        "guid": "guid-mandatory-skill",
+        "name": "mandatory-skill",
+        "description": "mandatory metadata"
+    })];
+    items.extend((0..100).map(|number| {
+        serde_json::json!({
+            "guid": format!("guid-caller-skill-{number}"),
+            "name": format!("caller-skill-{number}"),
+            "description": format!("caller metadata {number}")
+        })
+    }));
+    let second_page = items.split_off(PAGE_SIZE);
+    let (base, requests, server) = registry(vec![
+        Reply::ok(page(items, true, Some("boundary-page-two".into()))),
+        Reply::ok(page(second_page, false, None)),
+    ])
+    .await;
+
+    let mut requested = vec![SkillId::new("mandatory-skill")];
+    requested.extend((0..100).map(|number| SkillId::new(format!("caller-skill-{number}"))));
 
     let described = catalog(&base)
         .describe(
@@ -956,117 +955,82 @@ async fn description_lookups_over_the_ceiling_use_the_first_distinct_skills_only
             &requested,
         )
         .await
-        .expect("overflow is intentionally left undescribed");
+        .expect("the valid profile boundary is fully eligible for enrichment");
 
+    assert_eq!(described.len(), 101);
+    assert_eq!(described[0].requested.0, "mandatory-skill");
+    assert_eq!(described[0].skill.description, "mandatory metadata");
+    for (number, description) in described.iter().skip(1).enumerate() {
+        assert_eq!(description.requested.0, format!("caller-skill-{number}"));
+        assert_eq!(description.skill.name, format!("caller-skill-{number}"));
+        assert_eq!(
+            description.skill.description,
+            format!("caller metadata {number}")
+        );
+    }
     let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2, "one search walk serves all 101 grants");
     assert_eq!(
-        requests.len(),
-        DESCRIPTION_LOOKUP_LIMIT,
-        "duplicates and overflow must not become provider calls"
+        query(&requests[1], "cursor").as_deref(),
+        Some("boundary-page-two")
     );
-    assert!(requests.iter().all(|request| {
-        let searched = query(request, "q").expect("targeted search carries q");
-        searched != format!("skill-{DESCRIPTION_LOOKUP_LIMIT}")
-            && searched != format!("skill-{}", DESCRIPTION_LOOKUP_LIMIT + 1)
-    }));
-    assert_eq!(described.len(), DESCRIPTION_LOOKUP_LIMIT);
-    assert_eq!(
-        described
-            .iter()
-            .map(|skill| skill.name.clone())
-            .collect::<Vec<_>>(),
-        (0..DESCRIPTION_LOOKUP_LIMIT)
-            .map(|number| format!("skill-{number}"))
-            .collect::<Vec<_>>(),
-        "first appearance selects a stable enrichment prefix"
-    );
-    assert!(!described.iter().any(|skill| {
-        skill.name == format!("skill-{DESCRIPTION_LOOKUP_LIMIT}")
-            || skill.name == format!("skill-{}", DESCRIPTION_LOOKUP_LIMIT + 1)
-    }));
+    for request in requests.iter() {
+        assert_catalogue_search(request);
+    }
     server.abort();
 }
 
 #[tokio::test]
-async fn an_eighth_in_flight_search_blocks_the_ninth_until_one_finishes() {
-    let (base, mut started, current, maximum, server) = blocking_registry().await;
-    let operation = tokio::spawn(async move {
-        catalog(&base)
-            .describe(
-                &SubjectId("subject-a".into()),
-                Some("caller-token"),
-                &skill_ids(DESCRIPTION_LOOKUP_CONCURRENCY + 1),
-            )
-            .await
-    });
-    let mut blocked = HashMap::new();
+async fn description_enrichment_never_calls_the_pull_counting_detail_route() {
+    let detail_path = format!("{DETAIL_FIXTURE_PREFIX}tempting-skill");
+    let tempting_detail_reply = Reply {
+        path: Some(detail_path),
+        query: None,
+        status: StatusCode::OK,
+        body: serde_json::json!({
+            "guid": "guid-tempting",
+            "name": "tempting-skill",
+            "description": "detail metadata must remain untouched"
+        }),
+    };
+    let (base, requests, server) = registry(vec![
+        tempting_detail_reply,
+        Reply::ok(page(
+            vec![serde_json::json!({
+                "guid": "guid-tempting",
+                "name": "tempting-skill",
+                "description": "side-effect-free search metadata"
+            })],
+            false,
+            None,
+        )),
+    ])
+    .await;
 
-    for _ in 0..DESCRIPTION_LOOKUP_CONCURRENCY {
-        let search = tokio::time::timeout(std::time::Duration::from_secs(1), started.recv())
-            .await
-            .expect("eight search handlers start")
-            .expect("blocking registry remains connected");
-        assert!(
-            blocked.insert(search.skill, search.release).is_none(),
-            "each selected search starts once"
-        );
-    }
-    assert_eq!(
-        current.load(Ordering::SeqCst),
-        DESCRIPTION_LOOKUP_CONCURRENCY
-    );
-    assert_eq!(
-        maximum.load(Ordering::SeqCst),
-        DESCRIPTION_LOOKUP_CONCURRENCY
-    );
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(250), started.recv())
-            .await
-            .is_err(),
-        "the ninth search must remain gated while eight handlers are blocked"
-    );
-
-    blocked
-        .remove("skill-0")
-        .expect("the ordered first search is blocked")
-        .send(())
-        .expect("release the first search");
-    let ninth = tokio::time::timeout(std::time::Duration::from_secs(1), started.recv())
+    let described = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &[SkillId::new("tempting-skill")],
+        )
         .await
-        .expect("the ninth search starts after one completion")
-        .expect("blocking registry remains connected");
-    assert_eq!(ninth.skill, "skill-8");
-    assert!(blocked.insert(ninth.skill, ninth.release).is_none());
-    assert_eq!(
-        current.load(Ordering::SeqCst),
-        DESCRIPTION_LOOKUP_CONCURRENCY
-    );
-    assert_eq!(
-        maximum.load(Ordering::SeqCst),
-        DESCRIPTION_LOOKUP_CONCURRENCY
-    );
+        .expect("search metadata resolves without materializing the package");
 
-    for release in blocked.into_values() {
-        release.send(()).expect("release remaining search");
-    }
-    let described = tokio::time::timeout(std::time::Duration::from_secs(1), operation)
-        .await
-        .expect("description call completes")
-        .expect("description task does not panic")
-        .expect("released search responses are valid");
+    assert_eq!(described.len(), 1);
     assert_eq!(
-        described
+        described[0].skill.description,
+        "side-effect-free search metadata"
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests
             .iter()
-            .map(|skill| skill.name.clone())
-            .collect::<Vec<_>>(),
-        (0..=DESCRIPTION_LOOKUP_CONCURRENCY)
-            .map(|number| format!("skill-{number}"))
-            .collect::<Vec<_>>()
+            .filter(|request| parsed(request).path().starts_with(DETAIL_FIXTURE_PREFIX))
+            .count(),
+        0,
+        "authenticated detail GETs increment Ornn pull counts"
     );
-    assert_eq!(current.load(Ordering::SeqCst), 0);
-    assert_eq!(
-        maximum.load(Ordering::SeqCst),
-        DESCRIPTION_LOOKUP_CONCURRENCY
-    );
+    assert_catalogue_search(&requests[0]);
     server.abort();
 }

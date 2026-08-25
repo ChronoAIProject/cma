@@ -138,9 +138,10 @@ pub use directory::{
     MAX_DIRECTORY_LIMIT,
 };
 pub use environment::{
-    AgentConfiguration, Baseline, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
-    EnvironmentProfileSpec, EnvironmentVariable, GrantedSkill, ResolvedEnvironment,
-    ServiceAvailability, ServiceCatalog, ServiceId, SkillCatalog, SkillId, SoftwarePackage,
+    AgentConfiguration, Baseline, CatalogError, CatalogService, CatalogSkill, DescribedSkill,
+    EnvironmentProfile, EnvironmentProfileSpec, EnvironmentVariable, GrantedSkill,
+    ResolvedEnvironment, ServiceAvailability, ServiceCatalog, ServiceId, SkillCatalog, SkillId,
+    SoftwarePackage,
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;

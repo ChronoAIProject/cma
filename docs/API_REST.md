@@ -796,28 +796,30 @@ coded `503 skill_catalogue_unavailable` problem and no catalogue body. Its
 detail is fixed and never reflects an upstream URL, cursor, or transport error.
 The route never presents the pages collected so far as a complete picker.
 
-Session reads do not repeat that full walk. Starting with the first rendered
-session and then each session's recorded skill order, CMA selects the first 50
-distinct skill ids or slugs for targeted keyword searches. A repeated id keeps
-its first position and consumes no second lookup. Search results are accepted
-only when their GUID or slug exactly equals the recorded grant; fuzzy-only hits
-never supply metadata. At most eight registry requests are in flight at once,
-and no more than 50 are made for one response, leaving headroom below Ornn's
-60-search-per-minute caller limit even for a collection page containing the
-maximum 200 sessions. These metadata searches never call Ornn's skill-detail
-route, which records authenticated reads as package pulls.
+Session reads make one side-effect-free catalogue walk for all distinct recorded
+skill identifiers on the rendered response. That walk sends no fuzzy `q`, follows
+the same opaque cursor in pages of 100, and stops at the same ceiling of 50 pages
+/ 5,000 rows. It therefore enriches a valid profile containing 100 caller skills
+plus mandatory baseline skills in at most 50 upstream requests, rather than one
+request per grant. A repeated durable identifier keeps its first request order
+and consumes no separate work. The walk never calls Ornn's
+`/api/v1/skills/{idOrName}` detail route, whose authenticated GET records a
+package pull in Mongo and PostHog.
 
-Selected entries receive `agent.skills[].name` and `description` even when the
-skill would have appeared after the picker's first registry page. Entries after
-the first-50 budget are not looked up: they remain in their original positions
-with the raw recorded `id` and `version`, and omit current catalogue metadata.
-The same raw fallback applies when the registry cannot be asked. If one selected
-skill has since been removed, is no longer visible, or yields only fuzzy hits on
-a terminal search page, only that entry remains raw while descriptions for the
-other exact, visible selected grants are still returned. If a fuzzy page says
-more matches remain before an exact match is found, CMA does not mistake that
-bounded partial search for proof of absence: enrichment fails visibly in logs
-and the whole rendered response keeps its raw grants.
+Only an exact registry GUID or exact slug can supply `agent.skills[].name` and
+`description`; substring matches never do. Each result is keyed to the durable
+identifier it resolved, so a successful GUID cannot accidentally supply metadata
+for a colliding slug. A slug shared by multiple rows is ambiguous and remains
+raw without hiding metadata for other identifiers. A removed, inaccessible, or
+malformed entry likewise affects only identifiers it claims to represent.
+
+Enrichment is best-effort because the durable grants are already the authority.
+After a later page or transport failure, exact GUID matches collected on earlier
+pages remain usable; slug-only matches remain raw because an unseen page could
+still contain a colliding alias. If no safe metadata was collected, the catalogue
+failure is logged and the rendered response still carries every raw grant. In
+all cases enrichment changes only `name` and `description`: recorded order, `id`,
+and `version` remain byte-for-byte stable.
 
 ---
 

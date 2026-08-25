@@ -19,8 +19,8 @@ use std::sync::Arc;
 use crate::authz::{Caller, Capability};
 use crate::clock::now_rfc3339;
 use crate::environment::{
-    AgentConfiguration, Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
-    ResolvedEnvironment, ServiceAvailability, SkillCatalog, SkillId,
+    AgentConfiguration, Baseline, CatalogSkill, DescribedSkill, EnvironmentProfile,
+    EnvironmentProfileSpec, ResolvedEnvironment, ServiceAvailability, SkillCatalog, SkillId,
 };
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
@@ -589,18 +589,17 @@ impl EnvironmentProfileService {
             })
     }
 
-    /// Describe the named skills without listing the picker catalogue.
+    /// Describe the named skills through the catalogue's bounded projection.
     ///
     /// Session views already hold the durable grant. This lookup supplies only
-    /// display metadata for those identifiers, so an adapter can use the
-    /// registry's bounded metadata search instead of paging every selectable
-    /// skill on every session read.
+    /// display metadata for those identifiers, so an adapter can use one
+    /// bounded projection instead of one upstream request per durable grant.
     pub async fn describe_skills(
         &self,
         caller: &Caller,
         credential: Option<&str>,
         skills: &[SkillId],
-    ) -> Result<Vec<CatalogSkill>, CoreError> {
+    ) -> Result<Vec<DescribedSkill>, CoreError> {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
