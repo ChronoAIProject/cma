@@ -229,10 +229,25 @@ fn an_action_with_nothing_in_its_body_records_nothing_from_one() {
 }
 
 #[test]
+fn both_event_cursor_spellings_produce_the_same_activity_detail() {
+    let detail_for = |key: &str| {
+        let mut detail = ActivityDetail::new();
+        detail_from_query(Some(&format!("{key}=1042")), &mut detail);
+        detail
+    };
+
+    let canonical = detail_for("starting_after");
+    let alias = detail_for("after");
+    assert_eq!(canonical, alias);
+    assert_eq!(canonical.get(DetailKey::Cursor), Some("1042"));
+    assert_eq!(canonical.iter().count(), 1);
+}
+
+#[test]
 fn a_cursor_and_a_limit_are_read_from_a_query_and_nothing_else_is() {
     let mut detail = ActivityDetail::new();
     detail_from_query(
-        Some("after=1042&limit=50&actor=76fe9d91&unexpected=should-never-appear"),
+        Some("starting_after=1042&limit=50&actor=76fe9d91&unexpected=should-never-appear"),
         &mut detail,
     );
 
@@ -248,9 +263,14 @@ fn a_cursor_and_a_limit_are_read_from_a_query_and_nothing_else_is() {
 
 #[test]
 fn a_query_value_that_is_not_a_number_where_one_is_expected_is_ignored() {
-    let mut detail = ActivityDetail::new();
-    detail_from_query(Some("after=yesterday&limit=all"), &mut detail);
-    assert!(detail.is_empty());
+    for query in [
+        "starting_after=yesterday&limit=all",
+        "after=yesterday&limit=all",
+    ] {
+        let mut detail = ActivityDetail::new();
+        detail_from_query(Some(query), &mut detail);
+        assert!(detail.is_empty(), "for {query}");
+    }
 }
 
 #[test]
@@ -333,7 +353,7 @@ fn a_ticket_never_reaches_a_record() {
     // acceptable only while nothing writes it down.
     let mut detail = ActivityDetail::new();
     detail_from_query(
-        Some("ticket=aaaaaaaabbbbbbbbccccccccdddddddd&after=7"),
+        Some("ticket=aaaaaaaabbbbbbbbccccccccdddddddd&starting_after=7"),
         &mut detail,
     );
     let rendered = format!("{detail:?}");
