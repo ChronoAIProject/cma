@@ -16,7 +16,7 @@
 //! * **Values are never rendered.** A variable's value is exactly the place a
 //!   caller will put a token, so `Debug` redacts it and nothing here logs one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -101,7 +101,7 @@ pub struct AgentConfiguration {
 }
 
 /// What a caller supplies when creating or replacing a profile.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentProfileSpec {
     /// Name the owner recognises it by.
     pub name: String,
@@ -143,9 +143,22 @@ pub struct EnvironmentProfileSpec {
 impl EnvironmentProfileSpec {
     /// Reject anything that cannot be stored or handed to a runtime.
     ///
-    /// Runs before the baseline is applied, so a caller is never told their
-    /// request is too large because of entries the platform added.
+    /// This baseline-free form is useful to code that owns no deployment
+    /// configuration. Profile services use `validate_with_baseline` so a
+    /// normalized response remains echoable after mandatory entries are added.
     pub fn validate(&self) -> Result<(), CoreError> {
+        self.validate_with_baseline(&Baseline::default())
+    }
+
+    /// Reject invalid content while treating one copy of each mandatory entry
+    /// as deployment-owned rather than caller-controlled.
+    ///
+    /// GET includes today's baseline, so only one occurrence per distinct
+    /// current mandatory identity is discounted. Repeated mandatory identifiers
+    /// and identities retired from the current baseline consume the caller's
+    /// bound. The profile service separately permits an exact normalized no-op
+    /// before this validation; every changed write is checked here.
+    pub fn validate_with_baseline(&self, baseline: &Baseline) -> Result<(), CoreError> {
         let name = self.name.trim();
         if name.is_empty() {
             return Err(CoreError::InvalidRequest("name must not be empty".into()));
@@ -156,9 +169,6 @@ impl EnvironmentProfileSpec {
             )));
         }
         check_length("variables", self.variables.len())?;
-        check_length("packages", self.packages.len())?;
-        check_length("skills", self.agent.skills.len())?;
-        check_length("services", self.services.len())?;
 
         let mut seen: Vec<&str> = Vec::with_capacity(self.variables.len());
         for variable in &self.variables {
@@ -205,8 +215,41 @@ impl EnvironmentProfileSpec {
                 ));
             }
         }
+
+        check_baseline_aware_length(
+            "packages",
+            self.packages.iter().map(|package| package.name.as_str()),
+            baseline
+                .packages
+                .iter()
+                .map(|package| package.name.as_str()),
+        )?;
+        check_baseline_aware_length(
+            "skills",
+            self.agent.skills.iter().map(|skill| skill.0.as_str()),
+            baseline.skills.iter().map(|skill| skill.0.as_str()),
+        )?;
+        check_baseline_aware_length(
+            "services",
+            self.services.iter().map(|service| service.0.as_str()),
+            baseline.services.iter().map(|service| service.0.as_str()),
+        )?;
         Ok(())
     }
+}
+
+fn check_baseline_aware_length<'entry, 'mandatory>(
+    what: &str,
+    entries: impl IntoIterator<Item = &'entry str>,
+    mandatory: impl IntoIterator<Item = &'mandatory str>,
+) -> Result<(), CoreError> {
+    let mandatory: HashSet<&str> = mandatory.into_iter().collect();
+    let mut discounted = HashSet::new();
+    let caller_controlled = entries
+        .into_iter()
+        .filter(|entry| !(mandatory.contains(*entry) && discounted.insert(*entry)))
+        .count();
+    check_length(what, caller_controlled)
 }
 
 fn check_length(what: &str, len: usize) -> Result<(), CoreError> {
@@ -253,15 +296,17 @@ pub struct EnvironmentProfile {
     pub created_at: String,
     /// Last modification timestamp, RFC 3339 in UTC.
     pub updated_at: String,
-    /// Whether its owner has made this the profile their sessions start from.
+    /// Whether clients should preselect this profile for its owner.
     ///
     /// At most one of a subject's profiles holds it. Kept here rather than as
     /// a pointer beside the subject because it is a fact about the profile
     /// that is read whenever the profile is — a separate record would have to
     /// be fetched to answer a question the list already answers.
     ///
-    /// `#[serde(default)]` so a profile stored before this reads back as not
-    /// the default, which is the right answer for every one of them.
+    /// This is presentation state only. Session creation never consults it: an
+    /// unqualified create uses deployment defaults, and a qualified create uses
+    /// the id in that request. `#[serde(default)]` keeps older stored profiles
+    /// readable as not preselected.
     #[serde(default)]
     pub preferred: bool,
 }
@@ -291,6 +336,22 @@ impl EnvironmentProfile {
             agent_notes: self.agent_notes.clone(),
         }
     }
+
+    /// Replace caller-controlled content without touching server-owned state.
+    ///
+    /// Store implementations use this in their in-memory doubles to mirror the
+    /// atomic database operation. Identity, ownership, creation time, and
+    /// client preselection remain exactly as they are at the instant of the
+    /// replacement.
+    pub fn apply_content(&mut self, content: &EnvironmentProfileSpec, updated_at: &str) {
+        self.name = content.name.clone();
+        self.agent = content.agent.clone();
+        self.variables = content.variables.clone();
+        self.packages = content.packages.clone();
+        self.services = content.services.clone();
+        self.agent_notes = content.agent_notes.clone();
+        self.updated_at = updated_at.to_string();
+    }
 }
 
 /// The entries every session carries whether or not anyone asked for them.
@@ -314,9 +375,9 @@ impl Baseline {
         services: impl IntoIterator<Item = ServiceId>,
     ) -> Self {
         Self {
-            packages: packages.into_iter().collect(),
-            skills: skills.into_iter().collect(),
-            services: services.into_iter().collect(),
+            packages: unique_by_identity(packages, |package| package.name.clone()),
+            skills: unique_by_identity(skills, |skill| skill.0.clone()),
+            services: unique_by_identity(services, |service| service.0.clone()),
         }
     }
 
@@ -384,6 +445,17 @@ impl Baseline {
         }
         spec.services.extend(chosen_services);
     }
+}
+
+fn unique_by_identity<T>(
+    entries: impl IntoIterator<Item = T>,
+    identity: impl Fn(&T) -> String,
+) -> Vec<T> {
+    let mut seen = HashSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| seen.insert(identity(entry)))
+        .collect()
 }
 
 /// Everything a session's runtime is given, once a selection has been resolved.
