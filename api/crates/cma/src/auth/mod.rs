@@ -571,7 +571,7 @@ impl AuthState {
     pub async fn sessions_due_for_reissue(
         &self,
         lifetime: std::time::Duration,
-    ) -> Result<SweepBatch<(layer2_core::SessionId, SubjectId)>, StoreError> {
+    ) -> Result<SweepBatch<layer2_core::SessionId>, StoreError> {
         let now = SystemTime::now();
         let issued_before = now.checked_sub(lifetime).unwrap_or(SystemTime::UNIX_EPOCH);
         let mut epochs = self.reissue_sweep_epochs.lock().await;
@@ -738,7 +738,7 @@ impl AuthState {
         &self,
         lifetime: std::time::Duration,
         budget: &AuthOperationBudget,
-    ) -> Result<SweepBatch<(SessionId, SubjectId)>, StoreError> {
+    ) -> Result<SweepBatch<SessionId>, StoreError> {
         const ROW_OPERATIONS: usize = 1 + AUTH_REISSUE_ATTEMPT_BUDGET;
         const PAGE_LIMIT: usize = (AUTH_SWEEP_THREE_LANE_BATCH_SIZE - 1) / ROW_OPERATIONS;
 
@@ -965,7 +965,9 @@ impl AuthState {
                     next.revision = current.revision.checked_add(1).ok_or_else(|| {
                         StoreError::Malformed("subject auth revision exhausted".into())
                     })?;
-                    self.store.replace_subject(current.revision, next).await?
+                    self.store
+                        .replace_subject(&current.incarnation, current.revision, next)
+                        .await?
                 }
                 None => self.store.insert_subject(next).await?,
             };
@@ -1304,7 +1306,7 @@ fn credential_reissue_batch(
     expired_leases: Vec<AuthSweepItem<CredentialLeaseCursor, persistence::SessionCredentialState>>,
     pending: Vec<AuthSweepItem<CredentialMutationCursor, persistence::SessionCredentialState>>,
     current: Vec<AuthSweepItem<CredentialReissueCursor, persistence::SessionCredentialState>>,
-) -> SweepBatch<(SessionId, SubjectId)> {
+) -> SweepBatch<SessionId> {
     let mut first_error = None;
     let mut work = Vec::new();
     for state in expired_leases
@@ -1320,10 +1322,8 @@ fn credential_reissue_batch(
                 continue;
             }
         };
-        if let Some(pending) = state.pending {
-            work.push((state.session, pending.owner));
-        } else if let Some(current) = state.current {
-            work.push((state.session, current.owner));
+        if state.pending.is_some() || state.current.is_some() {
+            work.push(state.session);
         }
     }
     SweepBatch { work, first_error }
@@ -1393,6 +1393,8 @@ fn rebase(endpoint: &str, base: &str) -> String {
 
 pub mod bearer;
 mod delegation;
+#[cfg(test)]
+pub(crate) use delegation::empty_session_service;
 mod identity;
 mod middleware;
 mod tokens;

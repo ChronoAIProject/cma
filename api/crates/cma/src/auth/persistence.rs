@@ -182,6 +182,10 @@ pub struct DurableCredential {
     pub expires_at: Option<SystemTime>,
     /// Hash of the frozen service grant this key represents.
     pub scope_fingerprint: String,
+    /// Exact non-renewable authority that can revoke this provider key.
+    ///
+    /// Absent means revocation follows the owner's renewable subject token.
+    pub revocation_credential: Option<SecretValue>,
 }
 
 /// Stable position in the time-ordered current-credential reissue work set.
@@ -216,7 +220,7 @@ pub struct CredentialMutationCursor {
 }
 
 /// A provider key no runtime should present and revocation still owes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RevokeDebt {
     /// Provider identifier used for revocation.
     pub id: String,
@@ -224,6 +228,11 @@ pub struct RevokeDebt {
     pub owner: SubjectId,
     /// When the debt first became durable.
     pub queued_at: SystemTime,
+    /// Exact non-renewable authority retained until this debt is settled.
+    ///
+    /// The initiating request may be gone by the time a retry runs. Absent
+    /// means the owner's renewable subject token authorizes the revoke.
+    pub revocation_credential: Option<SecretValue>,
 }
 
 /// Stable position in the ordered revoke-debt work set.
@@ -355,9 +364,10 @@ pub trait AuthStore: Send + Sync {
     /// Insert only when no state exists for this subject.
     async fn insert_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError>;
 
-    /// Replace only the expected subject revision.
+    /// Replace only the expected subject lifecycle and revision.
     async fn replace_subject(
         &self,
+        expected_incarnation: &str,
         expected_revision: u64,
         state: SubjectAuthState,
     ) -> Result<bool, StoreError>;
@@ -704,8 +714,9 @@ impl AuthStore for MemoryAuthStore {
 
     async fn replace_subject(
         &self,
+        expected_incarnation: &str,
         expected_revision: u64,
-        state: SubjectAuthState,
+        mut state: SubjectAuthState,
     ) -> Result<bool, StoreError> {
         self.available()?;
         next_revision(expected_revision, state.revision, "subject auth")?;
@@ -713,8 +724,11 @@ impl AuthStore for MemoryAuthStore {
         let Some(current) = subjects.get(&state.subject) else {
             return Ok(false);
         };
-        if current.revision != expected_revision {
+        if current.incarnation != expected_incarnation || current.revision != expected_revision {
             return Ok(false);
+        }
+        if expected_incarnation.is_empty() && state.incarnation.is_empty() {
+            state.incarnation = uuid::Uuid::new_v4().simple().to_string();
         }
         let subject = state.subject.clone();
         subjects.insert(subject.clone(), state);
@@ -1056,7 +1070,11 @@ impl AuthStore for MemoryAuthStore {
             .values()
             .flat_map(|state| {
                 let sequence = sequences.get(&state.session).copied().unwrap_or_default();
-                state.revoke_debt.iter().cloned().map(move |debt| {
+                let request_bound_credential = state.request_bound_credential.clone();
+                state.revoke_debt.iter().cloned().map(move |mut debt| {
+                    if debt.revocation_credential.is_none() {
+                        debt.revocation_credential = request_bound_credential.clone();
+                    }
                     let cursor = RevokeDebtCursor {
                         sweep_sequence: sequence,
                         session: state.session.clone(),

@@ -31,7 +31,7 @@ const RENEW_MARGIN: Duration = Duration::from_secs(300);
 
 /// Run the renewal loop until the process ends.
 pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
-    let provider_renewal = auth.requires_credential();
+    let oauth_renewal = auth.requires_credential();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(SWEEP_INTERVAL);
         loop {
@@ -42,7 +42,7 @@ pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
     tracing::info!(
         sweep_seconds = SWEEP_INTERVAL.as_secs(),
         margin_seconds = RENEW_MARGIN.as_secs(),
-        provider_renewal,
+        oauth_renewal,
         "authentication maintenance started"
     );
 }
@@ -68,14 +68,10 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
         tracing::error!(error = %error, "could not maintain durable authentication schema");
     }
 
-    // Trusted mode has no provider tokens or provider credential lifecycle, but
-    // it can still open a database containing more compatibility work than one
-    // bounded store-open batch. Keep the recurring maintenance lane alive.
-    if !auth.requires_credential() {
-        return pass.used();
-    }
-
-    // Credentials this deployment minted that no session accounts for.
+    // Durable custody whose session has ended must be retired in every mode.
+    // A configuration transition can remove the issuer after a process dies,
+    // but that must not leave its request-bound bearer live indefinitely.
+    // Provider listing is attempted only when an issuer remains configured.
     //
     // A control plane that stopped between minting and releasing leaves one
     // behind, and nothing else records the pairing — the key's own name is
@@ -105,99 +101,126 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
         }
     }
 
-    let taken = match auth
-        .revoke_retired_credentials_with_budget(&revoke_debt_budget)
-        .await
-    {
-        Ok(taken) => taken,
-        Err(error) => {
-            tracing::error!(error = %error, "could not process durable credential revoke debt");
-            0
-        }
-    };
-    if taken > 0 {
-        tracing::info!(count = taken, "took back retired session credentials");
-    }
-
-    // Sessions whose own credential is old enough to swap. Distinct from the
-    // subject refresh below: that keeps this service able to mint, this keeps
-    // the sessions able to act.
-    let due_for_reissue = if reissue_budget.remaining() > 0 {
-        match auth
-            .sessions_due_for_reissue_with_budget(CREDENTIAL_LIFETIME, &reissue_budget)
+    // Revocation and recurring session-key rotation belong to the issuer, not
+    // to the interactive authentication mode. A deployment may keep its
+    // platform issuer while switching from Provider to Trusted mode; durable
+    // custody must still be settled and rotated after that transition.
+    let has_issuer = auth.sessions_hold_own_credentials().await;
+    if has_issuer {
+        let taken = match auth
+            .revoke_retired_credentials_with_budget(&revoke_debt_budget)
             .await
         {
-            Ok(batch) => {
-                if let Some(error) = batch.first_error {
-                    tracing::error!(
-                        error = %error,
-                        "one credential replacement record could not be read"
-                    );
-                }
-                batch.work
-            }
+            Ok(taken) => taken,
             Err(error) => {
-                tracing::error!(error = %error, "could not list credentials due for replacement");
-                Vec::new()
-            }
-        }
-    } else {
-        Vec::new()
-    };
-    for (session, owner) in due_for_reissue {
-        let item_budget = AuthOperationBudget::standalone(AUTH_REISSUE_ATTEMPT_BUDGET);
-        // A current session carries its granted services directly. A legacy
-        // session can require one additional environment-profile read.
-        if !item_budget.take(2) {
-            continue;
-        }
-        let services = service.session_services(&session).await;
-        let value = match auth
-            .reissue_with_budget(&session, &owner, &services, item_budget.clone())
-            .await
-        {
-            Ok(Some(value)) => value,
-            Ok(None) => {
-                tracing::warn!(session_id = %session, "could not mint a replacement credential");
-                continue;
-            }
-            Err(error) => {
-                tracing::error!(
-                    session_id = %session,
-                    error = %error,
-                    "could not update durable credential replacement state"
-                );
-                continue;
+                tracing::error!(error = %error, "could not process durable credential revoke debt");
+                0
             }
         };
-        if !item_budget.take(1) {
-            tracing::warn!(session_id = %session, "replacement remains pending because this pass exhausted its operation allowance");
-            continue;
+        if taken > 0 {
+            tracing::info!(count = taken, "took back retired session credentials");
         }
-        if service.push_session_credential(&session, value).await {
+
+        // Sessions whose own credential is old enough to swap. Distinct from
+        // the subject refresh below: that keeps this service able to mint,
+        // while this keeps the sessions able to act.
+        let due_for_reissue = if reissue_budget.remaining() > 0 {
             match auth
-                .confirm_reissue_with_budget(&session, &item_budget)
+                .sessions_due_for_reissue_with_budget(CREDENTIAL_LIFETIME, &reissue_budget)
                 .await
             {
-                Ok(true) => {
-                    tracing::info!(session_id = %session, "session credential replaced");
+                Ok(batch) => {
+                    if let Some(error) = batch.first_error {
+                        tracing::error!(
+                            error = %error,
+                            "one credential replacement record could not be read"
+                        );
+                    }
+                    batch.work
                 }
-                Ok(false) => {
-                    // Release may have won the race after delivery. Its
-                    // durable retirement owns both values in that case.
-                    tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
+                Err(error) => {
+                    tracing::error!(error = %error, "could not list credentials due for replacement");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        for session in due_for_reissue {
+            let item_budget = AuthOperationBudget::standalone(AUTH_REISSUE_ATTEMPT_BUDGET);
+            // This authoritative session read supplies both owner and grant. A
+            // legacy session can require one additional environment-profile read.
+            if !item_budget.take(2) {
+                continue;
+            }
+            let (owner, services) = match service.session_credential_context(&session).await {
+                Ok(Some(context)) => context,
+                Ok(None) => {
+                    tracing::warn!(session_id = %session, "credential replacement has no active session context");
+                    continue;
                 }
                 Err(error) => {
                     tracing::error!(
                         session_id = %session,
                         error = %error,
-                        "could not confirm durable credential replacement"
+                        "could not read session context for credential replacement"
                     );
+                    continue;
                 }
+            };
+            let value = match auth
+                .reissue_with_budget(&session, &owner, &services, item_budget.clone())
+                .await
+            {
+                Ok(Some(value)) => value,
+                Ok(None) => {
+                    tracing::warn!(session_id = %session, "could not mint a replacement credential");
+                    continue;
+                }
+                Err(error) => {
+                    tracing::error!(
+                        session_id = %session,
+                        error = %error,
+                        "could not update durable credential replacement state"
+                    );
+                    continue;
+                }
+            };
+            if !item_budget.take(1) {
+                tracing::warn!(session_id = %session, "replacement remains pending because this pass exhausted its operation allowance");
+                continue;
             }
-        } else {
-            tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
+            if service.push_session_credential(&session, value).await {
+                match auth
+                    .confirm_reissue_with_budget(&session, &item_budget)
+                    .await
+                {
+                    Ok(true) => {
+                        tracing::info!(session_id = %session, "session credential replaced");
+                    }
+                    Ok(false) => {
+                        // Release may have won the race after delivery. Its
+                        // durable retirement owns both values in that case.
+                        tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            session_id = %session,
+                            error = %error,
+                            "could not confirm durable credential replacement"
+                        );
+                    }
+                }
+            } else {
+                tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
+            }
         }
+    }
+
+    // OAuth subject-token refresh is meaningful only in Provider mode. The
+    // issuer work above deliberately remains active in Trusted mode.
+    if !auth.requires_credential() {
+        return pass.used();
     }
 
     let due = if refresh_budget.remaining() > 0 {
@@ -240,7 +263,6 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
      * Their own keys are replaced on age by the reissue above, which is the
      * rotation that belongs to a session rather than to a person.
      */
-    let sessions_run_on_own_keys = auth.sessions_hold_own_credentials().await;
     for due in due {
         let subject = due.subject;
         let item_budget = AuthOperationBudget::standalone(AUTH_REFRESH_ATTEMPT_BUDGET);
@@ -255,7 +277,7 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
             .await
         {
             Ok(access_token) => {
-                if sessions_run_on_own_keys {
+                if has_issuer {
                     // Said out loud rather than at debug. This is the branch
                     // that stops an owner's whole identity reaching their
                     // sessions, and a silent branch cannot be confirmed to
@@ -293,13 +315,33 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
 mod tests {
     use super::*;
     use crate::auth::persistence::{
-        AuthStore, CredentialLease, DurableCredential, MemoryAuthStore, SecretValue,
+        AuthStore, CredentialLease, DurableCredential, MemoryAuthStore, RevokeDebt, SecretValue,
         SessionCredentialState, SubjectRefreshLease,
     };
     use crate::auth::{AuthMode, SubjectTokens};
     use layer2_core::{SessionId, SubjectId};
     use std::collections::HashSet;
     use std::time::SystemTime;
+
+    #[derive(Clone, Default)]
+    struct TrustedDebtPlatform {
+        deleted: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    async fn delete_trusted_debt(
+        axum::extract::State(platform): axum::extract::State<TrustedDebtPlatform>,
+        axum::extract::Path(id): axum::extract::Path<String>,
+        headers: axum::http::HeaderMap,
+    ) -> axum::http::StatusCode {
+        assert_eq!(
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        platform.deleted.lock().expect("delete log lock").push(id);
+        axum::http::StatusCode::NO_CONTENT
+    }
 
     fn tokens(expires_in: Duration, refresh: Option<&str>) -> SubjectTokens {
         SubjectTokens {
@@ -487,13 +529,14 @@ mod tests {
                 .expect("store works")
                 .expect("leased subject exists");
             let revision = state.revision;
+            let incarnation = state.incarnation.clone();
             state.revision += 1;
             state.refresh_lease = Some(SubjectRefreshLease {
                 holder: "abandoned-worker".into(),
                 expires_at: SystemTime::now() - Duration::from_secs(1),
             });
             assert!(store
-                .replace_subject(revision, state)
+                .replace_subject(&incarnation, revision, state)
                 .await
                 .expect("expired lease persists"));
         }
@@ -570,12 +613,16 @@ mod tests {
             .unwrap()
             .expect("leased subject exists");
         let revision = state.revision;
+        let incarnation = state.incarnation.clone();
         state.revision += 1;
         state.refresh_lease = Some(SubjectRefreshLease {
             holder: "abandoned-worker".into(),
             expires_at: SystemTime::now() - Duration::from_secs(1),
         });
-        assert!(store.replace_subject(revision, state).await.unwrap());
+        assert!(store
+            .replace_subject(&incarnation, revision, state)
+            .await
+            .unwrap());
 
         store.fail_scan_on_call(4);
         assert!(matches!(
@@ -612,6 +659,7 @@ mod tests {
             issued_at,
             expires_at: None,
             scope_fingerprint: "scope".into(),
+            revocation_credential: None,
         };
         let ordinary_lane_work = crate::auth::AUTH_SWEEP_BATCH_SIZE / 3 + 2;
         for number in 0..ordinary_lane_work {
@@ -674,21 +722,21 @@ mod tests {
         assert_eq!(
             first
                 .iter()
-                .filter(|(session, _)| session.as_str().starts_with("current-"))
+                .filter(|session| session.as_str().starts_with("current-"))
                 .count(),
             crate::auth::AUTH_SWEEP_BATCH_SIZE / 3
         );
         assert_eq!(
             first
                 .iter()
-                .filter(|(session, _)| session.as_str().starts_with("pending-"))
+                .filter(|session| session.as_str().starts_with("pending-"))
                 .count(),
             crate::auth::AUTH_SWEEP_BATCH_SIZE / 3
         );
         assert_eq!(
             first
                 .iter()
-                .filter(|(session, _)| session.as_str().starts_with("expired-lease-"))
+                .filter(|session| session.as_str().starts_with("expired-lease-"))
                 .count(),
             lease_lane_size
         );
@@ -717,7 +765,7 @@ mod tests {
         assert_eq!(
             second
                 .iter()
-                .filter(|(session, _)| session.as_str().starts_with("current-"))
+                .filter(|session| session.as_str().starts_with("current-"))
                 .count(),
             2
         );
@@ -729,18 +777,18 @@ mod tests {
         assert_eq!(wrapped.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
         assert!(wrapped
             .iter()
-            .any(|(session, _)| session.as_str() == "pending-000"));
+            .any(|session| session.as_str() == "pending-000"));
         assert_eq!(
             second
                 .iter()
-                .filter(|(session, _)| session.as_str().starts_with("expired-lease-"))
+                .filter(|session| session.as_str().starts_with("expired-lease-"))
                 .count(),
             2
         );
         assert_eq!(
             second
                 .iter()
-                .filter(|(session, _)| session.as_str().starts_with("pending-"))
+                .filter(|session| session.as_str().starts_with("pending-"))
                 .count(),
             2
         );
@@ -765,6 +813,7 @@ mod tests {
             issued_at,
             expires_at: None,
             scope_fingerprint: "scope".into(),
+            revocation_credential: None,
         };
         for number in 0..40 {
             assert!(store
@@ -808,10 +857,10 @@ mod tests {
             .expect("retry starts from the unpublished epochs");
         assert!(retry
             .iter()
-            .any(|(session, _)| session.as_str() == "pending-000"));
+            .any(|session| session.as_str() == "pending-000"));
         assert!(retry
             .iter()
-            .any(|(session, _)| session.as_str() == "current-000"));
+            .any(|session| session.as_str() == "current-000"));
     }
 
     #[tokio::test]
@@ -858,6 +907,7 @@ mod tests {
             issued_at,
             expires_at: None,
             scope_fingerprint: "scope".into(),
+            revocation_credential: None,
         };
         for number in 0..REISSUE_PER_SUBLANE {
             for (kind, pending, lease) in [
@@ -901,12 +951,16 @@ mod tests {
                 .expect("leased refresh work persists");
             let mut state = store.subject(&subject).await.unwrap().unwrap();
             let revision = state.revision;
+            let incarnation = state.incarnation.clone();
             state.revision += 1;
             state.refresh_lease = Some(SubjectRefreshLease {
                 holder: "expired-worker".into(),
                 expires_at: SystemTime::now() - Duration::from_secs(1),
             });
-            assert!(store.replace_subject(revision, state).await.unwrap());
+            assert!(store
+                .replace_subject(&incarnation, revision, state)
+                .await
+                .unwrap());
         }
 
         let mut reissued = HashSet::new();
@@ -928,7 +982,7 @@ mod tests {
                 .sessions_due_for_reissue_with_budget(Duration::ZERO, &reissue)
                 .await
                 .expect("bounded reissue selection succeeds");
-            for (session, _) in due_reissue {
+            for session in due_reissue {
                 assert!(
                     reissued.insert(session.0),
                     "cursor must not repeat before wrap"
@@ -980,14 +1034,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn renewal_does_not_start_without_a_provider() {
-        // Trusted mode has no tokens to renew; starting a loop would be noise.
-        let auth = AuthState::new(
+    async fn trusted_mode_with_an_issuer_processes_durable_revoke_debt() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
             AuthMode::Trusted {
                 subject: "local".into(),
             },
             None,
+            store.clone(),
         );
         assert!(!auth.requires_credential());
+
+        let owner = SubjectId("owner".into());
+        let session = SessionId("sesn_trusted_mode_debt".into());
+        store
+            .insert_credential(SessionCredentialState {
+                session: session.clone(),
+                generation: 0,
+                request_bound_credential: None,
+                current: None,
+                pending: None,
+                revoke_debt: vec![RevokeDebt {
+                    id: "provider-key".into(),
+                    owner,
+                    queued_at: SystemTime::now(),
+                    revocation_credential: Some(SecretValue::new("owner-access".into())),
+                }],
+                lease: None,
+                retired: true,
+            })
+            .await
+            .expect("revoke debt persists");
+
+        let platform = TrustedDebtPlatform::default();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/api-keys/{id}",
+                axum::routing::delete(delete_trusted_debt),
+            )
+            .with_state(platform.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind revoke platform");
+        let base = format!("http://{}", listener.local_addr().expect("local address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve revoke platform");
+        });
+        auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+            reqwest::Client::new(),
+            base,
+            "test",
+        )))
+        .await;
+
+        let service = crate::auth::empty_session_service();
+        sweep_once(&auth, &service).await;
+
+        assert_eq!(
+            *platform.deleted.lock().expect("delete log lock"),
+            vec!["provider-key".to_string()]
+        );
+        assert!(store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("settled terminal custody remains until TTL cleanup")
+            .revoke_debt
+            .is_empty());
+        server.abort();
     }
 }
