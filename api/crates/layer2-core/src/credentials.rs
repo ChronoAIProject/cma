@@ -68,11 +68,6 @@ impl SessionService {
             .await
     }
 
-    /// What this session's profile says its credential may reach.
-    ///
-    /// Read from the session rather than from the request that created it, so
-    /// a credential minted long afterwards — for a replaced runtime, or after
-    /// a restart — is scoped the same way the first one was.
     /// Whether this session still exists and could present a credential.
     ///
     /// A terminated session is not live even while its record remains: the
@@ -110,6 +105,26 @@ impl SessionService {
         self.services_for(id).await
     }
 
+    /// Authoritative owner and frozen grant for recurring credential work.
+    ///
+    /// Missing or terminal sessions have no context that can authorize a mint
+    /// or delivery. Store failures remain distinguishable from that absence.
+    pub async fn session_credential_context(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<(SubjectId, Vec<crate::environment::ServiceId>)>, crate::store::StoreError>
+    {
+        let Some(record) = self.store.get(id).await? else {
+            return Ok(None);
+        };
+        if record.session.status.is_terminal() {
+            return Ok(None);
+        }
+        let owner = record.session.owner.clone();
+        let services = self.services_for_record(&record).await;
+        Ok(Some((owner, services)))
+    }
+
     /// Hand one session a credential that was minted for it.
     ///
     /// Separate from the subject-wide push because a per-session credential is
@@ -130,6 +145,14 @@ impl SessionService {
         let Ok(Some(record)) = self.store.get(id).await else {
             return Vec::new();
         };
+        self.services_for_record(&record).await
+    }
+
+    /// What this session's recorded grant says its credential may reach.
+    async fn services_for_record(
+        &self,
+        record: &crate::store::SessionRecord,
+    ) -> Vec<crate::environment::ServiceId> {
         // The session's own answer, not its profile's. A credential minted long
         // afterwards — for a replaced runtime, or after a restart — is scoped
         // the way the first one was, even if the bundle it was started from has

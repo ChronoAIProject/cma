@@ -45,6 +45,7 @@ fn credential(id: &str, issued_at: SystemTime) -> DurableCredential {
         issued_at,
         expires_at: None,
         scope_fingerprint: "scope".into(),
+        revocation_credential: None,
     }
 }
 
@@ -106,8 +107,8 @@ async fn subject_compare_and_swap_has_one_winner() {
     let store = Arc::new(MemoryAuthStore::default());
     assert!(store.insert_subject(subject_state(0)).await.unwrap());
     let (left, right) = tokio::join!(
-        store.replace_subject(0, subject_state(1)),
-        store.replace_subject(0, subject_state(1))
+        store.replace_subject("subject-incarnation-a", 0, subject_state(1)),
+        store.replace_subject("subject-incarnation-a", 0, subject_state(1))
     );
     assert_eq!(
         [left.unwrap(), right.unwrap()]
@@ -115,6 +116,54 @@ async fn subject_compare_and_swap_has_one_winner() {
             .filter(|won| *won)
             .count(),
         1
+    );
+}
+
+#[tokio::test]
+async fn subject_compare_and_swap_upgrades_an_empty_legacy_incarnation() {
+    let store = MemoryAuthStore::default();
+    let mut legacy = subject_state(0);
+    legacy.incarnation.clear();
+    let subject = legacy.subject.clone();
+    assert!(store.insert_subject(legacy.clone()).await.unwrap());
+
+    legacy.revision = 1;
+    assert!(store.replace_subject("", 0, legacy).await.unwrap());
+    assert!(!store
+        .subject(&subject)
+        .await
+        .unwrap()
+        .unwrap()
+        .incarnation
+        .is_empty());
+}
+
+#[tokio::test]
+async fn subject_compare_and_swap_rejects_ttl_recreation_revision_aba() {
+    let store = MemoryAuthStore::default();
+    let original = subject_state(0);
+    let subject = original.subject.clone();
+    assert!(store.insert_subject(original.clone()).await.unwrap());
+
+    store.subjects.lock().await.remove(&subject);
+    store.subject_sweep_sequences.lock().await.remove(&subject);
+    let mut replacement = subject_state(0);
+    replacement.incarnation = "replacement-incarnation".into();
+    replacement.profile.display_name = Some("replacement".into());
+    assert!(store.insert_subject(replacement).await.unwrap());
+
+    let mut stale_write = original;
+    stale_write.revision = 1;
+    stale_write.profile.display_name = Some("stale".into());
+    assert!(!store
+        .replace_subject("subject-incarnation-a", 0, stale_write)
+        .await
+        .unwrap());
+    let retained = store.subject(&subject).await.unwrap().unwrap();
+    assert_eq!(retained.incarnation, "replacement-incarnation");
+    assert_eq!(
+        retained.profile.display_name.as_deref(),
+        Some("replacement")
     );
 }
 
@@ -279,11 +328,13 @@ async fn credential_work_pages_are_bounded_and_skip_only_settled_history() {
             id: "debt-a".into(),
             owner: SubjectId("owner".into()),
             queued_at: old,
+            revocation_credential: None,
         },
         RevokeDebt {
             id: "debt-b".into(),
             owner: SubjectId("owner".into()),
             queued_at: old,
+            revocation_credential: None,
         },
     ];
     assert!(store.insert_credential(first).await.unwrap());
@@ -315,6 +366,7 @@ async fn credential_work_pages_are_bounded_and_skip_only_settled_history() {
         id: "debt-e".into(),
         owner: SubjectId("owner".into()),
         queued_at: old,
+        revocation_credential: None,
     });
     assert!(store.insert_credential(retired_debt).await.unwrap());
     let through_sequence = store.auth_sweep_high_water().await.unwrap();
@@ -451,7 +503,7 @@ async fn subject_revision_overflow_is_rejected_instead_of_saturating() {
 
     assert!(matches!(
         store
-            .replace_subject(u64::MAX, subject_state(u64::MAX))
+            .replace_subject("subject-incarnation-a", u64::MAX, subject_state(u64::MAX),)
             .await,
         Err(StoreError::Malformed(_))
     ));
