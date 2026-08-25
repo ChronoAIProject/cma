@@ -20,9 +20,10 @@ use axum::{
 use layer2_core::{
     AgentConfiguration, Authorization, Baseline, Capability, CatalogError, CatalogService,
     CatalogSkill, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentProfileService, EnvironmentProfileStore, EnvironmentVariable, KernelId, Page,
-    PageRequest, PermissionMode, ReasoningEffort, ServiceCatalog, ServiceId, SessionMode,
-    SessionSize, SkillCatalog, SkillId, SoftwarePackage, StoreError, SubjectId,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore,
+    EnvironmentVariable, KernelId, Page, PageRequest, PermissionMode, ReasoningEffort,
+    ServiceCatalog, ServiceId, SessionMode, SessionSize, SkillCatalog, SkillId, SoftwarePackage,
+    StoreError, SubjectId,
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -102,6 +103,7 @@ impl ServiceCatalog for UnavailableCatalog {
 struct RecordingProfileStore {
     profiles: Mutex<HashMap<String, EnvironmentProfile>>,
     upserts: AtomicUsize,
+    replacements: AtomicUsize,
 }
 
 impl RecordingProfileStore {
@@ -134,6 +136,22 @@ impl EnvironmentProfileStore for RecordingProfileStore {
             .expect("profile store lock")
             .insert(profile.id.0.clone(), profile.clone());
         Ok(())
+    }
+
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        let mut profiles = self.profiles.lock().expect("profile store lock");
+        let Some(profile) = profiles.get_mut(&id.0) else {
+            return Ok(None);
+        };
+        profile.apply_content(content, updated_at);
+        let profile = profile.clone();
+        self.replacements.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(profile))
     }
 
     async fn get(
@@ -473,7 +491,7 @@ fn documented_profile(preferred: bool) -> EnvironmentProfile {
         ],
         agent_notes: "Keep the caller's standing instructions byte for byte.".into(),
         created_at: "2026-08-25T09:00:00Z".into(),
-        updated_at: "2026-08-25T09:30:00Z".into(),
+        updated_at: "2026-08-25T09:00:00Z".into(),
         preferred,
     }
 }
@@ -556,6 +574,7 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
         1,
         "an exact echo is a no-op rather than a timestamp-only store write"
     );
+    assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
 
     let after = send(&harness.app, Method::GET, &profile_uri, None).await;
     assert_eq!(after.status, StatusCode::OK);
@@ -564,6 +583,70 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
         after.bytes, before.bytes,
         "echoing every writable field must leave the complete ProfileView JSON byte-identical"
     );
+}
+
+#[tokio::test]
+async fn maximum_caller_lists_plus_the_baseline_echo_byte_identically_without_a_write() {
+    let harness = Harness::new();
+    let request = ProfileRequest {
+        name: "boundary profile".into(),
+        variables: Vec::new(),
+        packages: (0..100)
+            .map(|i| PackageBody {
+                name: format!("caller-package-{i}"),
+                version: None,
+            })
+            .collect(),
+        agent: AgentBody {
+            skills: (0..100).map(|i| format!("caller-skill-{i}")).collect(),
+            ..AgentBody::default()
+        },
+        nyxid: NyxIdBody {
+            services: (0..100).map(|i| format!("caller-service-{i}")).collect(),
+        },
+        agent_notes: String::new(),
+    };
+
+    let created = send(
+        &harness.app,
+        Method::POST,
+        "/api/v1/environment-profiles",
+        Some(serde_json::to_value(request).expect("boundary request serializes")),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    assert_eq!(created.json["packages"].as_array().unwrap().len(), 101);
+    assert_eq!(
+        created.json["agent"]["skills"].as_array().unwrap().len(),
+        101
+    );
+    assert_eq!(
+        created.json["nyxid"]["services"].as_array().unwrap().len(),
+        101
+    );
+    let id = created.json["id"].as_str().expect("created id");
+    let uri = format!("/api/v1/environment-profiles/{id}");
+    let before = send(&harness.app, Method::GET, &uri, None).await;
+    assert_eq!(before.status, StatusCode::OK);
+
+    let echoed = send(
+        &harness.app,
+        Method::PUT,
+        &uri,
+        Some(writable_projection(&before.json)),
+    )
+    .await;
+    assert_eq!(echoed.status, StatusCode::OK);
+    assert_eq!(echoed.bytes, before.bytes);
+    assert_eq!(harness.store.upserts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        harness.store.replacements.load(Ordering::SeqCst),
+        0,
+        "the accepted boundary echo remains a no-op"
+    );
+
+    let after = send(&harness.app, Method::GET, &uri, None).await;
+    assert_eq!(after.bytes, before.bytes);
 }
 
 #[tokio::test]
@@ -605,6 +688,7 @@ async fn a_legacy_get_put_get_is_byte_identical_after_deployment_defaults_change
     assert_eq!(replaced.status, StatusCode::OK);
     assert_eq!(replaced.bytes, before.bytes);
     assert_eq!(harness.store.upserts.load(Ordering::SeqCst), 0);
+    assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
     assert_eq!(
         harness.store.snapshot(PROFILE_ID),
         Some(stored_before),
@@ -866,6 +950,34 @@ fn environment_profile_documentation_examples_follow_the_wire_types() {
 #[tokio::test]
 async fn documented_collection_catalogue_and_preference_responses_are_served() {
     let section = environment_profile_documentation();
+    let create_harness = Harness::new();
+    let request = marked_examples(section, "profile-request-example")[0].clone();
+    let created = send(
+        &create_harness.app,
+        Method::POST,
+        "/api/v1/environment-profiles",
+        Some(request.clone()),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    assert_eq!(created.content_type.as_deref(), Some("application/json"));
+    assert!(created.json["id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("envp_")));
+    assert_eq!(created.json["created_at"], created.json["updated_at"]);
+    assert_eq!(created.json["preferred"], false);
+    assert_eq!(writable_projection(&created.json), request);
+    let mut expected_created = marked_examples(section, "profile-view-example")[0].clone();
+    expected_created["id"] = created.json["id"].clone();
+    expected_created["created_at"] = created.json["created_at"].clone();
+    expected_created["updated_at"] = created.json["updated_at"].clone();
+    assert_eq!(
+        created.json, expected_created,
+        "the documented 201 example has the route's complete real response shape"
+    );
+    assert_eq!(create_harness.store.upserts.load(Ordering::SeqCst), 1);
+    assert_eq!(create_harness.store.replacements.load(Ordering::SeqCst), 0);
+
     let harness = Harness::new();
     harness.store.seed(documented_profile(false));
 

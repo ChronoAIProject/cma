@@ -360,6 +360,14 @@ mod tests {
         async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
             Ok(())
         }
+        async fn replace_content(
+            &self,
+            _id: &EnvironmentProfileId,
+            _content: &EnvironmentProfileSpec,
+            _updated_at: &str,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
+        }
         async fn get(
             &self,
             _id: &EnvironmentProfileId,
@@ -455,6 +463,15 @@ mod tests {
         impl EnvironmentProfileStore for CyclingStore {
             async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
                 Ok(())
+            }
+
+            async fn replace_content(
+                &self,
+                _id: &EnvironmentProfileId,
+                _content: &EnvironmentProfileSpec,
+                _updated_at: &str,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
             }
 
             async fn get(
@@ -638,6 +655,20 @@ mod tests {
             async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError> {
                 self.0.lock().unwrap().push(profile.clone());
                 Ok(())
+            }
+
+            async fn replace_content(
+                &self,
+                id: &EnvironmentProfileId,
+                content: &EnvironmentProfileSpec,
+                updated_at: &str,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                let mut profiles = self.0.lock().unwrap();
+                let Some(profile) = profiles.iter_mut().find(|profile| profile.id == *id) else {
+                    return Ok(None);
+                };
+                profile.apply_content(content, updated_at);
+                Ok(Some(profile.clone()))
             }
 
             async fn get(

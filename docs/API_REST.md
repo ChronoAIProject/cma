@@ -125,6 +125,13 @@ Top-level fields:
 | `record_tool_bodies` | no | `false`. Whether tool arguments and results are written to the durable conversation log. The response always carries this boolean |
 | `skills` | no | `[]`, before mandatory skills are merged. Entries are skill identifiers |
 
+Each list accepts at most 100 caller-controlled entries. `packages`, `skills`,
+and `nyxid.services` may render more than 100 entries after the deployment adds
+its mandatory baseline. One occurrence of each distinct mandatory identifier is
+deployment-owned when validating POST or PUT; further duplicates count toward
+the caller's limit. A complete GET response therefore remains a valid PUT echo,
+including after the mandatory baseline grows.
+
 Every object in this request is closed: unknown fields are refused at the top
 level and inside `variables`, `packages`, `agent`, `agent.size`, and `nyxid`.
 Create and replace both return `422 invalid_request` rather than silently
@@ -178,7 +185,8 @@ entry as fixed. An owned profile containing mandatory entries can still be
 deleted with `204`; deleting the profile does not revoke the deployment's
 baseline from other profiles or sessions.
 
-**`201 Created`** returns a complete `ProfileView`:
+**`201 Created`** returns a complete `ProfileView`. On creation, `created_at`
+and `updated_at` are identical because no later content replacement has occurred:
 
 <!-- profile-view-example -->
 ```json
@@ -212,7 +220,7 @@ baseline from other profiles or sessions.
     "skills": ["mandatory-skill"]
   },
   "created_at": "2026-08-25T09:00:00Z",
-  "updated_at": "2026-08-25T09:30:00Z",
+  "updated_at": "2026-08-25T09:00:00Z",
   "preferred": false
 }
 ```
@@ -258,7 +266,7 @@ GET /api/v1/environment-profiles?limit=50
       "skills": ["mandatory-skill"]
     },
     "created_at": "2026-08-25T09:00:00Z",
-    "updated_at": "2026-08-25T09:30:00Z",
+    "updated_at": "2026-08-25T09:00:00Z",
     "preferred": false
   }
 ]
@@ -437,7 +445,7 @@ exactly the selected row carrying `preferred: true`:
       "skills": ["mandatory-skill"]
     },
     "created_at": "2026-08-25T09:00:00Z",
-    "updated_at": "2026-08-25T09:30:00Z",
+    "updated_at": "2026-08-25T09:00:00Z",
     "preferred": true
   }
 ]

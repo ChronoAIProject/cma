@@ -12,11 +12,11 @@ use futures_util::TryStreamExt;
 use layer2_core::{
     store::{EnvironmentProfileStore, Page, PageCursor, PageRequest, StoreError},
     AgentConfiguration, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, ServiceId, SessionMode,
-    SkillId, SoftwarePackage, SubjectId,
+    EnvironmentProfileSpec, EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort,
+    ServiceId, SessionMode, SkillId, SoftwarePackage, SubjectId,
 };
 use mongodb::bson::doc;
-use mongodb::options::{IndexOptions, ReplaceOptions};
+use mongodb::options::{IndexOptions, ReplaceOptions, ReturnDocument};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
@@ -115,44 +115,98 @@ struct AgentDoc {
     skills: Vec<String>,
 }
 
+/// Fields an atomic content replacement is allowed to mutate.
+///
+/// Server-owned fields are absent by construction, so serializing this value
+/// cannot accidentally overwrite identity, ownership, creation time, or the
+/// client's current preselection.
+#[derive(Debug, Serialize)]
+struct ProfileContentDoc {
+    name: String,
+    variables: Vec<VariableDoc>,
+    packages: Vec<PackageDoc>,
+    /// Clear the legacy location whenever current content is written.
+    skills: Vec<String>,
+    agent: AgentDoc,
+    services: Vec<String>,
+    agent_notes: String,
+    updated_at: String,
+}
+
+fn variable_docs(variables: &[EnvironmentVariable]) -> Vec<VariableDoc> {
+    variables
+        .iter()
+        .map(|variable| VariableDoc {
+            key: variable.key.clone(),
+            value: variable.value.clone(),
+        })
+        .collect()
+}
+
+fn package_docs(packages: &[SoftwarePackage]) -> Vec<PackageDoc> {
+    packages
+        .iter()
+        .map(|package| PackageDoc {
+            name: package.name.clone(),
+            version: package.version.clone(),
+        })
+        .collect()
+}
+
+fn agent_doc(agent: &AgentConfiguration) -> AgentDoc {
+    AgentDoc {
+        kernel: agent.kernel.0.clone(),
+        mode: agent.mode,
+        model: agent.model.clone(),
+        reasoning_effort: agent.reasoning_effort,
+        permission: agent.permission,
+        credential: agent.credential,
+        size: agent.size,
+        record_tool_bodies: agent.record_tool_bodies,
+        skills: agent.skills.iter().map(|skill| skill.0.clone()).collect(),
+    }
+}
+
+fn profile_content_doc(content: &EnvironmentProfileSpec, updated_at: &str) -> ProfileContentDoc {
+    ProfileContentDoc {
+        name: content.name.clone(),
+        variables: variable_docs(&content.variables),
+        packages: package_docs(&content.packages),
+        skills: Vec::new(),
+        agent: agent_doc(&content.agent),
+        services: content
+            .services
+            .iter()
+            .map(|service| service.0.clone())
+            .collect(),
+        agent_notes: content.agent_notes.clone(),
+        updated_at: updated_at.to_string(),
+    }
+}
+
+fn profile_content_update(
+    content: &EnvironmentProfileSpec,
+    updated_at: &str,
+) -> Result<mongodb::bson::Document, StoreError> {
+    let fields = mongodb::bson::serialize_to_document(&profile_content_doc(content, updated_at))
+        .map_err(|_| StoreError::Malformed("profile content cannot be encoded".into()))?;
+    Ok(doc! { "$set": fields })
+}
+
 fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
     ProfileDoc {
         id: p.id.0.clone(),
         owner: p.owner.0.clone(),
         name: p.name.clone(),
-        variables: p
-            .variables
-            .iter()
-            .map(|v| VariableDoc {
-                key: v.key.clone(),
-                value: v.value.clone(),
-            })
-            .collect(),
-        packages: p
-            .packages
-            .iter()
-            .map(|s| PackageDoc {
-                name: s.name.clone(),
-                version: s.version.clone(),
-            })
-            .collect(),
+        variables: variable_docs(&p.variables),
+        packages: package_docs(&p.packages),
         // Written only in the agent section from here on. The legacy field is
         // emptied so a document is migrated by being saved, rather than
         // carrying two copies that can disagree.
         skills: Vec::new(),
         services: p.services.iter().map(|s| s.0.clone()).collect(),
         agent_notes: p.agent_notes.clone(),
-        agent: Some(AgentDoc {
-            kernel: p.agent.kernel.0.clone(),
-            mode: p.agent.mode,
-            model: p.agent.model.clone(),
-            reasoning_effort: p.agent.reasoning_effort,
-            permission: p.agent.permission,
-            credential: p.agent.credential,
-            size: p.agent.size,
-            record_tool_bodies: p.agent.record_tool_bodies,
-            skills: p.agent.skills.iter().map(|s| s.0.clone()).collect(),
-        }),
+        agent: Some(agent_doc(&p.agent)),
         created_at: p.created_at.clone(),
         updated_at: p.updated_at.clone(),
         preferred: p.preferred,
@@ -261,6 +315,22 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
             .await
             .map_err(|e| StoreError::Unavailable(format!("upsert profile: {e}")))?;
         Ok(())
+    }
+
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        let update = profile_content_update(content, updated_at)?;
+        self.profiles
+            .find_one_and_update(doc! { "_id": &id.0 }, update)
+            .return_document(ReturnDocument::After)
+            .upsert(false)
+            .await
+            .map(|profile| profile.map(from_doc))
+            .map_err(|e| StoreError::Unavailable(format!("replace profile content: {e}")))
     }
 
     async fn get(
@@ -497,6 +567,100 @@ mod tests {
         let json = serde_json::to_value(&doc).expect("serializes");
         assert_eq!(json["owner"], "subject-a");
         assert_eq!(json["_id"], "envp_1");
+    }
+
+    #[test]
+    fn a_content_update_cannot_name_any_server_owned_field() {
+        let mut content = profile().to_spec();
+        content.name = "replacement".into();
+        let update =
+            profile_content_update(&content, "2026-08-25T10:00:00Z").expect("content serializes");
+        let fields = update.get_document("$set").expect("an atomic set document");
+
+        for protected in ["_id", "owner", "created_at", "preferred"] {
+            assert!(
+                !fields.contains_key(protected),
+                "content replacement must not write {protected}"
+            );
+        }
+        assert_eq!(fields.get_str("name").unwrap(), "replacement");
+        assert_eq!(
+            fields.get_str("updated_at").unwrap(),
+            "2026-08-25T10:00:00Z"
+        );
+        assert!(fields.get_array("skills").unwrap().is_empty());
+        assert_eq!(
+            fields
+                .get_document("agent")
+                .unwrap()
+                .get_array("skills")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at MongoDB"]
+    async fn mongo_content_replacement_preserves_preference_and_never_upserts() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("CHRONO_TEST_MONGODB_URI must name MongoDB");
+        let client = Client::with_uri_str(uri)
+            .await
+            .expect("test Mongo connects");
+        let unique = EnvironmentProfileId::generate();
+        let database = format!("chrono_profile_replace_{}", unique.as_str());
+        let store = MongoEnvironmentProfileStore::open(&client, &database)
+            .await
+            .expect("profile store opens");
+        let mut original = profile();
+        original.id = unique.clone();
+        store.upsert(&original).await.expect("profile is inserted");
+
+        let mut content = original.to_spec();
+        content.name = "replacement after set".into();
+        store
+            .set_preferred(&original.owner, Some(&original.id))
+            .await
+            .expect("preference is set concurrently");
+        let after_set = store
+            .replace_content(&original.id, &content, "2026-08-25T10:00:00Z")
+            .await
+            .expect("content replacement succeeds")
+            .expect("row still exists");
+        assert!(after_set.preferred);
+        assert_eq!(after_set.owner, original.owner);
+        assert_eq!(after_set.created_at, original.created_at);
+
+        content.name = "replacement after clear".into();
+        store
+            .set_preferred(&original.owner, None)
+            .await
+            .expect("preference is cleared concurrently");
+        let after_clear = store
+            .replace_content(&original.id, &content, "2026-08-25T11:00:00Z")
+            .await
+            .expect("content replacement succeeds")
+            .expect("row still exists");
+        assert!(!after_clear.preferred);
+
+        store.delete(&original.id).await.expect("row is deleted");
+        assert!(store
+            .replace_content(&original.id, &content, "2026-08-25T12:00:00Z")
+            .await
+            .expect("absence is not a store failure")
+            .is_none());
+        assert!(store
+            .get(&original.id)
+            .await
+            .expect("store reads")
+            .is_none());
+
+        client
+            .database(&database)
+            .drop()
+            .await
+            .expect("test database is removed");
     }
 
     #[test]
