@@ -143,6 +143,13 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
 | State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
 
+`TOOL_CALL_ARGS` and `TOOL_CALL_RESULT` are part of the interface vocabulary,
+but a particular session emits them only when its environment profile has
+`record_tool_bodies` enabled and the runtime supplied a body. The capability
+document says what this interface can emit for some session; the session's
+environment decides whether these optional bodies are recorded for that
+session.
+
 ### Canonical initial state
 
 ```json
@@ -438,7 +445,15 @@ GET /api/v1/agui/capabilities
     "RUN_STARTED": true, "RUN_FINISHED": true, "RUN_ERROR": true,
     "TEXT_MESSAGE_START": true, "TEXT_MESSAGE_CONTENT": true, "TEXT_MESSAGE_END": true,
     "TOOL_CALL_START": true, "TOOL_CALL_ARGS": true, "TOOL_CALL_END": true,
-    "TOOL_CALL_RESULT": true, "THINKING_START": false, "THINKING_END": false,
+    "TOOL_CALL_RESULT": true,
+    "REASONING_MESSAGE_CONTENT": true,
+    "REASONING_START": false, "REASONING_END": false,
+    "REASONING_MESSAGE_START": false, "REASONING_MESSAGE_END": false,
+    "REASONING_MESSAGE_CHUNK": false, "REASONING_ENCRYPTED_VALUE": false,
+    "THINKING_START": false, "THINKING_END": false,
+    "THINKING_TEXT_MESSAGE_START": false,
+    "THINKING_TEXT_MESSAGE_CONTENT": false,
+    "THINKING_TEXT_MESSAGE_END": false,
     "STATE_SNAPSHOT": false, "STATE_DELTA": true
   },
   "features": {
@@ -450,7 +465,8 @@ GET /api/v1/agui/capabilities
     "execution":      { "codeExecution": true, "sandboxed": true },
     "custom":         { "cma:terminal": false, "cma:usage": true,
                         "cma:resources": true,
-                        "cma:changePlane": false, "cma:planeChangeObserved": true }
+                        "cma:changePlane": false, "cma:planeChangeObserved": true,
+                        "cma:liveFrames": true }
   },
   "conformsTo": [
     "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
