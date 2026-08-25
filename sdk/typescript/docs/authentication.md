@@ -7,6 +7,28 @@ credential. The SDK does not mint credentials and never persists one. How a user
 obtains a credential is deployment-specific; when issuance is not self-service,
 ask that deployment's operator or identity administrator.
 
+## Anonymous deployment discovery
+
+`readConformance` is always anonymous, even when the client is configured with a
+bearer credential or browser cookies. It reads the deployment's protocol classes,
+version, and exact build without presenting either credential:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient({
+  baseUrl: 'https://cma.example.com',
+  credential: () => process.env.CMA_ACCESS_TOKEN,
+});
+
+const deployment = await cma.readConformance();
+console.log(deployment.conformsTo, deployment.version, deployment.buildSha);
+```
+
+Correlation and response observation remain active for discovery. Public access
+means that the request omits authorization and cookies; it does not bypass the
+client's diagnostics.
+
 ## Backend bearer credentials
 
 Supply a callback, not a captured header. The callback is invoked for every unary

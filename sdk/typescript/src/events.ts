@@ -1,5 +1,11 @@
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
-import { headersFor, urlOf, type ResolvedConfig } from './config.js';
+import {
+  headersFor,
+  observeResponse,
+  resolveRequestId,
+  urlOf,
+  type ResolvedConfig,
+} from './config.js';
 import {
   ApiError,
   CmaError,
@@ -114,6 +120,7 @@ async function* reconnectingEvents(
   options: StreamEventsOptions,
   policy: StreamPolicy,
 ): AsyncGenerator<SessionEvent> {
+  const requestId = await resolveRequestId(config, options.requestId);
   let cursor = options.startingAfter ?? 0;
   let emptyConnections = 0;
   let failedAttempts = 0;
@@ -123,7 +130,7 @@ async function* reconnectingEvents(
     throwIfAborted(options.signal);
     let active: ActiveResponse;
     try {
-      active = await connect(config, sessionId, cursor, options);
+      active = await connect(config, sessionId, cursor, options, requestId);
     } catch (cause) {
       if (!retryable(cause)) {
         throw cause;
@@ -193,6 +200,7 @@ async function connect(
   sessionId: string,
   cursor: number,
   options: OperationOptions,
+  requestId: string,
 ): Promise<ActiveResponse> {
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
   if (!positiveInteger(timeoutMs)) {
@@ -213,17 +221,22 @@ async function connect(
       urlOf(config, `/api/v1/sessions/${encodeURIComponent(sessionId)}/events${query}`),
       {
         method: 'GET',
-        headers: await headersFor(config, {
-          Accept: 'text/event-stream',
-          ...(cursor === 0 ? {} : { 'Last-Event-ID': String(cursor) }),
-        }),
+        headers: await headersFor(
+          config,
+          {
+            Accept: 'text/event-stream',
+            ...(cursor === 0 ? {} : { 'Last-Event-ID': String(cursor) }),
+          },
+          { requestId },
+        ),
         credentials: config.cookies ? 'include' : 'omit',
         redirect: 'error',
         signal: controller.signal,
       },
     );
+    const metadata = await observeResponse(config, response);
     if (!response.ok) {
-      throw await errorFromResponse(response);
+      throw await errorFromResponse(response, undefined, metadata.requestId);
     }
     if (response.status !== 200) {
       throw new ProtocolError(

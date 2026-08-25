@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EventSourceMessage } from 'eventsource-parser';
-import { resolveConfig } from '../src/config.js';
+import { resolveConfig, type ResponseMetadata } from '../src/config.js';
 import {
   ApiError,
   CapabilityRefused,
@@ -31,6 +31,7 @@ function message(event: unknown, seq = 1, sessionId = SESSION): EventSourceMessa
 function sse(
   events: readonly { readonly seq: number; readonly event: unknown }[],
   sessionId = SESSION,
+  requestId?: string,
 ): Response {
   const body = events
     .map(({ seq, event }) => {
@@ -38,10 +39,14 @@ function sse(
       return `id: ${String(seq)}\ndata: ${data}\n\n`;
     })
     .join('');
-  return new Response(body, {
+  const response = new Response(body, {
     status: 200,
     headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
   });
+  if (requestId !== undefined) {
+    response.headers.set('x-request-id', requestId);
+  }
+  return response;
 }
 
 async function first(events: AsyncIterable<SessionEvent>): Promise<SessionEvent> {
@@ -300,13 +305,14 @@ describe('the reconnecting event stream', () => {
 
   it('reconnects from the last cursor, refreshes credentials, and deduplicates overlap', async () => {
     const responses = [
-      sse([{ seq: 8, event: { type: 'session_created' } }], 'sesn/fixture'),
+      sse([{ seq: 8, event: { type: 'session_created' } }], 'sesn/fixture', 'response-events-one'),
       sse(
         [
           { seq: 8, event: { type: 'session_created' } },
           { seq: 9, event: { type: 'turn_started' } },
         ],
         'sesn/fixture',
+        'response-events-two',
       ),
     ];
     const calls: { readonly url: string; readonly init: RequestInit }[] = [];
@@ -320,10 +326,16 @@ describe('the reconnecting event stream', () => {
     });
     let credential = 0;
     const delays: number[] = [];
+    const requestIdProvider = vi.fn(() => 'caller-event-stream-488');
+    const observed: ResponseMetadata[] = [];
     const config = resolveConfig({
       cookies: false,
       credential: () => `token-${String(++credential)}`,
       fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+      responseObserver: (metadata) => {
+        observed.push(metadata);
+      },
     });
 
     const received = await take(
@@ -352,6 +364,15 @@ describe('the reconnecting event stream', () => {
     expect(calls.map(({ init }) => new Headers(init.headers).get('authorization'))).toEqual([
       'Bearer token-1',
       'Bearer token-2',
+    ]);
+    expect(calls.map(({ init }) => new Headers(init.headers).get('x-request-id'))).toEqual([
+      'caller-event-stream-488',
+      'caller-event-stream-488',
+    ]);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+    expect(observed).toEqual([
+      { status: 200, requestId: 'response-events-one' },
+      { status: 200, requestId: 'response-events-two' },
     ]);
     expect(calls.every(({ init }) => init.credentials === 'omit')).toBe(true);
     expect(delays).toEqual([10]);
@@ -419,7 +440,7 @@ describe('the reconnecting event stream', () => {
             code: 'capability_unsupported',
             capability: 'core_events',
           }),
-          { status: 422 },
+          { status: 422, headers: { 'x-request-id': 'response-event-refusal' } },
         ),
       ),
     );
@@ -430,6 +451,7 @@ describe('the reconnecting event stream', () => {
       ),
     ).catch((cause: unknown) => cause);
     expect(refusal).toBeInstanceOf(CapabilityRefused);
+    expect((refusal as CapabilityRefused).requestId).toBe('response-event-refusal');
     expect(refusing).toHaveBeenCalledOnce();
   });
 

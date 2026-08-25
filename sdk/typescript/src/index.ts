@@ -43,8 +43,12 @@ export {
   resolveConfig,
   type ClientConfig,
   type Credential,
+  type RequestIdProvider,
   type ResolvedConfig,
+  type ResponseMetadata,
+  type ResponseObserver,
 } from './config.js';
+export { readConformance, toConformance, type Conformance } from './discovery.js';
 export {
   ApiError,
   CapabilityRefused,
@@ -53,6 +57,8 @@ export {
   DeploymentAtCapacity,
   ProtocolError,
   RequestAborted,
+  RequestIdError,
+  ResponseObserverError,
   SessionLimitReached,
   TimeoutError,
   TransportError,

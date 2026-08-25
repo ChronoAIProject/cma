@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { Cma } from '../src/client.js';
-import { resolveConfig } from '../src/config.js';
+import { resolveConfig, type ResponseMetadata } from '../src/config.js';
 import {
   ApiError,
   ProtocolError,
@@ -185,6 +185,51 @@ describe('the shared session fixture', () => {
     expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
       '/api/v1/sessions',
       '/api/v1/sessions?limit=50&cursor=opaque',
+    ]);
+  });
+
+  it('reuses one request id and observes every response in a page walk', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'sesn_page_one' })]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/sessions?cursor=page-two>; rel="next"',
+            'x-request-id': 'response-page-one',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'sesn_page_two' })]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'x-request-id': 'response-page-two',
+          },
+        }),
+      );
+    const requestIdProvider = vi.fn(() => 'caller-page-walk-488');
+    const observed: ResponseMetadata[] = [];
+    const config = resolveConfig({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+      responseObserver: (metadata) => {
+        observed.push(metadata);
+      },
+    });
+
+    const sessions = await listSessions(config);
+
+    expect(sessions.map(({ id }) => id)).toEqual(['sesn_page_one', 'sesn_page_two']);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+    expect(
+      fetch.mock.calls.map(([, init]) => new Headers(init?.headers).get('x-request-id')),
+    ).toEqual(['caller-page-walk-488', 'caller-page-walk-488']);
+    expect(observed).toEqual([
+      { status: 200, requestId: 'response-page-one' },
+      { status: 200, requestId: 'response-page-two' },
     ]);
   });
 
