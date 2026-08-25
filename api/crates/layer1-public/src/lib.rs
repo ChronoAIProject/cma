@@ -16,6 +16,8 @@ pub mod pty;
 pub mod rest;
 pub mod tickets;
 
+mod unavailable;
+
 pub use auth::{ActedUpon, AuthenticatedSubject, SettingsTouched};
 
 /// A semantic operation on the core session model. Each interface declares the
