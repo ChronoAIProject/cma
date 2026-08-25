@@ -20,6 +20,29 @@ use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{store_failed, SessionService};
 use crate::session::SessionStatus;
 
+/// What provider metadata says about a runtime's durable generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderRuntimeGeneration {
+    /// The runtime predates generation metadata.
+    Legacy,
+    /// The provider returned a valid non-zero generation.
+    Recorded(u64),
+    /// Metadata was present but could not name a valid generation.
+    Malformed,
+}
+
+impl From<layer3_adapter::RuntimeGeneration> for ProviderRuntimeGeneration {
+    fn from(generation: layer3_adapter::RuntimeGeneration) -> Self {
+        match generation {
+            layer3_adapter::RuntimeGeneration::Legacy => Self::Legacy,
+            layer3_adapter::RuntimeGeneration::Recorded(generation) => {
+                Self::Recorded(generation.get())
+            }
+            layer3_adapter::RuntimeGeneration::Malformed => Self::Malformed,
+        }
+    }
+}
+
 /// One runtime, and what the record knows about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeEntry {
@@ -29,7 +52,7 @@ pub struct RuntimeEntry {
     ///
     /// Absence marks a legacy runtime. It must stay visible as absence so an
     /// operator or reclamation path cannot mistake it for current authority.
-    pub generation: Option<u64>,
+    pub generation: ProviderRuntimeGeneration,
     /// Which control plane created it, when the provider records one.
     ///
     /// A provider is shared, so an operator reading this may be looking at
@@ -150,7 +173,7 @@ impl SessionService {
                             let known = listing.session.as_deref().and_then(|s| owners.get(s));
                             RuntimeEntry {
                                 runtime: listing.handle.0,
-                                generation: listing.generation,
+                                generation: listing.generation.into(),
                                 // Which control plane created it, so an
                                 // operator reading a shared provider can tell
                                 // this deployment's sandboxes from another's

@@ -68,7 +68,7 @@ fn spec() -> RuntimeSpec {
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
-        generation: 0,
+        generation: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
         subject_credential: None,
@@ -200,7 +200,7 @@ fn sandboxes_do_not_expire_on_a_timer() {
 fn provisioning_writes_both_generations_of_correlation_metadata() {
     let mut request = spec();
     request.created_by = Some("test-plane".to_string());
-    request.generation = 17;
+    request.generation = std::num::NonZeroU64::new(17);
 
     assert_eq!(
         provisioning_metadata(&request, "test-kernel"),
@@ -217,6 +217,24 @@ fn provisioning_writes_both_generations_of_correlation_metadata() {
             ("chrono-bot/session".to_string(), "sesn_x".to_string()),
         ])
     );
+}
+
+#[test]
+fn generation_metadata_distinguishes_legacy_valid_and_corrupt_values() {
+    let valid = std::num::NonZeroU64::new(17).unwrap();
+    for (raw, expected) in [
+        (None, RuntimeGeneration::Legacy),
+        (Some("17"), RuntimeGeneration::Recorded(valid)),
+        (Some("0"), RuntimeGeneration::Malformed),
+        (Some("-1"), RuntimeGeneration::Malformed),
+        (Some("not-a-number"), RuntimeGeneration::Malformed),
+        (Some("18446744073709551616"), RuntimeGeneration::Malformed),
+    ] {
+        let metadata = raw.map_or_else(BTreeMap::new, |value| {
+            BTreeMap::from([(GENERATION_METADATA_KEY.to_string(), value.to_string())])
+        });
+        assert_eq!(runtime_generation(&metadata), expected, "raw {raw:?}");
+    }
 }
 
 #[tokio::test]
@@ -263,7 +281,10 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session.as_deref(), Some("sesn_x"));
-    assert_eq!(listed[0].generation, Some(17));
+    assert_eq!(
+        listed[0].generation,
+        RuntimeGeneration::Recorded(std::num::NonZeroU64::new(17).unwrap())
+    );
     assert_eq!(listed[0].created_by.as_deref(), Some("test-plane"));
     assert!(!listed[0].serving);
     assert_eq!(listed[0].lost_because, Some(RuntimeLossReason::Failed));
@@ -300,7 +321,7 @@ async fn canonical_correlation_metadata_wins_over_historical_values() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session.as_deref(), Some("sesn_current"));
-    assert_eq!(listed[0].generation, None);
+    assert_eq!(listed[0].generation, RuntimeGeneration::Legacy);
     assert_eq!(listed[0].created_by.as_deref(), Some("current-plane"));
 }
 
