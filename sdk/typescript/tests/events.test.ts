@@ -631,6 +631,24 @@ describe('the reconnecting event stream', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('does not observe a stream handshake that arrives after its deadline', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const config = resolveConfig({
+      fetch: vi.fn(() => fetched.promise) as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+
+    await expect(
+      first(streamEvents(config, SESSION, { timeoutMs: 5, maxEmptyConnections: 1 })),
+    ).rejects.toBeInstanceOf(TimeoutError);
+
+    fetched.resolve(sse([{ seq: 1, event: { type: 'session_created' } }]));
+    await nextTurn();
+
+    expect(responseObserver).not.toHaveBeenCalled();
+  });
+
   it('does not read a stream body after its response observer times out', async () => {
     const observer = deferred<void>();
     const observerStarted = deferred<void>();

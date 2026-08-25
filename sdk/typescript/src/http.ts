@@ -375,6 +375,7 @@ async function send(
     body,
     signal,
   });
+  throwIfSignalAborted(signal);
   const metadata = await observeResponse(config, response);
   throwIfSignalAborted(signal);
   return { response, metadata };
