@@ -25,6 +25,8 @@ import {
 } from '../http.js';
 import type { AguiTransport } from './connection.js';
 import { canBeDurableProjectionPrefix } from './cursor.js';
+import { toEvent, type AguiEvent } from './events.js';
+import { ProjectionAssembler } from './projection.js';
 
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 
@@ -274,8 +276,25 @@ async function* framesFromBody(response: Response, signal: AbortSignal): AsyncGe
   }
 }
 
-/** Parse a complete SSE body with the same strict boundary as the live stream. */
-export function parseEventStream(body: string): unknown[] {
+/**
+ * Parse a complete SSE body into occurrence-aware AG-UI events.
+ *
+ * Durable prefixes are held until their numbered final frame arrives, matching
+ * `AguiConnection`. In particular, repeated unknown prefixes receive distinct
+ * stable `projectionId` values before callers pass them to `fold`.
+ */
+export function parseEventStream(body: string): AguiEvent[] {
+  const assembler = new ProjectionAssembler();
+  const events: AguiEvent[] = [];
+  for (const frame of parseEventFrames(body)) {
+    events.push(...assembler.accept(toEvent(frame)));
+  }
+  assembler.assertComplete('AG-UI event stream');
+  return events;
+}
+
+/** Parse a complete SSE body at the raw transport boundary. @internal */
+export function parseEventFrames(body: string): unknown[] {
   const frames: unknown[] = [];
   let failure: ProtocolError | undefined;
   const parser = parserFor(
