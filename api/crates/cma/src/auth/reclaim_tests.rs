@@ -16,10 +16,10 @@ use axum::{
 };
 use layer2_core::{
     AgentConfiguration, Baseline, Deployment, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentProfileService, EnvironmentProfileStore, Event, Page, PageRequest,
-    PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, SessionId,
-    SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionStore, StoreError,
-    StoredEvent, SubjectId, TerminalGeometry,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, Page,
+    PageRequest, PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
+    SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionStore,
+    StoreError, StoredEvent, SubjectId, TerminalGeometry,
 };
 use tokio::sync::{Mutex, Semaphore};
 
@@ -203,6 +203,15 @@ struct NoProfiles;
 impl EnvironmentProfileStore for NoProfiles {
     async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    async fn replace_content(
+        &self,
+        _id: &EnvironmentProfileId,
+        _content: &EnvironmentProfileSpec,
+        _updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(None)
     }
 
     async fn get(

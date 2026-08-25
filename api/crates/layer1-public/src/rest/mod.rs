@@ -782,12 +782,17 @@ pub struct BodyProblem(BodyProblemKind);
 
 enum BodyProblemKind {
     Axum(axum::extract::rejection::JsonRejection),
+    InvalidData,
     MissingJsonContentType,
 }
 
 impl BodyProblem {
     fn missing_json_content_type() -> Self {
         Self(BodyProblemKind::MissingJsonContentType)
+    }
+
+    fn invalid_data() -> Self {
+        Self(BodyProblemKind::InvalidData)
     }
 }
 
@@ -801,6 +806,9 @@ impl IntoResponse for BodyProblem {
     fn into_response(self) -> Response {
         match self.0 {
             BodyProblemKind::Axum(error) => json_rejection_response(error),
+            BodyProblemKind::InvalidData => {
+                json_problem_response(StatusCode::UNPROCESSABLE_ENTITY, JsonProblemKind::Data)
+            }
             BodyProblemKind::MissingJsonContentType => json_problem_response(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 JsonProblemKind::MissingContentType,
