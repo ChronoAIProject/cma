@@ -1,10 +1,14 @@
 //! RFC 6902 conformance and documentation guards for AG-UI state.
 
+use std::collections::BTreeSet;
+
 use json_patch::Patch;
-use layer2_core::{Event, EventKind, LiveFrame, ResourceReading, SessionId, SessionMode};
+use layer2_core::{
+    Event, EventKind, LiveFrame, ResourceReading, SessionId, SessionMode, SessionStatus, StopReason,
+};
 use serde_json::{json, Value};
 
-use super::{initial_state, INITIAL_STATE_JSON};
+use super::{initial_state, INITIAL_STATE_JSON, STATE_DELTA_PATHS};
 use crate::agui::{live::project_live, project::project, resources::project_reading};
 
 fn logged(seq: u64, kind: EventKind) -> Event {
@@ -16,8 +20,44 @@ fn logged(seq: u64, kind: EventKind) -> Event {
     }
 }
 
-fn durable_state_deltas() -> Vec<crate::agui::project::AguiEvent> {
+/// One sample of every durable core event.
+///
+/// The match is exhaustive on purpose. When the core vocabulary grows, this
+/// fixture must be revisited so a new `STATE_DELTA` projection cannot evade the
+/// path-vocabulary regression by being absent from its inputs.
+fn every_durable_kind() -> Vec<EventKind> {
     let kinds = vec![
+        EventKind::SessionCreated,
+        serde_json::from_value(json!({ "type": "progress", "stage": "ready" }))
+            .expect("the core's public durable progress shape must deserialize"),
+        EventKind::StatusChanged {
+            status: SessionStatus::Ready,
+            stop_reason: None,
+            detail: None,
+            capability: None,
+        },
+        EventKind::TurnStarted,
+        EventKind::TurnCompleted,
+        EventKind::ConversationOpened {
+            conversation_id: "conversation_state_contract".into(),
+        },
+        EventKind::MessageCommitted {
+            content: "complete answer".into(),
+        },
+        EventKind::OwnerMessage {
+            content: "owner input".into(),
+        },
+        EventKind::ToolCallStarted {
+            call_id: "call_state_contract".into(),
+            title: "read a file".into(),
+            kind: "read".into(),
+            arguments: None,
+        },
+        EventKind::ToolCallUpdated {
+            call_id: "call_state_contract".into(),
+            status: "completed".into(),
+            result: None,
+        },
         EventKind::UsageReported {
             input_tokens: 31,
             output_tokens: 12,
@@ -47,6 +87,21 @@ fn durable_state_deltas() -> Vec<crate::agui::project::AguiEvent> {
             message: Some("Continue sign-in".into()),
         },
         EventKind::ConversationGap { frames: 3 },
+        EventKind::TerminalAttached,
+        EventKind::TerminalDetached,
+        EventKind::TerminalResized {
+            columns: 120,
+            rows: 40,
+        },
+        EventKind::ApprovalRequested {
+            request_id: "approval_state_contract".into(),
+            action: Some("run a command".into()),
+            detail: None,
+        },
+        EventKind::ApprovalResolved {
+            request_id: "approval_state_contract".into(),
+            allowed: true,
+        },
         EventKind::PlaneChanged {
             from: SessionMode::Terminal,
             to: SessionMode::Conversation,
@@ -69,12 +124,46 @@ fn durable_state_deltas() -> Vec<crate::agui::project::AguiEvent> {
         },
     ];
 
+    for kind in &kinds {
+        match kind {
+            EventKind::SessionCreated
+            | EventKind::Progress { .. }
+            | EventKind::StatusChanged { .. }
+            | EventKind::TurnStarted
+            | EventKind::TurnCompleted
+            | EventKind::ConversationOpened { .. }
+            | EventKind::MessageCommitted { .. }
+            | EventKind::OwnerMessage { .. }
+            | EventKind::ToolCallStarted { .. }
+            | EventKind::ToolCallUpdated { .. }
+            | EventKind::UsageReported { .. }
+            | EventKind::ContextCompacted { .. }
+            | EventKind::ModeChanged { .. }
+            | EventKind::PlanSet { .. }
+            | EventKind::ConfigOptionsSet { .. }
+            | EventKind::AvailableCommandsSet { .. }
+            | EventKind::ConversationGap { .. }
+            | EventKind::TerminalAttached
+            | EventKind::TerminalDetached
+            | EventKind::TerminalResized { .. }
+            | EventKind::ApprovalRequested { .. }
+            | EventKind::ApprovalResolved { .. }
+            | EventKind::PlaneChanged { .. }
+            | EventKind::RuntimeLost { .. }
+            | EventKind::MemoryPressureOpened { .. }
+            | EventKind::MemoryPressureClosed { .. }
+            | EventKind::SignInRequired { .. } => {}
+        }
+    }
     kinds
+}
+
+fn durable_state_deltas() -> Vec<crate::agui::project::AguiEvent> {
+    every_durable_kind()
         .into_iter()
         .enumerate()
-        .map(|(offset, kind)| {
-            let name = format!("{kind:?}");
-            let mut events = project(
+        .flat_map(|(offset, kind)| {
+            project(
                 &logged(offset as u64 + 1, kind),
                 "run_state_contract",
                 "sesn_state_contract",
@@ -82,24 +171,42 @@ fn durable_state_deltas() -> Vec<crate::agui::project::AguiEvent> {
             .events
             .into_iter()
             .filter(|event| event.kind == "STATE_DELTA")
-            .collect::<Vec<_>>();
-            assert_eq!(events.len(), 1, "{name} must yield one STATE_DELTA");
-            events.pop().expect("the length was checked")
         })
         .collect()
+}
+
+/// One sample of every cursorless conversation frame.
+fn every_live_frame() -> Vec<LiveFrame> {
+    let frames = vec![
+        LiveFrame::TerminalOutput(b"terminal output".to_vec()),
+        LiveFrame::MessageDelta("message delta".into()),
+        LiveFrame::ThoughtDelta("reasoning delta".into()),
+        LiveFrame::AvailableCommands(Vec::new()),
+        LiveFrame::Exited {
+            code: Some(0),
+            reason: StopReason::EndTurn,
+        },
+    ];
+
+    for frame in &frames {
+        match frame {
+            LiveFrame::TerminalOutput(_)
+            | LiveFrame::MessageDelta(_)
+            | LiveFrame::ThoughtDelta(_)
+            | LiveFrame::AvailableCommands(_)
+            | LiveFrame::Exited { .. } => {}
+        }
+    }
+    frames
 }
 
 fn every_state_delta() -> Vec<crate::agui::project::AguiEvent> {
     let mut events = durable_state_deltas();
 
-    let commands = project_live(
-        &LiveFrame::AvailableCommands(Vec::new()),
-        "run_state_contract",
-        "sesn_state_contract",
-    )
-    .expect("available commands have an AG-UI projection");
-    assert_eq!(commands.kind, "STATE_DELTA");
-    events.push(commands);
+    events.extend(every_live_frame().into_iter().filter_map(|frame| {
+        project_live(&frame, "run_state_contract", "sesn_state_contract")
+            .filter(|event| event.kind == "STATE_DELTA")
+    }));
 
     let resources = project_reading(
         &ResourceReading {
@@ -132,6 +239,57 @@ fn patch_of(event: &crate::agui::project::AguiEvent) -> Patch {
         .unwrap_or_else(|error| panic!("{} carried an invalid JSON Patch: {error}", event.body))
 }
 
+fn emitted_state_delta_paths() -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    for event in every_state_delta() {
+        let operations = event.body["delta"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{} carried no STATE_DELTA operation list", event.body));
+        for operation in operations {
+            let path = operation["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{operation} carried no JSON-Pointer path"));
+            paths.insert(path.to_string());
+        }
+    }
+    paths
+}
+
+fn canonical_state_delta_paths() -> BTreeSet<String> {
+    STATE_DELTA_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect()
+}
+
+fn documented_state_delta_paths(document: &str) -> BTreeSet<String> {
+    const START: &str = "### `STATE_DELTA` paths\n\n";
+    let section = document
+        .split_once(START)
+        .unwrap_or_else(|| panic!("docs/API_AGUI.md has no §3 STATE_DELTA path section"))
+        .1;
+    let section = section
+        .split_once("\n### ")
+        .map_or(section, |(before_next_section, _)| before_next_section);
+
+    section
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `"))
+        .filter_map(|row| row.split_once("` |").map(|(path, _)| path))
+        .filter(|path| path.starts_with('/'))
+        .map(str::to_string)
+        .collect()
+}
+
+fn assert_same_paths(label: &str, actual: &BTreeSet<String>, expected: &BTreeSet<String>) {
+    let missing = expected.difference(actual).collect::<Vec<_>>();
+    let unexpected = actual.difference(expected).collect::<Vec<_>>();
+    assert!(
+        missing.is_empty() && unexpected.is_empty(),
+        "{label} STATE_DELTA paths drifted; missing: {missing:?}; unexpected: {unexpected:?}"
+    );
+}
+
 fn apply_all(mut state: Value, events: &[crate::agui::project::AguiEvent]) -> Value {
     for event in events {
         let patch = patch_of(event);
@@ -149,6 +307,25 @@ fn every_emitted_state_delta_applies_with_a_conforming_library() {
         json_patch::patch(&mut state, &patch)
             .unwrap_or_else(|error| panic!("{} did not apply: {error}", event.body));
     }
+}
+
+#[test]
+fn emitted_canonical_and_documented_paths_are_equal() {
+    let emitted = emitted_state_delta_paths();
+    let canonical = canonical_state_delta_paths();
+    let documented = documented_state_delta_paths(include_str!("../../../../../docs/API_AGUI.md"));
+
+    assert_eq!(
+        canonical.len(),
+        STATE_DELTA_PATHS.len(),
+        "the canonical STATE_DELTA path table contains a duplicate"
+    );
+    assert!(
+        !documented.is_empty(),
+        "the §3 STATE_DELTA path table yielded no documented paths"
+    );
+    assert_same_paths("emitted", &emitted, &canonical);
+    assert_same_paths("documented", &documented, &canonical);
 }
 
 #[test]
