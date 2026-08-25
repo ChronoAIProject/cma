@@ -33,8 +33,7 @@ impl SessionService {
         id: &SessionId,
     ) -> Result<Session, CoreError> {
         caller.authorization.require(Capability::CreateSession)?;
-        let lifecycle_gate = self.lifecycle_gates.gate(id);
-        let _lifecycle = lifecycle_gate.lock().await;
+        let _lifecycle = self.lock_lifecycle(id).await;
         let record = self.record(id).await?;
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
@@ -290,8 +289,7 @@ impl SessionService {
         // and termination, so neither can complete and then be locally undone
         // by this stale snapshot. The service-wide entries lock is never held
         // across the durable read or write.
-        let installation_gate = self.lifecycle_gates.gate(&id);
-        let installation = installation_gate.lock().await;
+        let installation = self.lock_lifecycle(&id).await;
         if self.entries.read().await.contains_key(&id) {
             return Ok(());
         }

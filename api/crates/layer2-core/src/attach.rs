@@ -5,7 +5,7 @@
 //! process, and this owns the attachment, which exists only while somebody is
 //! looking at a session.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use layer3_adapter::{TermSize, TerminalInput};
 use tokio::sync::{broadcast, Mutex, OwnedMutexGuard};
@@ -15,9 +15,9 @@ use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
-use crate::log::{append, append_with, drop_undelivered};
+use crate::log::{append, append_with, CleanupAttempt, DeferredCleanup, RestartableCommit};
 use crate::service::{store_failed, Attachment, AttachmentHandle, SessionService};
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, StoreError};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 type EntryScreen = Arc<Mutex<Box<dyn ScreenModel>>>;
@@ -27,9 +27,98 @@ struct RetainedAttachment {
     committed: SessionRecord,
 }
 
+/// An unread successful attach handed back to service-owned recovery.
+struct DeferredAttachmentCleanup {
+    service: Weak<SessionService>,
+    id: SessionId,
+    generation: Option<u64>,
+    screen: EntryScreen,
+    committed: Option<SessionRecord>,
+    commit: Option<RestartableCommit>,
+    outcome: Option<Result<SessionRecord, StoreError>>,
+    lifecycle: Option<OwnedMutexGuard<()>>,
+}
+
+impl DeferredCleanup for DeferredAttachmentCleanup {
+    fn session_id(&self) -> &SessionId {
+        &self.id
+    }
+
+    fn attempt(&mut self) -> CleanupAttempt<'_> {
+        Box::pin(async move {
+            let Some(service) = self.service.upgrade() else {
+                self.committed.take();
+                self.lifecycle.take();
+                return;
+            };
+            if self.commit.is_none() {
+                let mut entries = service.entries.write().await;
+                if let Some(generation) = self.generation {
+                    if let Some(entry) = entries.get_mut(&self.id).filter(|entry| {
+                        Arc::ptr_eq(&entry.screen, &self.screen)
+                            && entry
+                                .attached
+                                .as_ref()
+                                .is_some_and(|attached| attached.generation == generation)
+                    }) {
+                        entry.attached = None;
+                    }
+                }
+                drop(entries);
+                let Some(committed) = self.committed.take() else {
+                    return;
+                };
+                self.commit = Some(service.retain_cleanup_durably(
+                    committed,
+                    vec![Event {
+                        session_id: self.id.clone(),
+                        seq: 0,
+                        kind: EventKind::TerminalDetached,
+                        appended_at: String::new(),
+                    }],
+                ));
+            }
+            let commit = self
+                .commit
+                .as_mut()
+                .expect("a deferred detach retains its durable write");
+            commit.restart();
+            if self.outcome.is_none() {
+                self.outcome = Some(commit.committed().await);
+            }
+            match self
+                .outcome
+                .as_ref()
+                .expect("a completed cleanup write retains its outcome")
+            {
+                Ok(committed) => {
+                    let mut entries = service.entries.write().await;
+                    if let Some(entry) = entries
+                        .get_mut(&self.id)
+                        .filter(|entry| Arc::ptr_eq(&entry.screen, &self.screen))
+                    {
+                        entry.session.last_seq = committed.session.last_seq;
+                        let event_log = Arc::clone(&entry.event_log);
+                        event_log.synchronize_tail(&mut entry.session.last_seq);
+                    }
+                }
+                Err(error) => {
+                    service
+                        .synchronize_live_tail_for(&self.id, &self.screen)
+                        .await;
+                    tracing::error!(session_id = %self.id, %error, "retained terminal detach failed");
+                }
+            }
+            self.lifecycle.take();
+            self.commit.take();
+            self.outcome.take();
+        })
+    }
+}
+
 /// Persist the compensating detach without exposing an outage receiver that can
-/// acknowledge and abandon it. The lifecycle guard moves into the detached
-/// continuation, so another attach or lifecycle decision cannot overtake it.
+/// acknowledge and abandon it. The lifecycle guard remains in the service-owned
+/// restartable job, so another attach or lifecycle decision cannot overtake it.
 fn retain_terminal_detach(
     service: Arc<SessionService>,
     id: SessionId,
@@ -37,40 +126,18 @@ fn retain_terminal_detach(
     screen: EntryScreen,
     lifecycle: OwnedMutexGuard<()>,
 ) {
-    let installed_service = Arc::clone(&service);
-    let installed_id = id.clone();
-    let installed_screen = Arc::clone(&screen);
-    let rejected_service = Arc::clone(&service);
-    let rejected_id = id.clone();
-    let rejected_screen = Arc::clone(&screen);
-    let detach = service.persist_durably_with(
-        record,
-        vec![Event {
-            session_id: id,
-            seq: 0,
-            kind: EventKind::TerminalDetached,
-            appended_at: String::new(),
-        }],
-        move |committed| async move {
-            let mut entries = installed_service.entries.write().await;
-            if let Some(entry) = entries
-                .get_mut(&installed_id)
-                .filter(|entry| Arc::ptr_eq(&entry.screen, &installed_screen))
-            {
-                entry.session.last_seq = committed.session.last_seq;
-                let event_log = Arc::clone(&entry.event_log);
-                event_log.synchronize_tail(&mut entry.session.last_seq);
-            }
-            ((), lifecycle)
-        },
-        move |_error| async move {
-            rejected_service
-                .synchronize_live_tail_for(&rejected_id, &rejected_screen)
-                .await;
-        },
-        drop_undelivered,
-    );
-    drop(detach);
+    service
+        .event_logs
+        .retain_cleanup(DeferredAttachmentCleanup {
+            service: Arc::downgrade(&service),
+            id,
+            generation: None,
+            screen,
+            committed: Some(record),
+            commit: None,
+            outcome: None,
+            lifecycle: Some(lifecycle),
+        });
 }
 
 /// How an attach should treat an attachment somebody already holds.
@@ -123,8 +190,7 @@ impl SessionService {
             // open — which is a lie the person cannot act on.
             self.readopt(&record).await?;
         }
-        let gate = self.lifecycle_gates.gate(id);
-        let lifecycle = gate.lock_owned().await;
+        let lifecycle = self.lock_lifecycle(id).await;
 
         // The session may have been recovered before its owner had signed back
         // in, when there was no credential to be had. This is the moment they
@@ -290,33 +356,28 @@ impl SessionService {
                         .synchronize_live_tail_for(&rejected_id, &rejected_screen)
                         .await;
                 },
-                move |result: Result<RetainedAttachment, CoreError>, mut ownership| async move {
-                    if let Ok(mut retained) = result {
-                        let generation = retained.handle.generation;
-                        let screen = Arc::clone(&retained.handle.entry_screen);
-                        {
-                            let mut entries = cleanup_service.entries.write().await;
-                            if let Some(entry) = entries.get_mut(&cleanup_id).filter(|entry| {
-                                Arc::ptr_eq(&entry.screen, &screen)
-                                    && entry
-                                        .attached
-                                        .as_ref()
-                                        .is_some_and(|attached| attached.generation == generation)
-                            }) {
-                                entry.attached = None;
-                            }
-                        }
-                        retained.handle.release_on_drop = false;
-                        drop(retained.handle);
-                        if let Some(lifecycle) = ownership.take() {
-                            retain_terminal_detach(
-                                Arc::clone(&cleanup_service),
-                                cleanup_id,
-                                retained.committed,
+                move |result: Result<RetainedAttachment, CoreError>, mut ownership| {
+                    if let Ok(retained) = result {
+                        let RetainedAttachment {
+                            mut handle,
+                            committed,
+                        } = retained;
+                        let generation = handle.generation;
+                        let screen = Arc::clone(&handle.entry_screen);
+                        handle.release_on_drop = false;
+                        drop(handle);
+                        cleanup_service
+                            .event_logs
+                            .retain_cleanup(DeferredAttachmentCleanup {
+                                service: Arc::downgrade(&cleanup_service),
+                                id: cleanup_id,
+                                generation: Some(generation),
                                 screen,
-                                lifecycle,
-                            );
-                        }
+                                committed: Some(committed),
+                                commit: None,
+                                outcome: None,
+                                lifecycle: ownership.take(),
+                            });
                     }
                 },
             )

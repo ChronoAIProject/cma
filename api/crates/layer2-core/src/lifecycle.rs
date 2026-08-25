@@ -93,8 +93,7 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
     ) -> Result<SubjectId, CoreError> {
-        let lifecycle_gate = self.lifecycle_gates.gate(id);
-        let lifecycle = lifecycle_gate.lock_owned().await;
+        let lifecycle = self.lock_lifecycle(id).await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "terminate")?;
         let owner = record.session.owner.clone();
@@ -267,8 +266,7 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
     ) -> Result<SubjectId, CoreError> {
-        let lifecycle_gate = self.lifecycle_gates.gate(id);
-        let lifecycle = lifecycle_gate.lock_owned().await;
+        let lifecycle = self.lock_lifecycle(id).await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "stop")?;
         if record.session.status.is_terminal() {
