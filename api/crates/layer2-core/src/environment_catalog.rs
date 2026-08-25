@@ -6,6 +6,8 @@
 //! so the code that holds a credential and speaks HTTP lives in the composition
 //! root rather than here.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::environment_values::{ServiceId, SkillId};
@@ -40,6 +42,19 @@ pub struct CatalogSkill {
     pub access: Option<String>,
 }
 
+/// Display metadata resolved for one exact durable skill identifier.
+///
+/// The key is explicit because profiles may store either a registry GUID or a
+/// human-facing slug. Returning only the catalogue row would force consumers to
+/// alias it by both forms and could attach an ambiguous slug to the wrong grant.
+#[derive(Debug, Clone)]
+pub struct DescribedSkill {
+    /// The durable identifier the caller asked the catalogue to describe.
+    pub requested: SkillId,
+    /// The one catalogue row that matched that identifier exactly.
+    pub skill: CatalogSkill,
+}
+
 /// Failures a catalogue may report.
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -69,6 +84,38 @@ pub trait SkillCatalog: Send + Sync {
         subject: &SubjectId,
         credential: Option<&str>,
     ) -> Result<Vec<CatalogSkill>, CatalogError>;
+
+    /// Describe only the skills a session says it was given.
+    ///
+    /// Adapters with a bounded, side-effect-free metadata projection should
+    /// override this. The default keeps simple catalogues useful and accepts
+    /// both durable identifier forms, but returns metadata only when exactly one
+    /// catalogue row matches the requested GUID or human-facing slug.
+    async fn describe(
+        &self,
+        subject: &SubjectId,
+        credential: Option<&str>,
+        skills: &[SkillId],
+    ) -> Result<Vec<DescribedSkill>, CatalogError> {
+        let available = self.available(subject, credential).await?;
+        let mut seen = HashSet::new();
+        let mut described = Vec::new();
+        for requested in skills.iter().filter(|skill| seen.insert(skill.0.as_str())) {
+            let mut exact = available
+                .iter()
+                .filter(|candidate| candidate.id.0 == requested.0 || candidate.name == requested.0);
+            let Some(skill) = exact.next() else {
+                continue;
+            };
+            if exact.next().is_none() {
+                described.push(DescribedSkill {
+                    requested: requested.clone(),
+                    skill: skill.clone(),
+                });
+            }
+        }
+        Ok(described)
+    }
 }
 
 /// Where the services a caller may allow are listed.
