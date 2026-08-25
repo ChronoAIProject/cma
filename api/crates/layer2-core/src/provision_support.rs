@@ -70,7 +70,7 @@ impl SessionService {
                 &session.id,
                 &session.owner,
                 &services,
-                spec.caller_credential.as_deref(),
+                spec.caller_credential.as_ref(),
             )
             .await
         {

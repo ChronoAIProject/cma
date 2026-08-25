@@ -849,7 +849,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     let app = if authenticated {
         app.layer(Extension(caller.authorization.clone()))
             .layer(Extension(AuthenticatedSubject(caller.subject.clone())))
-            .layer(Extension(DelegatedCredential(
+            .layer(Extension(DelegatedCredential::subject(
                 TEST_DELEGATED_CREDENTIAL.into(),
             )))
     } else {

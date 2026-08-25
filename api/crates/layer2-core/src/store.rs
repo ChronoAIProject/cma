@@ -598,8 +598,17 @@ pub trait CredentialSource: Send + Sync {
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
-        caller_credential: Option<&str>,
+        caller_credential: Option<&crate::session::CallerCredential>,
     ) -> Result<Option<String>, StoreError>;
+
+    /// Whether this session should receive later subject-token renewals.
+    ///
+    /// Sources that mint per-session credentials or pin an initiating bearer
+    /// return false. On failure callers must conservatively avoid replacing a
+    /// credential whose provenance is unknown.
+    async fn tracks_subject_credential(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(true)
+    }
 
     /// Give up whatever was issued for a session that has ended.
     ///

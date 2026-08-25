@@ -1123,7 +1123,9 @@ async fn create(
 ) -> Result<(StatusCode, ProjectedSession), RequestFailure> {
     let Json(body) = body?;
     let parts = body.into_parts()?;
-    let credential_value = credential.as_ref().map(|axum::Extension(c)| c.0.clone());
+    let credential_value = credential
+        .as_ref()
+        .map(|axum::Extension(c)| c.value().to_owned());
     let session = service
         .create_session(
             &caller,
@@ -1139,7 +1141,7 @@ async fn create(
                 options: Default::default(),
                 // The caller's own token, for asking the platform as them. It is
                 // never what the session runs on: the core mints that.
-                caller_credential: credential.map(|axum::Extension(c)| c.0),
+                caller_credential: credential.map(|axum::Extension(c)| c.into_caller_credential()),
                 runtime_credential: None,
                 // This interface takes no plane, so the profile or the
                 // deployment decides — which is what it has always done.
@@ -1193,7 +1195,7 @@ async fn list(
         .list_sessions(&caller, &params.store_query())
         .await?;
     let headers = params.next_headers("/api/v1/sessions", sessions.next.as_ref());
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let views = viewed(
         &environments,
         &users,
@@ -1221,7 +1223,7 @@ async fn read(
     Path(id): Path<String>,
 ) -> Result<ProjectedSession, Problem> {
     let session = service.get_session(&caller, &SessionId(id)).await?;
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let view = viewed_one(
         &environments,
         &users,
@@ -1304,7 +1306,7 @@ async fn plane(
     let session = service
         .change_plane(&caller, &SessionId(id), body.plane)
         .await?;
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     Ok(viewed_one(
         &environments,
         &users,
@@ -1331,7 +1333,7 @@ async fn revive(
     Path(id): Path<String>,
 ) -> Result<ProjectedSession, Problem> {
     let session = service.revive_session(&caller, &SessionId(id)).await?;
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     Ok(viewed_one(
         &environments,
         &users,

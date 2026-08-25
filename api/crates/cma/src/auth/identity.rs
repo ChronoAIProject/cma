@@ -31,6 +31,7 @@ impl AuthState {
                 authorization,
                 profile,
                 delegated_credential: Some(token),
+                credential_is_request_bound: true,
             }));
         }
         let Ok(meta) = self.metadata().await else {
@@ -52,6 +53,7 @@ impl AuthState {
                     authorization,
                     profile,
                     delegated_credential: Some(token),
+                    credential_is_request_bound: true,
                 }))
             }
             Err(e) => {

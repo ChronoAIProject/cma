@@ -235,6 +235,72 @@ impl RecoveryState {
     }
 }
 
+/// A credential delegated by the caller while creating a session.
+///
+/// Browser credentials track the subject's renewable durable token. Bearer
+/// credentials are request-bound and must remain pinned to this exact value
+/// when the session is recovered later.
+#[derive(Clone)]
+pub struct CallerCredential {
+    value: String,
+    request_bound: bool,
+}
+
+impl CallerCredential {
+    /// Keep this exact request credential for the lifetime of the session.
+    pub fn request_bound(value: String) -> Self {
+        Self {
+            value,
+            request_bound: true,
+        }
+    }
+
+    /// Whether recovery must use this exact value rather than subject state.
+    pub fn is_request_bound(&self) -> bool {
+        self.request_bound
+    }
+}
+
+impl From<String> for CallerCredential {
+    fn from(value: String) -> Self {
+        Self {
+            value,
+            request_bound: false,
+        }
+    }
+}
+
+impl From<&str> for CallerCredential {
+    fn from(value: &str) -> Self {
+        value.to_string().into()
+    }
+}
+
+impl std::ops::Deref for CallerCredential {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl AsRef<str> for CallerCredential {
+    fn as_ref(&self) -> &str {
+        &self.value
+    }
+}
+
+impl std::fmt::Debug for CallerCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "CallerCredential(<redacted {} bytes>, request_bound={})",
+            self.value.len(),
+            self.request_bound
+        )
+    }
+}
+
 /// What a caller asks for when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSpec {
@@ -270,7 +336,7 @@ pub struct SessionSpec {
     /// The core stores and forwards this without interpreting it. It is never
     /// serialized back out, never logged, and never rendered by an interface.
     #[serde(skip)]
-    pub caller_credential: Option<String>,
+    pub caller_credential: Option<CallerCredential>,
     /// The session's own credential, minted for it alone.
     ///
     /// Filled by the core during provisioning and never by a caller — an
