@@ -307,6 +307,57 @@ async function selectingLeavesOperations(page) {
   return stuck ? ['operations: choosing a session left the operator panel on screen'] : [];
 }
 
+/** Wait for AppFrame's observed width and animated tracks to reach a new viewport. */
+async function waitForDeveloperFrame(page, width, phoneControls) {
+  try {
+    await page.waitForFunction(
+      (expectedWidth, expectsPhoneControls) => {
+        const frame = document.querySelector('.frame');
+        const center = document.querySelector('.frame__center');
+        const details = document.querySelector('.frame__details');
+        const layout = document.querySelector('.developer__layout');
+        const rail = document.querySelector('.developer__rail');
+        const picker = document.querySelector('.developer__picker');
+        if (
+          !(frame instanceof HTMLElement) ||
+          !(center instanceof HTMLElement) ||
+          !(details instanceof HTMLElement) ||
+          !(layout instanceof HTMLElement) ||
+          !(rail instanceof HTMLElement) ||
+          !(picker instanceof HTMLElement)
+        ) {
+          return false;
+        }
+
+        const frameBox = frame.getBoundingClientRect();
+        const centerBox = center.getBoundingClientRect();
+        const detailsBox = details.getBoundingClientRect();
+        const railDisplay = getComputedStyle(rail).display;
+        const pickerDisplay = getComputedStyle(picker).display;
+        const controlsReady = expectsPhoneControls
+          ? railDisplay === 'none' && pickerDisplay !== 'none'
+          : railDisplay !== 'none' && pickerDisplay === 'none';
+        return (
+          window.innerWidth === expectedWidth &&
+          document.documentElement.clientWidth === expectedWidth &&
+          Math.abs(frameBox.width - window.innerWidth) <= 1 &&
+          controlsReady &&
+          frame.getAnimations().every((animation) => animation.playState === 'finished') &&
+          centerBox.left >= frameBox.left - 1 &&
+          centerBox.right <= frameBox.right + 1 &&
+          Math.abs(detailsBox.right - frameBox.right) <= 1
+        );
+      },
+      { polling: 'raf', timeout: 5000 },
+      width,
+      phoneControls,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The bundled Developer view remains readable and leaves no trap at either layout. */
 async function developerSurface(page) {
   const problems = [];
@@ -398,25 +449,73 @@ async function developerSurface(page) {
   }
 
   await page.setViewport({ width: 390, height: 844 });
-  await settle(400);
+  const phoneLayoutSettled = await waitForDeveloperFrame(page, 390, true);
   const phone = await page.evaluate(() => {
+    const frame = document.querySelector('.frame');
+    const center = document.querySelector('.frame__center');
+    const surface = document.querySelector('.developer');
     const layout = document.querySelector('.developer__layout');
     const rail = document.querySelector('.developer__rail');
     const picker = document.querySelector('.developer__picker');
     if (
+      !(frame instanceof HTMLElement) ||
+      !(center instanceof HTMLElement) ||
+      !(surface instanceof HTMLElement) ||
       !(layout instanceof HTMLElement) ||
       !(rail instanceof HTMLElement) ||
       !(picker instanceof HTMLElement)
     ) {
       return { missing: true };
     }
-    const box = layout.getBoundingClientRect();
+    const rectangle = (element) => {
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, width: box.width };
+    };
+    const box = rectangle(layout);
+    const wideners = [...document.querySelectorAll('body *')]
+      .filter((element) => {
+        const candidate = element.getBoundingClientRect();
+        if (candidate.width === 0 || candidate.height === 0) return false;
+        const style = getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        return (
+          candidate.left < -1 ||
+          candidate.right > window.innerWidth + 1 ||
+          (element.scrollWidth > element.clientWidth + 1 && style.overflowX === 'visible')
+        );
+      })
+      .slice(0, 8)
+      .map((element) => {
+        const candidate = rectangle(element);
+        return {
+          element: `${element.tagName.toLowerCase()}${
+            element.getAttribute('class') === null
+              ? ''
+              : `.${element.getAttribute('class').trim().replaceAll(/\\s+/g, '.')}`
+          }`,
+          ...candidate,
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        };
+      });
     return {
       missing: false,
       rail: getComputedStyle(rail).display,
       picker: getComputedStyle(picker).display,
       offscreen: box.left < -1 || box.right > window.innerWidth + 1,
       horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+      viewport: window.innerWidth,
+      document: {
+        clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      },
+      frame: rectangle(frame),
+      grid: getComputedStyle(frame).gridTemplateColumns,
+      frameAnimations: frame.getAnimations().map((animation) => animation.playState),
+      center: rectangle(center),
+      surface: rectangle(surface),
+      layout: box,
+      wideners,
     };
   });
   if (phone.missing) {
@@ -426,12 +525,15 @@ async function developerSurface(page) {
       problems.push('developer: the phone layout does not replace the rail with its selector');
     }
     if (phone.offscreen || phone.horizontal) {
-      problems.push('developer: the phone surface widens or leaves the viewport');
+      problems.push(
+        'developer: the phone surface widens or leaves the viewport ' +
+          JSON.stringify({ settled: phoneLayoutSettled, ...phone }),
+      );
     }
   }
 
   await page.setViewport({ width: 1440, height: 900 });
-  await settle(400);
+  await waitForDeveloperFrame(page, 1440, false);
   const picked = await page.evaluate(() => {
     const row = document.querySelector('.row-item');
     row?.click();
