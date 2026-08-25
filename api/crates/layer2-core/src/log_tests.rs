@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
+use crate::commit_fault_support::CommitFaultStore;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
 use crate::options::SessionMode;
@@ -66,6 +67,12 @@ struct FaultStore {
     pause_next_write: AtomicBool,
     write_started: Notify,
     release_write: Notify,
+    delete_calls: AtomicUsize,
+    delete_failures: AtomicUsize,
+    pause_delete_before_call: AtomicUsize,
+    pause_delete_after_call: AtomicUsize,
+    delete_started: Notify,
+    release_delete: Notify,
 }
 
 impl FaultStore {
@@ -124,7 +131,30 @@ impl SessionStore for FaultStore {
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
-        self.inner.delete(id).await
+        let call = self.delete_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if self
+            .pause_delete_before_call
+            .compare_exchange(call, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.delete_started.notify_one();
+            self.release_delete.notified().await;
+        }
+        if Self::consume_failure(&self.delete_failures) {
+            return Err(StoreError::Unavailable(
+                "transient test delete failure".into(),
+            ));
+        }
+        self.inner.delete(id).await?;
+        if self
+            .pause_delete_after_call
+            .compare_exchange(call, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.delete_started.notify_one();
+            self.release_delete.notified().await;
+        }
+        Ok(())
     }
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
@@ -199,6 +229,58 @@ async fn wait_for_lane_idle(lane: &Arc<super::SessionLog>) {
     })
     .await
     .expect("the durable lane drains");
+}
+
+fn current_thread_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds")
+}
+
+fn is_runtime_drop_probe(_record: &SessionRecord, events: &[Event]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            EventKind::MessageCommitted { content }
+                if content.starts_with("runtime-drop-first")
+        )
+    })
+}
+
+fn is_runtime_drop_resize(_record: &SessionRecord, events: &[Event]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event.kind,
+            EventKind::TerminalResized {
+                columns: 133,
+                rows: 47
+            }
+        )
+    })
+}
+
+fn is_runtime_drop_rejection(record: &SessionRecord, events: &[Event]) -> bool {
+    events.is_empty() && record.context_ref.as_deref() == Some("stale-retained-rejection")
+}
+
+fn is_final_rejection_probe(_record: &SessionRecord, events: &[Event]) -> bool {
+    events.iter().any(|event| {
+        matches!(event.kind, EventKind::TerminalResized { .. })
+            || matches!(
+                &event.kind,
+                EventKind::MessageCommitted { content }
+                    if content == "late-after-final-rejection"
+            )
+    })
+}
+
+fn enqueue_test_fence(lane: &Arc<super::SessionLog>) -> super::LaneReceiver<()> {
+    let (complete, receiver) = tokio::sync::oneshot::channel();
+    lane.enqueue(super::PendingOperation::Fence {
+        complete: Some(complete),
+    });
+    super::LaneReceiver::new(receiver, Arc::clone(lane))
 }
 
 async fn collide_with_newer_record(
@@ -462,6 +544,735 @@ fn a_restartable_write_survives_its_worker_runtime_stopping_before_the_first_pol
         assert_eq!(events.len(), 1);
         assert!(format!("{:?}", events[0].kind).contains("survives-an-unpolled-worker"));
     });
+}
+
+#[test]
+fn a_retained_continuation_survives_runtime_stopping_before_any_worker_poll() {
+    let origin = current_thread_runtime();
+    let store = Arc::new(FakeStore::default());
+    let seeded = record();
+    origin.block_on(store.seed(&seeded)).expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    let continued = Arc::new(AtomicBool::new(false));
+    let continuation_flag = Arc::clone(&continued);
+
+    let fence = {
+        let _entered = origin.enter();
+        let pending = service.persist_durably_with(
+            seeded,
+            vec![said(0, "retained-before-any-worker-poll")],
+            move |_committed| async move {
+                continuation_flag.store(true, Ordering::SeqCst);
+                ((), ())
+            },
+            super::ignore_rejected,
+            super::drop_undelivered,
+        );
+        let fence = enqueue_test_fence(&lane);
+        drop(pending);
+        fence
+    };
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "dropping an unpolled worker releases its retained operation"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        fence
+            .await
+            .expect("the prequeued fence restarts the retained lane");
+        assert!(
+            continued.load(Ordering::SeqCst),
+            "the FIFO cannot reach its fence before the retained continuation"
+        );
+        wait_for_lane_idle(&lane).await;
+    });
+
+    let events = replacement.block_on(store.events_since(&id(), 0)).unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(format!("{:?}", events[0].kind).contains("retained-before-any-worker-poll"));
+}
+
+#[test]
+fn a_public_resize_continuation_and_lifecycle_survive_store_runtime_replacement() {
+    let origin = current_thread_runtime();
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_drop_resize,
+    ));
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("runtime-replaced-resize-owner");
+    let created = origin.block_on(async {
+        let created = service
+            .create_session(&owner, spec())
+            .await
+            .expect("session is created");
+        await_settled(&service, &owner, &created.id).await;
+        created
+    });
+    let lane = origin.block_on(async {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    });
+    origin.block_on(wait_for_lane_idle(&lane));
+    let before = origin
+        .block_on(inner.get(&created.id))
+        .unwrap()
+        .expect("settled record exists");
+    let resized = TerminalGeometry::new(133, 47).expect("valid geometry");
+    let lifecycle_gate = service.lifecycle_gates.gate(&created.id);
+    store.pause_next();
+
+    origin.block_on(async {
+        let resize = tokio::spawn({
+            let service = Arc::clone(&service);
+            let owner = owner.clone();
+            let id = created.id.clone();
+            async move { service.resize_terminal(&owner, &id, resized).await }
+        });
+        store.wait_until_held().await;
+        assert_eq!(
+            inner
+                .get(&created.id)
+                .await
+                .unwrap()
+                .expect("the pre-resize record remains durable")
+                .session
+                .geometry,
+            before.session.geometry,
+            "the selected resize is still pending inside the store"
+        );
+        assert!(
+            lifecycle_gate.try_lock().is_err(),
+            "the public resize owns its lifecycle gate before runtime loss"
+        );
+        drop(resize);
+    });
+    let first_write_id = store
+        .matched_write_ids()
+        .into_iter()
+        .next()
+        .expect("the paused resize records its write identity");
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "the interrupted resize releases the lane for a replacement worker"
+    );
+    assert!(
+        lifecycle_gate.try_lock().is_err(),
+        "the queued retained operation, not the lost runtime, owns the lifecycle gate"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        let public_successor = TerminalGeometry::new(134, 48).expect("valid geometry");
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            service.resize_terminal(&owner, &created.id, public_successor),
+        )
+        .await
+        .expect("a public lifecycle call restarts the retained lane")
+        .expect("the public successor follows the recovered resize");
+        assert_eq!(
+            service
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .expect("live entry survives")
+                .session
+                .geometry,
+            public_successor,
+            "the public successor runs after the retained live continuation"
+        );
+        assert_eq!(
+            service
+                .screen_snapshot(&owner, &created.id)
+                .await
+                .expect("screen remains readable")
+                .geometry,
+            public_successor
+        );
+        wait_for_lane_idle(&lane).await;
+    });
+
+    let write_ids = store.matched_write_ids();
+    assert_eq!(write_ids, [first_write_id.clone(), first_write_id]);
+    let durable = replacement
+        .block_on(inner.get(&created.id))
+        .unwrap()
+        .expect("resized record is durable");
+    assert_eq!(durable.session.geometry.columns(), 134);
+    assert_eq!(durable.session.geometry.rows(), 48);
+    assert_eq!(durable.session.last_seq, before.session.last_seq + 2);
+    let events = replacement
+        .block_on(inner.events_since(&created.id, before.session.last_seq))
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalResized {
+            columns: 133,
+            rows: 47
+        })
+    ));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalResized {
+            columns: 134,
+            rows: 48
+        })
+    ));
+    assert!(
+        lifecycle_gate.try_lock().is_ok(),
+        "undelivered success releases lifecycle ownership after continuation"
+    );
+}
+
+#[test]
+fn a_public_lifecycle_call_recovers_an_orphaned_polled_continuation() {
+    let origin = current_thread_runtime();
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_drop_probe,
+    ));
+    let seeded = record();
+    origin.block_on(inner.seed(&seeded)).expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lifecycle_gate = service.lifecycle_gates.gate(&id());
+    let continuation_started = Arc::new(Notify::new());
+    let release_continuation = Arc::new(Notify::new());
+    let continued = Arc::new(AtomicUsize::new(0));
+
+    let mut pending = None;
+    origin.block_on(async {
+        let lifecycle = service.lock_lifecycle(&id()).await;
+        let started = Arc::clone(&continuation_started);
+        let release = Arc::clone(&release_continuation);
+        let continuation_count = Arc::clone(&continued);
+        pending = Some(service.persist_durably_with(
+            seeded,
+            vec![said(0, "runtime-drop-first-continuation-pending")],
+            move |_committed| async move {
+                started.notify_one();
+                release.notified().await;
+                continuation_count.fetch_add(1, Ordering::SeqCst);
+                ((), lifecycle)
+            },
+            super::ignore_rejected,
+            super::drop_undelivered,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), continuation_started.notified())
+            .await
+            .expect("the durable continuation reaches its pending await");
+        assert_eq!(inner.events_since(&id(), 0).await.unwrap().len(), 1);
+    });
+    let pending = pending.expect("the retained completion receiver is constructed");
+    assert_eq!(store.matched_calls(), 1);
+    assert_eq!(continued.load(Ordering::SeqCst), 0);
+    drop(pending);
+
+    drop(origin);
+    assert!(
+        lifecycle_gate.try_lock().is_err(),
+        "the stored continuation future retains lifecycle ownership"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        release_continuation.notify_one();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            service.stop_session(&user("subject-log"), &id()),
+        )
+        .await
+        .expect("a public lifecycle call restarts the orphaned retained lane")
+        .expect("the public stop follows the recovered continuation");
+        assert_eq!(
+            continued.load(Ordering::SeqCst),
+            1,
+            "the same continuation future resumes exactly once before the public stop"
+        );
+    });
+
+    assert_eq!(
+        store.matched_calls(),
+        1,
+        "resuming post-commit work does not replay an already durable write"
+    );
+    assert_eq!(store.matched_write_ids().len(), 1);
+    let events = replacement.block_on(inner.events_since(&id(), 0)).unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(format!("{:?}", events[0].kind).contains("runtime-drop-first-continuation-pending"));
+    assert!(
+        lifecycle_gate.try_lock().is_ok(),
+        "undelivered completion releases lifecycle ownership after continuation"
+    );
+    drop(
+        service
+            .event_logs
+            .lane(&SessionId("sesn_retained_cycle_prune_probe".into())),
+    );
+    assert_eq!(
+        service.event_logs.registry_len(),
+        1,
+        "completed retained work breaks its lane keepalive cycle"
+    );
+}
+
+#[test]
+fn a_public_lifecycle_call_recovers_an_orphaned_polled_rejection() {
+    let origin = current_thread_runtime();
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_drop_rejection,
+    ));
+    let mut stale = record();
+    stale.context_ref = Some("stale-retained-rejection".into());
+    origin.block_on(async {
+        inner.seed(&stale).await.expect("seed record");
+        let mut rival = stale.clone();
+        rival.context_ref = Some("rival-before-retained-rejection".into());
+        inner
+            .commit_session_idempotent("rival-before-retained-rejection", &rival, &[])
+            .await
+            .expect("the rival advances the durable revision");
+    });
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lifecycle_gate = service.lifecycle_gates.gate(&id());
+    let rejection_started = Arc::new(Notify::new());
+    let release_rejection = Arc::new(Notify::new());
+    let rejected = Arc::new(AtomicUsize::new(0));
+    let continued = Arc::new(AtomicBool::new(false));
+
+    let mut pending = None;
+    origin.block_on(async {
+        let lifecycle = service.lock_lifecycle(&id()).await;
+        let continuation_flag = Arc::clone(&continued);
+        let started = Arc::clone(&rejection_started);
+        let release = Arc::clone(&release_rejection);
+        let rejection_count = Arc::clone(&rejected);
+        pending = Some(service.persist_durably_with(
+            stale,
+            Vec::new(),
+            move |_committed| async move {
+                continuation_flag.store(true, Ordering::SeqCst);
+                ((), lifecycle)
+            },
+            move |_error| async move {
+                started.notify_one();
+                release.notified().await;
+                rejection_count.fetch_add(1, Ordering::SeqCst);
+            },
+            super::drop_undelivered,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), rejection_started.notified())
+            .await
+            .expect("the retained rejection reaches its pending await");
+    });
+    let pending = pending.expect("the retained rejection receiver is constructed");
+    assert_eq!(rejected.load(Ordering::SeqCst), 0);
+    assert!(!continued.load(Ordering::SeqCst));
+    drop(pending);
+
+    drop(origin);
+    assert!(
+        lifecycle_gate.try_lock().is_err(),
+        "the retained but uncalled continuation still owns lifecycle state"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        release_rejection.notify_one();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            service.stop_session(&user("subject-log"), &id()),
+        )
+        .await
+        .expect("a public lifecycle call restarts the orphaned retained lane")
+        .expect("the public stop follows the recovered rejection");
+        assert_eq!(
+            rejected.load(Ordering::SeqCst),
+            1,
+            "the same rejection future resumes exactly once before the public stop"
+        );
+    });
+
+    assert!(!continued.load(Ordering::SeqCst));
+    assert_eq!(store.matched_calls(), 1);
+    assert_eq!(store.matched_write_ids().len(), 1);
+    assert_eq!(
+        replacement
+            .block_on(inner.get(&id()))
+            .unwrap()
+            .expect("the rival record remains durable")
+            .context_ref
+            .as_deref(),
+        Some("rival-before-retained-rejection")
+    );
+    assert!(
+        lifecycle_gate.try_lock().is_ok(),
+        "final rejection releases lifecycle ownership after cleanup"
+    );
+}
+
+#[test]
+fn a_pre_enqueue_retained_rejection_survives_runtime_loss_and_precedes_its_successor() {
+    let origin = current_thread_runtime();
+    let store = Arc::new(FakeStore::default());
+    let seeded = record();
+    origin.block_on(store.seed(&seeded)).expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    let lifecycle_gate = service.lifecycle_gates.gate(&id());
+    let lifecycle = origin.block_on(service.lock_lifecycle(&id()));
+    let continued = Arc::new(AtomicBool::new(false));
+    let rejected = Arc::new(AtomicUsize::new(0));
+
+    let successor = {
+        let _entered = origin.enter();
+        let continuation_flag = Arc::clone(&continued);
+        let rejection_count = Arc::clone(&rejected);
+        let (retained, pending) = super::retain_commit(
+            id(),
+            Arc::clone(&lane),
+            move |_committed| async move {
+                continuation_flag.store(true, Ordering::SeqCst);
+                ((), lifecycle)
+            },
+            move |error| async move {
+                assert!(matches!(error, StoreError::Malformed(_)));
+                rejection_count.fetch_add(1, Ordering::SeqCst);
+            },
+            super::drop_undelivered,
+        );
+        let mut malformed = said(0, "retained-malformed-before-enqueue");
+        malformed.session_id = SessionId("sesn_wrong_lane".into());
+        lane.enqueue_retained_commit(
+            super::CommitMode::UpdateExact,
+            seeded.clone(),
+            vec![malformed],
+            None,
+            retained,
+            |_| {},
+        );
+        let successor = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded,
+            vec![said(0, "successor-after-pre-enqueue-rejection")],
+        );
+        drop(pending);
+        successor
+    };
+
+    drop(origin);
+    assert!(
+        lifecycle_gate.try_lock().is_err(),
+        "the uncalled continuation owns lifecycle state across runtime loss"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        successor
+            .complete
+            .committed()
+            .await
+            .expect("the successor restarts and follows retained rejection cleanup");
+        assert_eq!(
+            rejected.load(Ordering::SeqCst),
+            1,
+            "pre-enqueue rejection cleanup runs once before its FIFO successor"
+        );
+        wait_for_lane_idle(&lane).await;
+    });
+
+    assert!(!continued.load(Ordering::SeqCst));
+    assert!(lifecycle_gate.try_lock().is_ok());
+    let events = replacement.block_on(store.events_since(&id(), 0)).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].seq, 1);
+    assert!(format!("{:?}", events[0].kind).contains("successor-after-pre-enqueue"));
+}
+
+#[test]
+fn an_ordinary_write_survives_runtime_stopping_after_pop_before_store_entry() {
+    let origin = current_thread_runtime();
+    let inner = Arc::new(FakeStore::default());
+    let seeded = record();
+    origin.block_on(inner.seed(&seeded)).expect("seed record");
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_drop_probe,
+    ));
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.pause_next_operation_after_pop();
+
+    let (first, successor) = origin.block_on(async {
+        let first = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded.clone(),
+            vec![said(0, "runtime-drop-first-before-store")],
+        );
+        let successor = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded,
+            vec![said(0, "runtime-drop-successor-before-store")],
+        );
+        tokio::time::timeout(Duration::from_secs(2), lane.operation_popped.notified())
+            .await
+            .expect("the worker pops the first operation");
+        (first, successor)
+    });
+    assert_eq!(store.matched_calls(), 0, "the store was not entered");
+
+    drop(origin);
+    {
+        let state = lane.state.lock().unwrap_or_else(|error| error.into_inner());
+        assert!(!state.running, "the cancelled worker releases the lane");
+        assert_eq!(state.queued.len(), 2, "the first operation is restored");
+    }
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        first
+            .complete
+            .committed()
+            .await
+            .expect("the ordinary waiter restarts and completes the first write");
+        successor
+            .complete
+            .committed()
+            .await
+            .expect("the already queued successor completes without another enqueue");
+        wait_for_lane_idle(&lane).await;
+    });
+
+    assert_eq!(store.matched_calls(), 1);
+    let events = replacement
+        .block_on(inner.events_since(&id(), 0))
+        .expect("events remain readable");
+    assert_eq!(events.len(), 2);
+    assert!(format!("{:?}", events[0].kind).contains("runtime-drop-first-before-store"));
+    assert!(format!("{:?}", events[1].kind).contains("runtime-drop-successor-before-store"));
+}
+
+#[test]
+fn an_ordinary_write_replays_the_same_identity_after_runtime_stops_inside_store() {
+    let origin = current_thread_runtime();
+    let inner = Arc::new(FakeStore::default());
+    let seeded = record();
+    origin.block_on(inner.seed(&seeded)).expect("seed record");
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_drop_probe,
+    ));
+    store.pause_next();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+
+    let (first, successor) = origin.block_on(async {
+        let first = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded.clone(),
+            vec![said(0, "runtime-drop-first-inside-store")],
+        );
+        let successor = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded,
+            vec![said(0, "runtime-drop-successor-inside-store")],
+        );
+        store.wait_until_held().await;
+        (first, successor)
+    });
+    let first_write_id = store
+        .matched_write_ids()
+        .into_iter()
+        .next()
+        .expect("the paused call records its write identity");
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "the in-store cancellation releases the lane"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        first
+            .complete
+            .committed()
+            .await
+            .expect("the first write replays on the replacement runtime");
+        successor
+            .complete
+            .committed()
+            .await
+            .expect("the queued successor keeps FIFO order");
+        wait_for_lane_idle(&lane).await;
+    });
+
+    let write_ids = store.matched_write_ids();
+    assert_eq!(write_ids, [first_write_id.clone(), first_write_id]);
+    let events = replacement.block_on(inner.events_since(&id(), 0)).unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(format!("{:?}", events[0].kind).contains("runtime-drop-first-inside-store"));
+    assert!(format!("{:?}", events[1].kind).contains("runtime-drop-successor-inside-store"));
+}
+
+#[test]
+fn an_unknown_commit_outcome_replays_once_with_the_same_identity_on_a_new_runtime() {
+    let origin = current_thread_runtime();
+    let inner = Arc::new(FakeStore::default());
+    let seeded = record();
+    origin.block_on(inner.seed(&seeded)).expect("seed record");
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_drop_probe,
+    ));
+    store.pause_after_next();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+
+    let (first, successor) = origin.block_on(async {
+        let first = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded.clone(),
+            vec![said(0, "runtime-drop-first-after-commit")],
+        );
+        let successor = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded,
+            vec![said(0, "runtime-drop-successor-after-commit")],
+        );
+        store.wait_until_held().await;
+        assert_eq!(inner.events_since(&id(), 0).await.unwrap().len(), 1);
+        (first, successor)
+    });
+    let first_write_id = store.matched_write_ids()[0].clone();
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "the post-commit cancellation releases the lane"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        first
+            .complete
+            .committed()
+            .await
+            .expect("the durable receipt reconciles the unknown outcome");
+        successor
+            .complete
+            .committed()
+            .await
+            .expect("the queued successor follows the reconciled write");
+        wait_for_lane_idle(&lane).await;
+    });
+
+    let write_ids = store.matched_write_ids();
+    assert_eq!(write_ids, [first_write_id.clone(), first_write_id]);
+    let events = replacement.block_on(inner.events_since(&id(), 0)).unwrap();
+    assert_eq!(
+        events.len(),
+        2,
+        "the durable first event is never duplicated"
+    );
+    assert!(format!("{:?}", events[0].kind).contains("runtime-drop-first-after-commit"));
+    assert!(format!("{:?}", events[1].kind).contains("runtime-drop-successor-after-commit"));
+}
+
+#[test]
+fn fourth_outage_observation_and_fifo_progress_survive_worker_runtime_replacement() {
+    let origin = current_thread_runtime();
+    let store = Arc::new(FaultStore::default());
+    let seeded = record();
+    origin
+        .block_on(store.inner.seed(&seeded))
+        .expect("seed record");
+    store.failures.store(4, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+
+    let (first, successor) = origin.block_on(async {
+        let first = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded.clone(),
+            vec![said(0, "runtime-drop-first-fourth-outage")],
+        );
+        let successor = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            seeded,
+            vec![said(0, "runtime-drop-successor-fourth-outage")],
+        );
+        tokio::time::timeout(Duration::from_secs(2), lane.failure_delivered.notified())
+            .await
+            .expect("the fourth outage is delivered before observation");
+        (first, successor)
+    });
+    assert_eq!(store.calls.load(Ordering::SeqCst), 4);
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "the pending acknowledgement is restartable"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        assert!(matches!(
+            first
+                .complete
+                .committed()
+                .await
+                .expect_err("the replacement runtime observes the retained report"),
+            StoreError::Unavailable(_)
+        ));
+        successor
+            .complete
+            .committed()
+            .await
+            .expect("the rejected reservation is removed before its successor runs");
+        wait_for_lane_idle(&lane).await;
+    });
+
+    assert_eq!(store.calls.load(Ordering::SeqCst), 5);
+    let events = replacement
+        .block_on(store.inner.events_since(&id(), 0))
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].seq, 1);
+    assert!(format!("{:?}", events[0].kind).contains("runtime-drop-successor-fourth-outage"));
 }
 
 #[tokio::test]
@@ -1498,6 +2309,142 @@ async fn a_rejected_resize_rebuilds_a_queued_successor_cursor() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn final_rejection_insertion_is_atomic_against_a_late_producer() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_final_rejection_probe,
+    ));
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let owner = user("atomic-rejection-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("session is created");
+    await_settled(&service, &owner, &created.id).await;
+    let lane = {
+        let entries = service.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").event_log)
+    };
+    wait_for_lane_idle(&lane).await;
+    let before = inner.get(&created.id).await.unwrap().unwrap();
+    let rejected_geometry = TerminalGeometry::new(127, 49).expect("valid geometry");
+    let rival_geometry = TerminalGeometry::new(128, 50).expect("valid geometry");
+    let lifecycle_gate = service.lifecycle_gates.gate(&created.id);
+    let (rejection_reached, release_rejection) = lane.pause_next_final_rejection();
+
+    store.pause_next();
+    let resize = tokio::spawn({
+        let service = Arc::clone(&service);
+        let owner = owner.clone();
+        let id = created.id.clone();
+        async move {
+            service
+                .resize_terminal(&owner, &id, rejected_geometry)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    {
+        let mut entries = service.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("live entry");
+        super::append(
+            entry,
+            EventKind::MessageCommitted {
+                content: "early-before-final-rejection".into(),
+            },
+        );
+    }
+    let mut rival = before.clone();
+    rival.session.geometry = rival_geometry;
+    inner
+        .commit_session_idempotent("rival-at-final-rejection", &rival, &[])
+        .await
+        .expect("the rival geometry commits");
+    store.release();
+
+    tokio::task::spawn_blocking(move || {
+        rejection_reached
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the rejection reaches its locked insertion boundary");
+    })
+    .await
+    .expect("the insertion observer joins");
+    assert!(
+        lane.state.try_lock().is_err(),
+        "the finalizer holds the queue lock at the insertion boundary"
+    );
+
+    // The next selected store call is the late producer. Holding it lets the
+    // test inspect whether retained rejection cleanup ran before that producer.
+    store.pause_next();
+    let (late_started, late_reached) = tokio::sync::oneshot::channel();
+    let late = tokio::spawn({
+        let service = Arc::clone(&service);
+        let id = created.id.clone();
+        async move {
+            let mut entries = service.entries.write().await;
+            let entry = entries.get_mut(&id).expect("live entry");
+            let _ = late_started.send(());
+            super::append(
+                entry,
+                EventKind::MessageCommitted {
+                    content: "late-after-final-rejection".into(),
+                },
+            );
+        }
+    });
+    late_reached
+        .await
+        .expect("the late producer reaches the lane insertion boundary");
+    assert!(
+        !late.is_finished(),
+        "the final rejection still owns the lane lock at the linearization point"
+    );
+    release_rejection
+        .send(())
+        .expect("release the final rejection transition");
+    late.await.expect("the late producer enqueues");
+
+    store.wait_until_held().await;
+    drop(
+        lifecycle_gate
+            .try_lock()
+            .expect("retained rejection cleanup precedes the late store call"),
+    );
+    assert!(
+        resize.await.expect("the resize task completes").is_err(),
+        "the conflicting resize remains rejected"
+    );
+    store.release();
+    wait_for_lane_idle(&lane).await;
+
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, rival_geometry);
+    assert_eq!(durable.session.last_seq, before.session.last_seq + 2);
+    let events = inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].seq, before.session.last_seq + 1);
+    assert!(format!("{:?}", events[0].kind).contains("early-before-final-rejection"));
+    assert_eq!(events[1].seq, before.session.last_seq + 2);
+    assert!(format!("{:?}", events[1].kind).contains("late-after-final-rejection"));
+    assert_eq!(
+        service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("live entry")
+            .session
+            .last_seq,
+        durable.session.last_seq
+    );
+}
+
 #[tokio::test]
 async fn stale_runtime_loss_cannot_clear_a_replacement_runtime() {
     let mut base = record();
@@ -1995,6 +2942,170 @@ async fn a_queued_delete_cannot_be_followed_by_an_inheriting_resurrection() {
     ));
     assert!(store.get(&id()).await.unwrap().is_none());
     assert!(store.events_since(&id(), 0).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_dropped_delete_waiter_still_stops_after_four_completed_outages() {
+    let store = Arc::new(FaultStore::default());
+    let base = record();
+    store.inner.seed(&base).await.expect("seed record");
+    store.delete_failures.store(5, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+
+    let deletion = lane.enqueue_delete();
+    drop(deletion);
+    let successor = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        base,
+        vec![said(0, "successor-after-dropped-delete-waiter")],
+    );
+    successor
+        .complete
+        .committed()
+        .await
+        .expect("the successor advances after the delete report boundary");
+    wait_for_lane_idle(&lane).await;
+
+    assert_eq!(
+        store.delete_calls.load(Ordering::SeqCst),
+        super::REPORT_AFTER_ATTEMPTS,
+        "waiter cancellation does not turn delete into an unbounded retry"
+    );
+    assert_eq!(store.delete_failures.load(Ordering::SeqCst), 1);
+    let durable = store.inner.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.session.last_seq, 1);
+    let events = store.inner.events_since(&id(), 0).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(format!("{:?}", events[0].kind).contains("successor-after-dropped-delete-waiter"));
+}
+
+#[test]
+fn an_unknown_delete_outcome_is_replayed_before_its_successor_on_a_new_runtime() {
+    let origin = current_thread_runtime();
+    let store = Arc::new(FaultStore::default());
+    let base = record();
+    origin
+        .block_on(store.inner.seed(&base))
+        .expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    origin.block_on(async {
+        lane.observe_record(&base);
+        wait_for_lane_idle(&lane).await;
+    });
+    store.pause_delete_after_call.store(1, Ordering::SeqCst);
+
+    let (deletion, successor) = origin.block_on(async {
+        let deletion = lane.enqueue_delete();
+        let successor = lane.enqueue_commit(
+            super::CommitMode::UpdateInheriting,
+            base,
+            vec![said(0, "must-remain-after-replayed-delete")],
+        );
+        tokio::time::timeout(Duration::from_secs(2), store.delete_started.notified())
+            .await
+            .expect("the delete commits before its response is released");
+        assert!(store.inner.get(&id()).await.unwrap().is_none());
+        (deletion, successor)
+    });
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "the unknown delete outcome releases the lane"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        deletion
+            .await
+            .expect("the delete worker is replaced")
+            .expect("the idempotent delete replay succeeds");
+        assert!(matches!(
+            successor
+                .complete
+                .committed()
+                .await
+                .expect_err("the successor runs only after deletion is observed"),
+            StoreError::SessionDeleted { .. }
+        ));
+        wait_for_lane_idle(&lane).await;
+    });
+
+    assert_eq!(store.delete_calls.load(Ordering::SeqCst), 2);
+    assert!(replacement
+        .block_on(store.inner.get(&id()))
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn cancellation_during_the_fourth_delete_call_preserves_the_error_boundary() {
+    let origin = current_thread_runtime();
+    let store = Arc::new(FaultStore::default());
+    let base = record();
+    origin
+        .block_on(store.inner.seed(&base))
+        .expect("seed record");
+    store.delete_failures.store(4, Ordering::SeqCst);
+    store
+        .pause_delete_before_call
+        .store(super::REPORT_AFTER_ATTEMPTS, Ordering::SeqCst);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+
+    let (deletion, successor) = origin.block_on(async {
+        let deletion = lane.enqueue_delete();
+        let successor = lane.enqueue_commit(
+            super::CommitMode::UpdateExact,
+            base,
+            vec![said(0, "successor-after-fourth-delete-boundary")],
+        );
+        tokio::time::timeout(Duration::from_secs(2), store.delete_started.notified())
+            .await
+            .expect("the fourth started delete is held before its result");
+        assert_eq!(store.delete_calls.load(Ordering::SeqCst), 4);
+        (deletion, successor)
+    });
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "the interrupted fourth call releases the lane"
+    );
+
+    let replacement = current_thread_runtime();
+    replacement.block_on(async {
+        assert!(matches!(
+            deletion
+                .await
+                .expect("the replacement delete worker reports")
+                .expect_err("the fourth completed unavailable result is reported"),
+            StoreError::Unavailable(_)
+        ));
+        successor
+            .complete
+            .committed()
+            .await
+            .expect("the queued successor advances after the reported delete failure");
+        wait_for_lane_idle(&lane).await;
+    });
+
+    assert_eq!(store.delete_calls.load(Ordering::SeqCst), 5);
+    let events = replacement
+        .block_on(store.inner.events_since(&id(), 0))
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(format!("{:?}", events[0].kind).contains("successor-after-fourth-delete-boundary"));
 }
 
 #[tokio::test]
