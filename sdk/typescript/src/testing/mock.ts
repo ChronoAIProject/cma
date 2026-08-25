@@ -45,6 +45,40 @@ export interface MockOptions {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
+interface DurableProjection {
+  readonly seq: number;
+  readonly frames: readonly Readonly<Record<string, unknown>>[];
+}
+
+/** Associate every durable transcript frame with the event projection it came from. */
+function durableProjections(transcript: Transcript): readonly (DurableProjection | undefined)[] {
+  const byFrame: (DurableProjection | undefined)[] = new Array(transcript.frames.length);
+  let prefixes: { readonly index: number; readonly event: Readonly<Record<string, unknown>> }[] =
+    [];
+
+  transcript.frames.forEach((frame, index) => {
+    if (frame.event['cma:live'] === true) {
+      return;
+    }
+    if (Number(frame.event.seq ?? 0) === 0) {
+      prefixes.push({ index, event: frame.event });
+      return;
+    }
+
+    const members = [...prefixes, { index, event: frame.event }];
+    const projection: DurableProjection = {
+      seq: Number(frame.event.seq),
+      frames: members.map((member) => member.event),
+    };
+    for (const member of members) {
+      byFrame[member.index] = projection;
+    }
+    prefixes = [];
+  });
+
+  return byFrame;
+}
+
 /**
  * A mock AG-UI session.
  *
@@ -53,8 +87,9 @@ export interface MockOptions {
  * is the property the surface is being tested against.
  */
 export class MockSession {
-  /** Durable frames the session has already emitted, in sequence order. */
-  #delivered: Record<string, unknown>[] = [];
+  /** Durable events whose projection has begun streaming, in sequence order. */
+  readonly #available = new Set<DurableProjection>();
+  readonly #projectionByFrame: readonly (DurableProjection | undefined)[];
   #cursorAtDrop = 0;
   #dropsRemaining: number;
 
@@ -70,6 +105,7 @@ export class MockSession {
       throw new TypeError(`mock transcript ${transcript.name} has no threadId`);
     }
     this.id = threadId;
+    this.#projectionByFrame = durableProjections(transcript);
     this.#dropsRemaining = options.dropAfter === undefined ? 0 : 1;
   }
 
@@ -120,12 +156,14 @@ export class MockSession {
               onDrop('the mock dropped the stream');
               return;
             }
-            // Liveness is never history. Recording it here makes the
-            // connection deliver it once from history and once from the live
-            // stream, and makes a reload show reasoning the protocol never
-            // persisted.
-            if (frame.event['cma:live'] !== true) {
-              this.#delivered.push(frame.event);
+            // The durable event exists before the server starts projecting it
+            // onto SSE. Expose the whole projection to history before its first
+            // frame is sent, so a disconnect after a seq: 0 prefix replays the
+            // complete event. Liveness has no projection and never enters
+            // history.
+            const projection = this.#projectionByFrame[index - 1];
+            if (projection !== undefined) {
+              this.#available.add(projection);
             }
             onFrame(frame.event);
           }
@@ -136,9 +174,15 @@ export class MockSession {
       },
 
       history: (_session, cursor) =>
-        // Everything already emitted after the caller's cursor, oldest first —
-        // the same contract the wire's `starting_after` honours.
-        Promise.resolve(this.#delivered.filter((frame) => Number(frame.seq ?? 0) > cursor)),
+        // Every complete durable projection already available after the
+        // caller's cursor, oldest first — the same contract the wire's
+        // `starting_after` honours.
+        Promise.resolve(
+          [...this.#available]
+            .filter((projection) => projection.seq > cursor)
+            .sort((left, right) => left.seq - right.seq)
+            .flatMap((projection) => projection.frames),
+        ),
     };
   }
 
@@ -173,7 +217,7 @@ export class MockSession {
    */
   emit(event: Record<string, unknown>, onFrame: (raw: unknown) => void): void {
     if (event['cma:live'] !== true) {
-      this.#delivered.push(event);
+      this.#available.add({ seq: Number(event.seq ?? 0), frames: [event] });
     }
     onFrame(event);
   }
