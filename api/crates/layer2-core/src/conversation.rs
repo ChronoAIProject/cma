@@ -84,12 +84,28 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<(), CoreError> {
-        let input = self
-            .conversation_input(caller, id, Capability::Conversation)
+        // Authorize and, after a control-plane restart, readopt before taking
+        // the ordering gate. Opening a conversation can itself report sign-in
+        // and command updates, and those must remain foldable during readoption.
+        self.conversation_input(caller, id, Capability::Conversation)
             .await?;
-        // Recorded before the turn begins: the owner's message is what the
-        // conversation replays as the owner's side of it, and its time is what
-        // §18.1 labels that turn with.
+        let ordering = self.conversation_order_gates.gate(id);
+        let _ordered_turn = ordering.lock().await;
+        // The entry may have been replaced between readoption and the gate.
+        // Drive the sender that is live now, under the same gate its folder
+        // takes before recording anything that delivery can cause.
+        let input = {
+            let entries = self.entries.read().await;
+            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+            entry.session.capabilities.require(Capability::Conversation)?;
+            entry.conversation.clone().ok_or_else(|| {
+                CoreError::RuntimeUnavailable("this session holds no conversation".into())
+            })?
+        };
+        // The boundary comes first so every projection can establish the turn
+        // before it receives the message that opened it. The owner's message
+        // still carries its own durable time, which is what §18.1 labels that
+        // side of the conversation with.
         let owner_text = text.clone();
         self.toward_runtime(
             id,
@@ -104,13 +120,13 @@ impl SessionService {
             };
             entry.session.status = SessionStatus::Running;
             entry.session.stop_reason = None;
+            append(entry, EventKind::TurnStarted);
             append(
                 entry,
                 EventKind::OwnerMessage {
                     content: owner_text,
                 },
             );
-            append(entry, EventKind::TurnStarted);
             append(
                 entry,
                 EventKind::StatusChanged {
