@@ -83,28 +83,26 @@ function committedMessage(seq: number, messageId: string, body: string) {
   ] as const;
 }
 
-function toolStart(toolCallId: string) {
-  return {
-    type: 'TOOL_CALL_START',
-    threadId: 'sesn_1',
-    runId: 'run_1',
-    seq: 0,
-    toolCallId,
-    toolCallName: `Read for ${toolCallId}`,
-    'cma:toolKind': 'read',
-  };
-}
-
-function toolArgs(seq: number, toolCallId: string) {
-  return {
-    type: 'TOOL_CALL_ARGS',
-    threadId: 'sesn_1',
-    runId: 'run_1',
-    seq,
-    toolCallId,
-    delta: '{}',
-    'cma:truncated': false,
-  };
+function toolUpdate(seq: number, toolCallId: string, status: string) {
+  return [
+    {
+      type: 'TOOL_CALL_END',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      toolCallId,
+      'cma:status': status,
+    },
+    {
+      type: 'TOOL_CALL_RESULT',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq,
+      toolCallId,
+      content: `${status} result`,
+      'cma:truncated': false,
+    },
+  ] as const;
 }
 
 /** Let the connection's own loop advance. */
@@ -727,52 +725,179 @@ describe('a durable event that projects to several frames', () => {
     ]);
   });
 
-  it('releases overlap identities and retires an open key on a stale final', async () => {
+  it('preserves repeated durable updates for the same tool call', async () => {
     const fake = new Fake();
-    const turn = [
-      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
-      toolStart('call-1'),
-      toolArgs(2, 'call-1'),
-      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 3 },
+    fake.responses = [
+      [...toolUpdate(2, 'call-1', 'running'), ...toolUpdate(3, 'call-1', 'completed')],
     ];
-    fake.onOpen = turn;
-    fake.responses = [turn];
 
-    const { seen, statuses, stop } = connect(fake);
-    await vi.waitFor(() => expect(statuses).toContain('live'));
-    const before = seen.length;
-
-    // Once the buffered overlap is gone, its completed identities are gone
-    // too. The stale final is still responsible for retiring the newly open
-    // prefix, so the same key can become the next active projection again.
-    fake.frames?.(toolStart('call-1'));
-    fake.frames?.(toolArgs(2, 'call-1'));
-    fake.frames?.(toolStart('call-1'));
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(3));
     stop();
 
-    expect(seen.slice(before).map((event) => event.type)).toEqual([
-      'TOOL_CALL_START',
-      'TOOL_CALL_START',
+    expect(seen.flatMap((event) => (event.type === 'TOOL_CALL_END' ? [event.status] : []))).toEqual(
+      ['running', 'completed'],
+    );
+    expect(
+      seen.flatMap((event) => (event.type === 'TOOL_CALL_RESULT' ? [event.content] : [])),
+    ).toEqual(['running result', 'completed result']);
+  });
+
+  it('deduplicates history overlap by projection occurrence, then keeps a newer same-call update', async () => {
+    const fake = new Fake();
+    const running = toolUpdate(2, 'call-1', 'running');
+    const completed = toolUpdate(3, 'call-1', 'completed');
+    fake.responses = [[...running]];
+    fake.onOpen = [...running, ...completed];
+
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(3));
+    stop();
+
+    expect(seen.flatMap((event) => (event.type === 'TOOL_CALL_END' ? [event.status] : []))).toEqual(
+      ['running', 'completed'],
+    );
+    expect(seen.map((event) => event.type)).toEqual([
+      'TOOL_CALL_END',
+      'TOOL_CALL_RESULT',
+      'TOOL_CALL_END',
+      'TOOL_CALL_RESULT',
     ]);
   });
 
-  it('deduplicates sequential unnumbered tool frames by tool-call identity', async () => {
+  it('delivers an unknown cursorless future prefix without advancing early', async () => {
     const fake = new Fake();
-    const { seen, stop } = connect(fake);
-    await tick();
+    fake.responses = [
+      [
+        {
+          type: 'FUTURE_PREFIX',
+          threadId: 'sesn_1',
+          runId: 'run_1',
+          seq: 0,
+          futureValue: 7,
+        },
+        { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
+      ],
+    ];
 
-    fake.frames?.(toolStart('call-1'));
-    fake.frames?.(toolStart('call-1'));
-    fake.frames?.(toolArgs(1, 'call-1'));
-    fake.frames?.(toolStart('call-2'));
-    fake.frames?.(toolStart('call-2'));
-    fake.frames?.(toolArgs(2, 'call-2'));
-    await tick();
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(1));
     stop();
 
-    expect(
-      seen.flatMap((event) => (event.type === 'TOOL_CALL_START' ? [event.toolCallId] : [])),
-    ).toEqual(['call-1', 'call-2']);
+    expect(seen.map((event) => event.type)).toEqual(['UNKNOWN', 'RUN_FINISHED']);
+    expect(seen[0]).toMatchObject({ type: 'UNKNOWN', kind: 'FUTURE_PREFIX', seq: 0 });
+  });
+
+  it('retries an unacknowledged prefix without advancing the cursor', async () => {
+    const fake = new Fake();
+    const message = committedMessage(7, 'm_7', 'retry the prefix');
+    fake.responses = [message, message];
+    let resume: () => void = () => {};
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 0,
+      maxBackoffMs: 0,
+      sleep: () => paused,
+    });
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    let startAttempts = 0;
+    const stop = connection.subscribe(
+      (event) => {
+        if (event.type === 'TEXT_MESSAGE_START') {
+          startAttempts += 1;
+          if (startAttempts === 1) {
+            throw new Error('consumer failed before acknowledging START');
+          }
+        }
+        seen.push(event);
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('reconnecting'));
+    expect(connection.cursor).toBe(0);
+    expect(seen).toEqual([]);
+    resume();
+    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    stop();
+
+    expect(startAttempts).toBe(2);
+    expect(seen.map((event) => event.type)).toEqual([
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+    ]);
+    expect(fake.historyReads).toEqual([0, 0]);
+  });
+
+  it('retries only an unacknowledged final and advances after it succeeds', async () => {
+    const fake = new Fake();
+    const message = committedMessage(7, 'm_7', 'retry the final');
+    fake.responses = [message, message];
+    let resume: () => void = () => {};
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 0,
+      maxBackoffMs: 0,
+      sleep: () => paused,
+    });
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    let endAttempts = 0;
+    const stop = connection.subscribe(
+      (event) => {
+        if (event.type === 'TEXT_MESSAGE_END') {
+          endAttempts += 1;
+          if (endAttempts === 1) {
+            throw new Error('consumer failed before acknowledging END');
+          }
+        }
+        seen.push(event);
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('reconnecting'));
+    expect(connection.cursor).toBe(0);
+    expect(seen.map((event) => event.type)).toEqual(['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT']);
+    resume();
+    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    stop();
+
+    expect(endAttempts).toBe(2);
+    expect(seen.map((event) => event.type)).toEqual([
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+    ]);
+    expect(fake.historyReads).toEqual([0, 0]);
+  });
+
+  it('stops between projection frames when a consumer unsubscribes', async () => {
+    const fake = new Fake();
+    fake.responses = [committedMessage(7, 'm_7', 'must not be delivered')];
+    const connection = new AguiConnection(fake, 'sesn_1');
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    let stop: () => void = () => undefined;
+    stop = connection.subscribe(
+      (event) => {
+        seen.push(event);
+        stop();
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('closed'));
+
+    expect(seen.map((event) => event.type)).toEqual(['TEXT_MESSAGE_START']);
+    expect(connection.cursor).toBe(0);
+    expect(fake.opens).toBe(1);
   });
 
   it('still drops a frame the reconnect overlap replays', async () => {

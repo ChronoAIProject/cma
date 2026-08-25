@@ -65,8 +65,12 @@ describe('reading a frame', () => {
     },
   );
 
-  it('rejects an unnumbered unknown durable kind', () => {
-    expect(() => toEvent({ ...base, type: 'FUTURE_THING', seq: 0 })).toThrow(ProtocolError);
+  it('preserves an unnumbered unknown durable prefix', () => {
+    const raw = { ...base, type: 'FUTURE_THING', seq: 0, futureValue: 7 };
+    const event = toEvent(raw);
+
+    expect(event).toMatchObject({ type: 'UNKNOWN', kind: 'FUTURE_THING', seq: 0 });
+    expect(event.type === 'UNKNOWN' && event.raw).toEqual(raw);
   });
 
   it('retains an explicitly live zero sequence', () => {

@@ -68,14 +68,22 @@ const DEFAULT_MAX_BACKOFF = 15_000;
 const DEFAULT_JITTER_RATIO = 1;
 const TERMINAL_HTTP_STATUSES = new Set([401, 403, 404, 410, 422]);
 
-interface ProjectionPrefix {
-  readonly identity: string;
-  readonly frame: string;
+interface ProjectionBuffer {
+  readonly prefixes: AguiEvent[];
 }
 
-interface OpenProjection {
-  readonly identity: string;
-  readonly frames: Set<string>;
+interface PendingProjection {
+  readonly seq: number;
+  readonly finalKey: string;
+  readonly fingerprint: string;
+  acknowledged: number;
+}
+
+class EventCallbackFailure extends Error {
+  constructor(cause: unknown) {
+    super('the AG-UI event consumer did not acknowledge a durable frame', { cause });
+    this.name = 'EventCallbackFailure';
+  }
 }
 
 /** Where the link is, for a surface that has to say so. */
@@ -114,13 +122,8 @@ export class AguiConnection {
    * a client can least afford to drop something it does not understand.
    */
   #seen = new Set<string>();
-  /**
-   * The one projection whose prefix was delivered but whose stamped final
-   * frame has not arrived. Durable projections are contiguous, so retaining
-   * one identity is sufficient across reconnects and bounds this state to the
-   * protocol's largest prefix rather than the session's lifetime.
-   */
-  #openProjection: OpenProjection | undefined;
+  /** A complete projection whose consumer callback has not acknowledged every frame. */
+  #pendingProjection: PendingProjection | undefined;
   #closed = false;
   /** The one terminal notification this one-shot connection has emitted. */
   #terminal: 'failed' | 'closed' | undefined;
@@ -235,9 +238,7 @@ export class AguiConnection {
          * history and opening a connection.
          */
         const pending: unknown[] = [];
-        // Completed prefixes are needed only until the history/stream overlap
-        // has drained. Keeping this local makes that lifetime explicit.
-        const overlapProjectionFrames = new Set<string>();
+        const streamProjection: ProjectionBuffer = { prefixes: [] };
         let live = false;
         let dropped = false;
         let dropCause: unknown;
@@ -257,7 +258,7 @@ export class AguiConnection {
                 return;
               }
               if (live) {
-                this.#deliver(raw, onEvent);
+                this.#accept(raw, onEvent, streamProjection);
               } else {
                 // Held until history has been replayed, so the caller sees one
                 // ordered sequence rather than the future before the past.
@@ -271,18 +272,28 @@ export class AguiConnection {
           this.options,
         );
 
-        // Then history, from the cursor. Stamped frames deduplicate on sequence
-        // and kind; unnumbered prefixes use their projection identity.
+        // Then history, from the cursor. Cursorless durable frames are held
+        // until their numbered final frame makes the projection an exact,
+        // occurrence-aware deduplication unit.
         try {
           const history = await this.transport.history(this.session, this.#cursor, this.options);
           if (this.#closed) {
             return;
           }
+          const historyProjection: ProjectionBuffer = { prefixes: [] };
           for (const raw of history) {
             if (this.#closed) {
               return;
             }
-            this.#deliver(raw, onEvent, overlapProjectionFrames);
+            this.#accept(raw, onEvent, historyProjection);
+          }
+          if (historyProjection.prefixes.length > 0) {
+            throw new ProtocolError('AG-UI history ended inside a durable projection');
+          }
+          if (this.#pendingProjection !== undefined) {
+            throw new ProtocolError(
+              `AG-UI history did not replay the unacknowledged projection at sequence ${String(this.#pendingProjection.seq)}`,
+            );
           }
         } catch (cause) {
           this.#stopStream?.();
@@ -323,12 +334,11 @@ export class AguiConnection {
               return;
             }
             const raw = pending.shift();
-            this.#deliver(raw, onEvent, overlapProjectionFrames);
+            this.#accept(raw, onEvent, streamProjection);
           }
         } catch (cause) {
           drop(cause);
         }
-        overlapProjectionFrames.clear();
         live = true;
         if (!dropped) {
           onStatus?.('live');
@@ -419,20 +429,8 @@ export class AguiConnection {
     onStatus?.('closed');
   }
 
-  /**
-   * Deliver one frame, once.
-   *
-   * Deduplicated on the durable event a frame was projected from together
-   * with the kind of frame it is, which is what the reconnect order above
-   * depends on: opening the stream before reading history guarantees an
-   * overlap, and this is what makes the overlap harmless without discarding
-   * the siblings of a frame already seen.
-   */
-  #deliver(
-    raw: unknown,
-    onEvent: (event: AguiEvent) => void,
-    overlapProjectionFrames?: Set<string>,
-  ) {
+  /** Parse one wire frame and deliver complete durable projections once. */
+  #accept(raw: unknown, onEvent: (event: AguiEvent) => void, buffer: ProjectionBuffer): void {
     if (this.#closed) {
       return;
     }
@@ -449,107 +447,107 @@ export class AguiConnection {
       onEvent(event);
       return;
     }
-    const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
-    /*
-     * A leading durable projection frame deliberately has no SSE id. It can
-     * repeat after a drop, while the cursor still names the preceding durable
-     * event, so deduplicate it by the message or tool-call identity carried in
-     * the protocol. Completed identities live only for the active
-     * history/stream overlap; an actually interrupted projection is retained
-     * separately until its final frame arrives after reconnect.
-     */
+
+    // A cursorless durable frame is only a prefix. Holding it until the final
+    // frame prevents a history/stream overlap from forcing semantic identities
+    // (which are not unique: one tool call may have many durable updates) to do
+    // the work of a log cursor.
     if (event.seq === 0) {
-      const prefix = projectionPrefix(event);
-      if (prefix === undefined) {
-        throw new ProtocolError(`AG-UI ${wireKind} cannot be an unnumbered durable frame`);
-      }
-      if (overlapProjectionFrames?.has(prefix.frame) === true) {
-        return;
-      }
-      if (this.#openProjection !== undefined && this.#openProjection.identity !== prefix.identity) {
-        throw new ProtocolError('AG-UI durable projections were interleaved before completion');
-      }
-      this.#openProjection ??= { identity: prefix.identity, frames: new Set<string>() };
-      if (this.#openProjection.frames.has(prefix.frame)) {
-        return;
-      }
-      this.#openProjection.frames.add(prefix.frame);
-      onEvent(event);
+      buffer.prefixes.push(event);
       return;
     }
 
-    // A final closes the open prefix even when history has already advanced
-    // beyond its sequence. Returning stale frames before this cleanup would
-    // retain their identities for the rest of the session.
-    if (this.#openProjection !== undefined) {
-      const completed = completedProjectionIdentity(event);
-      if (completed === this.#openProjection.identity) {
-        for (const frame of this.#openProjection.frames) {
-          overlapProjectionFrames?.add(frame);
-        }
-      }
-      this.#openProjection = undefined;
+    const events = [...buffer.prefixes, event];
+    buffer.prefixes.length = 0;
+    this.#deliverProjection(events, onEvent);
+  }
+
+  /** Deliver a projection and acknowledge its cursor only after every callback returns. */
+  #deliverProjection(events: readonly AguiEvent[], onEvent: (event: AguiEvent) => void): void {
+    const final = events.at(-1);
+    if (final === undefined || final.ephemeral === true || final.seq <= 0) {
+      throw new ProtocolError('AG-UI durable projection had no numbered final frame');
     }
-    if (event.seq < this.#cursor) {
+    const wireKind = final.type === 'UNKNOWN' ? final.kind : final.type;
+    const finalKey = frameKey(final.seq, wireKind);
+    if (final.seq < this.#cursor) {
       return;
     }
-    if (event.seq > this.#cursor) {
-      this.#cursor = event.seq;
-      // A reconnect asks strictly after the cursor. Only sibling projections
-      // at the current sequence can overlap now, so older keys retain no value
-      // and would otherwise grow for the session's entire lifetime.
+    if (final.seq === this.#cursor && this.#seen.has(finalKey)) {
+      return;
+    }
+
+    const fingerprint = canonicalJson(events);
+    let pending = this.#pendingProjection;
+    if (pending === undefined) {
+      pending = { seq: final.seq, finalKey, fingerprint, acknowledged: 0 };
+      this.#pendingProjection = pending;
+    } else if (
+      pending.seq !== final.seq ||
+      pending.finalKey !== finalKey ||
+      pending.fingerprint !== fingerprint
+    ) {
+      throw new ProtocolError(
+        `AG-UI replay changed the unacknowledged projection at sequence ${String(pending.seq)}`,
+      );
+    }
+
+    for (let index = pending.acknowledged; index < events.length; index += 1) {
+      try {
+        onEvent(events[index] as AguiEvent);
+      } catch (cause) {
+        throw new EventCallbackFailure(cause);
+      }
+      pending.acknowledged = index + 1;
+      if (this.#closed && pending.acknowledged < events.length) {
+        return;
+      }
+    }
+
+    if (final.seq > this.#cursor) {
+      this.#cursor = final.seq;
+      // A reconnect asks strictly after the cursor. Only legacy siblings at
+      // this sequence can still overlap, so older keys need not survive.
       this.#seen.clear();
     }
-    const delivered = frameKey(event.seq, wireKind);
-    if (this.#seen.has(delivered)) {
-      return;
-    }
-    this.#seen.add(delivered);
-    onEvent(event);
+    this.#seen.add(finalKey);
+    this.#pendingProjection = undefined;
   }
 }
 
-/** The projection and frame identities carried by an unnumbered prefix. */
-function projectionPrefix(event: AguiEvent): ProjectionPrefix | undefined {
-  switch (event.type) {
-    case 'TEXT_MESSAGE_START':
-    case 'TEXT_MESSAGE_CONTENT': {
-      const identity = projectionIdentity(event.runId, 'message', event.messageId);
-      return { identity, frame: projectionFrame(identity, event.type) };
-    }
-    case 'TOOL_CALL_START': {
-      const identity = projectionIdentity(event.runId, 'tool-start', event.toolCallId);
-      return { identity, frame: projectionFrame(identity, event.type) };
-    }
-    case 'TOOL_CALL_END': {
-      const identity = projectionIdentity(event.runId, 'tool-update', event.toolCallId);
-      return { identity, frame: projectionFrame(identity, event.type) };
-    }
-    default:
-      return undefined;
+/** Stable JSON identity for retrying a callback without accepting changed history. */
+function canonicalJson(value: unknown, ancestors = new Set<object>()): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
   }
-}
-
-/** The prefix identity a positive frame completes, where it completes one. */
-function completedProjectionIdentity(event: AguiEvent): string | undefined {
-  switch (event.type) {
-    case 'TEXT_MESSAGE_END':
-      return projectionIdentity(event.runId, 'message', event.messageId);
-    case 'TOOL_CALL_ARGS':
-      return projectionIdentity(event.runId, 'tool-start', event.toolCallId);
-    case 'TOOL_CALL_RESULT':
-      return projectionIdentity(event.runId, 'tool-update', event.toolCallId);
-    default:
-      return undefined;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new ProtocolError('AG-UI projection contained a non-JSON number');
+    }
+    return JSON.stringify(value);
   }
-}
-
-function projectionIdentity(runId: string, family: string, entityId: string): string {
-  return `${runId}\u0000${family}\u0000${entityId}`;
-}
-
-function projectionFrame(identity: string, type: string): string {
-  return `${identity}\u0000${type}`;
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (typeof value !== 'object') {
+    throw new ProtocolError('AG-UI projection contained a non-JSON value');
+  }
+  if (ancestors.has(value)) {
+    throw new ProtocolError('AG-UI projection contained a cycle');
+  }
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return `[${value.map((entry) => canonicalJson(entry, ancestors)).join(',')}]`;
+    }
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key], ancestors)}`)
+      .join(',')}}`;
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 function validateOptions(
