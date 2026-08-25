@@ -170,10 +170,13 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 `STATE_SNAPSHOT` is not emitted. Create this document once for each session and
 apply every `STATE_DELTA` to it, in stream order, with RFC 6902 semantics. The
 parents and replace targets are present deliberately: applying the same patches
-to `{}` is invalid JSON Patch. A `null` value means no value has been reported.
-That includes each usage field and `availableCommands`: reported zero usage and
-a reported empty command list arrive as `0` and `[]`, respectively, and remain
-observably different from an unknown value.
+to `{}` is invalid JSON Patch. For report-valued members, an initial `null`
+means no value has been reported. Zero input and output token counts and an empty
+command list are real reports, arriving as `0` and `[]` rather than remaining
+unknown. `/usage/contextUsed` is different only at the core event boundary:
+zero there is the established "no context reading" sentinel, so its projection
+omits that operation and preserves the canonical `null` or last positive value.
+For `/memoryPressure`, `null` means no pressure episode is currently open.
 
 For a replay from the beginning, discard the old state and start from this
 document again. When resuming after a cursor, retain the state already folded
@@ -293,7 +296,7 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 
 `messageId` is derived from the durable sequence, so reading the log twice yields the same identifier. A client deduplicating on it after a reconnect sees one message rather than two.
 
-**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. The current reading is written at `/usage/contextUsed`; the ceiling it is drawn from is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
+**`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A positive current reading is written at `/usage/contextUsed`. Core turn accounting uses zero in that field to mean that it carried no context reading; that sentinel is not projected, so the initial `null` or prior positive reading remains. The ceiling is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
 
 Memory pressure is durable state folded from those ephemeral readings. An
 opening edge replaces `/memoryPressure` with `usedBytes`, `limitBytes`,

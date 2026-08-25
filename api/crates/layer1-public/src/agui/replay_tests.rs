@@ -879,6 +879,24 @@ mod route_resume {
                 },
             ),
             durable(
+                9,
+                EventKind::UsageReported {
+                    input_tokens: 31,
+                    output_tokens: 12,
+                    context_used: 1_500,
+                    context_window: Some(2_000),
+                },
+            ),
+            durable(
+                10,
+                EventKind::UsageReported {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    context_used: 0,
+                    context_window: None,
+                },
+            ),
+            durable(
                 11,
                 EventKind::ContextCompacted {
                     was: 1_800,
@@ -898,15 +916,24 @@ mod route_resume {
         let full = replay(&app, 0).await;
         assert_eq!(
             full.iter().map(|frame| frame.id).collect::<Vec<_>>(),
-            vec![Some(3), Some(7), Some(11), Some(15)]
+            vec![Some(3), Some(7), Some(9), Some(10), Some(11), Some(15)]
         );
         let full_state = fold_state(agui::initial_state(), &full);
 
-        let retained = fold_state(agui::initial_state(), &full[..2]);
-        let resumed = replay(&app, 7).await;
+        let retained = fold_state(agui::initial_state(), &full[..3]);
+        let resumed = replay(&app, 9).await;
         let resumed_state = fold_state(retained, &resumed);
 
         assert_eq!(resumed_state, full_state);
+        assert_eq!(
+            full_state["usage"],
+            json!({
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "contextUsed": 1_500,
+                "contextWindow": 2_000,
+            })
+        );
         assert_eq!(full_state["gaps"], json!([{ "frames": 4 }]));
         assert_eq!(
             full_state["planeChanges"],
