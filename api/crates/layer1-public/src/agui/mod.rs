@@ -22,6 +22,8 @@
 //! `docs/API_AGUI.md` governs. Where this code and that document disagree, one
 //! of them is wrong and it is usually this one.
 
+use std::time::Duration;
+
 use axum::{
     routing::{get, post},
     Router,
@@ -38,6 +40,8 @@ mod replay;
 mod resources;
 mod run;
 mod run_ending;
+
+pub(super) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Routes this interface contributes.
 pub fn router(state: SessionsState) -> Router {
