@@ -11,6 +11,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::task::{Context, Poll};
@@ -37,6 +39,17 @@ enum CommitMode {
     UpdateInheriting,
 }
 
+type CommitCompletion = oneshot::Sender<Result<CommitDelivery<SessionRecord>, StoreError>>;
+type CommitCompletionSlot = Option<CommitCompletion>;
+
+enum CommitTarget {
+    Ordinary {
+        complete: CommitCompletionSlot,
+        observed: Option<oneshot::Receiver<()>>,
+    },
+    Retained(Box<dyn RetainedCommitWork>),
+}
+
 enum PendingOperation {
     Commit {
         write_id: String,
@@ -44,25 +57,52 @@ enum PendingOperation {
         record: Box<SessionRecord>,
         change: Option<Box<RecordChange>>,
         events: Vec<Event>,
-        complete: oneshot::Sender<Result<CommitDelivery<SessionRecord>, StoreError>>,
-        observed: oneshot::Receiver<()>,
-        retained_outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
+        target: Option<CommitTarget>,
+        progress: CommitProgress,
+        /// Set before post-commit work is first polled, so that phase resumes
+        /// without replaying a write whose outcome is already known.
+        outcome: Option<Result<SessionRecord, StoreError>>,
     },
     RestartableCommit {
         write_id: String,
         record: Box<SessionRecord>,
         events: Vec<Event>,
         outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
+        progress: CommitProgress,
     },
     Delete {
-        complete: oneshot::Sender<Result<(), StoreError>>,
+        complete: Option<oneshot::Sender<Result<(), StoreError>>>,
+        progress: DeleteProgress,
     },
     Fence {
-        complete: oneshot::Sender<()>,
+        complete: Option<oneshot::Sender<()>>,
     },
-    ObserveRecord(Box<SessionRecord>),
+    RetainedCompletion {
+        retained: Box<dyn RetainedCommitWork>,
+        outcome: Result<SessionRecord, StoreError>,
+    },
+    ObserveRecord(Option<Box<SessionRecord>>),
     #[cfg(test)]
     ObserveRevision(u64),
+}
+
+#[derive(Default)]
+struct CommitProgress {
+    prepared: bool,
+    attempt: usize,
+    unavailable_attempt: usize,
+    reported_error: Option<StoreError>,
+}
+
+#[derive(Default)]
+struct DeleteProgress {
+    /// Only completed unavailable results consume the caller's report boundary.
+    ///
+    /// Deletes have no semantic continuation to retain after their waiter goes
+    /// away. They therefore finish the lane after four completed unavailable
+    /// results even when delivery fails, rather than retrying forever for a
+    /// caller that can no longer observe the result.
+    unavailable_attempt: usize,
 }
 
 /// One live snapshot's change from the snapshot immediately before it.
@@ -94,9 +134,50 @@ struct EnqueuedCommit {
     last_seq: u64,
 }
 
+type RestartSignal = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+fn restart_signal(changed: Arc<tokio::sync::Notify>) -> RestartSignal {
+    Box::pin(async move { changed.notified().await })
+}
+
+struct LaneReceiver<T> {
+    complete: oneshot::Receiver<T>,
+    lane: Arc<SessionLog>,
+    restart: RestartSignal,
+}
+
+impl<T> LaneReceiver<T> {
+    fn new(complete: oneshot::Receiver<T>, lane: Arc<SessionLog>) -> Self {
+        let restart = restart_signal(Arc::clone(&lane.restart_needed));
+        Self {
+            complete,
+            lane,
+            restart,
+        }
+    }
+}
+
+/// A lane result whose waiter can take worker ownership onto another runtime.
+///
+/// The restart listener is polled before `kick`. A worker cancellation either
+/// clears `running` before that check or notifies the already-registered waiter,
+/// so enqueueing immediately before cancellation cannot lose the restart.
+impl<T> Future for LaneReceiver<T> {
+    type Output = Result<T, oneshot::error::RecvError>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.restart.as_mut().poll(context).is_ready() {
+            self.restart = restart_signal(Arc::clone(&self.lane.restart_needed));
+            let _ = self.restart.as_mut().poll(context);
+        }
+        self.lane.kick();
+        Pin::new(&mut self.complete).poll(context)
+    }
+}
+
 pub(crate) struct RestartableCommit {
     lane: Arc<SessionLog>,
-    outcome: oneshot::Receiver<Result<SessionRecord, StoreError>>,
+    outcome: LaneReceiver<Result<SessionRecord, StoreError>>,
 }
 
 impl RestartableCommit {
@@ -310,12 +391,19 @@ impl Drop for CleanupDrain<'_> {
 pub(crate) struct CommitReceiver<T = SessionRecord> {
     complete: oneshot::Receiver<Result<CommitDelivery<T>, StoreError>>,
     acknowledge_error: Option<oneshot::Sender<()>>,
+    lane: Arc<SessionLog>,
+    restart: RestartSignal,
 }
 
 impl<T> Future for CommitReceiver<T> {
     type Output = Result<Result<T, StoreError>, oneshot::error::RecvError>;
 
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.restart.as_mut().poll(context).is_ready() {
+            self.restart = restart_signal(Arc::clone(&self.lane.restart_needed));
+            let _ = self.restart.as_mut().poll(context);
+        }
+        self.lane.kick();
         match Pin::new(&mut self.complete).poll(context) {
             Poll::Ready(Ok(Ok(delivery))) => Poll::Ready(Ok(Ok(delivery.observed()))),
             Poll::Ready(Ok(Err(error))) => {
@@ -331,26 +419,181 @@ impl<T> Future for CommitReceiver<T> {
 }
 
 impl<T> CommitReceiver<T> {
+    fn new(
+        complete: oneshot::Receiver<Result<CommitDelivery<T>, StoreError>>,
+        acknowledge_error: Option<oneshot::Sender<()>>,
+        lane: Arc<SessionLog>,
+    ) -> Self {
+        let restart = restart_signal(Arc::clone(&lane.restart_needed));
+        Self {
+            complete,
+            acknowledge_error,
+            lane,
+            restart,
+        }
+    }
+
     pub(crate) async fn committed(self) -> Result<T, StoreError> {
         self.await
             .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))?
     }
 }
 
-/// Keep a proposal's post-commit work alive independently of its waiter.
+type RetainedAttempt<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+type RetainedContinuation<T, H> =
+    Box<dyn FnOnce(SessionRecord) -> RetainedAttempt<'static, (T, H)> + Send>;
+type RetainedRejection = Box<dyn FnOnce(StoreError) -> RetainedAttempt<'static, ()> + Send>;
+type RetainedUndelivered<T, H> = Box<dyn FnOnce(T, H) + Send>;
+
+/// Type-erased post-commit work kept inside its guarded lane operation.
+trait RetainedCommitWork: Send {
+    fn report_error(&mut self, error: StoreError) -> bool;
+    fn error_observed(&mut self) -> RetainedAttempt<'_, bool>;
+    fn clear_error_observation(&mut self);
+    fn prepare_outcome(&mut self, outcome: Result<SessionRecord, StoreError>);
+    fn finish(&mut self) -> RetainedAttempt<'_, ()>;
+}
+
+struct RetainedCommit<T, H> {
+    id: SessionId,
+    /// Keep the weakly registered lane reachable while this work is queued.
+    /// Completion breaks the temporary lane -> work -> lane cycle.
+    lane_keepalive: Option<Arc<SessionLog>>,
+    report: Option<oneshot::Sender<Result<CommitDelivery<T>, StoreError>>>,
+    error_observed: Option<oneshot::Receiver<()>>,
+    error_was_observed: bool,
+    continuation: Option<RetainedContinuation<T, H>>,
+    continuing: Option<RetainedAttempt<'static, (T, H)>>,
+    on_rejected: Option<RetainedRejection>,
+    rejecting: Option<RetainedAttempt<'static, ()>>,
+    rejection: Option<StoreError>,
+    on_undelivered: Option<RetainedUndelivered<T, H>>,
+    outcome_prepared: bool,
+}
+
+impl<T, H> RetainedCommitWork for RetainedCommit<T, H>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+{
+    fn report_error(&mut self, error: StoreError) -> bool {
+        let Some(report) = self.report.take() else {
+            return false;
+        };
+        if report.send(Err(error)).is_ok() {
+            true
+        } else {
+            self.error_observed.take();
+            false
+        }
+    }
+
+    fn error_observed(&mut self) -> RetainedAttempt<'_, bool> {
+        Box::pin(async move {
+            let observed = self
+                .error_observed
+                .as_mut()
+                .expect("a reported retained commit keeps its observation channel")
+                .await
+                .is_ok();
+            if observed {
+                self.error_was_observed = true;
+            }
+            observed
+        })
+    }
+
+    fn clear_error_observation(&mut self) {
+        self.error_observed.take();
+    }
+
+    fn prepare_outcome(&mut self, outcome: Result<SessionRecord, StoreError>) {
+        if self.outcome_prepared {
+            return;
+        }
+        self.outcome_prepared = true;
+        match outcome {
+            Ok(record) => {
+                let continuation = self
+                    .continuation
+                    .take()
+                    .expect("a retained continuation is prepared at most once");
+                self.continuing = Some(continuation(record));
+            }
+            Err(error) => {
+                let on_rejected = self
+                    .on_rejected
+                    .take()
+                    .expect("a retained rejection is prepared at most once");
+                self.rejecting = Some(on_rejected(error.clone()));
+                self.rejection = Some(error);
+            }
+        }
+    }
+
+    fn finish(&mut self) -> RetainedAttempt<'_, ()> {
+        Box::pin(async move {
+            if let Some(continuing) = self.continuing.as_mut() {
+                let (output, ownership) = continuing.as_mut().await;
+                self.continuing.take();
+                let on_undelivered = self
+                    .on_undelivered
+                    .take()
+                    .expect("a retained success finishes at most once");
+                if let Some(report) = self.report.take() {
+                    let _ = report.send(Ok(CommitDelivery::retained(
+                        output,
+                        ownership,
+                        on_undelivered,
+                    )));
+                } else {
+                    on_undelivered(output, ownership);
+                }
+                self.lane_keepalive.take();
+                return;
+            }
+
+            if let Some(rejecting) = self.rejecting.as_mut() {
+                rejecting.as_mut().await;
+                self.rejecting.take();
+                let error = self
+                    .rejection
+                    .take()
+                    .expect("a retained rejection keeps its error until cleanup finishes");
+                if let Some(report) = self.report.take() {
+                    let _ = report.send(Err(error));
+                } else if !self.error_was_observed {
+                    tracing::error!(
+                        session_id = %self.id,
+                        error = %error,
+                        "a detached durable session proposal failed"
+                    );
+                }
+                self.lane_keepalive.take();
+                return;
+            }
+
+            debug_assert!(
+                self.outcome_prepared,
+                "retained work finishes only after durability"
+            );
+            self.lane_keepalive.take();
+        })
+    }
+}
+
+/// Build post-commit work before its lane operation can start.
 ///
-/// The ordinary completion channel may report an outage after four attempts,
-/// but only its external receiver is allowed to acknowledge that report. If
-/// the receiver is cancelled, the lane retains the write and this task keeps
-/// both the continuation and its ownership guard until eventual success.
+/// Both the closures and any future already produced from them remain fields of
+/// the guarded operation. Dropping one Tokio runtime therefore requeues the
+/// exact durable/continuation phase for a waiter on another runtime to resume.
 fn retain_commit<T, H, F, Fut, R, RFut, U>(
     id: SessionId,
-    commit: CommitReceiver,
-    retained_outcome: oneshot::Receiver<Result<SessionRecord, StoreError>>,
+    lane: Arc<SessionLog>,
     continuation: F,
     on_rejected: R,
     on_undelivered: U,
-) -> CommitReceiver<T>
+) -> (Box<dyn RetainedCommitWork>, CommitReceiver<T>)
 where
     T: Send + 'static,
     H: Send + 'static,
@@ -360,100 +603,70 @@ where
     RFut: Future<Output = ()> + Send + 'static,
     U: FnOnce(T, H) + Send + 'static,
 {
-    let CommitReceiver {
-        complete: durable,
-        acknowledge_error: acknowledge_durable_error,
-    } = commit;
     let (report, complete) = oneshot::channel();
     let (acknowledge_error, error_observed) = oneshot::channel();
-    tokio::spawn(async move {
-        let mut report = Some(report);
-        let mut error_was_observed = false;
-        match durable.await {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => {
-                let delivered = report
-                    .take()
-                    .expect("a retained commit reports at most once")
-                    .send(Err(error))
-                    .is_ok();
-                if delivered && error_observed.await.is_ok() {
-                    error_was_observed = true;
-                    if let Some(acknowledge) = acknowledge_durable_error {
-                        let _ = acknowledge.send(());
-                    }
-                } else {
-                    // Dropping this sender is the signal that the report was not
-                    // externally observed. The lane then keeps retrying.
-                    drop(acknowledge_durable_error);
-                }
-            }
-            Err(_) => {
-                let error = StoreError::Unavailable("session write worker stopped".into());
-                let _ = report
-                    .take()
-                    .expect("a retained commit reports at most once")
-                    .send(Err(error.clone()));
-                on_rejected(error).await;
-                return;
-            }
-        }
-
-        match retained_outcome.await {
-            Ok(Ok(record)) => {
-                let (output, ownership) = continuation(record).await;
-                if let Some(report) = report {
-                    let _ = report.send(Ok(CommitDelivery::retained(
-                        output,
-                        ownership,
-                        on_undelivered,
-                    )));
-                } else {
-                    on_undelivered(output, ownership);
-                }
-            }
-            Ok(Err(error)) => {
-                on_rejected(error.clone()).await;
-                if let Some(report) = report {
-                    let _ = report.send(Err(error));
-                } else if !error_was_observed {
-                    tracing::error!(
-                        session_id = %id,
-                        error = %error,
-                        "a detached durable session proposal failed"
-                    );
-                }
-            }
-            Err(_) => {
-                let error = StoreError::Unavailable("session write worker stopped".into());
-                on_rejected(error.clone()).await;
-                if let Some(report) = report {
-                    let _ = report.send(Err(error));
-                } else if !error_was_observed {
-                    tracing::error!(
-                        session_id = %id,
-                        error = %error,
-                        "a detached durable session proposal stopped without an outcome"
-                    );
-                }
-            }
-        }
-    });
-    CommitReceiver {
-        complete,
-        acknowledge_error: Some(acknowledge_error),
-    }
+    let retained = RetainedCommit {
+        id,
+        lane_keepalive: Some(Arc::clone(&lane)),
+        report: Some(report),
+        error_observed: Some(error_observed),
+        error_was_observed: false,
+        continuation: Some(Box::new(move |record| Box::pin(continuation(record)))),
+        continuing: None,
+        on_rejected: Some(Box::new(move |error| Box::pin(on_rejected(error)))),
+        rejecting: None,
+        rejection: None,
+        on_undelivered: Some(Box::new(on_undelivered)),
+        outcome_prepared: false,
+    };
+    (
+        Box::new(retained),
+        CommitReceiver::new(complete, Some(acknowledge_error), lane),
+    )
 }
 
 pub(crate) async fn ignore_rejected(_error: StoreError) {}
 
 pub(crate) fn drop_undelivered<T, H>(_output: T, _ownership: H) {}
 
-struct CommitReporter {
-    complete: Option<oneshot::Sender<Result<CommitDelivery<SessionRecord>, StoreError>>>,
-    observed: Option<oneshot::Receiver<()>>,
+struct CommitReporter<'a> {
+    progress: &'a mut CommitProgress,
+    target: Option<&'a mut CommitTarget>,
     retain_after_cancellation: bool,
-    retained_outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
+}
+
+impl CommitReporter<'_> {
+    fn report_error(&mut self, error: StoreError) -> bool {
+        match self.target.as_deref_mut() {
+            Some(CommitTarget::Ordinary { complete, .. }) => complete
+                .take()
+                .is_some_and(|complete| complete.send(Err(error)).is_ok()),
+            Some(CommitTarget::Retained(retained)) => retained.report_error(error),
+            None => false,
+        }
+    }
+
+    async fn error_observed(&mut self) -> bool {
+        match self.target.as_deref_mut() {
+            Some(CommitTarget::Ordinary { observed, .. }) => observed
+                .as_mut()
+                .expect("a reported commit retains its observation channel")
+                .await
+                .is_ok(),
+            Some(CommitTarget::Retained(retained)) => retained.error_observed().await,
+            None => unreachable!("a reported commit has a completion target"),
+        }
+    }
+
+    fn clear_error_observation(&mut self) {
+        match self.target.as_deref_mut() {
+            Some(CommitTarget::Ordinary { observed, .. }) => {
+                observed.take();
+            }
+            Some(CommitTarget::Retained(retained)) => retained.clear_error_observation(),
+            None => {}
+        }
+    }
 }
 
 #[derive(Default)]
@@ -475,20 +688,32 @@ struct LaneState {
     queued: VecDeque<PendingOperation>,
 }
 
-struct RunningRestartableCommit {
+#[cfg(test)]
+struct FinalRejectionPause {
+    reached: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+struct RunningOperation {
     lane: Arc<SessionLog>,
     operation: Option<PendingOperation>,
 }
 
-impl RunningRestartableCommit {
-    fn finish(mut self) -> PendingOperation {
+impl RunningOperation {
+    fn operation_mut(&mut self) -> &mut PendingOperation {
+        self.operation
+            .as_mut()
+            .expect("a running lane operation remains owned until it finishes")
+    }
+
+    fn finish(mut self) {
         self.operation
             .take()
-            .expect("a restartable lane operation finishes at most once")
+            .expect("a lane operation finishes at most once");
     }
 }
 
-impl Drop for RunningRestartableCommit {
+impl Drop for RunningOperation {
     fn drop(&mut self) {
         let Some(operation) = self.operation.take() else {
             return;
@@ -500,6 +725,8 @@ impl Drop for RunningRestartableCommit {
             .unwrap_or_else(|error| error.into_inner());
         state.queued.push_front(operation);
         state.running = false;
+        drop(state);
+        self.lane.restart_needed.notify_waiters();
     }
 }
 
@@ -527,6 +754,7 @@ impl Drop for UnpolledLaneWorker {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .running = false;
+        self.lane.restart_needed.notify_waiters();
     }
 }
 
@@ -537,8 +765,17 @@ pub(crate) struct SessionLog {
     sequences: Arc<Sequences>,
     revision: AtomicU64,
     state: StdMutex<LaneState>,
+    restart_needed: Arc<tokio::sync::Notify>,
     #[cfg(test)]
     failure_delivered: tokio::sync::Notify,
+    #[cfg(test)]
+    pause_after_pop: AtomicBool,
+    #[cfg(test)]
+    operation_popped: tokio::sync::Notify,
+    #[cfg(test)]
+    release_popped_operation: tokio::sync::Notify,
+    #[cfg(test)]
+    final_rejection_pause: StdMutex<Option<FinalRejectionPause>>,
 }
 
 impl SessionLog {
@@ -549,9 +786,41 @@ impl SessionLog {
             sequences,
             revision: AtomicU64::new(0),
             state: StdMutex::new(LaneState::default()),
+            restart_needed: Arc::new(tokio::sync::Notify::new()),
             #[cfg(test)]
             failure_delivered: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            pause_after_pop: AtomicBool::new(false),
+            #[cfg(test)]
+            operation_popped: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            release_popped_operation: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            final_rejection_pause: StdMutex::new(None),
         }
+    }
+
+    #[cfg(test)]
+    fn pause_next_operation_after_pop(&self) {
+        assert!(!self.pause_after_pop.swap(true, Ordering::SeqCst));
+    }
+
+    #[cfg(test)]
+    fn pause_next_final_rejection(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (reached, wait_until_reached) = std::sync::mpsc::channel();
+        let (release, wait_until_released) = std::sync::mpsc::channel();
+        let mut pause = self
+            .final_rejection_pause
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert!(pause.is_none(), "only one final rejection can be paused");
+        *pause = Some(FinalRejectionPause {
+            reached,
+            release: wait_until_released,
+        });
+        (wait_until_reached, release)
     }
 
     #[cfg(test)]
@@ -572,7 +841,9 @@ impl SessionLog {
             state.local_tail = Some(Box::new(record.clone()));
             state
                 .queued
-                .push_back(PendingOperation::ObserveRecord(Box::new(record.clone())));
+                .push_back(PendingOperation::ObserveRecord(Some(Box::new(
+                    record.clone(),
+                ))));
             if state.running {
                 false
             } else {
@@ -636,26 +907,20 @@ impl SessionLog {
         record: SessionRecord,
         events: Vec<Event>,
         owned_fields: Option<RecordFields>,
+        retained: Box<dyn RetainedCommitWork>,
         after_allocation: F,
-    ) -> (
-        EnqueuedCommit,
-        oneshot::Receiver<Result<SessionRecord, StoreError>>,
-    )
-    where
+    ) where
         F: FnOnce(u64),
     {
-        let (retained_outcome, outcome) = oneshot::channel();
-        (
-            self.enqueue_commit_inner(
-                mode,
-                record,
-                events,
-                owned_fields,
-                Some(retained_outcome),
-                after_allocation,
-            ),
-            outcome,
-        )
+        let enqueued = self.enqueue_commit_inner(
+            mode,
+            record,
+            events,
+            owned_fields,
+            Some(retained),
+            after_allocation,
+        );
+        drop(enqueued.complete);
     }
 
     fn enqueue_restartable_commit(
@@ -670,7 +935,7 @@ impl SessionLog {
             )));
             return RestartableCommit {
                 lane: Arc::clone(self),
-                outcome: receiver,
+                outcome: LaneReceiver::new(receiver, Arc::clone(self)),
             };
         }
         let appended_at = crate::clock::now_rfc3339();
@@ -693,7 +958,7 @@ impl SessionLog {
                         let _ = outcome.send(Err(error));
                         return RestartableCommit {
                             lane: Arc::clone(self),
-                            outcome: receiver,
+                            outcome: LaneReceiver::new(receiver, Arc::clone(self)),
                         };
                     }
                 };
@@ -701,7 +966,7 @@ impl SessionLog {
                     let _ = outcome.send(Err(error));
                     return RestartableCommit {
                         lane: Arc::clone(self),
-                        outcome: receiver,
+                        outcome: LaneReceiver::new(receiver, Arc::clone(self)),
                     };
                 }
                 record.session.last_seq = events
@@ -713,6 +978,7 @@ impl SessionLog {
                 record: Box::new(record),
                 events,
                 outcome: Some(outcome),
+                progress: CommitProgress::default(),
             });
             if state.running {
                 false
@@ -726,7 +992,7 @@ impl SessionLog {
         }
         RestartableCommit {
             lane: Arc::clone(self),
-            outcome: receiver,
+            outcome: LaneReceiver::new(receiver, Arc::clone(self)),
         }
     }
 
@@ -736,7 +1002,7 @@ impl SessionLog {
         mut record: SessionRecord,
         mut events: Vec<Event>,
         owned_fields: Option<RecordFields>,
-        retained_outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
+        mut retained: Option<Box<dyn RetainedCommitWork>>,
         after_allocation: F,
     ) -> EnqueuedCommit
     where
@@ -745,14 +1011,19 @@ impl SessionLog {
         let (complete, receiver) = oneshot::channel();
         let (acknowledge_error, observed) = oneshot::channel();
         if record.session.id != self.id || events.iter().any(|event| event.session_id != self.id) {
-            let _ = complete.send(Err(StoreError::Malformed(
+            let error = StoreError::Malformed(
                 "one durable session write named more than one session".into(),
-            )));
+            );
+            if let Some(retained) = retained.take() {
+                self.enqueue(PendingOperation::RetainedCompletion {
+                    retained,
+                    outcome: Err(error),
+                });
+            } else {
+                let _ = complete.send(Err(error));
+            }
             return EnqueuedCommit {
-                complete: CommitReceiver {
-                    complete: receiver,
-                    acknowledge_error: Some(acknowledge_error),
-                },
+                complete: CommitReceiver::new(receiver, Some(acknowledge_error), Arc::clone(self)),
                 last_seq: record.session.last_seq,
             };
         }
@@ -783,23 +1054,63 @@ impl SessionLog {
                 {
                     Ok(first) => first,
                     Err(error) => {
-                        let _ = complete.send(Err(error));
+                        if let Some(retained) = retained.take() {
+                            state
+                                .queued
+                                .push_back(PendingOperation::RetainedCompletion {
+                                    retained,
+                                    outcome: Err(error),
+                                });
+                            let start = if state.running {
+                                false
+                            } else {
+                                state.running = true;
+                                true
+                            };
+                            drop(state);
+                            if start {
+                                self.spawn_worker();
+                            }
+                        } else {
+                            let _ = complete.send(Err(error));
+                        }
                         return EnqueuedCommit {
-                            complete: CommitReceiver {
-                                complete: receiver,
-                                acknowledge_error: Some(acknowledge_error),
-                            },
+                            complete: CommitReceiver::new(
+                                receiver,
+                                Some(acknowledge_error),
+                                Arc::clone(self),
+                            ),
                             last_seq: record.session.last_seq,
                         };
                     }
                 };
                 if let Err(error) = renumber(&self.id, &mut events, first) {
-                    let _ = complete.send(Err(error));
+                    if let Some(retained) = retained.take() {
+                        state
+                            .queued
+                            .push_back(PendingOperation::RetainedCompletion {
+                                retained,
+                                outcome: Err(error),
+                            });
+                        let start = if state.running {
+                            false
+                        } else {
+                            state.running = true;
+                            true
+                        };
+                        drop(state);
+                        if start {
+                            self.spawn_worker();
+                        }
+                    } else {
+                        let _ = complete.send(Err(error));
+                    }
                     return EnqueuedCommit {
-                        complete: CommitReceiver {
-                            complete: receiver,
-                            acknowledge_error: Some(acknowledge_error),
-                        },
+                        complete: CommitReceiver::new(
+                            receiver,
+                            Some(acknowledge_error),
+                            Arc::clone(self),
+                        ),
                         last_seq: record.session.last_seq,
                     };
                 }
@@ -833,9 +1144,15 @@ impl SessionLog {
                 record: Box::new(record),
                 change,
                 events,
-                complete,
-                observed,
-                retained_outcome,
+                target: Some(match retained.take() {
+                    Some(retained) => CommitTarget::Retained(retained),
+                    None => CommitTarget::Ordinary {
+                        complete: Some(complete),
+                        observed: Some(observed),
+                    },
+                }),
+                progress: CommitProgress::default(),
+                outcome: None,
             });
             let start = if state.running {
                 false
@@ -849,25 +1166,27 @@ impl SessionLog {
             self.spawn_worker();
         }
         EnqueuedCommit {
-            complete: CommitReceiver {
-                complete: receiver,
-                acknowledge_error: Some(acknowledge_error),
-            },
+            complete: CommitReceiver::new(receiver, Some(acknowledge_error), Arc::clone(self)),
             last_seq,
         }
     }
 
-    fn enqueue_delete(self: &Arc<Self>) -> oneshot::Receiver<Result<(), StoreError>> {
+    fn enqueue_delete(self: &Arc<Self>) -> LaneReceiver<Result<(), StoreError>> {
         let (complete, receiver) = oneshot::channel();
-        self.enqueue(PendingOperation::Delete { complete });
-        receiver
+        self.enqueue(PendingOperation::Delete {
+            complete: Some(complete),
+            progress: DeleteProgress::default(),
+        });
+        LaneReceiver::new(receiver, Arc::clone(self))
     }
 
     /// Wait behind every operation already in this lane.
     pub(crate) async fn fence(self: &Arc<Self>) {
         let (complete, receiver) = oneshot::channel();
-        self.enqueue(PendingOperation::Fence { complete });
-        let _ = receiver.await;
+        self.enqueue(PendingOperation::Fence {
+            complete: Some(complete),
+        });
+        let _ = LaneReceiver::new(receiver, Arc::clone(self)).await;
     }
 
     fn enqueue(self: &Arc<Self>, operation: PendingOperation) {
@@ -922,129 +1241,152 @@ impl SessionLog {
                 }
             };
 
-            if matches!(&operation, PendingOperation::RestartableCommit { .. }) {
-                self.run_restartable_commit(operation).await;
-                continue;
+            let mut running = RunningOperation {
+                lane: Arc::clone(&self),
+                operation: Some(operation),
+            };
+            #[cfg(test)]
+            if self.pause_after_pop.swap(false, Ordering::SeqCst) {
+                self.operation_popped.notify_one();
+                self.release_popped_operation.notified().await;
             }
 
-            match operation {
+            match running.operation_mut() {
                 PendingOperation::Commit {
                     write_id,
                     mode,
-                    mut record,
+                    record,
                     change,
-                    mut events,
-                    complete,
-                    observed,
-                    retained_outcome,
+                    events,
+                    target,
+                    progress,
+                    outcome,
                 } => {
-                    let mut reporter = CommitReporter {
-                        complete: Some(complete),
-                        observed: Some(observed),
-                        retain_after_cancellation: !matches!(mode, CommitMode::Create),
-                        retained_outcome,
-                    };
-                    let result = self
-                        .commit(
-                            &write_id,
-                            mode,
-                            &mut record,
-                            change.as_deref(),
-                            &mut events,
+                    let mode = *mode;
+                    if outcome.is_none() {
+                        let retain_after_cancellation = !matches!(mode, CommitMode::Create)
+                            || matches!(target.as_ref(), Some(CommitTarget::Retained(_)));
+                        let result = {
+                            let mut reporter = CommitReporter {
+                                progress,
+                                target: target.as_mut(),
+                                retain_after_cancellation,
+                            };
+                            self.commit(
+                                write_id,
+                                mode,
+                                record,
+                                change.as_deref(),
+                                events,
+                                &mut reporter,
+                            )
+                            .await
+                        };
+                        let result = result.map(|()| (**record).clone());
+                        if let Err(error) = &result {
+                            let retained =
+                                if matches!(target.as_ref(), Some(CommitTarget::Retained(_))) {
+                                    let Some(CommitTarget::Retained(retained)) = target.take()
+                                    else {
+                                        unreachable!("the retained target was just inspected")
+                                    };
+                                    Some((retained, error.clone()))
+                                } else {
+                                    None
+                                };
+                            self.finalize_rejected_commit(
+                                events.len(),
+                                matches!(mode, CommitMode::UpdateInheriting),
+                                retained,
+                            );
+                        }
+                        *outcome = Some(result);
+                    }
+                    let result = outcome
+                        .as_ref()
+                        .expect("a finished durable commit keeps its outcome")
+                        .clone();
+                    if target.is_some() {
+                        match target
+                            .as_mut()
+                            .expect("a commit keeps its target until completion")
+                        {
+                            CommitTarget::Ordinary { complete, .. } => {
+                                if let Some(complete) = complete.take() {
+                                    if let Err(Err(error)) =
+                                        complete.send(result.map(CommitDelivery::plain))
+                                    {
+                                        tracing::error!(
+                                            session_id = %self.id,
+                                            error = %error,
+                                            "a detached durable session write failed"
+                                        );
+                                    }
+                                }
+                            }
+                            CommitTarget::Retained(retained) => {
+                                retained.prepare_outcome(result);
+                                retained.finish().await;
+                            }
+                        }
+                    }
+                }
+                PendingOperation::RestartableCommit {
+                    write_id,
+                    record,
+                    events,
+                    outcome,
+                    progress,
+                } => {
+                    let result = {
+                        let mut reporter = CommitReporter {
+                            progress,
+                            target: None,
+                            retain_after_cancellation: true,
+                        };
+                        self.commit(
+                            write_id,
+                            CommitMode::UpdateExact,
+                            record,
+                            None,
+                            events,
                             &mut reporter,
                         )
                         .await
-                        .map(|()| *record);
+                    };
                     if result.is_err() {
-                        if !events.is_empty() {
-                            self.abandon_sequence_reservation(events.len());
-                        }
-                        if matches!(mode, CommitMode::UpdateInheriting) {
-                            self.rebuild_local_lineage();
-                        }
+                        self.finalize_rejected_commit(events.len(), false, None);
                     }
-                    if let Some(retained_outcome) = reporter.retained_outcome.take() {
-                        let _ = retained_outcome.send(result.clone());
-                    }
-                    if let Some(complete) = reporter.complete.take() {
-                        if let Err(Err(error)) = complete.send(result.map(CommitDelivery::plain)) {
-                            tracing::error!(
-                                session_id = %self.id,
-                                error = %error,
-                                "a detached durable session write failed"
-                            );
-                        }
+                    if let Some(outcome) = outcome.take() {
+                        let _ = outcome.send(result.map(|()| (**record).clone()));
                     }
                 }
-                PendingOperation::Delete { complete } => {
-                    let result = self.delete().await;
-                    let _ = complete.send(result);
-                }
-                PendingOperation::Fence { complete } => {
-                    let _ = complete.send(());
+                PendingOperation::Delete { complete, progress } => {
+                    let result = self.delete(progress).await;
+                    if let Some(complete) = complete.take() {
+                        let _ = complete.send(result);
+                    }
                 }
                 PendingOperation::ObserveRecord(record) => {
-                    self.remember_durable(*record);
+                    if let Some(record) = record.take() {
+                        self.remember_durable(*record);
+                    }
                 }
-                PendingOperation::RestartableCommit { .. } => {
-                    unreachable!("restartable commits use their cancellation guard")
+                PendingOperation::Fence { complete } => {
+                    if let Some(complete) = complete.take() {
+                        let _ = complete.send(());
+                    }
+                }
+                PendingOperation::RetainedCompletion { retained, outcome } => {
+                    retained.prepare_outcome(outcome.clone());
+                    retained.finish().await;
                 }
                 #[cfg(test)]
                 PendingOperation::ObserveRevision(revision) => {
-                    self.revision.fetch_max(revision, Ordering::AcqRel);
+                    self.revision.fetch_max(*revision, Ordering::AcqRel);
                 }
             }
-        }
-    }
-
-    async fn run_restartable_commit(self: &Arc<Self>, operation: PendingOperation) {
-        let mut running = RunningRestartableCommit {
-            lane: Arc::clone(self),
-            operation: Some(operation),
-        };
-        let result = {
-            let PendingOperation::RestartableCommit {
-                write_id,
-                record,
-                events,
-                ..
-            } = running
-                .operation
-                .as_mut()
-                .expect("the guarded operation remains owned while it runs")
-            else {
-                unreachable!("only restartable commits enter this runner")
-            };
-            let mut reporter = CommitReporter {
-                complete: None,
-                observed: None,
-                retain_after_cancellation: true,
-                retained_outcome: None,
-            };
-            self.commit(
-                write_id,
-                CommitMode::UpdateExact,
-                record,
-                None,
-                events,
-                &mut reporter,
-            )
-            .await
-        };
-        let PendingOperation::RestartableCommit {
-            record,
-            events,
-            mut outcome,
-            ..
-        } = running.finish()
-        else {
-            unreachable!("the guarded operation keeps its variant")
-        };
-        if result.is_err() && !events.is_empty() {
-            self.abandon_sequence_reservation(events.len());
-        }
-        if let Some(outcome) = outcome.take() {
-            let _ = outcome.send(result.map(|()| *record));
+            running.finish();
         }
     }
 
@@ -1055,17 +1397,16 @@ impl SessionLog {
         record: &mut SessionRecord,
         change: Option<&RecordChange>,
         events: &mut [Event],
-        reporter: &mut CommitReporter,
+        reporter: &mut CommitReporter<'_>,
     ) -> Result<(), StoreError> {
-        if matches!(mode, CommitMode::UpdateInheriting) {
+        self.resolve_reported_error(reporter).await?;
+        if matches!(mode, CommitMode::UpdateInheriting) && !reporter.progress.prepared {
             self.prepare_inheriting_record(record, change)?;
+            reporter.progress.prepared = true;
         }
-        let mut attempt = 0_usize;
-        // Collision recovery is forward progress, not an outage retry, and
-        // must not consume or skip the caller's four-unavailable boundary.
-        let mut unavailable_attempt = 0_usize;
         loop {
-            attempt = attempt.saturating_add(1);
+            reporter.progress.attempt = reporter.progress.attempt.saturating_add(1);
+            let attempt = reporter.progress.attempt;
             if let Some(last) = events.last() {
                 record.session.last_seq = last.seq;
             }
@@ -1134,17 +1475,17 @@ impl SessionLog {
                             );
                         }
                         Err(error @ StoreError::Unavailable(_)) => {
-                            unavailable_attempt = unavailable_attempt.saturating_add(1);
-                            self.retry_or_stop(error, unavailable_attempt, reporter)
-                                .await?;
+                            reporter.progress.unavailable_attempt =
+                                reporter.progress.unavailable_attempt.saturating_add(1);
+                            self.retry_or_stop(error, reporter).await?;
                         }
                         Err(error) => return Err(error),
                     }
                 }
                 Err(error @ StoreError::Unavailable(_)) => {
-                    unavailable_attempt = unavailable_attempt.saturating_add(1);
-                    self.retry_or_stop(error, unavailable_attempt, reporter)
-                        .await?;
+                    reporter.progress.unavailable_attempt =
+                        reporter.progress.unavailable_attempt.saturating_add(1);
+                    self.retry_or_stop(error, reporter).await?;
                 }
                 Err(error) => return Err(error),
             }
@@ -1211,6 +1552,7 @@ impl SessionLog {
                     .map_err(|_| StoreError::Malformed("event batch is too large".into()))?,
                 PendingOperation::Delete { .. }
                 | PendingOperation::Fence { .. }
+                | PendingOperation::RetainedCompletion { .. }
                 | PendingOperation::ObserveRecord(_) => 0,
                 #[cfg(test)]
                 PendingOperation::ObserveRevision(_) => 0,
@@ -1257,10 +1599,51 @@ impl SessionLog {
         Ok(())
     }
 
-    /// Remove one failed unit's reservation and shift every successor with it.
-    fn abandon_sequence_reservation(&self, count: usize) {
-        let count = u64::try_from(count).unwrap_or(u64::MAX);
+    /// Atomically remove a rejected proposal and order its retained cleanup.
+    ///
+    /// Successors already queued are shifted and have their lineage rebuilt
+    /// before cleanup is appended. A producer arriving after this method takes
+    /// the lane lock can therefore only enqueue behind that cleanup.
+    fn finalize_rejected_commit(
+        &self,
+        event_count: usize,
+        rebuild_local_lineage: bool,
+        retained: Option<(Box<dyn RetainedCommitWork>, StoreError)>,
+    ) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if event_count != 0 {
+            self.abandon_sequence_reservation_locked(&mut state, event_count);
+        }
+        if rebuild_local_lineage {
+            Self::rebuild_local_lineage_locked(&mut state);
+        }
+
+        #[cfg(test)]
+        if let Some(pause) = self
+            .final_rejection_pause
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            let _ = pause.reached.send(());
+            let _ = pause.release.recv();
+        }
+
+        // Rejection repair observes every successor rebuilt above. It remains
+        // ahead of producers that arrive after this locked linearization point.
+        if let Some((retained, error)) = retained {
+            state
+                .queued
+                .push_back(PendingOperation::RetainedCompletion {
+                    retained,
+                    outcome: Err(error),
+                });
+        }
+    }
+
+    /// Remove one failed unit's reservation and shift every successor with it.
+    fn abandon_sequence_reservation_locked(&self, state: &mut LaneState, count: usize) {
+        let count = u64::try_from(count).unwrap_or(u64::MAX);
         for operation in &mut state.queued {
             let (mode, record, events) = match operation {
                 PendingOperation::Commit {
@@ -1297,8 +1680,7 @@ impl SessionLog {
     /// proposals conflict with state that never existed. Rebuild the queued
     /// lineage from the latest durable record while holding the same lane lock
     /// used for enqueueing.
-    fn rebuild_local_lineage(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+    fn rebuild_local_lineage_locked(state: &mut LaneState) {
         let mut local_tail = state.durable.clone();
         for operation in &mut state.queued {
             match operation {
@@ -1323,12 +1705,15 @@ impl SessionLog {
                     *change = Some(rebuilt);
                 }
                 PendingOperation::ObserveRecord(record) => {
-                    local_tail = Some(record.clone());
+                    if let Some(record) = record.as_ref() {
+                        local_tail = Some(record.clone());
+                    }
                 }
                 PendingOperation::Commit { .. }
                 | PendingOperation::RestartableCommit { .. }
                 | PendingOperation::Delete { .. }
-                | PendingOperation::Fence { .. } => {}
+                | PendingOperation::Fence { .. }
+                | PendingOperation::RetainedCompletion { .. } => {}
                 #[cfg(test)]
                 PendingOperation::ObserveRevision(_) => {}
             }
@@ -1368,12 +1753,32 @@ impl SessionLog {
         Ok(())
     }
 
+    async fn resolve_reported_error(
+        &self,
+        reporter: &mut CommitReporter<'_>,
+    ) -> Result<(), StoreError> {
+        let Some(error) = reporter.progress.reported_error.clone() else {
+            return Ok(());
+        };
+        if reporter.error_observed().await {
+            return Err(error);
+        }
+
+        reporter.clear_error_observation();
+        reporter.progress.reported_error = None;
+        if reporter.retain_after_cancellation {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
     async fn retry_or_stop(
         &self,
         error: StoreError,
-        unavailable_attempt: usize,
-        reporter: &mut CommitReporter,
+        reporter: &mut CommitReporter<'_>,
     ) -> Result<(), StoreError> {
+        let unavailable_attempt = reporter.progress.unavailable_attempt;
         if unavailable_attempt == 1 || unavailable_attempt.is_power_of_two() {
             tracing::warn!(
                 session_id = %self.id,
@@ -1383,24 +1788,13 @@ impl SessionLog {
             );
         }
         if unavailable_attempt == REPORT_AFTER_ATTEMPTS {
-            if let Some(complete) = reporter.complete.take() {
-                if complete.send(Err(error.clone())).is_ok() {
-                    #[cfg(test)]
-                    self.failure_delivered.notify_one();
-                    if reporter
-                        .observed
-                        .take()
-                        .expect("every commit reporter has an observation channel")
-                        .await
-                        .is_ok()
-                    {
-                        // The receiver acknowledges in the same poll that
-                        // observes the error. Only then can the worker give up
-                        // ownership without a cancellation window.
-                        return Err(error);
-                    }
-                }
+            reporter.progress.reported_error = Some(error.clone());
+            if reporter.report_error(error.clone()) {
+                #[cfg(test)]
+                self.failure_delivered.notify_one();
+                return self.resolve_reported_error(reporter).await;
             }
+            reporter.progress.reported_error = None;
             if !reporter.retain_after_cancellation {
                 return Err(error);
             }
@@ -1416,10 +1810,8 @@ impl SessionLog {
         )
     }
 
-    async fn delete(&self) -> Result<(), StoreError> {
-        let mut attempt = 0_usize;
+    async fn delete(&self, progress: &mut DeleteProgress) -> Result<(), StoreError> {
         loop {
-            attempt = attempt.saturating_add(1);
             match self.store.delete(&self.id).await {
                 Ok(()) => {
                     let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
@@ -1428,18 +1820,20 @@ impl SessionLog {
                     return Ok(());
                 }
                 Err(error @ StoreError::Unavailable(_)) => {
-                    if attempt == 1 || attempt.is_power_of_two() {
+                    progress.unavailable_attempt = progress.unavailable_attempt.saturating_add(1);
+                    let unavailable_attempt = progress.unavailable_attempt;
+                    if unavailable_attempt == 1 || unavailable_attempt.is_power_of_two() {
                         tracing::warn!(
                             session_id = %self.id,
-                            attempt,
+                            attempt = unavailable_attempt,
                             error = %error,
                             "durable session deletion retained by its retry worker"
                         );
                     }
-                    if attempt == REPORT_AFTER_ATTEMPTS {
+                    if unavailable_attempt == REPORT_AFTER_ATTEMPTS {
                         return Err(error);
                     }
-                    retry_delay(attempt).await;
+                    retry_delay(unavailable_attempt).await;
                 }
                 Err(error) => return Err(error),
             }
@@ -1455,9 +1849,10 @@ impl SessionLog {
 
 /// Weak registry of currently active session lanes.
 ///
-/// A live entry, caller, or worker owns its lane strongly. Dead weak entries are
-/// pruned on every lookup, so touching one-off sessions cannot grow this map
-/// without bound.
+/// A live entry, caller, worker, or queued retained continuation owns its lane
+/// strongly. Retained work breaks its temporary self-cycle on completion. Dead
+/// weak entries are pruned on every lookup, so touching one-off sessions cannot
+/// grow this map without bound.
 pub(crate) struct EventLogs {
     held: StdMutex<HashMap<SessionId, Weak<SessionLog>>>,
     store: Arc<dyn SessionStore>,
@@ -1522,9 +1917,20 @@ impl EventLogs {
 
 impl SessionService {
     pub(crate) async fn lock_lifecycle(&self, id: &SessionId) -> tokio::sync::OwnedMutexGuard<()> {
+        let event_log = self.event_logs.lane(id);
         let cleanup_gate = self.event_logs.cleanup_gate(id);
         let lifecycle_gate = self.lifecycle_gates.gate(id);
         loop {
+            // Register before `kick`: a worker can stop after the state check,
+            // and `notify_waiters` deliberately stores no permit for a listener
+            // that did not exist yet.
+            let restart_needed = event_log.restart_needed.notified();
+            tokio::pin!(restart_needed);
+            restart_needed.as_mut().enable();
+            // A retained continuation can own this gate after its original
+            // runtime and receiver disappear. Public lifecycle work is itself
+            // a recovery trigger for that weakly registered lane.
+            event_log.kick();
             self.event_logs.drain_cleanups_at(id, &cleanup_gate).await;
 
             // Register before inspecting the queue. A delivery dropped from a
@@ -1546,6 +1952,7 @@ impl SessionService {
                     return lifecycle;
                 }
                 () = &mut changed => {}
+                () = &mut restart_needed => {}
             }
         }
     }
@@ -1600,16 +2007,22 @@ impl SessionService {
     {
         let id = record.session.id.clone();
         let lane = self.event_logs.lane(&id);
-        let (enqueued, retained_outcome) =
-            lane.enqueue_retained_commit(CommitMode::UpdateExact, record, events, None, |_| {});
-        retain_commit(
+        let (retained, complete) = retain_commit(
             id,
-            enqueued.complete,
-            retained_outcome,
+            Arc::clone(&lane),
             continuation,
             on_rejected,
             on_undelivered,
-        )
+        );
+        lane.enqueue_retained_commit(
+            CommitMode::UpdateExact,
+            record,
+            events,
+            None,
+            retained,
+            |_| {},
+        );
+        complete
     }
 
     pub(crate) fn retain_cleanup_durably(
@@ -1653,11 +2066,21 @@ impl SessionService {
         };
         event_log.fence().await;
 
+        self.synchronize_ordered_live_tail_for(id, screen).await;
+    }
+
+    /// Repair a live cursor from a rejection cleanup already ordered in its lane.
+    pub(crate) async fn synchronize_ordered_live_tail_for(
+        &self,
+        id: &SessionId,
+        screen: &Arc<tokio::sync::Mutex<Box<dyn crate::terminal::ScreenModel>>>,
+    ) {
         let mut entries = self.entries.write().await;
         let Some(entry) = entries.get_mut(id) else {
             return;
         };
         if Arc::ptr_eq(&entry.screen, screen) {
+            let event_log = Arc::clone(&entry.event_log);
             event_log.synchronize_tail(&mut entry.session.last_seq);
         }
     }
@@ -2172,12 +2595,20 @@ where
     change(&mut record);
     let id = entry.session.id.clone();
     let event_log = Arc::clone(&entry.event_log);
+    let (retained, complete) = retain_commit(
+        id,
+        Arc::clone(&event_log),
+        continuation,
+        on_rejected,
+        on_undelivered,
+    );
     let mut live_tail = None;
-    let (enqueued, retained_outcome) = event_log.enqueue_retained_commit(
+    event_log.enqueue_retained_commit(
         CommitMode::UpdateInheriting,
         record,
         vec![event],
         None,
+        retained,
         |last_seq| live_tail = Some(last_seq.saturating_sub(1)),
     );
     // A proposal is not live until its continuation installs the committed
@@ -2185,14 +2616,7 @@ where
     if let Some(live_tail) = live_tail {
         entry.session.last_seq = live_tail;
     }
-    retain_commit(
-        id,
-        enqueued.complete,
-        retained_outcome,
-        continuation,
-        on_rejected,
-        on_undelivered,
-    )
+    complete
 }
 
 #[cfg(test)]
