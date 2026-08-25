@@ -293,7 +293,9 @@ async fn callback(
     };
     // Host-only, HttpOnly, SameSite=Lax: the cookie is never readable from
     // script, and never sent on a cross-site request that could act as the user.
-    let cookie = issued_session_cookie(&session);
+    // Production HTTPS also marks it Secure; explicit HTTP is retained for
+    // local development where a Secure cookie would never be returned.
+    let cookie = issued_session_cookie(&session, auth.secure_cookies());
     (
         StatusCode::SEE_OTHER,
         [(header::SET_COOKIE, cookie), (header::LOCATION, "/".into())],
@@ -301,8 +303,9 @@ async fn callback(
         .into_response()
 }
 
-fn issued_session_cookie(session: &str) -> String {
-    format!("{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400")
+fn issued_session_cookie(session: &str, secure: bool) -> String {
+    let secure = if secure { "; Secure" } else { "" };
+    format!("{SESSION_COOKIE}={session}; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=86400")
 }
 
 pub(crate) async fn resolve_subject(
@@ -392,8 +395,16 @@ mod tests {
     #[test]
     fn a_new_login_issues_only_the_canonical_cookie_name() {
         assert_eq!(
-            issued_session_cookie("secret"),
+            issued_session_cookie("secret", false),
             "cma_session=secret; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400"
+        );
+    }
+
+    #[test]
+    fn an_https_login_marks_the_session_cookie_secure() {
+        assert_eq!(
+            issued_session_cookie("secret", true),
+            "cma_session=secret; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400"
         );
     }
 
@@ -723,7 +734,8 @@ mod tests {
             .expect("authenticated subject");
         assert_eq!(subject.as_str(), "subject-a");
         let fact = restarted
-            .subject_fact(&subject)
+            .store
+            .subject(&subject)
             .await
             .expect("durable subject loads")
             .expect("subject fact");

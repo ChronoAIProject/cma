@@ -155,6 +155,8 @@ pub enum AuthMode {
         /// Client secret, held only by this process.
         client_secret: String,
         /// This service's public origin, used to build the redirect URI.
+        /// HTTPS origins also require the Secure attribute on browser cookies;
+        /// explicit HTTP remains available for local development.
         public_url: String,
     },
     /// Every request is attributed to one fixed subject.
@@ -293,6 +295,19 @@ pub struct AuthState {
     records: Option<records::SignInRecords>,
 }
 
+/// Authentication facts established for exactly one incoming credential.
+///
+/// Bearer-token facts never pass through the durable browser-subject record:
+/// two tokens may name the same subject while carrying different grants and
+/// delegated authority. Keeping the complete result together is what lets the
+/// middleware attach one internally consistent caller to the request.
+pub(super) struct RequestAuth {
+    pub(super) subject: SubjectId,
+    pub(super) authorization: Authorization,
+    pub(super) profile: profile::Profile,
+    pub(super) delegated_credential: Option<String>,
+}
+
 /// A token generation observed by one renewal sweep.
 pub(super) struct DueSubjectRefresh {
     pub(super) subject: SubjectId,
@@ -347,6 +362,13 @@ impl AuthState {
         matches!(self.mode, AuthMode::Provider { .. })
     }
 
+    fn secure_cookies(&self) -> bool {
+        let AuthMode::Provider { public_url, .. } = &self.mode else {
+            return false;
+        };
+        reqwest::Url::parse(public_url).is_ok_and(|url| url.scheme() == "https")
+    }
+
     /// Capabilities granted in trusted mode.
     ///
     /// Local bring-up has no provider to ask, so the fixed subject is given the
@@ -373,16 +395,42 @@ impl AuthState {
         ])
     }
 
-    /// Resolve the subject for a request, if any.
-    pub async fn resolve(&self, headers: &HeaderMap) -> Result<Option<SubjectId>, StoreError> {
+    /// Resolve all authentication facts for one request, if it carries a credential.
+    pub(super) async fn resolve_request(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<Option<RequestAuth>, StoreError> {
         match &self.mode {
-            AuthMode::Trusted { subject } => Ok(Some(SubjectId(subject.clone()))),
+            AuthMode::Trusted { subject } => Ok(Some(RequestAuth {
+                subject: SubjectId(subject.clone()),
+                authorization: Self::trusted_authorization(),
+                profile: profile::Profile::default(),
+                delegated_credential: None,
+            })),
             AuthMode::Provider { .. } => {
                 for token in session_cookies(headers) {
                     let id = SecretDigest::identify(BROWSER_SESSION_DOMAIN, &token);
                     if let Some(session) = self.store.browser_session(&id).await? {
                         if session.expires_at > SystemTime::now() {
-                            return Ok(Some(session.subject));
+                            let subject = session.subject;
+                            let Some(fact) = self.store.subject(&subject).await? else {
+                                return Ok(Some(RequestAuth {
+                                    subject,
+                                    authorization: Authorization::none(),
+                                    profile: profile::Profile::default(),
+                                    delegated_credential: None,
+                                }));
+                            };
+                            let delegated_credential = fact
+                                .tokens
+                                .filter(|tokens| tokens.expires_at > SystemTime::now())
+                                .map(|tokens| tokens.access_token.into_inner());
+                            return Ok(Some(RequestAuth {
+                                subject,
+                                authorization: fact.authorization,
+                                profile: fact.profile,
+                                delegated_credential,
+                            }));
                         }
                         // TTL deletion is eventual. An expired record is never
                         // accepted, and best-effort cleanup does not change the
@@ -402,9 +450,18 @@ impl AuthState {
                 let Some(token) = bearer::bearer_token(headers) else {
                     return Ok(None);
                 };
-                self.subject_for_bearer(&token).await
+                self.request_for_bearer(token).await
             }
         }
+    }
+
+    /// Resolve only identity for callers that do not consume request authority.
+    #[cfg(test)]
+    pub async fn resolve(&self, headers: &HeaderMap) -> Result<Option<SubjectId>, StoreError> {
+        Ok(self
+            .resolve_request(headers)
+            .await?
+            .map(|resolved| resolved.subject))
     }
 
     /// Fetch and cache the provider's metadata document.
@@ -912,14 +969,6 @@ impl AuthState {
                 return Ok(());
             }
         }
-    }
-
-    /// Read one subject fact from the durable authority.
-    pub(super) async fn subject_fact(
-        &self,
-        subject: &SubjectId,
-    ) -> Result<Option<SubjectAuthState>, StoreError> {
-        self.store.subject(subject).await
     }
 
     /// Persist a completed sign-in as one indivisible subject fact.

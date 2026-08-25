@@ -587,6 +587,10 @@ pub trait CredentialSource: Send + Sync {
     /// here. The core does not know what a service is; it knows only that the
     /// answer depends on which ones were chosen.
     ///
+    /// `caller_credential` is present only on the initiating request. A source
+    /// may use it to establish per-session custody, but recovery must work from
+    /// the custody record because no request credential exists after restart.
+    ///
     /// Store failures are returned explicitly. `Ok(None)` means no credential
     /// is available; it must never stand in for unknown durable custody.
     async fn credential_for(
@@ -594,6 +598,7 @@ pub trait CredentialSource: Send + Sync {
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
+        caller_credential: Option<&str>,
     ) -> Result<Option<String>, StoreError>;
 
     /// Give up whatever was issued for a session that has ended.

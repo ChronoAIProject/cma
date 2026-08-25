@@ -1091,10 +1091,14 @@ fn subject_migration_update(
                     },
                 ]
             },
-            // A compatibility rewrite is a new record lifecycle. Fresh fences
-            // prevent a pre-migration refresh from committing over this state.
+            // A compatibility rewrite advances every CAS fence atomically.
+            // Any old writer that pre-read the former revision must fail after
+            // this update rather than replacing the migrated document.
             "incarnation": incarnation,
-            "token_generation": { "$add": ["$revision", 1_i64] },
+            "revision": { "$add": [{ "$ifNull": ["$revision", 0_i64] }, 1_i64] },
+            "token_generation": {
+                "$add": [{ "$ifNull": ["$token_generation", 0_i64] }, 1_i64]
+            },
             "sweep_sequence": sweep_sequence,
             "auth_schema_version": AUTH_SCHEMA_VERSION,
         }
@@ -1132,6 +1136,8 @@ fn credential_migration_update(retention_millis: i64, sweep_sequence: i64) -> Ve
                     },
                 ]
             },
+            // Fence an old generation-CAS writer that overlapped migration.
+            "generation": { "$add": [{ "$ifNull": ["$generation", 0_i64] }, 1_i64] },
             "sweep_sequence": sweep_sequence,
             "auth_schema_version": AUTH_SCHEMA_VERSION,
         }

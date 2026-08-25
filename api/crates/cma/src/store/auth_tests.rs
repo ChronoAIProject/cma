@@ -1329,6 +1329,20 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
         )
         .await
         .unwrap();
+    let stale_subject = database
+        .collection::<Document>(SUBJECTS)
+        .find_one(doc! { "_id": "legacy-subject-000" })
+        .await
+        .unwrap()
+        .unwrap();
+    let stale_subject_revision = stored_integer(&stale_subject, "revision");
+    let stale_credential = database
+        .collection::<Document>(CREDENTIALS)
+        .find_one(doc! { "_id": "sesn_legacy_000" })
+        .await
+        .unwrap()
+        .unwrap();
+    let stale_credential_generation = stored_integer(&stale_credential, "generation");
     store
         .maintain_auth_schema(AUTH_SCHEMA_OPEN_BUDGET)
         .await
@@ -1350,8 +1364,13 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
         .is_empty());
     assert_eq!(
         stored_integer(&rewritten_subject, "token_generation"),
-        stored_integer(&rewritten_subject, "revision") + 1,
-        "a rolling old-writer rewrite receives a fresh token-generation fence"
+        1,
+        "a missing legacy token-generation receives a fresh fence"
+    );
+    assert_eq!(
+        stored_integer(&rewritten_subject, "revision"),
+        stale_subject_revision + 1,
+        "migration fences a subject writer that pre-read the legacy revision"
     );
     let rewritten_credential = database
         .collection::<Document>(CREDENTIALS)
@@ -1367,6 +1386,112 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_rolling_writer_s
     assert!(rewritten_credential
         .get_bool("revoke_debt_ordered")
         .unwrap());
+    assert_eq!(
+        stored_integer(&rewritten_credential, "generation"),
+        stale_credential_generation + 1,
+        "migration fences a credential writer that pre-read the legacy generation"
+    );
+    assert_eq!(
+        database
+            .collection::<Document>(SUBJECTS)
+            .replace_one(
+                doc! {
+                    "_id": "legacy-subject-000",
+                    "revision": stale_subject_revision,
+                },
+                stale_subject,
+            )
+            .await
+            .unwrap()
+            .matched_count,
+        0,
+        "a pre-migration subject replacement cannot erase migrated state"
+    );
+    assert_eq!(
+        database
+            .collection::<Document>(CREDENTIALS)
+            .replace_one(
+                doc! {
+                    "_id": "sesn_legacy_000",
+                    "generation": stale_credential_generation,
+                },
+                stale_credential,
+            )
+            .await
+            .unwrap()
+            .matched_count,
+        0,
+        "a pre-migration credential replacement cannot erase migrated state"
+    );
+
+    let subjects = database.collection::<Document>(SUBJECTS);
+    let credentials = database.collection::<Document>(CREDENTIALS);
+    subjects
+        .update_one(
+            doc! { "_id": "legacy-subject-001" },
+            doc! { "$unset": { "auth_schema_version": "" } },
+        )
+        .await
+        .unwrap();
+    credentials
+        .update_one(
+            doc! { "_id": "sesn_legacy_001" },
+            doc! { "$unset": { "auth_schema_version": "" } },
+        )
+        .await
+        .unwrap();
+    let concurrent_subject = subjects
+        .find_one(doc! { "_id": "legacy-subject-001" })
+        .await
+        .unwrap()
+        .unwrap();
+    let concurrent_revision = stored_integer(&concurrent_subject, "revision");
+    let concurrent_credential = credentials
+        .find_one(doc! { "_id": "sesn_legacy_001" })
+        .await
+        .unwrap()
+        .unwrap();
+    let concurrent_generation = stored_integer(&concurrent_credential, "generation");
+    let (maintenance, subject_write, credential_write) = tokio::join!(
+        store.maintain_auth_schema(AUTH_SCHEMA_OPEN_BUDGET),
+        subjects.replace_one(
+            doc! {
+                "_id": "legacy-subject-001",
+                "revision": concurrent_revision,
+            },
+            concurrent_subject,
+        ),
+        credentials.replace_one(
+            doc! {
+                "_id": "sesn_legacy_001",
+                "generation": concurrent_generation,
+            },
+            concurrent_credential,
+        ),
+    );
+    maintenance.unwrap();
+    subject_write.unwrap();
+    credential_write.unwrap();
+    let concurrent_subject = subjects
+        .find_one(doc! { "_id": "legacy-subject-001" })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored_integer(&concurrent_subject, "auth_schema_version"),
+        AUTH_SCHEMA_VERSION
+    );
+    assert!(stored_integer(&concurrent_subject, "revision") > concurrent_revision);
+    let concurrent_credential = credentials
+        .find_one(doc! { "_id": "sesn_legacy_001" })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored_integer(&concurrent_credential, "auth_schema_version"),
+        AUTH_SCHEMA_VERSION
+    );
+    assert!(stored_integer(&concurrent_credential, "generation") > concurrent_generation);
 
     database
         .collection::<Document>(CREDENTIALS)
@@ -2099,15 +2224,24 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
             .to_system_time(),
         expected_subject_delete_after
     );
-    assert!(!raw_legacy_subject.contains_key("incarnation"));
-    assert!(!raw_legacy_subject.contains_key("token_generation"));
+    assert_eq!(
+        stored_integer(&raw_legacy_subject, "auth_schema_version"),
+        AUTH_SCHEMA_VERSION
+    );
+    assert_eq!(stored_integer(&raw_legacy_subject, "revision"), 1);
+    assert_eq!(stored_integer(&raw_legacy_subject, "token_generation"), 1);
+    assert!(!raw_legacy_subject
+        .get_str("incarnation")
+        .expect("migration supplies an incarnation")
+        .is_empty());
     let restored_legacy_subject = first
         .subject(&SubjectId("legacy-subject".into()))
         .await
         .unwrap()
         .unwrap();
-    assert!(restored_legacy_subject.incarnation.is_empty());
-    assert_eq!(restored_legacy_subject.token_generation, 0);
+    assert!(!restored_legacy_subject.incarnation.is_empty());
+    assert_eq!(restored_legacy_subject.revision, 1);
+    assert_eq!(restored_legacy_subject.token_generation, 1);
     let raw_legacy_credential = client
         .database(&database_name)
         .collection::<Document>(CREDENTIALS)
@@ -2124,6 +2258,11 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     assert!(raw_legacy_credential
         .get_bool("revoke_debt_ordered")
         .unwrap());
+    assert_eq!(
+        stored_integer(&raw_legacy_credential, "auth_schema_version"),
+        AUTH_SCHEMA_VERSION
+    );
+    assert_eq!(stored_integer(&raw_legacy_credential, "generation"), 10);
 
     for (collection, expected_name, expected_field) in [
         (BROWSER_SESSIONS, BROWSER_EXPIRY_INDEX, "expires_at"),
